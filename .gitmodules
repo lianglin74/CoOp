@@ -1,3 +1,0 @@
-[submodule "src/IRISCaffe"]
-	path = src/IRISCaffe
-	url = https://msresearch.visualstudio.com/DefaultCollection/IRIS/_git/IRISCaffe
