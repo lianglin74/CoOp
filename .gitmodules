@@ -1,0 +1,4 @@
+[submodule "src/CCSCaffe"]
+	path = src/CCSCaffe
+	url = https://msresearch.visualstudio.com/IRIS/_git/CCSCaffe
+	branch = WinCaffe
