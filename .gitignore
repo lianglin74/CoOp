@@ -27,6 +27,15 @@ var/
 # include lib in py-faster-rcnn
 !src/*/lib/
 
+# exclude data folder
+data/
+# include README.md in the data folder as a placeholder
+!data/README.md
+
+# exclude visual studio files in script
+script/*.pyproj
+script/*.sln
+
 # PyInstaller
 #  Usually these files are written by a python script from a template
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
