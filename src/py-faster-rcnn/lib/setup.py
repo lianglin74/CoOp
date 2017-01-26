@@ -122,6 +122,16 @@ ext_modules = [
         ["nms/cpu_nms.pyx"],
         include_dirs = [numpy_include]
     ),
+    Extension(
+        'pycocotools._mask',
+        sources=['pycocotools/maskApi.c', 'pycocotools/_mask.pyx'],
+        include_dirs = [numpy_include, 'pycocotools']
+    ),
+    # generate gpu_nms.cpp for later use, ignore the error
+    Extension('nms.gpu_nms',
+        ['nms/gpu_nms.pyx'],
+    ),
+
 # Do not compile because do not know how to compile CUDA in Cython on Windows
 #    Extension('nms.gpu_nms',
 #        ['nms/nms_kernel.cu', 'nms/gpu_nms.pyx'],
@@ -140,13 +150,10 @@ ext_modules = [
 #                                     "'-fPIC'"]},
 #        include_dirs = [numpy_include, CUDA['include']]
 #    ),
-    Extension(
-        'pycocotools._mask',
-        sources=['pycocotools/maskApi.c', 'pycocotools/_mask.pyx'],
-        include_dirs = [numpy_include, 'pycocotools']
-    ),
 ]
 
+if 'VS90COMNTOOLS' not in os.environ:
+    os.environ['VS90COMNTOOLS' ] =  os.environ['VS140COMNTOOLS' ] 
 setup(
     name='fast_rcnn',
     ext_modules=ext_modules,
