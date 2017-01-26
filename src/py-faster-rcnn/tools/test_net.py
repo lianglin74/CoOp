@@ -18,7 +18,7 @@ import argparse
 import pprint
 import time, os, sys
 
-def parse_args():
+def parse_args(args_list):
     """
     Parse input arguments
     """
@@ -50,15 +50,15 @@ def parse_args():
                         help='max number of detections per image',
                         default=100, type=int)
 
-    if len(sys.argv) == 1:
+    if len(args_list) == 0:
         parser.print_help()
         sys.exit(1)
 
-    args = parser.parse_args()
+    args = parser.parse_args(args_list)
     return args
 
-if __name__ == '__main__':
-    args = parse_args()
+def main(args_list):
+    args = parse_args(args_list)
 
     print('Called with args:')
     print(args)
@@ -88,3 +88,9 @@ if __name__ == '__main__':
         imdb.set_proposal_method(cfg.TEST.PROPOSAL_METHOD)
 
     test_net(net, imdb, max_per_image=args.max_per_image, vis=args.vis)
+
+
+if __name__ == '__main__':
+    '''Wrap train_net in order to call script from python as well as console.'''
+    args_list = sys.argv[1:]
+    main(args_list)

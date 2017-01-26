@@ -37,7 +37,7 @@ def locate_cuda():
     # first check if the CUDAHOME env variable is in use
     if 'CUDAHOME' in os.environ:
         home = os.environ['CUDAHOME']
-        nvcc = pjoin(home, 'bin', 'nvcc')
+        nvcc = pjoin(home, 'bin', 'nvcc.exe')
     else:
         # otherwise, search the PATH for NVCC
         default_path = pjoin(os.sep, 'usr', 'local', 'cuda', 'bin')
@@ -49,13 +49,13 @@ def locate_cuda():
 
     cudaconfig = {'home':home, 'nvcc':nvcc,
                   'include': pjoin(home, 'include'),
-                  'lib64': pjoin(home, 'lib64')}
+                  'lib64': pjoin(home, 'lib/x64')}
     for k, v in cudaconfig.iteritems():
         if not os.path.exists(v):
             raise EnvironmentError('The CUDA %s path could not be located in %s' % (k, v))
 
     return cudaconfig
-CUDA = locate_cuda()
+#CUDA = locate_cuda()
 
 
 # Obtain the numpy include directory.  This logic works across numpy versions.
@@ -78,6 +78,8 @@ def customize_compiler_for_nvcc(self):
     self.src_extensions.append('.cu')
 
     # save references to the default compiler_so and _comple methods
+    import json
+    print (json.dumps(vars(self), indent=4))
     default_compiler_so = self.compiler_so
     super = self._compile
 
@@ -105,7 +107,7 @@ def customize_compiler_for_nvcc(self):
 # run the customize_compiler
 class custom_build_ext(build_ext):
     def build_extensions(self):
-        customize_compiler_for_nvcc(self.compiler)
+        #customize_compiler_for_nvcc(self.compiler)
         build_ext.build_extensions(self)
 
 
@@ -113,38 +115,35 @@ ext_modules = [
     Extension(
         "utils.cython_bbox",
         ["utils/bbox.pyx"],
-        extra_compile_args={'gcc': ["-Wno-cpp", "-Wno-unused-function"]},
         include_dirs = [numpy_include]
     ),
     Extension(
         "nms.cpu_nms",
         ["nms/cpu_nms.pyx"],
-        extra_compile_args={'gcc': ["-Wno-cpp", "-Wno-unused-function"]},
         include_dirs = [numpy_include]
     ),
-    Extension('nms.gpu_nms',
-        ['nms/nms_kernel.cu', 'nms/gpu_nms.pyx'],
-        library_dirs=[CUDA['lib64']],
-        libraries=['cudart'],
-        language='c++',
-        runtime_library_dirs=[CUDA['lib64']],
-        # this syntax is specific to this build system
-        # we're only going to use certain compiler args with nvcc and not with
-        # gcc the implementation of this trick is in customize_compiler() below
-        extra_compile_args={'gcc': ["-Wno-unused-function"],
-                            'nvcc': ['-arch=sm_35',
-                                     '--ptxas-options=-v',
-                                     '-c',
-                                     '--compiler-options',
-                                     "'-fPIC'"]},
-        include_dirs = [numpy_include, CUDA['include']]
-    ),
+# Do not compile because do not know how to compile CUDA in Cython on Windows
+#    Extension('nms.gpu_nms',
+#        ['nms/nms_kernel.cu', 'nms/gpu_nms.pyx'],
+#        library_dirs=[CUDA['lib64']],
+#        libraries=['cudart'],
+#        language='c++',
+#        runtime_library_dirs=[CUDA['lib64']],
+#        # this syntax is specific to this build system
+#        # we're only going to use certain compiler args with nvcc and not with
+#        # gcc the implementation of this trick is in customize_compiler() below
+#        extra_compile_args={'gcc': ["-Wno-unused-function"],
+#                            'nvcc': ['-arch=sm_35',
+#                                     '--ptxas-options=-v',
+#                                     '-c',
+#                                     '--compiler-options',
+#                                     "'-fPIC'"]},
+#        include_dirs = [numpy_include, CUDA['include']]
+#    ),
     Extension(
         'pycocotools._mask',
         sources=['pycocotools/maskApi.c', 'pycocotools/_mask.pyx'],
-        include_dirs = [numpy_include, 'pycocotools'],
-        extra_compile_args={
-            'gcc': ['-Wno-cpp', '-Wno-unused-function', '-std=c99']},
+        include_dirs = [numpy_include, 'pycocotools']
     ),
 ]
 

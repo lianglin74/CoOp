@@ -20,20 +20,20 @@ import pprint
 import numpy as np
 import sys
 
-def parse_args():
+def parse_args(args_list):
     """
     Parse input arguments
     """
     parser = argparse.ArgumentParser(description='Train a Fast R-CNN network')
-    parser.add_argument('--gpu', dest='gpu_id',
-                        help='GPU device id to use [0]',
+    parser.add_argument('--gpu', dest='GPU_ID',
+                        help='GPU device id to use [0]. If negative, train on CPU.',
                         default=0, type=int)
     parser.add_argument('--solver', dest='solver',
                         help='solver prototxt',
                         default=None, type=str)
     parser.add_argument('--iters', dest='max_iters',
                         help='number of iterations to train',
-                        default=40000, type=int)
+                        required=True, type=int)
     parser.add_argument('--weights', dest='pretrained_model',
                         help='initialize with pretrained model weights',
                         default=None, type=str)
@@ -50,11 +50,11 @@ def parse_args():
                         help='set config keys', default=None,
                         nargs=argparse.REMAINDER)
 
-    if len(sys.argv) == 1:
+    if len(args_list) == 0:
         parser.print_help()
         sys.exit(1)
 
-    args = parser.parse_args()
+    args = parser.parse_args(args_list)
     return args
 
 def combined_roidb(imdb_names):
@@ -76,8 +76,8 @@ def combined_roidb(imdb_names):
         imdb = get_imdb(imdb_names)
     return imdb, roidb
 
-if __name__ == '__main__':
-    args = parse_args()
+def main(args_list):
+    args = parse_args(args_list)
 
     print('Called with args:')
     print(args)
@@ -87,7 +87,7 @@ if __name__ == '__main__':
     if args.set_cfgs is not None:
         cfg_from_list(args.set_cfgs)
 
-    cfg.GPU_ID = args.gpu_id
+    cfg.GPU_ID = args.GPU_ID
 
     print('Using config:')
     pprint.pprint(cfg)
@@ -97,9 +97,9 @@ if __name__ == '__main__':
         np.random.seed(cfg.RNG_SEED)
         caffe.set_random_seed(cfg.RNG_SEED)
 
-    # set up caffe
+    print 'Setting GPU device %d for training' % cfg.GPU_ID
     caffe.set_mode_gpu()
-    caffe.set_device(args.gpu_id)
+    caffe.set_device(cfg.GPU_ID)
 
     imdb, roidb = combined_roidb(args.imdb_name)
     print '{:d} roidb entries'.format(len(roidb))
@@ -110,3 +110,8 @@ if __name__ == '__main__':
     train_net(args.solver, roidb, output_dir,
               pretrained_model=args.pretrained_model,
               max_iters=args.max_iters)
+
+if __name__ == '__main__':
+    '''Wrap train_net in order to call script from python as well as console.'''
+    args_list = sys.argv[1:]
+    main(args_list)
