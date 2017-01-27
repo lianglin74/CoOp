@@ -90,10 +90,12 @@ If you find Faster R-CNN useful in your research, please consider citing:
 3. Build the Cython modules
     ```Shell
     cd $FRCN_ROOT/lib
-    make
+    setup.py build_ext --inplace
     ```
-
-4. Build Caffe and pycaffe
+    **Note 3:** require `Cython`, `CUDA8.0` and `Visualstudio2015` installed, ignore the error message when failed to compile `gpu_nms.c`
+4. Build pynms
+   Build the project pynms under the folder $FRCN_ROOT/lib/VCProjs
+5. Build Caffe and pycaffe
     ```Shell
     cd $FRCN_ROOT/caffe-fast-rcnn
     # Now follow the Caffe installation instructions here:
@@ -104,7 +106,7 @@ If you find Faster R-CNN useful in your research, please consider citing:
     make -j8 && make pycaffe
     ```
 
-5. Download pre-computed Faster R-CNN detectors
+6. Download pre-computed Faster R-CNN detectors
     ```Shell
     cd $FRCN_ROOT
     ./data/scripts/fetch_faster_rcnn_models.sh
@@ -188,7 +190,7 @@ cd $FRCN_ROOT
 
 ("alt opt" refers to the alternating optimization training algorithm described in the NIPS paper.)
 
-To train and test a Faster R-CNN detector using the **approximate joint training** method, use `experiments/scripts/faster_rcnn_end2end.sh`.
+To train and test a Faster R-CNN detector using the **approximate joint training** method, use `experiments/scripts/faster_rcnn_end2end.py`.
 Output is written underneath `$FRCN_ROOT/output`.
 
 ```Shell
