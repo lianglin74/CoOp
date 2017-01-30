@@ -152,9 +152,9 @@ ext_modules = [
 #    ),
 ]
 
-if VS140COMNTOOLS in os.environ and 'VS90COMNTOOLS' not in os.environ:
+if 'VS140COMNTOOLS' in os.environ and 'VS90COMNTOOLS' not in os.environ:
     os.environ['VS90COMNTOOLS' ] =  os.environ['VS140COMNTOOLS' ] 
-if VS120COMNTOOLS in os.environ and 'VS90COMNTOOLS' not in os.environ:
+if 'VS120COMNTOOLS' in os.environ and 'VS90COMNTOOLS' not in os.environ:
     os.environ['VS90COMNTOOLS' ] =  os.environ['VS120COMNTOOLS' ] 
 
 setup(
