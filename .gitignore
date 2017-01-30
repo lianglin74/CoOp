@@ -26,6 +26,8 @@ var/
 
 # include lib in py-faster-rcnn
 !src/*/lib/
+!src/*/lib/VCProjs/*.sln
+!src/*/lib/VCProjs/*/*.vcproj
 
 # exclude data folder
 data/
