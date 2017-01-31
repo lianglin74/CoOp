@@ -245,6 +245,12 @@ class pascal_voc(imdb):
                 continue
             print 'Writing {} VOC results file'.format(cls)
             filename = self._get_voc_results_file_template().format(cls)
+            if not os.path.exists(os.path.dirname(filename)):
+                try:
+                    os.makedirs(os.path.dirname(filename))
+                except OSError as exc: # Guard against race condition
+                    if exc.errno != errno.EEXIST:
+                        raise
             with open(filename, 'wt') as f:
                 for im_ind, index in enumerate(self.image_index):
                     dets = all_boxes[cls_ind][im_ind]
@@ -261,8 +267,8 @@ class pascal_voc(imdb):
         annopath = os.path.join(
             self._devkit_path,
             'VOC' + self._year,
-            'Annotations',
-            '{:s}.xml')
+            'Annotations','');
+        annopath += '{:s}.xml'      #fix the compatible issue in windows. windows os.path.join didn't support '{}'
         imagesetfile = os.path.join(
             self._devkit_path,
             'VOC' + self._year,

@@ -31,18 +31,15 @@ class Tee(object):
         self.file = open(name, mode)
         self.stdout = sys.stdout
         sys.stdout = self
-
     def __del__(self):
         sys.stdout = self.stdout
         self.file.close()
-
     def write(self, data):
         self.file.write(data)
         self.stdout.write(data)
-
+        self.file.flush()
     def __enter__(self):
         pass
-
     def __exit__(self, _type, _value, _traceback):
         pass
 
@@ -93,7 +90,7 @@ if __name__ == "__main__":
             ([] if not args.EXTRA_ARGS else ['--set'] + args.EXTRA_ARGS))
         print 'tools/train_net.py finished in %s seconds' % (time.time() - start)
         
-        model_pattern = "output/faster_rcnn_end2end/tsv_%s_train/%s_faster_rcnn_iter_*.caffemodel"%(args.DATASET,args.NET.lower());
+        model_pattern = "output/faster_rcnn_end2end/%s/%s_faster_rcnn_iter_*.caffemodel"%(TRAIN_IMDB,args.NET.lower());
         searchedfile = glob.glob(model_pattern)
         assert (len(searchedfile)>0), "0 file matched by %s!"%(model_pattern)
         files = sorted( searchedfile, key = lambda file: os.path.getctime(file));
