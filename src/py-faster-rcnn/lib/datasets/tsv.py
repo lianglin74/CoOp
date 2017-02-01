@@ -4,11 +4,10 @@
 # Licensed under The MIT License [see LICENSE for details]
 # Written by Ross Girshick
 # --------------------------------------------------------
-
-import os
+import sys, os
+#sys.path.insert(0,'D:\Src\IRISObjectDetection\src\py-faster-rcnn\lib');
 from datasets.imdb import imdb
 import datasets.ds_utils as ds_utils
-import xml.etree.ElementTree as ET
 import numpy as np
 import scipy.sparse
 import scipy.io as sio
@@ -19,6 +18,8 @@ import uuid
 from tsv_eval import tsv_eval
 from fast_rcnn.config import cfg
 import base64
+import json
+import random
 
 class tsv(imdb):
     def __init__(self, folder_name, image_set, devkit_path=None):
@@ -26,8 +27,7 @@ class tsv(imdb):
         folder_name: the root folder of the tsv dataset
         image_set: train or val set
         """
-        tsv_file_name = 'image.tsv'
-
+        tsv_file_name = '%s.tsv'%image_set;
         imdb.__init__(self, 'tsv_' + folder_name + '_' + image_set)
         self._folder_name = folder_name
         self._image_set = image_set
@@ -49,18 +49,19 @@ class tsv(imdb):
         lineidx_file = os.path.splitext(self._tsv_file)[0] + '.lineidx'
         with open(lineidx_file, 'r') as f:
             self._lineidx = [int(line.split('\t')[0]) for line in f]
-
+        self._imgname = ["" for x in self._lineidx]
         # load label map
-        labelmap_file = os.path.splitext(self._tsv_file)[0] + '.labelmap'
+        labelmap_file = os.path.join(self._data_folder, 'labelmap.txt')
         with open(labelmap_file, 'r') as f:
-            self._classes = [line.split('\t')[0] for line in f]
+            self._classes = [line.split('\t')[0].strip() for line in f]
         self._classes.insert(0, '__background__')    # always index 0
 
         self._class_to_ind = dict(zip(self.classes, xrange(self.num_classes)))
 
-        self._image_index = self._load_image_set_index()
+        self._image_index = list(range(len(self._lineidx)))
+        random.shuffle(self._image_index);
         # Default to roidb handler
-        self._roidb_handler = self.selective_search_roidb
+        self._roidb_handler = self.gt_roidb
         self._salt = str(uuid.uuid4())
         self._comp_id = 'comp4'
 
@@ -85,25 +86,12 @@ class tsv(imdb):
         # read the line content
         line = self._tsv_f.readline().rstrip()
         cols = line.split('\t')
-        imagestring = cols[1]
-
+        imagestring = cols[2]
+        self._imgname[line_no]=cols[0];
         # decode image string
         jpgbytestring = base64.b64decode(imagestring)
 
         return jpgbytestring
-
-    def _load_image_set_index(self):
-        """
-        Load the indexes listed in this dataset's image set file.
-        """
-        image_set_file = os.path.splitext(self._tsv_file)[0] + '.label.' + self._image_set + '.shuffle'
-        assert os.path.exists(image_set_file), \
-                'Path does not exist: {}'.format(image_set_file)
-        with open(image_set_file) as f:
-            image_index = [int(x.strip()) for x in f.readlines()]
-
-        return image_index
-
     def gt_roidb(self):
         """
         Return the database of ground-truth regions of interest.
@@ -118,12 +106,36 @@ class tsv(imdb):
             return roidb
 
         print 'load gt roidb from tsv file'
-        label_file = os.path.splitext(self._tsv_file)[0] + '.label.tsv'
+        label_file = self._tsv_file;
+        gt_roidb = []
+        self._imgname = [];
         with open(label_file, 'r') as f:
-            lines = f.readlines()
-            gt_roidb = [self._load_roi_annotation(line_no, lines[line_no]) \
-                for line_no in self._image_index]
-
+            for line in f:
+                cols = [x.strip() for x in line.split("\t")];
+                rects = json.loads(cols[1]);
+                num_objs = len(rects);
+                boxes = np.zeros((num_objs, 4), dtype=np.uint16)
+                gt_classes = np.zeros((num_objs), dtype=np.int32)
+                overlaps = np.zeros((num_objs, self.num_classes), dtype=np.float32)
+                seg_areas = np.zeros((num_objs), dtype=np.float32)
+                label = ""
+                for i in range(num_objs):
+                    box = rects[i]['rect'];
+                    boxes[i,:] = box;
+                    label = rects[i]['class'].encode('ascii');
+                    cls  = self._class_to_ind[label]
+                    gt_classes[i] = cls;
+                    overlaps[i, cls] = 1.0
+                    seg_areas[i] = (box[2]-box[0] + 1) * (box[3]-box[1]+ 1)
+                overlaps = scipy.sparse.csr_matrix(overlaps)
+                self._imgname += [cols[0]];
+                gt_roidb +=[{'imagename': cols[0],
+                'classname': label,
+                'boxes' : boxes,
+                'gt_classes': gt_classes,
+                'gt_overlaps' : overlaps,
+                'flipped' : False,
+                'seg_areas' : seg_areas}]
         with open(cache_file, 'wb') as fid:
             cPickle.dump(gt_roidb, fid, cPickle.HIGHEST_PROTOCOL)
         print 'wrote gt roidb to {}'.format(cache_file)
@@ -196,55 +208,12 @@ class tsv(imdb):
 
         return self.create_roidb_from_box_list(box_list, gt_roidb)
 
-    def _load_roi_annotation(self, line_no, line):
-        """
-        Load image and bounding boxes info from XML file in the PASCAL VOC
-        format.
-        """
-        line = line.rstrip('\n')
-        cols = line.split('\t')
-        label = cols[0]
-        rois = cols[1]
-        rois = rois.replace('[', '').replace(']', '').split(',')
-        rois = [int(x) for x in rois if len(x.strip()) > 0]
-        objs = [rois[i:i + 4] for i in xrange(0, len(rois), 4)]
-        num_objs = len(objs)
-
-        boxes = np.zeros((num_objs, 4), dtype=np.uint16)
-        gt_classes = np.zeros((num_objs), dtype=np.int32)
-        overlaps = np.zeros((num_objs, self.num_classes), dtype=np.float32)
-        # "Seg" area for pascal is just the box area
-        seg_areas = np.zeros((num_objs), dtype=np.float32)
-
-        # Load object bounding boxes into a data frame.
-        for ix, obj in enumerate(objs):
-            x1 = objs[ix][0]
-            y1 = objs[ix][1]
-            x2 = objs[ix][2]
-            y2 = objs[ix][3]
-            cls = self._class_to_ind[label]
-            boxes[ix, :] = [x1, y1, x2, y2]
-            gt_classes[ix] = cls
-            overlaps[ix, cls] = 1.0
-            seg_areas[ix] = (x2 - x1 + 1) * (y2 - y1 + 1)
-
-        overlaps = scipy.sparse.csr_matrix(overlaps)
-
-        return {'imagename': str(line_no),
-                'classname': label,
-                'boxes' : boxes,
-                'gt_classes': gt_classes,
-                'gt_overlaps' : overlaps,
-                'flipped' : False,
-                'seg_areas' : seg_areas}
-
     def _get_comp_id(self):
         comp_id = (self._comp_id + '_' + self._salt if self.config['use_salt']
             else self._comp_id)
         return comp_id
 
     def _get_voc_results_file_template(self):
-        # VOCdevkit/results/VOC2007/Main/<comp_id>_det_test_aeroplane.txt
         filename = self._get_comp_id() + '_det_' + self._image_set + '_{:s}.txt'
         path = os.path.join(
             self._data_folder,
@@ -265,8 +234,8 @@ class tsv(imdb):
                         continue
                     # the VOCdevkit expects 1-based indices
                     for k in xrange(dets.shape[0]):
-                        f.write('{:d} {:.3f} {:.1f} {:.1f} {:.1f} {:.1f}\n'.
-                                format(index, dets[k, -1],
+                        f.write('{:s} {:.3f} {:.1f} {:.1f} {:.1f} {:.1f}\n'.
+                                format(self._imgname[index], dets[k, -1],
                                        dets[k, 0] + 1, dets[k, 1] + 1,
                                        dets[k, 2] + 1, dets[k, 3] + 1))
 
@@ -339,7 +308,7 @@ class tsv(imdb):
             self.config['cleanup'] = True
 
 if __name__ == '__main__':
-    from datasets.tsv import tsv
-    d = tsv('brand45', 'train')
+    from datasets.tsv2 import tsv
+    d = tsv('voc2', 'train')
     d.set_proposal_method('gt')
     res = d.roidb

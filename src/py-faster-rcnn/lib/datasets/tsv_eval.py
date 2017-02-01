@@ -44,7 +44,7 @@ def tsv_eval(gt_roidb, image_index,
     class_recs = {}
     npos = 0
     for line_no in image_index:
-        imagename = str(line_no)
+        imagename = gt_roidb[line_no]['imagename']
         R = [obj for obj in recs[imagename] if obj['name'] == classname]
         bbox = np.array([x['bbox'] for x in R])
         difficult = np.array([x['difficult'] for x in R]).astype(np.bool)
