@@ -37,6 +37,10 @@ data/
 # exclude visual studio files in script
 script/*.pyproj
 script/*.sln
+*.opendb
+*.VC.db
+*.deps
+x64/
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
