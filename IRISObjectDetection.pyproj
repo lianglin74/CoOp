@@ -1,0 +1,111 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003" DefaultTargets="Build">
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <SchemaVersion>2.0</SchemaVersion>
+    <ProjectGuid>{f0ee757f-5752-481a-a841-553889d4c6ca}</ProjectGuid>
+    <ProjectHome />
+    <StartupFile>script\train.py</StartupFile>
+    <SearchPath />
+    <WorkingDirectory>D:\Src\IRISObjectDetection</WorkingDirectory>
+    <OutputPath>.</OutputPath>
+    <ProjectTypeGuids>{888888a0-9f3d-457c-b088-3a5042f75d52}</ProjectTypeGuids>
+    <LaunchProvider>Standard Python launcher</LaunchProvider>
+    <InterpreterId>{9a7a9026-48c1-4688-9d5d-e5699d47d074}</InterpreterId>
+    <InterpreterVersion>2.7</InterpreterVersion>
+    <EnableNativeCodeDebugging>False</EnableNativeCodeDebugging>
+    <IsWindowsApplication>False</IsWindowsApplication>
+    <CommandLineArguments>--net ZF --gpu 0 --data voc20 --iters 7000</CommandLineArguments>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug'" />
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'" />
+  <PropertyGroup>
+    <VisualStudioVersion Condition=" '$(VisualStudioVersion)' == '' ">10.0</VisualStudioVersion>
+    <PtvsTargetsFile>$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Python Tools\Microsoft.PythonTools.targets</PtvsTargetsFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="script\deteval.py" />
+    <Compile Include="script\deteval_voc.py" />
+    <Compile Include="script\imgdet.py" />
+    <Compile Include="script\prepare_voc.py" />
+    <Compile Include="script\train.py" />
+    <Compile Include="script\tsvdet.py" />
+    <Compile Include="script\_init_paths.py" />
+    <Compile Include="src\py-faster-rcnn\lib\datasets\coco.py" />
+    <Compile Include="src\py-faster-rcnn\lib\datasets\ds_utils.py" />
+    <Compile Include="src\py-faster-rcnn\lib\datasets\factory.py" />
+    <Compile Include="src\py-faster-rcnn\lib\datasets\imdb.py" />
+    <Compile Include="src\py-faster-rcnn\lib\datasets\pascal_voc.py" />
+    <Compile Include="src\py-faster-rcnn\lib\datasets\tools\mcg_munge.py" />
+    <Compile Include="src\py-faster-rcnn\lib\datasets\tsv.py" />
+    <Compile Include="src\py-faster-rcnn\lib\datasets\tsv_eval.py" />
+    <Compile Include="src\py-faster-rcnn\lib\datasets\voc_eval.py" />
+    <Compile Include="src\py-faster-rcnn\lib\datasets\__init__.py" />
+    <Compile Include="src\py-faster-rcnn\lib\fast_rcnn\bbox_transform.py" />
+    <Compile Include="src\py-faster-rcnn\lib\fast_rcnn\config.py" />
+    <Compile Include="src\py-faster-rcnn\lib\fast_rcnn\nms_wrapper.py" />
+    <Compile Include="src\py-faster-rcnn\lib\fast_rcnn\test.py" />
+    <Compile Include="src\py-faster-rcnn\lib\fast_rcnn\train.py" />
+    <Compile Include="src\py-faster-rcnn\lib\fast_rcnn\__init__.py" />
+    <Compile Include="src\py-faster-rcnn\lib\nms\py_cpu_nms.py" />
+    <Compile Include="src\py-faster-rcnn\lib\nms\__init__.py" />
+    <Compile Include="src\py-faster-rcnn\lib\pycocotools\coco.py" />
+    <Compile Include="src\py-faster-rcnn\lib\pycocotools\cocoeval.py" />
+    <Compile Include="src\py-faster-rcnn\lib\pycocotools\mask.py" />
+    <Compile Include="src\py-faster-rcnn\lib\pycocotools\__init__.py" />
+    <Compile Include="src\py-faster-rcnn\lib\roi_data_layer\layer.py" />
+    <Compile Include="src\py-faster-rcnn\lib\roi_data_layer\minibatch.py" />
+    <Compile Include="src\py-faster-rcnn\lib\roi_data_layer\roidb.py" />
+    <Compile Include="src\py-faster-rcnn\lib\roi_data_layer\__init__.py" />
+    <Compile Include="src\py-faster-rcnn\lib\rpn\anchor_target_layer.py" />
+    <Compile Include="src\py-faster-rcnn\lib\rpn\generate.py" />
+    <Compile Include="src\py-faster-rcnn\lib\rpn\generate_anchors.py" />
+    <Compile Include="src\py-faster-rcnn\lib\rpn\proposal_layer.py" />
+    <Compile Include="src\py-faster-rcnn\lib\rpn\proposal_target_layer.py" />
+    <Compile Include="src\py-faster-rcnn\lib\rpn\__init__.py" />
+    <Compile Include="src\py-faster-rcnn\lib\setup.py" />
+    <Compile Include="src\py-faster-rcnn\lib\transform\torch_image_transform_layer.py" />
+    <Compile Include="src\py-faster-rcnn\lib\transform\__init__.py" />
+    <Compile Include="src\py-faster-rcnn\lib\utils\blob.py" />
+    <Compile Include="src\py-faster-rcnn\lib\utils\timer.py" />
+    <Compile Include="src\py-faster-rcnn\lib\utils\__init__.py" />
+    <Compile Include="src\py-faster-rcnn\lib\VCProjs\nmstest\nms_wrapper.py" />
+    <Compile Include="src\py-faster-rcnn\lib\VCProjs\nmstest\test.py" />
+    <Compile Include="src\py-faster-rcnn\tools\compress_net.py" />
+    <Compile Include="src\py-faster-rcnn\tools\demo.py" />
+    <Compile Include="src\py-faster-rcnn\tools\eval_recall.py" />
+    <Compile Include="src\py-faster-rcnn\tools\reval.py" />
+    <Compile Include="src\py-faster-rcnn\tools\rpn_generate.py" />
+    <Compile Include="src\py-faster-rcnn\tools\test_net.py" />
+    <Compile Include="src\py-faster-rcnn\tools\train_faster_rcnn_alt_opt.py" />
+    <Compile Include="src\py-faster-rcnn\tools\train_net.py" />
+    <Compile Include="src\py-faster-rcnn\tools\train_svms.py" />
+    <Compile Include="src\py-faster-rcnn\tools\_init_paths.py" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="src\py-faster-rcnn\lib\pycocotools\license.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="script" />
+    <Folder Include="src\" />
+    <Folder Include="src\py-faster-rcnn\" />
+    <Folder Include="src\py-faster-rcnn\lib" />
+    <Folder Include="src\py-faster-rcnn\lib\datasets" />
+    <Folder Include="src\py-faster-rcnn\lib\datasets\tools" />
+    <Folder Include="src\py-faster-rcnn\lib\fast_rcnn" />
+    <Folder Include="src\py-faster-rcnn\lib\nms" />
+    <Folder Include="src\py-faster-rcnn\lib\pycocotools" />
+    <Folder Include="src\py-faster-rcnn\lib\roi_data_layer" />
+    <Folder Include="src\py-faster-rcnn\lib\rpn" />
+    <Folder Include="src\py-faster-rcnn\lib\transform" />
+    <Folder Include="src\py-faster-rcnn\lib\utils" />
+    <Folder Include="src\py-faster-rcnn\lib\VCProjs\" />
+    <Folder Include="src\py-faster-rcnn\lib\VCProjs\nmstest" />
+    <Folder Include="src\py-faster-rcnn\tools" />
+  </ItemGroup>
+  <ItemGroup>
+    <InterpreterReference Include="{9a7a9026-48c1-4688-9d5d-e5699d47d074}\2.7" />
+  </ItemGroup>
+  <Import Project="$(PtvsTargetsFile)" Condition="Exists($(PtvsTargetsFile))" />
+  <Import Project="$(MSBuildToolsPath)\Microsoft.Common.targets" Condition="!Exists($(PtvsTargetsFile))" />
+</Project>

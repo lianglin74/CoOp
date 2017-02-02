@@ -1,0 +1,177 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003" DefaultTargets="Build">
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <SchemaVersion>2.0</SchemaVersion>
+    <ProjectGuid>{ebe9b990-557e-4c32-a636-3af66c2b7a58}</ProjectGuid>
+    <ProjectHome />
+    <StartupFile>experiments\scripts\faster_rcnn_end2end.py</StartupFile>
+    <SearchPath />
+    <WorkingDirectory>D:\Src\IRISObjectDetection\src\py-faster-rcnn</WorkingDirectory>
+    <OutputPath>.</OutputPath>
+    <ProjectTypeGuids>{888888a0-9f3d-457c-b088-3a5042f75d52}</ProjectTypeGuids>
+    <LaunchProvider>Standard Python launcher</LaunchProvider>
+    <InterpreterId>{9a7a9026-48c1-4688-9d5d-e5699d47d074}</InterpreterId>
+    <InterpreterVersion>2.7</InterpreterVersion>
+    <IsWindowsApplication>False</IsWindowsApplication>
+    <CommandLineArguments>--NET ZF --GPU 0 --DATASET pascal_voc --ITERS 7000</CommandLineArguments>
+    <EnableNativeCodeDebugging>False</EnableNativeCodeDebugging>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug'" />
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'" />
+  <PropertyGroup>
+    <VisualStudioVersion Condition=" '$(VisualStudioVersion)' == '' ">10.0</VisualStudioVersion>
+    <PtvsTargetsFile>$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Python Tools\Microsoft.PythonTools.targets</PtvsTargetsFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="experiments\scripts\faster_rcnn_alt_opt.py" />
+    <Compile Include="experiments\scripts\faster_rcnn_end2end.py" />
+    <Compile Include="experiments\scripts\fast_rcnn.py" />
+    <Compile Include="lib\datasets\coco.py" />
+    <Compile Include="lib\datasets\ds_utils.py" />
+    <Compile Include="lib\datasets\factory.py" />
+    <Compile Include="lib\datasets\imdb.py" />
+    <Compile Include="lib\datasets\pascal_voc.py" />
+    <Compile Include="lib\datasets\tools\mcg_munge.py" />
+    <Compile Include="lib\datasets\tsv.py" />
+    <Compile Include="lib\datasets\tsv_eval.py" />
+    <Compile Include="lib\datasets\voc_eval.py" />
+    <Compile Include="lib\datasets\__init__.py" />
+    <Compile Include="lib\fast_rcnn\bbox_transform.py" />
+    <Compile Include="lib\fast_rcnn\config.py" />
+    <Compile Include="lib\fast_rcnn\nms_wrapper.py" />
+    <Compile Include="lib\fast_rcnn\test.py" />
+    <Compile Include="lib\fast_rcnn\train.py" />
+    <Compile Include="lib\fast_rcnn\__init__.py" />
+    <Compile Include="lib\nms\py_cpu_nms.py" />
+    <Compile Include="lib\nms\__init__.py" />
+    <Compile Include="lib\pycocotools\coco.py" />
+    <Compile Include="lib\pycocotools\cocoeval.py" />
+    <Compile Include="lib\pycocotools\mask.py" />
+    <Compile Include="lib\pycocotools\__init__.py" />
+    <Compile Include="lib\roi_data_layer\layer.py" />
+    <Compile Include="lib\roi_data_layer\minibatch.py" />
+    <Compile Include="lib\roi_data_layer\roidb.py" />
+    <Compile Include="lib\roi_data_layer\__init__.py" />
+    <Compile Include="lib\rpn\anchor_target_layer.py" />
+    <Compile Include="lib\rpn\generate.py" />
+    <Compile Include="lib\rpn\generate_anchors.py" />
+    <Compile Include="lib\rpn\proposal_layer.py" />
+    <Compile Include="lib\rpn\proposal_target_layer.py" />
+    <Compile Include="lib\rpn\__init__.py" />
+    <Compile Include="lib\setup.py" />
+    <Compile Include="lib\transform\torch_image_transform_layer.py" />
+    <Compile Include="lib\transform\__init__.py" />
+    <Compile Include="lib\utils\blob.py" />
+    <Compile Include="lib\utils\timer.py" />
+    <Compile Include="lib\utils\__init__.py" />
+    <Compile Include="lib\VCProjs\nmstest\nms_wrapper.py" />
+    <Compile Include="lib\VCProjs\nmstest\test.py" />
+    <Compile Include="tools\compress_net.py" />
+    <Compile Include="tools\demo.py" />
+    <Compile Include="tools\eval_recall.py" />
+    <Compile Include="tools\reval.py" />
+    <Compile Include="tools\rpn_generate.py" />
+    <Compile Include="tools\test_net.py" />
+    <Compile Include="tools\train_faster_rcnn_alt_opt.py" />
+    <Compile Include="tools\train_net.py" />
+    <Compile Include="tools\train_svms.py" />
+    <Compile Include="tools\_init_paths.py" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-25_21-38-02.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-25_21-38-18.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-25_21-39-32.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-25_21-51-01.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-25_21-51-16.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-25_21-53-43.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-26_02-27-28.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-26_02-29-51.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-26_02-30-56.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-26_02-45-00.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-26_02-53-55.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-26_03-02-36.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-26_03-04-35.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-26_03-10-33.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-26_18-10-37.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-26_18-12-32.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-27_11-59-35.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-27_12-02-40.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-27_12-03-31.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-27_12-04-47.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-29_12-20-44.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-29_12-22-39.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-29_12-25-29.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-29_16-15-00.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-29_16-18-36.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-29_16-20-52.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-29_16-33-01.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-29_16-33-27.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-29_16-34-48.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-29_17-10-37.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-29_22-08-30.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-30_00-13-36.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-30_00-17-41.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-30_00-20-48.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-30_12-00-58.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-30_12-01-10.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-30_12-09-26.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-30_16-50-09.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-30_17-22-55.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-30_17-25-04.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-30_17-25-47.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-30_17-27-58.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-30_17-32-27.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-30_17-34-46.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-30_17-36-42.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-30_22-18-31.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-30_22-20-06.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-30_22-20-22.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-30_22-21-04.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-30_22-22-30.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-30_22-38-34.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-30_22-48-02.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-31_12-49-20.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-31_12-50-57.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-31_13-15-41.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-31_13-18-39.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-31_13-21-13.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-31_13-30-25.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-31_13-37-47.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-31_13-38-56.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-31_21-18-33.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-31_21-24-54.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-31_21-31-43.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-31_21-50-02.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-31_22-08-22.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-31_22-28-55.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-31_22-29-37.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-31_22-31-53.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-01-31_22-38-28.txt" />
+    <Content Include="experiments\logs\faster_rcnn_end2end_ZF__2017-02-01_14-10-02.txt" />
+    <Content Include="lib\pycocotools\license.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="experiments\" />
+    <Folder Include="experiments\logs" />
+    <Folder Include="experiments\scripts" />
+    <Folder Include="lib" />
+    <Folder Include="lib\datasets" />
+    <Folder Include="lib\datasets\tools" />
+    <Folder Include="lib\fast_rcnn" />
+    <Folder Include="lib\nms" />
+    <Folder Include="lib\pycocotools" />
+    <Folder Include="lib\roi_data_layer" />
+    <Folder Include="lib\rpn" />
+    <Folder Include="lib\transform" />
+    <Folder Include="lib\utils" />
+    <Folder Include="lib\VCProjs\" />
+    <Folder Include="lib\VCProjs\nmstest" />
+    <Folder Include="tools" />
+  </ItemGroup>
+  <ItemGroup>
+    <InterpreterReference Include="{9a7a9026-48c1-4688-9d5d-e5699d47d074}\2.7" />
+  </ItemGroup>
+  <Import Project="$(PtvsTargetsFile)" Condition="Exists($(PtvsTargetsFile))" />
+  <Import Project="$(MSBuildToolsPath)\Microsoft.Common.targets" Condition="!Exists($(PtvsTargetsFile))" />
+</Project>

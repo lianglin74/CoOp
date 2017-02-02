@@ -24,6 +24,9 @@ from datasets.tsv import tsv
 import datasets.imdb
 import caffe
 from shutil import copyfile
+from pprint import pprint
+from tsvdet import tsvdet
+import deteval_voc;
 
 def at_fcnn(x):
     return op.realpath(op.join(FRCN_ROOT, x))
@@ -51,6 +54,7 @@ def parse_args():
     parser.add_argument('--net', required=True, help='CNN archiutecture')    
     parser.add_argument('--iters', dest='max_iters',  help='number of iterations to train', default=70000,    required=True, type=int)
     parser.add_argument('--data', help='the name of the dataset', required=True);
+    parser.add_argument('--expid', help='the experiment id', required=True);
     #parser.add_argument('--cfg', dest='cfg_file',  help='optional config file',    default=None, type=str)
     return parser.parse_args()
 
@@ -78,33 +82,44 @@ def createpath( pparts ):
     if not os.path.exists(fpath):
         os.makedirs(fpath);
     return fpath;   
+def latest_model(model_pattern):
+    searchedfile = glob.glob(model_pattern)
+    assert (len(searchedfile)>0), "0 file matched by %s!"%(model_pattern)
+    files = sorted( searchedfile, key = lambda file: os.path.getmtime(file));
+    return files[-1];
+
+def setup_paths(basenet, dataset, expid):
+    proj_root = op.dirname(op.dirname(op.realpath(__file__)));
+    model_path = op.join (proj_root,"models");
+    data_root = op.join(proj_root,"data");
+    data_path = op.join(data_root,dataset);
+    basemodel_file = op.join(model_path ,basenet+'.caffemodel');
+    default_cfg = op.join(model_path,"faster_rcnn_end2end.yml")
+    output_path = createpath([proj_root,"output","_".join([dataset,basenet,expid])]);
+    solver_file = op.join(output_path,"solver.prototxt");
+    snapshot_path = createpath([output_path,"snapshot"]);
+    DATE = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')    
+    log_file = op.join(output_path, '%s_%s.log' %(basenet, DATE));
+    model_pattern = "%s/%s_faster_rcnn_iter_*.caffemodel"%(snapshot_path,args.net.lower());
+    deploy_path = createpath([output_path,"deploy"]);
+    return { "snapshot":snapshot_path, "solver":solver_file, "log":log_file, "output":output_path, "cfg":default_cfg, 'data_root':data_root, 'data':data_path, 'basemodel':basemodel_file, 'model_pattern':model_pattern, 'deploy':deploy_path};
+    
 if __name__ == "__main__":
     args = parse_args()
-    
-    
-    proj_root = op.dirname(op.dirname(op.realpath(__file__)));
-    solver_file = op.join (proj_root,"models",args.net,args.data,"solver.prototxt");
-    basemodel_file =  op.join (proj_root,"models",args.net, '%s.caffemodel'%args.net);
-    default_cfg = op.join(proj_root,"models","faster_rcnn_end2end.yml")
-    data_path = op.join(proj_root,"data");
-    snapshot_path = createpath([proj_root,"output",args.data,'snapshot']);
-    DATE = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-    log_file = op.join(proj_root,"output",args.data,'%s_%s.log' %(args.net, DATE));
-    
-    cfg_from_file(default_cfg)
+    path_env = setup_paths( args.net, args.data, args.expid);
+    #TODO  quckcaffe.generateprototxt(path_env['basemodel'], path_env['data'], path_env['output']);
+    cfg_from_file(path_env['cfg'])
     cfg.GPU_ID = args.GPU_ID;
-    cfg.DATA_DIR = data_path;
-    #print('Using config:')
-    #pprint.pprint(cfg)
+    cfg.DATA_DIR = path_env['data_root'];
 
     # fix the random seeds (numpy and caffe) for reproducibility
     #np.random.seed(cfg.RNG_SEED)
     #caffe.set_random_seed(cfg.RNG_SEED)
 
     # redirect output to the LOG file
-    print 'Logging output to %s' % log_file
+    print 'Logging output to %s' % path_env['log']
     start = time.time()
-    with Tee(log_file,'w'):
+    with Tee(path_env['log'],'w'):
         print 'Setting GPU device %d for training' % cfg.GPU_ID
         caffe.set_mode_gpu()
         caffe.set_device(cfg.GPU_ID)
@@ -116,23 +131,32 @@ if __name__ == "__main__":
         roidb = get_training_roidb(imdb)   #imdb.gt_roidb()
         
         print '{:d} roidb entries'.format(len(roidb))
-
-        train_net(solver_file, roidb, snapshot_path,
-                  pretrained_model=basemodel_file,
+        train_net(path_env['solver'], roidb, path_env['snapshot'],
+                  pretrained_model=path_env['basemodel'],
                   max_iters=args.max_iters)
         print 'training finished in %s seconds' % (time.time() - start)
-
-        model_pattern = "%s/%s_faster_rcnn_iter_*.caffemodel"%(snapshot_path,args.net.lower());
-        searchedfile = glob.glob(model_pattern)
-        assert (len(searchedfile)>0), "0 file matched by %s!"%(model_pattern)
-        files = sorted( searchedfile, key = lambda file: os.path.getctime(file));
-        net_final = files[-1];
-        labelmap_src = op.join(data_path,args.data,"labelmap.txt")
-        proto_src =  op.join (proj_root,"models",args.net,args.data,"test.prototxt")
-        model_dst = op.join(snapshot_path,"..",op.basename(net_final));
+        
+        #get final models
+        labelmap_src = op.join(path_env['data'],"labelmap.txt")    
+        net_final = latest_model( path_env['model_pattern'] )
+        
+        labelmap_src = op.join(path_env['data'],"labelmap.txt")
+        proto_src =  op.join (path_env['output'],"test.prototxt")
+        model_dst = op.join(path_env['deploy'],op.basename(net_final));
         proto_dst = op.splitext(model_dst)[0]+".prototxt";
         labelmap_dst = op.splitext(model_dst)[0]+".labelmap";
         
         copyfile(net_final,model_dst);
         copyfile(proto_src, proto_dst);
         copyfile(labelmap_src, labelmap_dst)
+    
+        #do evaluation when test data is available
+        intsv_file = op.join(path_env['data'], "test.tsv");
+        if op.isfile(intsv_file) :  #this is a test file, do det and evaluation
+            outtsv_file = op.join(path_env['output'],'test.eval');
+            start = time.time()            
+            nimgs = tsvdet(model_dst, intsv_file, 0,2,outtsv_file);
+            time_used = time.time() - start
+            print ( 'detect %d images, used %g s (avg: %g s)' % (nimgs,time_used, time_used/nimgs ) )           
+            deteval_voc.eval(intsv_file, outtsv_file,0.5, True)
+        
