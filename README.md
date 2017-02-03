@@ -19,15 +19,20 @@ This repo is for the algorithm development for IRIS object detection. The curren
    ```
    The script will download 3rd party dependencies and build caffe automatically.  
    See [Caffe README.md](https://msresearch.visualstudio.com/IRIS/_git/CCSCaffe?path=%2FREADME.md&version=GBWinCaffe&_a=contents) for more detailed steps.
-3. Setup py-faster-rcnn by following [py-faster-rcnn README.md](https://msresearch.visualstudio.com/IRIS/_git/IRISObjectDetection?path=%2Fsrc%2Fpy-faster-rcnn%2FREADME.md&version=GBmaster&_a=contents)
-4. Under the repo root folder, copy `Pascal VOC' data:
+3. Setup `py-faster-rcnn` under the repo root folder (**Admin privileges is required**)
    ```
-   robocopy \\ivm-server2\IRIS\IRISObjectDetection\Data\voc2 data\voc2 /e
-   robocopy \\ivm-server2\IRIS\IRISObjectDetection\Data\voc20 data\voc20 /e
+   python script\setup_pyfrcn.py
    ```
-   voc20 is a voc full dataset in TSV format, and voc2 is a voc subset including only images for 'horse' and 'dog'.
-
+   The script will install required python packages. it will also  download test data and test model automatically.
+   The test data sets contains `voc20` and `voc2`. `voc20` is a voc full dataset in TSV format, and `voc2` is a voc subset including only images for 'horse' and 'dog'.
    If you want to create other datasets, please refer `script\prepare_voc.py` for example.
+   See [py-faster-rcnn README.md](https://msresearch.visualstudio.com/IRIS/_git/IRISObjectDetection?path=%2Fsrc%2Fpy-faster-rcnn%2FREADME.md&version=GBmaster&_a=contents) for more detailed steps.
+4. Running examples under the repo root folder:
+   ```
+   python script\train.py --gpu 0 --net ZF --data voc20 --iters 7000 --expid dbg
+   ```
+   
+
     
 ## Contribute
 TODO: Explain how other colleagues can contribute. 
