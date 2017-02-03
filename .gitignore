@@ -31,10 +31,14 @@ var/
 !src/*/lib/VCProjs/*.sln
 !src/*/lib/VCProjs/*/*.vcproj
 !models/*.yml
+
 # exclude data folder
 data/
 # include README.md in the data folder as a placeholder
 !data/README.md
+
+# exclude output folder
+output/
 
 # exclude visual studio files in script
 script/*.pyproj
