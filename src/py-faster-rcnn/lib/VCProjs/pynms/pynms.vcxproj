@@ -85,7 +85,7 @@
     </Link>
     <CudaCompile>
       <TargetMachinePlatform>64</TargetMachinePlatform>
-      <CodeGeneration>compute_60,sm_60</CodeGeneration>
+      <CodeGeneration>compute_35,sm_35;compute_52,sm_52;compute_61,sm_61</CodeGeneration>
     </CudaCompile>
     <PostBuildEvent>
       <Command>copy /Y $(TargetPath) $(SolutionDir)..\nms\gpu_nms.pyd</Command>

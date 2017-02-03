@@ -23,12 +23,14 @@ var/
 *.egg-info/
 .installed.cfg
 *.egg
+*.out
+*.caffemodel
 
 # include lib in py-faster-rcnn
 !src/*/lib/
 !src/*/lib/VCProjs/*.sln
 !src/*/lib/VCProjs/*/*.vcproj
-
+!models/*.yml
 # exclude data folder
 data/
 # include README.md in the data folder as a placeholder
