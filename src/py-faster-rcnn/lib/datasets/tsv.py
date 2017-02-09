@@ -59,7 +59,7 @@ class tsv(imdb):
         self._class_to_ind = dict(zip(self.classes, xrange(self.num_classes)))
 
         self._image_index = list(range(len(self._lineidx)))
-        random.shuffle(self._image_index);
+        #random.shuffle(self._image_index);
         # Default to roidb handler
         self._roidb_handler = self.gt_roidb
         self._salt = str(uuid.uuid4())
@@ -98,12 +98,12 @@ class tsv(imdb):
 
         This function loads/saves from/to a cache file to speed up future calls.
         """
-        cache_file = os.path.join(self.cache_path, self.name + '_gt_roidb.pkl')
-        if os.path.exists(cache_file):
-            with open(cache_file, 'rb') as fid:
-                roidb = cPickle.load(fid)
-            print '{} gt roidb loaded from {}'.format(self.name, cache_file)
-            return roidb
+        #cache_file = os.path.join(self.cache_path, self.name + '_gt_roidb.pkl')
+        #if os.path.exists(cache_file):
+        #    with open(cache_file, 'rb') as fid:
+        #        roidb = cPickle.load(fid)
+        #    print '{} gt roidb loaded from {}'.format(self.name, cache_file)
+        #    return roidb
 
         print 'load gt roidb from tsv file'
         label_file = self._tsv_file;
@@ -113,6 +113,8 @@ class tsv(imdb):
             for line in f:
                 cols = [x.strip() for x in line.split("\t")];
                 rects = json.loads(cols[1]);
+                #exclude difficult examples
+                rects = [ obj for obj in rects if 'diff' not in obj or obj['diff']==0 ]
                 num_objs = len(rects);
                 boxes = np.zeros((num_objs, 4), dtype=np.uint16)
                 gt_classes = np.zeros((num_objs), dtype=np.int32)
@@ -136,9 +138,9 @@ class tsv(imdb):
                 'gt_overlaps' : overlaps,
                 'flipped' : False,
                 'seg_areas' : seg_areas}]
-        with open(cache_file, 'wb') as fid:
-            cPickle.dump(gt_roidb, fid, cPickle.HIGHEST_PROTOCOL)
-        print 'wrote gt roidb to {}'.format(cache_file)
+        #with open(cache_file, 'wb') as fid:
+        #    cPickle.dump(gt_roidb, fid, cPickle.HIGHEST_PROTOCOL)
+        #print 'wrote gt roidb to {}'.format(cache_file)
 
         return gt_roidb
 

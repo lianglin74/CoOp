@@ -159,7 +159,7 @@ if __name__ == '__main__':
     
     download_voc_data(src_dir, dst_dir)
     
-    train = pascal_voc(os.path.join(dst_dir, r'VOCdevkit\VOC2007'), 'train')
+    train = pascal_voc(os.path.join(dst_dir, r'VOCdevkit\VOC2007'), 'trainval')
     test = pascal_voc(os.path.join(dst_dir, 'VOCdevkit\VOC2007'), 'test')
 
     classes = ('horse', 'dog')

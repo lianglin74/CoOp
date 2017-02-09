@@ -2,3 +2,6 @@
 	path = src/CCSCaffe
 	url = https://msresearch.visualstudio.com/IRIS/_git/CCSCaffe
 	branch = WinCaffe
+[submodule "src/quickcaffe"]
+	path = src/quickcaffe
+	url = https://msresearch.visualstudio.com/IRIS/_git/quickcaffe

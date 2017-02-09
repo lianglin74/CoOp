@@ -27,6 +27,7 @@ from shutil import copyfile
 from pprint import pprint
 from tsvdet import tsvdet
 import deteval_voc;
+import gen_prototxt;
 
 def at_fcnn(x):
     return op.realpath(op.join(FRCN_ROOT, x))
@@ -51,7 +52,7 @@ class Tee(object):
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a Fast R-CNN network')
     parser.add_argument('--gpu', dest='GPU_ID', help='GPU device id to use [0].',  default=0, type=int)
-    parser.add_argument('--net', required=True, help='CNN archiutecture')    
+    parser.add_argument('--net', required=True, choices = gen_prototxt.list_models() + ['zf'], help='CNN archiutecture')
     parser.add_argument('--iters', dest='max_iters',  help='number of iterations to train', default=70000,    required=True, type=int)
     parser.add_argument('--data', help='the name of the dataset', required=True);
     parser.add_argument('--expid', help='the experiment id', required=True);
@@ -107,7 +108,6 @@ def setup_paths(basenet, dataset, expid):
 if __name__ == "__main__":
     args = parse_args()
     path_env = setup_paths( args.net, args.data, args.expid);
-    #TODO  quckcaffe.generateprototxt(path_env['basemodel'], path_env['data'], path_env['output']);
     cfg_from_file(path_env['cfg'])
     cfg.GPU_ID = args.GPU_ID;
     cfg.DATA_DIR = path_env['data_root'];
@@ -126,6 +126,11 @@ if __name__ == "__main__":
 
         imdb = tsv(args.data, 'train')
         print 'Loaded dataset `{:s}` for training'.format(imdb.name)
+
+        #generate training/testing prototxt
+        if args.net != 'zf': # won't generate prototxt for 'zf' because it already exists
+            gen_prototxt.generate_prototxt(path_env['basemodel'], imdb.num_images, imdb.num_classes, path_env['output']);
+
         #imdb.set_proposal_method(cfg.TRAIN.PROPOSAL_METHOD)
         #print 'Set proposal method: {:s}'.format(cfg.TRAIN.PROPOSAL_METHOD)
         roidb = get_training_roidb(imdb)   #imdb.gt_roidb()
