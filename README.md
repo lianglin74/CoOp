@@ -6,7 +6,7 @@ This repo is for the algorithm development for IRIS object detection. The curren
 
 1.	NVidia Cuda 8.0
 2.	Visual Studio 2015
-
+3.  [Anaconda py2.7](https://repo.continuum.io/archive/Anaconda2-4.3.0.1-Windows-x86_64.exe)
 ## Installation
 1. Clone the repository:
 
@@ -29,7 +29,7 @@ This repo is for the algorithm development for IRIS object detection. The curren
    See [py-faster-rcnn README.md](https://msresearch.visualstudio.com/IRIS/_git/IRISObjectDetection?path=%2Fsrc%2Fpy-faster-rcnn%2FREADME.md&version=GBmaster&_a=contents) for more detailed steps.
 4. Running examples under the repo root folder:
    ```
-   python script\train.py --gpu 0 --net ZF --data voc20 --iters 7000 --expid dbg
+   python script\train.py --gpu 0 --net zf --data voc20 --iters 7000 --expid dbg
    ```
    
 

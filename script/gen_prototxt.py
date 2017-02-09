@@ -14,7 +14,7 @@ model_dict = {
     }
 
 def list_models():
-    return ['zfb', 'vgg', 'resnet10', 'resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152', 'squeezenet']
+    return ['zfb', 'vgg16', 'resnet10', 'resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152', 'squeezenet']
 
 def gen_net_prototxt(basemodel, num_classes, deploy=False):
     assert basemodel.lower() in list_models(), 'Unsupported basemodel: %s' % basemodel
