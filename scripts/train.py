@@ -52,7 +52,7 @@ class Tee(object):
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a Fast R-CNN network')
     parser.add_argument('--gpu', dest='GPU_ID', help='GPU device id to use [0].',  default=0, type=int)
-    parser.add_argument('--net', required=True, choices = gen_prototxt.list_models() + ['zf'], help='CNN archiutecture')
+    parser.add_argument('--net', required=True, choices = gen_prototxt.list_models(), type=str.lower, help='CNN archiutecture')
     parser.add_argument('--iters', dest='max_iters',  help='number of iterations to train', default=70000,    required=True, type=int)
     parser.add_argument('--data', help='the name of the dataset', required=True);
     parser.add_argument('--expid', help='the experiment id', required=True);
@@ -128,8 +128,7 @@ if __name__ == "__main__":
         print 'Loaded dataset `{:s}` for training'.format(imdb.name)
 
         #generate training/testing prototxt
-        if args.net != 'zf': # won't generate prototxt for 'zf' because it already exists
-            gen_prototxt.generate_prototxt(path_env['basemodel'], imdb.num_images, imdb.num_classes, path_env['output']);
+        gen_prototxt.generate_prototxt(path_env['basemodel'], imdb.num_images, imdb.num_classes, path_env['output']);
 
         #imdb.set_proposal_method(cfg.TRAIN.PROPOSAL_METHOD)
         #print 'Set proposal method: {:s}'.format(cfg.TRAIN.PROPOSAL_METHOD)

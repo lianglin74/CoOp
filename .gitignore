@@ -41,8 +41,6 @@ data/
 output/
 
 # exclude visual studio files in script
-script/*.pyproj
-script/*.sln
 *.opendb
 *.VC.db
 *.deps

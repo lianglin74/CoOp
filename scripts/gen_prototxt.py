@@ -7,14 +7,15 @@ import caffe
 import quickcaffe.modelzoo as mzoo
 
 model_dict = {
-    'zfb': mzoo.ZFNet(add_last_pooling_layer=False, rcnn_mode=True),
+    'zf': mzoo.ZFNet(add_last_pooling_layer=False, rcnn_mode=True),
+    'zfb': mzoo.ZFBNet(add_last_pooling_layer=False, rcnn_mode=True),
     'vgg': mzoo.VGG(add_last_pooling_layer=False, rcnn_mode=True),
     'resnet': mzoo.ResNet(add_last_pooling_layer=False, rcnn_mode=True),
     'squeezenet': mzoo.SqueezeNet(add_last_pooling_layer=False, rcnn_mode=True),
     }
 
 def list_models():
-    return ['zfb', 'vgg', 'resnet10', 'resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152', 'squeezenet']
+    return ['zf', 'zfb', 'vgg16', 'vgg19', 'resnet10', 'resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152', 'squeezenet']
 
 def gen_net_prototxt(basemodel, num_classes, deploy=False):
     assert basemodel.lower() in list_models(), 'Unsupported basemodel: %s' % basemodel
@@ -35,7 +36,7 @@ def gen_net_prototxt(basemodel, num_classes, deploy=False):
         n.im_info = caffe.layers.Layer()
 
     model.add_body(n, lr=1, depth=model_depth, deploy=deploy)
-    rcnn.add_body(n, lr=1, num_classes=num_classes, deploy=deploy)
+    rcnn.add_body(n, lr=1, num_classes=num_classes, roi_size=model.roi_size(), deploy=deploy)
 
     layers = str(n.to_proto()).split('layer {')[1:]
     layers = ['layer {' + x for x in layers]

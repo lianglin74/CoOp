@@ -15,12 +15,10 @@ def check_packages(packagedict):
             pip.main(['install', pkg_dst])
 
 #setup data
-subprocess.call(["robocopy", "\\\\ivm-server2\\IRIS\\IRISObjectDetection\\Data\\voc2", 'data\\voc2', '/e'], shell=True)
-subprocess.call(["robocopy", "\\\\ivm-server2\\IRIS\\IRISObjectDetection\\Data\\voc20", 'data\\voc20', '/e'], shell=True)
-subprocess.call(["robocopy", "\\\\ivm-server2\\IRIS\\IRISObjectDetection\\output\\voc20_ZF_dbg", 'output\\voc20_ZF_dbg', '/e'], shell=True)
-copyfile('\\\\ivm-server2\\IRIS\\IRISObjectDetection\\Data\\imagenet_models\\ZF.v2.caffemodel', 'models\\ZF.caffemodel')
+subprocess.call(["robocopy", "\\\\ivm-server2\\IRIS\\IRISObjectDetection\\Data\\datasets", 'data', '/e'], shell=True)
+subprocess.call(["robocopy", '\\\\ivm-server2\\IRIS\\IRISObjectDetection\\Data\\imagenet_models', 'models', '*.caffemodel','/e'],shell=True)
 
-packagedict = {'opencv-python':'' , 'progressbar':'', 'easydict':''}
+packagedict = {'opencv-python':'' , 'progressbar':'', 'easydict':'', 'Cython':'', 'protobuf':''}
 check_packages(packagedict);
 
 msbuild = r'C:\Program Files (x86)\MSBuild\14.0\Bin\MSBuild.exe'
