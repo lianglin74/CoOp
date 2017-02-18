@@ -17,7 +17,6 @@ def check_packages(packagedict):
 #setup data
 subprocess.call(["robocopy", "\\\\ivm-server2\\IRIS\\IRISObjectDetection\\Data\\datasets", 'data', '/e'], shell=True)
 subprocess.call(["robocopy", '\\\\ivm-server2\\IRIS\\IRISObjectDetection\\Data\\imagenet_models', 'models', '*.caffemodel','/e'],shell=True)
-
 packagedict = {'opencv-python':'' , 'progressbar':'', 'easydict':'', 'Cython':'', 'protobuf':''}
 check_packages(packagedict);
 
