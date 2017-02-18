@@ -28,7 +28,8 @@ else:
     print('Skip install prebuilt dependencies. For clean setup, please delete folder <src/CCSCaffe/libraries> and run this script again')
 
 if not os.path.exists('cudnn'):
-    cudnn_zipfile = r'\\ivm-server2\IRIS\IRISObjectDetection\Data\cudnn-8.0-windows10-x64-v5.0-ga.zip'
+    #cudnn_zipfile = r'\\ivm-server2\IRIS\IRISObjectDetection\Data\cudnn-8.0-windows10-x64-v5.0-ga.zip'
+    cudnn_zipfile = r'\\ivm-server2\IRIS\IRISObjectDetection\Data\cudnn-8.0-windows10-x64-v5.1.zip'
     install_cudnn.main([cudnn_zipfile])
 else:
     print('Skip install cudnn. For clean setup, please delete folder <src/CCSCaffe/cudnn> and run this script again')
