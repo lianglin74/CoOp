@@ -82,14 +82,14 @@ def parse_args():
     parser.add_argument('--intsv', required=True,   help='input tsv file for images, col_0:key, col_1:imgbase64')
     parser.add_argument('--colkey', required=False, type=int, default=0,  help='key col index');
     parser.add_argument('--colimg', required=False, type=int, default=1,  help='imgdata col index');
-    parser.add_argument('--outtsv', required=False, default="",  help='output tsv file with roi info')    
+    parser.add_argument('--outtsv', required=False, default="",  help='output tsv file with roi info')
     args = parser.parse_args()
     return args
 
-def tsvdet(caffemodel, intsv_file, key_idx,img_idx,outtsv_file):
+def tsvdet(caffemodel, intsv_file, key_idx,img_idx,outtsv_file, **kwargs):
     cfg.TEST.HAS_RPN = True  # Use RPN for proposals
-    prototxt = op.splitext(caffemodel)[0] + '.prototxt';
-    cmapfile = op.splitext(caffemodel)[0] + '.labelmap';
+    prototxt = op.splitext(caffemodel)[0] + '.prototxt' if 'proto' not in kwargs else kwargs['proto'];
+    cmapfile = op.splitext(caffemodel)[0] + '.labelmap' if 'cmap' not in kwargs else kwargs['cmap'];
     if not os.path.isfile(caffemodel) :
         raise IOError(('{:s} not found.').format(caffemodel))
     if not os.path.isfile(prototxt) :

@@ -26,28 +26,41 @@ import caffe
 from shutil import copyfile
 from pprint import pprint
 from tsvdet import tsvdet
-import deteval_voc;
+import deteval;
+#import deteval_voc;
 import gen_prototxt;
 
 def at_fcnn(x):
     return op.realpath(op.join(FRCN_ROOT, x))
 
-class Tee(object):
-    def __init__(self, name, mode):
-        self.file = open(name, mode)
-        self.stdout = sys.stdout
-        sys.stdout = self
+#tee python stdout        
+class PyTee(object):
+    def __init__(self, logstream, stream_name):
+        valid_streams = ['stderr','stdout'];
+        if  stream_name not in valid_streams:
+            raise IOError("valid stream names are %s" % ', '.join(valid_streams))
+        self.logstream =  logstream
+        self.stream_name = stream_name;
     def __del__(self):
-        sys.stdout = self.stdout
-        self.file.close()
-    def write(self, data):
-        self.file.write(data)
-        self.stdout.write(data)
-        self.file.flush()
+        pass;
+    def write(self, data):  #tee stdout
+        self.logstream.write(data);
+        self.fstream.write(data);
+        self.logstream.flush();
+        self.fstream.flush();        
     def __enter__(self):
-        pass
+        if self.stream_name=='stdout' :
+            self.fstream   =  sys.stdout
+            sys.stdout = self;
+        else:
+            self.fstream   =  sys.stderr
+            sys.stderr = self;
+        self.fstream.flush();
     def __exit__(self, _type, _value, _traceback):
-        pass
+        if self.stream_name=='stdout' :
+            sys.stdout = self.fstream;
+        else:
+            sys.stderr = self.fstream;
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a Fast R-CNN network')
@@ -56,7 +69,8 @@ def parse_args():
     parser.add_argument('--iters', dest='max_iters',  help='number of iterations to train', default=70000,    required=True, type=int)
     parser.add_argument('--data', help='the name of the dataset', required=True);
     parser.add_argument('--expid', help='the experiment id', required=True);
-    #parser.add_argument('--cfg', dest='cfg_file',  help='optional config file',    default=None, type=str)
+    parser.add_argument('--precth', required=False, type=float, nargs='+', default=[0.8,0.9,0.95], help="get precision, recall, threshold above given precision threshold")
+    parser.add_argument('--ovth', required=False, type=float, nargs='+', default=[0.3,0.4,0.5], help="get precision, recall, threshold above given precision threshold")
     return parser.parse_args()
 
 def combined_roidb(imdb_names):
@@ -99,11 +113,13 @@ def setup_paths(basenet, dataset, expid):
     output_path = createpath([proj_root,"output","_".join([dataset,basenet,expid])]);
     solver_file = op.join(output_path,"solver.prototxt");
     snapshot_path = createpath([output_path,"snapshot"]);
-    DATE = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')    
+    DATE = datetime.now().strftime('%Y%m%d_%H%M%S')    
     log_file = op.join(output_path, '%s_%s.log' %(basenet, DATE));
+    caffe_log_file = op.join(output_path, '%s_caffe_'%(basenet));
     model_pattern = "%s/%s_faster_rcnn_iter_*.caffemodel"%(snapshot_path,args.net.lower());
     deploy_path = createpath([output_path,"deploy"]);
-    return { "snapshot":snapshot_path, "solver":solver_file, "log":log_file, "output":output_path, "cfg":default_cfg, 'data_root':data_root, 'data':data_path, 'basemodel':basemodel_file, 'model_pattern':model_pattern, 'deploy':deploy_path};
+    eval_output =  op.join(output_path, '%s_%s_testeval.tsv' %(basenet, DATE));
+    return { "snapshot":snapshot_path, "solver":solver_file, "log":log_file, "output":output_path, "cfg":default_cfg, 'data_root':data_root, 'data':data_path, 'basemodel':basemodel_file, 'model_pattern':model_pattern, 'deploy':deploy_path, 'caffe_log':caffe_log_file, 'eval':eval_output};
     
 if __name__ == "__main__":
     args = parse_args()
@@ -119,10 +135,11 @@ if __name__ == "__main__":
     # redirect output to the LOG file
     print 'Logging output to %s' % path_env['log']
     start = time.time()
-    with Tee(path_env['log'],'w'):
+    with open(path_env['log'],'w') as pylog, PyTee(pylog,'stdout'):
         print 'Setting GPU device %d for training' % cfg.GPU_ID
         caffe.set_mode_gpu()
         caffe.set_device(cfg.GPU_ID)
+        caffe.init_glog(path_env['caffe_log']);
 
         imdb = tsv(args.data, 'train')
         print 'Loaded dataset `{:s}` for training'.format(imdb.name)
@@ -135,9 +152,7 @@ if __name__ == "__main__":
         roidb = get_training_roidb(imdb)   #imdb.gt_roidb()
         
         print '{:d} roidb entries'.format(len(roidb))
-        train_net(path_env['solver'], roidb, path_env['snapshot'],
-                  pretrained_model=path_env['basemodel'],
-                  max_iters=args.max_iters)
+        train_net(path_env['solver'], roidb, path_env['snapshot'], pretrained_model=path_env['basemodel'], max_iters=args.max_iters)
         print 'training finished in %s seconds' % (time.time() - start)
         
         #get final models
@@ -157,10 +172,19 @@ if __name__ == "__main__":
         #do evaluation when test data is available
         intsv_file = op.join(path_env['data'], "test.tsv");
         if op.isfile(intsv_file) :  #this is a test file, do det and evaluation
-            outtsv_file = op.join(path_env['output'],'test.eval');
+            outtsv_file = path_env['eval']
             start = time.time()            
-            nimgs = tsvdet(model_dst, intsv_file, 0,2,outtsv_file);
+            nimgs = tsvdet(model_dst, intsv_file, 0,2,outtsv_file, proto = proto_src, cmap = labelmap_src);
             time_used = time.time() - start
-            print ( 'detect %d images, used %g s (avg: %g s)' % (nimgs,time_used, time_used/nimgs ) )           
-            deteval_voc.eval(intsv_file, outtsv_file,0.5, True)
-        
+            print ( 'detect %d images, used %g s (avg: %g s)' % (nimgs,time_used, time_used/nimgs ) )  
+            truths = deteval.load_truths(intsv_file);
+            dets = deteval.load_dets(outtsv_file,truths);
+            #deteval_voc.eval(intsv_file, outtsv_file,0.5, True)            
+            for ov_th in args.ovth:
+                report = deteval.eval(truths, dets, ov_th);
+                print(report['class_ap'])     
+                print('overlap_threshold=%g, MAP=%g'%(ov_th,report['map']))
+                print("threshold\tprecision\t recall")
+                print("-----------------------------------------")
+                for prec_th in args.precth:
+                    deteval.print_pr(report,prec_th);
