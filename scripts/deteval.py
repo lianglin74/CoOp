@@ -26,12 +26,12 @@ def load_truths(filein):
                 if key not in retdict[label]:
                     retdict[label][key]=[];
                 bbox = [ x+1 for x in rect['rect'] ];
-                retdict[label][key]+=[(rect['diff'],bbox)];
+                retdict[label][key]+=[(rect['diff'] if 'diff' in rect else 0,bbox)];
     return retdict;
 
 #load the detection results, organized by classes
 def load_dets(filein,truths):
-    retdict = { key:[] for key in truths}
+    retdict = dict();
     with open(filein, "r") as tsvin:
         for line in tsvin:
             cols = [x.strip() for x in line.split("\t")]
@@ -42,6 +42,8 @@ def load_dets(filein,truths):
             for rect in rects:
                 label = rect['class'].strip();
                 bbox =  rect['rect'];
+                if label not in retdict:
+                    retdict[label]=[]
                 retdict[label] += [ (key,rect['conf'],bbox)]
     for key in retdict:
         retdict[key] = sorted(retdict[key], key=lambda x:-x[1])
