@@ -17,7 +17,7 @@ model_dict = {
 def list_models():
     return ['zf', 'zfb', 'vgg16', 'vgg19', 'resnet10', 'resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152', 'squeezenet']
 
-def gen_net_prototxt(basemodel, num_classes, deploy=False):
+def gen_net_prototxt(basemodel, num_classes, deploy=False, cpp_version=False):
     assert basemodel.lower() in list_models(), 'Unsupported basemodel: %s' % basemodel
 
     model_parts = re.findall(r'\d+|\D+', basemodel)
@@ -36,7 +36,7 @@ def gen_net_prototxt(basemodel, num_classes, deploy=False):
         n.im_info = caffe.layers.Layer()
 
     model.add_body(n, lr=1, depth=model_depth, deploy=deploy)
-    rcnn.add_body(n, lr=1, num_classes=num_classes, roi_size=model.roi_size(), deploy=deploy)
+    rcnn.add_body(n, lr=1, num_classes=num_classes, roi_size=model.roi_size(), deploy=deploy, cpp_version=cpp_version)
 
     layers = str(n.to_proto()).split('layer {')[1:]
     layers = ['layer {' + x for x in layers]
@@ -88,10 +88,13 @@ def generate_prototxt(basemodel_file, num_images, num_classes, output_path):
 
     train_net_file = os.path.join(output_path, 'train.prototxt')
     deploy_net_file = os.path.join(output_path, 'test.prototxt')
+    deploy_cpp_net_file = os.path.join(output_path, 'test_cpp.prototxt')
     with open(train_net_file, 'w') as f:
-        f.write(gen_net_prototxt(basemodel, num_classes, deploy=False))
+        f.write(gen_net_prototxt(basemodel, num_classes, deploy=False, cpp_version=False))
     with open(deploy_net_file, 'w') as f:
-        f.write(gen_net_prototxt(basemodel, num_classes, deploy=True))
+        f.write(gen_net_prototxt(basemodel, num_classes, deploy=True, cpp_version=False))
+    with open(deploy_cpp_net_file, 'w') as f:
+        f.write(gen_net_prototxt(basemodel, num_classes, deploy=True, cpp_version=True))
 
     solver_file = os.path.join(output_path, 'solver.prototxt')
     with open(solver_file, 'w') as f:

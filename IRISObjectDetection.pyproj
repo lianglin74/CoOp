@@ -5,7 +5,7 @@
     <SchemaVersion>2.0</SchemaVersion>
     <ProjectGuid>{f0ee757f-5752-481a-a841-553889d4c6ca}</ProjectGuid>
     <ProjectHome />
-    <StartupFile>script\train.py</StartupFile>
+    <StartupFile>scripts\train.py</StartupFile>
     <SearchPath />
     <WorkingDirectory>.</WorkingDirectory>
     <OutputPath>.</OutputPath>
@@ -24,14 +24,14 @@
     <PtvsTargetsFile>$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Python Tools\Microsoft.PythonTools.targets</PtvsTargetsFile>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="script\deteval_voc.py" />
-    <Compile Include="script\gen_prototxt.py">
+    <Compile Include="scripts\deteval_voc.py" />
+    <Compile Include="scripts\gen_prototxt.py">
       <SubType>Code</SubType>
     </Compile>
-    <Compile Include="script\prepare_voc.py" />
-    <Compile Include="script\train.py" />
-    <Compile Include="script\tsvdet.py" />
-    <Compile Include="script\_init_paths.py" />
+    <Compile Include="scripts\prepare_voc.py" />
+    <Compile Include="scripts\train.py" />
+    <Compile Include="scripts\tsvdet.py" />
+    <Compile Include="scripts\_init_paths.py" />
     <Compile Include="src\py-faster-rcnn\lib\datasets\coco.py" />
     <Compile Include="src\py-faster-rcnn\lib\datasets\ds_utils.py" />
     <Compile Include="src\py-faster-rcnn\lib\datasets\factory.py" />
@@ -102,7 +102,7 @@
     <Content Include="src\py-faster-rcnn\lib\pycocotools\license.txt" />
   </ItemGroup>
   <ItemGroup>
-    <Folder Include="script" />
+    <Folder Include="scripts" />
     <Folder Include="src\" />
     <Folder Include="src\py-faster-rcnn\" />
     <Folder Include="src\py-faster-rcnn\lib" />
