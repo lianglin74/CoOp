@@ -30,7 +30,7 @@ def load_truths(filein):
     return retdict;
 
 #load the detection results, organized by classes
-def load_dets(filein,truths):
+def load_dets(filein):
     retdict = dict();
     with open(filein, "r") as tsvin:
         for line in tsvin:
@@ -135,23 +135,24 @@ def eval(truths, detresults,ovthresh):
         else:
             apdict[label]=0;
         npos += c_npos;
-    for item in apdict.items():
-        print(item[0],item[1]);
-    print('------------------------')
     map = sum(apdict.values())/len(truths);
-    print("MAP",map );
-
     y_trues = np.hstack(y_trues)
     y_scores = np.hstack(y_scores)
     coverage_ratio = float(np.sum(y_trues))/npos;
     precision, recall, thresholds = metrics.precision_recall_curve(y_trues,y_scores);
+    precision = list(precision);
+    thresholds = list(thresholds);
+    if len(thresholds)<len(precision):
+        thresholds += [thresholds[-1]];
     #plot the PR-curve, and compare with baseline results
     recall *= coverage_ratio;
+    recall = list(recall);    
     return  { 'class_ap':apdict,
             'map': map,
-            'precision' : list(precision),
-            'recall' : list(recall),
-            'thresholds' : list(thresholds),
+            'precision' : precision,
+            'recall' : recall,
+            'thresholds' : thresholds,
+            'npos': npos,
             'coverage_ratio' : coverage_ratio
             }
             
@@ -160,7 +161,7 @@ def print_pr(report, thresh):
     recall_ = np.array(report['recall'])[idx];
     maxid = np.argmax(np.array(recall_));
     maxid = idx[0][maxid]
-    print("%9.6f\t%9.6f\t%9.6f"%(report['thresholds'][maxid], report['precision'][maxid], report['recall'][maxid]));
+    print("\t%9.6f\t%9.6f\t%9.6f"%(report['thresholds'][maxid], report['precision'][maxid], report['recall'][maxid]));
 
 def drawfigs(report, baselines, exp_name,report_fig):
     #plot the PR-curve, and compare with baseline results
@@ -187,7 +188,7 @@ if __name__ == '__main__':
     detsfile = args.dets
     #Load data
     truths = load_truths(truthsfile);
-    detresults = load_dets(detsfile,truths);
+    detresults = load_dets(detsfile);
     
     report = eval(truths, detresults, args.ovthresh);
     print("threshold\tprecision\t recall")
