@@ -7,11 +7,11 @@ import caffe
 import quickcaffe.modelzoo as mzoo
 
 model_dict = {
-    'zf': mzoo.ZFNet(add_last_pooling_layer=False, rcnn_mode=True),
-    'zfb': mzoo.ZFBNet(add_last_pooling_layer=False, rcnn_mode=True),
-    'vgg': mzoo.VGG(add_last_pooling_layer=False, rcnn_mode=True),
-    'resnet': mzoo.ResNet(add_last_pooling_layer=False, rcnn_mode=True),
-    'squeezenet': mzoo.SqueezeNet(add_last_pooling_layer=False, rcnn_mode=True),
+    'zf': mzoo.ZFNet(add_last_pooling_layer=False),
+    'zfb': mzoo.ZFBNet(add_last_pooling_layer=False),
+    'vgg': mzoo.VGG(add_last_pooling_layer=False),
+    'resnet': mzoo.ResNet(add_last_pooling_layer=False),
+    'squeezenet': mzoo.SqueezeNet(add_last_pooling_layer=False),
     }
 
 def list_models():
@@ -35,8 +35,8 @@ def gen_net_prototxt(basemodel, num_classes, deploy=False, cpp_version=False):
         n.data = caffe.layers.Layer()
         n.im_info = caffe.layers.Layer()
 
-    model.add_body(n, lr=1, depth=model_depth, deploy=deploy)
-    rcnn.add_body(n, lr=1, num_classes=num_classes, roi_size=model.roi_size(), deploy=deploy, cpp_version=cpp_version)
+    model.add_body_for_feature(n, depth=model_depth, lr=1, deploy=deploy)
+    rcnn.add_body(n, lr=1, num_classes=num_classes, cnnmodel=model, deploy=deploy, cpp_version=cpp_version)
 
     layers = str(n.to_proto()).split('layer {')[1:]
     layers = ['layer {' + x for x in layers]
