@@ -111,6 +111,7 @@ def tsvdet(caffemodel, intsv_file, key_idx,img_idx,outtsv_file, **kwargs):
                     tsv_out.write(cols[key_idx] + "\t" + results+"\n")
                     count += 1;
                 bar.update();
+    caffe.print_perf(count);
     return count;
     
 if __name__ == '__main__':

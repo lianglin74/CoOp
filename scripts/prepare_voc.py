@@ -161,16 +161,17 @@ if __name__ == '__main__':
     
     train = pascal_voc(os.path.join(dst_dir, r'VOCdevkit\VOC2007'), 'trainval')
     test = pascal_voc(os.path.join(dst_dir, 'VOCdevkit\VOC2007'), 'test')
+    
+    classeslist = [['horse'],  
+                   ['horse', 'bird'],
+                   ['horse', 'dog', 'bird', 'boat', 'bottle'],
+                   ['horse', 'dog', 'bird', 'boat', 'bottle', 'bus', 'car', 'cat', 'chair', 'cow'],
+                   ['aeroplane', 'bicycle', 'bird', 'boat', 'bottle', 'bus', 'car', 'cat', 'chair', 'cow', 'diningtable', 'dog', 'horse', 'motorbike', 'person', 'pottedplant', 'sheep', 'sofa', 'train', 'tvmonitor']
+                   ];
+    for classes in classeslist:
+        datafolder = 'voc%d'%(len(classes))
+        train.dump_data_tsv(os.path.join(dst_dir, datafolder, 'train.tsv'), classes)
+        test.dump_data_tsv(os.path.join(dst_dir, datafolder, 'test.tsv'), classes)
+        save_labelmap(os.path.join(dst_dir, datafolder, 'labelmap.txt'), classes)
+    
 
-    classes = ('horse', 'dog')
-    train.dump_data_tsv(os.path.join(dst_dir, r'voc2\train.tsv'), classes)
-    test.dump_data_tsv(os.path.join(dst_dir, r'voc2\test.tsv'), classes)
-    save_labelmap(os.path.join(dst_dir, 'voc2\labelmap.txt'), classes)
-
-    classes = ('aeroplane', 'bicycle', 'bird', 'boat', 'bottle', 
-               'bus', 'car', 'cat', 'chair', 'cow', 
-               'diningtable', 'dog', 'horse', 'motorbike', 'person', 
-               'pottedplant', 'sheep', 'sofa', 'train', 'tvmonitor')
-    train.dump_data_tsv(os.path.join(dst_dir, r'voc20\train.tsv'), classes)
-    test.dump_data_tsv(os.path.join(dst_dir, r'voc20\test.tsv'), classes)
-    save_labelmap(os.path.join(dst_dir, 'voc20\labelmap.txt'), classes)

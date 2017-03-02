@@ -120,6 +120,40 @@ def setup_paths(basenet, dataset, expid):
     deploy_path = createpath([output_path,"deploy"]);
     eval_output =  op.join(output_path, '%s_%s_testeval.tsv' %(basenet, DATE));
     return { "snapshot":snapshot_path, "solver":solver_file, "log":log_file, "output":output_path, "cfg":default_cfg, 'data_root':data_root, 'data':data_path, 'basemodel':basemodel_file, 'model_pattern':model_pattern, 'deploy':deploy_path, 'caffe_log':caffe_log_file, 'eval':eval_output};
+
+def  gen_truthslist(truths):
+    truths_small = dict()
+    truths_medium = dict()
+    truths_large = dict()
+    
+    for label in truths:
+        if label not in truths_small:
+            truths_small[label] =dict();
+            truths_medium[label] =dict();
+            truths_large[label] =dict();
+        for key in truths[label]:
+            crects_small = [];
+            crects_medium = [];
+            crects_large = [];
+            for item in truths[label][key]:
+                rect = item[1];
+                area = (rect[2]-rect[0])*(rect[3]-rect[1]);
+                tags = tagm = tagl = 1;
+                if not item[0]:
+                    if area>32*32:
+                        if area>96*96:
+                            tagl=0;
+                        else:
+                            tagm=0;
+                    else:
+                        tags=0;
+                crects_small  += [(tags,rect)]
+                crects_medium += [(tagm,rect)]
+                crects_large  += [(tagl,rect)]
+            truths_small[label][key] = crects_small;
+            truths_medium[label][key] = crects_medium;
+            truths_large[label][key] = crects_large;
+    return [('small',truths_small), ('medium',truths_medium), ('large',truths_large), ('overall',truths)];  
     
 if __name__ == "__main__":
     args = parse_args()
@@ -178,13 +212,16 @@ if __name__ == "__main__":
             time_used = time.time() - start
             print ( 'detect %d images, used %g s (avg: %g s)' % (nimgs,time_used, time_used/nimgs ) )  
             truths = deteval.load_truths(intsv_file);
-            dets = deteval.load_dets(outtsv_file,truths);
-            #deteval_voc.eval(intsv_file, outtsv_file,0.5, True)            
+            dets = deteval.load_dets(outtsv_file);
+            #deteval_voc.eval(intsv_file, outtsv_file,0.5, True)
+            truths_list = gen_truthslist(truths);
             for ov_th in args.ovth:
-                report = deteval.eval(truths, dets, ov_th);
-                print(report['class_ap'])     
-                print('overlap_threshold=%g, MAP=%g'%(ov_th,report['map']))
-                print("threshold\tprecision\t recall")
-                print("-----------------------------------------")
-                for prec_th in args.precth:
-                    deteval.print_pr(report,prec_th);
+                for part in truths_list:
+                    report = deteval.eval(part[1], dets, ov_th);
+                    print('Overlap_threshold=%g, %s(%d objs), MAP=%g'%(ov_th,part[0],report['npos'],report['map']))
+                    print("\tthreshold\tprecision\t recall")
+                    print("\t-----------------------------------------")
+                    for prec_th in args.precth:
+                        deteval.print_pr(report,prec_th);
+                    for item in   report['class_ap'].items():  
+                        print("\t%s\t%g"%(item[0],item[1]))     
