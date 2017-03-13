@@ -1,7 +1,4 @@
 [submodule "src/CCSCaffe"]
 	path = src/CCSCaffe
-	url = https://msresearch.visualstudio.com/IRIS/_git/CCSCaffe
+	url = https://github.com/msrccs/caffe
 	branch = WinCaffe
-[submodule "src/quickcaffe"]
-	path = src/quickcaffe
-	url = https://msresearch.visualstudio.com/IRIS/_git/quickcaffe
