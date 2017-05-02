@@ -17,6 +17,7 @@ model_dict = {
     'resnet': mzoo.ResNet(),
     'resnetrcnn': mzoo.ResNet(rcnn_mode=True),
     'squeezenet': mzoo.SqueezeNet(),
+    'darknet': mzoo.DarkNet(),
     }
 
 def gen_data_layer(data_path, format, crop_size, batchsize=(256,50), use_mean_file=True):
@@ -96,6 +97,7 @@ def sgd_solver_param(model_name, test_iter):
         'vgg': (0.01, 0.0005),
         'resnet': (0.1, 0.0001),
         'resnetrcnn': (0.1, 0.0001),
+        'darknet':(0.1,0.0005),
     }
     base_lr, weight_decay = solver_lr[model_name]
 
@@ -137,6 +139,26 @@ def quick_solver_param(model_name, test_iter):
         'solver_mode': caffe.params.Solver.GPU,
         }
     return solver_param
+
+def quick_solver_darknet_param(model_name, test_iter):
+    solver_param = {
+        # Test parameters
+        'test_iter': [test_iter],
+        'test_interval': 1000,
+        #'test_initialization': False,
+        # Train parameters
+        'base_lr': 0.1,
+        'lr_policy': "poly",
+        'power': 4.0, # linearly decrease LR
+        'display': 20,
+        'average_loss': 20,
+        'max_iter': 800000,
+        'momentum': 0.9,
+        'weight_decay': 0.0005,
+        'snapshot': 5000,
+        'solver_mode': caffe.params.Solver.GPU,
+        }
+    return solver_param
             
 def quick_solver_squeeze_param(model_name, test_iter):
     solver_param = {
@@ -167,6 +189,8 @@ def gen_solver_prototxt(cmd, train_net_file, test_iter):
         solver_param = quick_solver_param(model_name, test_iter)
     elif model_name == 'squeezenet':
         solver_param = quick_solver_squeeze_param(model_name, test_iter)
+    #elif model_name == 'darknet':
+    #    solver_param = quick_solver_darknet_param(model_name, test_iter)
     else:
         solver_param = sgd_solver_param(model_name, test_iter)
 
@@ -218,6 +242,6 @@ if __name__ == "__main__":
 
     # launch training
     if platform.system() == 'Windows':
-        print 'windows run'
+        print ('windows run')
     else: # Linux
-        print 'linux run'
+        print ('linux run')
