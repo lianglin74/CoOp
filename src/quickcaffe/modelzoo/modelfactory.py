@@ -6,3 +6,4 @@ from googlenet import *
 from resnet import *
 from squeezenet import *
 from fasterrcnn import *
+from darknet import *
