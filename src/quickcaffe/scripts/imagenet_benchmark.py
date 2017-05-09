@@ -222,21 +222,21 @@ def gen_solver_prototxt(cmd, train_net_file, test_iter):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model', required=True, 
+    parser.add_argument('-m', '--model', required=True, 
                         help='CNN model architecture: caffenet, zf, zfb, vgg16/19, resnet10/18/34/50/101/152, squeezenet')
-    parser.add_argument('--data', required=True,
+    parser.add_argument('-d', '--data', required=True,
                         help='ImageNet training data path. If the path includes "lmdb", lmdb data layer will be used.')
-    parser.add_argument('--format', required=False, default='tsv', choices=['tsv', 'leveldb', 'lmdb'],
+    parser.add_argument('-f', '--format', required=False, default='tsv', choices=['tsv', 'leveldb', 'lmdb'],
                         help='data format. choose one from tsv, leveldb, lmdb')
-    parser.add_argument('--batchsize', required=False, default='256,50',
+    parser.add_argument('-b', '--batchsize', required=False, default='256,50',
                         help='batch size for training and testing')
-    parser.add_argument('--base_lr', required=False, type=float, default='0.01',
+    parser.add_argument('-lr', '--base_lr', required=False, type=float, default='0.01',
                         help='base learning rate, default:0.01')
-    parser.add_argument('--num_classes', required=False, type=int, default='1000',
+    parser.add_argument('-n', '--num_classes', required=False, type=int, default='1000',
                         help='number of classes, default:1000')
-    parser.add_argument('--use_meanfile', default=False, action='store_true',
+    parser.add_argument('-um', '--use_meanfile', default=False, action='store_true',
                         help='Flag to use meanfile, default: False')
-    parser.add_argument('--use_inception', default=False, action='store_true',
+    parser.add_argument('-ui', '--use_inception', default=False, action='store_true',
                         help='Flag to use inception crop, default: False')
                         
     return parser.parse_args()
