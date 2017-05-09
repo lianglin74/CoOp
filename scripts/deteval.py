@@ -123,6 +123,8 @@ def eval(truths, detresults,ovthresh):
     npos = 0;
     apdict = dict();
     for label in sorted(truths.keys()):
+        if label not in detresults:
+            continue;
         c_detects = detresults[label];        #detection results for current class
         c_truths = truths[label];             #truths for current class
         (c_y_scores, c_y_trues, c_npos) = evaluate_(c_detects,c_truths, ovthresh);
