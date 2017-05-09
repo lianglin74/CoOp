@@ -126,7 +126,7 @@ def tsvdet(caffemodel, intsv_file, key_idx,img_idx,outtsv_file, **kwargs):
                 bar.update();
     caffe.print_perf(count);
 
-    if __name__ == '__main__':
+if __name__ == '__main__':
     args = parse_args()
     outtsv_file = args.outtsv if args.outtsv!="" else os.path.splitext(args.intsv)[0]+".eval";
     caffemodel = args.net;
