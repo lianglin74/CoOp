@@ -181,7 +181,57 @@ def drawfigs(report, baselines, exp_name,report_fig):
     plt.title('Object detection PR Curve on %s dataset'%dataset_name)
     plt.legend(loc="lower right")
     fig.savefig(report_fig,dpi=fig.dpi)
+
+def  gen_truthslist(truths):
+    truths_small = dict()
+    truths_medium = dict()
+    truths_large = dict()
     
+    for label in truths:
+        if label not in truths_small:
+            truths_small[label] =dict();
+            truths_medium[label] =dict();
+            truths_large[label] =dict();
+        for key in truths[label]:
+            crects_small = [];
+            crects_medium = [];
+            crects_large = [];
+            for item in truths[label][key]:
+                rect = item[1];
+                area = (rect[2]-rect[0])*(rect[3]-rect[1]);
+                tags = tagm = tagl = 1;
+                if not item[0]:
+                    if area>32*32:
+                        if area>96*96:
+                            tagl=0;
+                        else:
+                            tagm=0;
+                    else:
+                        tags=0;
+                crects_small  += [(tags,rect)]
+                crects_medium += [(tagm,rect)]
+                crects_large  += [(tagl,rect)]
+            truths_small[label][key] = crects_small;
+            truths_medium[label][key] = crects_medium;
+            truths_large[label][key] = crects_large;
+    return [('small',truths_small), ('medium',truths_medium), ('large',truths_large), ('overall',truths)];  
+
+def mseval (intsv_file, outtsv_file, ovths, precths):
+        truths = load_truths(intsv_file);
+        dets = load_dets(outtsv_file);
+        #deteval_voc.eval(intsv_file, outtsv_file,0.5, True)
+        truths_list = gen_truthslist(truths);
+        for ov_th in ovths:
+            for part in truths_list:
+                report = eval(part[1], dets, ov_th);
+                print('Overlap_threshold=%g, %s(%d objs), MAP=%g'%(ov_th,part[0],report['npos'],report['map']))
+                print("\tthreshold\tprecision\t recall")
+                print("\t-----------------------------------------")
+                for prec_th in precths:
+                    print_pr(report,prec_th);
+                for item in   report['class_ap'].items():  
+                    print("\t%s\t%g"%(item[0],item[1]))
+                    
 if __name__ == '__main__':
     # parse arguments
     args = parse_args();
