@@ -64,11 +64,11 @@ class PyTee(object):
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a Fast R-CNN network')
-    parser.add_argument('--gpu', dest='GPU_ID', help='GPU device id to use [0].',  default=0, type=int)
-    parser.add_argument('--net', required=True, type=str.lower, help='CNN archiutecture')
-    parser.add_argument('--iters', dest='max_iters',  help='number of iterations to train', default=70000,    required=True, type=int)
-    parser.add_argument('--data', help='the name of the dataset', required=True);
-    parser.add_argument('--expid', help='the experiment id', required=True);
+    parser.add_argument('-g', '--gpu', dest='GPU_ID', help='GPU device id to use [0].',  default=0, type=int)
+    parser.add_argument('-n', '--net', required=True, type=str.lower, help='CNN archiutecture')
+    parser.add_argument('-t', '--iters', dest='max_iters',  help='number of iterations to train', default=70000,    required=True, type=int)
+    parser.add_argument('-d', '--data', help='the name of the dataset', required=True);
+    parser.add_argument('-e', '--expid', help='the experiment id', required=True);
     parser.add_argument('--precth', required=False, type=float, nargs='+', default=[0.8,0.9,0.95], help="get precision, recall, threshold above given precision threshold")
     parser.add_argument('--ovth', required=False, type=float, nargs='+', default=[0.3,0.4,0.5], help="get precision, recall, threshold above given precision threshold")
     

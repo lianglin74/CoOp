@@ -35,7 +35,7 @@ def img_from_base64(imagestring):
         return cv2.imdecode(nparr, cv2.IMREAD_COLOR);
     except:
         return None;
-
+        
 def postfilter(scores, boxes, class_map, max_per_image=100, thresh=0.05, nms_thresh=0.3):
     class_num = scores.shape[1];        #first class is background
     # all detections are collected into:
