@@ -11,11 +11,12 @@ model_dict = {
     'zfb': mzoo.ZFBNet(add_last_pooling_layer=False),
     'vgg': mzoo.VGG(add_last_pooling_layer=False),
     'resnet': mzoo.ResNet(add_last_pooling_layer=False),
+    'darknet': mzoo.DarkNet(add_last_pooling_layer=False),
     'squeezenet': mzoo.SqueezeNet(add_last_pooling_layer=False),
     }
 
 def list_models():
-    return ['zf', 'zfb', 'vgg16', 'vgg19', 'resnet10', 'resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152', 'squeezenet']
+    return ['zf', 'zfb', 'vgg16', 'vgg19', 'resnet10', 'resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152', 'squeezenet', 'darknet19']
 
 def gen_net_prototxt(basemodel, num_classes, deploy=False, cpp_version=False):
     assert basemodel.lower() in list_models(), 'Unsupported basemodel: %s' % basemodel
