@@ -153,7 +153,7 @@ if __name__ == "__main__":
         roidb = get_training_roidb(imdb)   #imdb.gt_roidb()
         
         print '{:d} roidb entries'.format(len(roidb))
-        #train_net(path_env['solver'], roidb, path_env['snapshot'], pretrained_model=path_env['basemodel'], max_iters=args.max_iters)
+        train_net(path_env['solver'], roidb, path_env['snapshot'], pretrained_model=path_env['basemodel'], max_iters=args.max_iters)
         print 'training finished in %s seconds' % (time.time() - start)
         
         #get final models
