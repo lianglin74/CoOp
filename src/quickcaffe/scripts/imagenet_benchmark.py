@@ -39,6 +39,20 @@ def gen_data_layer(data_path, format, crop_size, batchsize=(256,50), use_mean_fi
     
     return data, label, test_str
 
+def gen_tsv_inception_layer(data_path, crop_size, batchsize=(256,50), new_image_size = (256, 256)):
+    mean_value = [104, 117, 123] 
+    colorkl_file = op.join(op.split(data_path)[0], 'train.resize480.shuffled.kl.txt').replace('\\', '/')
+    batchsize_train, batchsize_test = batchsize
+    
+    transform_param=dict(crop_size=crop_size, mean_value=mean_value, mirror=True)
+    tsv_data_param=dict(source=data_path, batch_size=batchsize_train, col_data=2, col_label=1, new_width=new_image_size[0], new_height=new_image_size[1], crop_type=2, color_kl_file=colorkl_file)
+    data, label = caffe.layers.TsvData(ntop=2, transform_param=transform_param, tsv_data_param=tsv_data_param, include=dict(phase=getattr(caffe.proto.caffe_pb2, 'TRAIN')))
+    n = caffe.NetSpec()
+    tsv_data_param=dict(source=data_path.replace('train', 'val'), batch_size=batchsize_test, col_data=2, col_label=1, new_width=new_image_size[0], new_height=new_image_size[1], crop_type=2)
+    transform_param=dict(crop_size=crop_size, mean_value=mean_value, mirror=False)
+    n.data, n.label = caffe.layers.TsvData(ntop=2, transform_param=transform_param, tsv_data_param=tsv_data_param, include=dict(phase=getattr(caffe.proto.caffe_pb2, 'TEST')))
+    return data, label,str(n.to_proto()) 
+
 def to_proto_str(n, test_str='', data_str='', deploy=False):
     layers = str(n.to_proto()).split('layer {')[1:]
     layers = ['layer {' + x for x in layers]
@@ -68,7 +82,10 @@ def gen_net_prototxt(cmd, deploy=False):
     # add data
     if not deploy:
         use_mean_file = cmd.use_meanfile
-        n.data, n.label, test_str = gen_data_layer(cmd.data, cmd.format, crop_size, batchsize, use_mean_file=use_mean_file)
+        if cmd.use_inception==False:
+            n.data, n.label, test_str = gen_data_layer(cmd.data, cmd.format, crop_size, batchsize, use_mean_file=use_mean_file)
+        else:
+            n.data, n.label, test_str = gen_tsv_inception_layer(cmd.data, crop_size, batchsize)
     else:
         n.data = caffe.layers.Layer()  # create a placeholder, and replace later
         data_str = 'input: {}\ninput_dim: {}\ninput_dim: {}\ninput_dim: {}\ninput_dim: {}\n'.format('"data"', 1, 3, crop_size, crop_size)
@@ -205,20 +222,23 @@ def gen_solver_prototxt(cmd, train_net_file, test_iter):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model', required=True, 
+    parser.add_argument('-m', '--model', required=True, 
                         help='CNN model architecture: caffenet, zf, zfb, vgg16/19, resnet10/18/34/50/101/152, squeezenet')
-    parser.add_argument('--data', required=True,
+    parser.add_argument('-d', '--data', required=True,
                         help='ImageNet training data path. If the path includes "lmdb", lmdb data layer will be used.')
-    parser.add_argument('--format', required=False, default='tsv', choices=['tsv', 'leveldb', 'lmdb'],
+    parser.add_argument('-f', '--format', required=False, default='tsv', choices=['tsv', 'leveldb', 'lmdb'],
                         help='data format. choose one from tsv, leveldb, lmdb')
-    parser.add_argument('--batchsize', required=False, default='256,50',
+    parser.add_argument('-b', '--batchsize', required=False, default='256,50',
                         help='batch size for training and testing')
-    parser.add_argument('--base_lr', required=False, type=float, default='0.01',
+    parser.add_argument('-lr', '--base_lr', required=False, type=float, default='0.01',
                         help='base learning rate, default:0.01')
-    parser.add_argument('--num_classes', required=False, type=int, default='1000',
+    parser.add_argument('-n', '--num_classes', required=False, type=int, default='1000',
                         help='number of classes, default:1000')
-    parser.add_argument('--use_meanfile', default=False, action='store_true',
+    parser.add_argument('-um', '--use_meanfile', default=False, action='store_true',
                         help='Flag to use meanfile, default: False')
+    parser.add_argument('-ui', '--use_inception', default=False, action='store_true',
+                        help='Flag to use inception crop, default: False')
+                        
     return parser.parse_args()
 
 if __name__ == "__main__":

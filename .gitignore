@@ -25,6 +25,7 @@ var/
 *.egg
 *.out
 *.caffemodel
+*.prototxt
 
 # include lib in py-faster-rcnn
 !src/*/lib/
