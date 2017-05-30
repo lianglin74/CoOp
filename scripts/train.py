@@ -66,11 +66,17 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Train a Fast R-CNN network')
     parser.add_argument('-g', '--gpu', dest='GPU_ID', help='GPU device id to use [0].',  default=0, type=int)
     parser.add_argument('-n', '--net', required=True, type=str.lower, help='CNN archiutecture')
-    parser.add_argument('-t', '--iters', dest='max_iters',  help='number of iterations to train', default=70000,    required=True, type=int)
-    parser.add_argument('-d', '--data', help='the name of the dataset', required=True);
-    parser.add_argument('-e', '--expid', help='the experiment id', required=True);
+    parser.add_argument('-t', '--iters', dest='max_iters',  help='number of iterations to train', default=70000, required=True, type=int)
+    parser.add_argument('-d', '--data', help='the name of the dataset', required=True)
+    parser.add_argument('-e', '--expid', help='the experiment id', required=True)
+    parser.add_argument(
+        '-c', '--model_config', default=os.path.join(
+            os.getcwd(), '../models/faster_rcnn_end2end.yml'),
+        type=str, help='model config path, default: models/faster_rcnn_end2end.yml',
+        required=False)
     parser.add_argument('--precth', required=False, type=float, nargs='+', default=[0.8,0.9,0.95], help="get precision, recall, threshold above given precision threshold")
     parser.add_argument('--ovth', required=False, type=float, nargs='+', default=[0.3,0.4,0.5], help="get precision, recall, threshold above given precision threshold")
+
     
     return parser.parse_args()
 
@@ -114,7 +120,7 @@ def setup_paths(basenet, dataset, expid):
     output_path = createpath([proj_root,"output","_".join([dataset,basenet,expid])]);
     solver_file = op.join(output_path,"solver.prototxt");
     snapshot_path = createpath([output_path,"snapshot"]);
-    DATE = datetime.now().strftime('%Y%m%d_%H%M%S')    
+    DATE = datetime.now().strftime('%Y%m%d_%H%M%S')
     log_file = op.join(output_path, '%s_%s.log' %(basenet, DATE));
     caffe_log_file = op.join(output_path, '%s_caffe_'%(basenet));
     model_pattern = "%s/%s_faster_rcnn_iter_*.caffemodel"%(snapshot_path,basenet.split('_')[0].lower());
@@ -124,10 +130,11 @@ def setup_paths(basenet, dataset, expid):
 
 if __name__ == "__main__":
     args = parse_args()
-    path_env = setup_paths( args.net, args.data, args.expid);
-    cfg_from_file(path_env['cfg'])
-    cfg.GPU_ID = args.GPU_ID;
-    cfg.DATA_DIR = path_env['data_root'];
+    path_env = setup_paths( args.net, args.data, args.expid)
+    cfg_config = args.model_config
+    cfg_from_file(cfg_config)
+    cfg.GPU_ID = args.GPU_ID
+    cfg.DATA_DIR = path_env['data_root']
 
     # fix the random seeds (numpy and caffe) for reproducibility
     #np.random.seed(cfg.RNG_SEED)
