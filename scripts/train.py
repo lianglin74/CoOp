@@ -130,8 +130,10 @@ def setup_paths(basenet, dataset, expid):
 if __name__ == "__main__":
     args = parse_args()
     path_env = setup_paths( args.net, args.data, args.expid)
+    # Get model train config copy it to the output path.
     cfg_config = args.model_config or path_env["default_cfg"]
     cfg_from_file(cfg_config)
+    copyfile(cfg_config, os.path.join(path_env["output"], "config.yml"))
     cfg.GPU_ID = args.GPU_ID
     cfg.DATA_DIR = path_env['data_root']
     cfg.TRAIN.SCALES = args.train_sizes[:-1]
