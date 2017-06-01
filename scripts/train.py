@@ -71,10 +71,8 @@ def parse_args():
     parser.add_argument('-d', '--data', help='the name of the dataset', required=True)
     parser.add_argument('-e', '--expid', help='the experiment id', required=True)
     parser.add_argument(
-        '-c', '--model_config', default=os.path.join(
-            os.getcwd(), '../models/faster_rcnn_end2end.yml'),
-        type=str, help='model config path, default: models/faster_rcnn_end2end.yml',
-        required=False)
+        '-c', '--model_config', default="", type=str, required=False,
+        help='model config path, default: models/faster_rcnn_end2end.yml')
     parser.add_argument('--precth', required=False, type=float, nargs='+', default=[0.8,0.9,0.95], help="get precision, recall, threshold above given precision threshold")
     parser.add_argument('--ovth', required=False, type=float, nargs='+', default=[0.3,0.4,0.5], help="get precision, recall, threshold above given precision threshold")
     parser.add_argument('-sg', '--skip_genprototxt', default=False, action='store_true', help='Flag to skip generating prototxt, default: False')
@@ -132,8 +130,10 @@ def setup_paths(basenet, dataset, expid):
 if __name__ == "__main__":
     args = parse_args()
     path_env = setup_paths( args.net, args.data, args.expid)
-    cfg_config = args.model_config
+    # Get model train config copy it to the output path.
+    cfg_config = args.model_config or path_env["cfg"]
     cfg_from_file(cfg_config)
+    copyfile(cfg_config, os.path.join(path_env["output"], "config.yml"))
     cfg.GPU_ID = args.GPU_ID
     cfg.DATA_DIR = path_env['data_root']
     cfg.TRAIN.SCALES = args.train_sizes[:-1]
