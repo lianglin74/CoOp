@@ -1,4 +1,4 @@
-"""Parse log for loss."""
+"""Parse log for loss and/or mAP."""
 
 from __future__ import division
 from __future__ import print_function
@@ -9,11 +9,19 @@ import os
 import re
 import sys
 
+# TODO(zhengxu): This is a temp workaround. Fix it in the future.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../"))
 import deteval
 
 def parse_loss(log_path):
-    """Parse caffe loss from log file."""
+    """Parse caffe loss from log file.
+
+    Usage:
+    ```
+        iter, loss = veval.parse_loss(log_path)
+        plt.plot(iters, losses)
+    ```
+    """
     with open(log_path) as fin:
         str_buff = fin.read()
     iter_loss = re.findall(r"Iteration\s+(\d+).+loss\s+=\s+([0-9\.]+)", str_buff)
@@ -25,6 +33,15 @@ def parse_loss(log_path):
     return iters, losses
 
 def mAP_generator(test_data, job_path):
+    """Evaluate and generate mAPs.
+
+    Usage:
+    ```
+        iter_mAP_map = mAP_generator(test_data, job_path)
+        iters, mAPs = zip(*list(iter_mAP_map))
+        plt.plot(iters, losses)
+    ```
+    """
     out_tsvs = glob(os.path.join(job_path, "test_iter_*.tsv"))
     out_tsv_maps = [(
         int(re.findall("test_iter_(\d+).tsv", out_tsv)[0]), out_tsv)
