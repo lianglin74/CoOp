@@ -6,17 +6,9 @@ import google.protobuf as pb
 from argparse import ArgumentParser
 import caffe
 
-def main(args):
-    # Set default output file names
-    if args.output_model is None:
-        file_name = osp.splitext(args.model)[0]
-        args.output_model = file_name + '_inference.prototxt'
-    if args.output_weights is None:
-        file_name = osp.splitext(args.weights)[0]
-        args.output_weights = file_name + '_inference.caffemodel'
-        
+def process_prototxt(proto_old, proto_new):
     #load model and weights
-    with open(args.model) as f:
+    with open(proto_old) as f:
         model = caffe.proto.caffe_pb2.NetParameter()
         pb.text_format.Parse(f.read(), model)
     
@@ -27,6 +19,8 @@ def main(args):
         bottom = layer.bottom[0]
         top = layer.top[0]
         convlayer = model.layer[i-1];
+        if len(convlayer.param)==1:   # training prototxt
+            convlayer.param.add(lr_mult=2,decay_mult=0)  #add learning rate and decay param for bias term
         convlayer.convolution_param.bias_term = True
         scale_layer = model.layer[i+1]
         if bottom not in convlayer.top or convlayer.type not in ['Convolution', 'InnerProduct']:
@@ -56,14 +50,15 @@ def main(args):
     output_model.CopyFrom(model)
     del(output_model.layer[:])
     output_model.layer.extend(output_model_layers)
-    with open(args.output_model, 'w') as f:
+    with open(proto_new, 'w') as f:
         f.write(pb.text_format.MessageToString(output_model))
-
-    print(to_be_absorbed)
+    return model, to_be_absorbed    
+    
+def process_weights(weights_old, weights_new, to_be_absorbed, proto_old,proto_new, model):
     # Absorb the BN parameters
-    weights = caffe.Net(args.model, args.weights, caffe.TEST)
+    weights = caffe.Net(proto_old, weights_old , caffe.TEST)
     # Save the caffemodel
-    output_weights = caffe.Net(args.output_model, caffe.TEST)
+    output_weights = caffe.Net(proto_new, caffe.TEST)
     bias_dict = dict();
     for i, layer in enumerate(model.layer):
         if layer.type!='BatchNorm' or layer.name not in to_be_absorbed: 
@@ -92,15 +87,21 @@ def main(args):
         else:
              output_weights.params[name][0].data[...] = weights.params[name][0].data.copy()
              output_weights.params[name][1].data[...] = bias_dict[name]
-    output_weights.save(args.output_weights)
+    output_weights.save(weights_new)
 
 
 if __name__ == '__main__':
     parser = ArgumentParser(
             description="Generate Batch Normalized model for inference")
     parser.add_argument('-m', '--model', help="The net definition prototxt", required=True)
-    parser.add_argument('-w', '--weights', help="The weights caffemodel", required=True)
+    parser.add_argument('-w', '--weights', help="The weights caffemodel", default=None, required=False)
     parser.add_argument('-om', '--output_model', help = 'New net definition prototxt')
     parser.add_argument('-ow', '--output_weights', help="New weights caffemodel")
     args = parser.parse_args()
-    main(args)
+    proto_old = args.model;
+    proto_new = args.output_model or osp.splitext(proto_old)[0] + '_inference.prototxt'
+    model, to_be_absorbed = process_prototxt(proto_old, proto_new);
+    if args.weights is not None:
+        weights_old = args.weights;
+        weights_new = args.output_weights or osp.splitext(weights_old)[0] + '_inference.caffemodel'
+        process_weights(weights_old,weights_new,to_be_absorbed, proto_old,proto_new,model)
