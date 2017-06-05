@@ -14,6 +14,31 @@ import math;
 import json;
 import base64;
 import progressbar;
+from datetime import datetime
+
+def createpath( pparts ):
+    fpath = op.join(*pparts);
+    if not os.path.exists(fpath):
+        os.makedirs(fpath);
+    return fpath;   
+    
+def setup_paths(basenet, dataset, expid):
+    proj_root = op.dirname(op.dirname(op.realpath(__file__)));
+    model_path = op.join (proj_root,"models");
+    data_root = op.join(proj_root,"data");
+    data_path = op.join(data_root,dataset);
+    basemodel_file = op.join(model_path ,basenet+'.caffemodel');
+    default_cfg = op.join(model_path,"faster_rcnn_end2end.yml")
+    output_path = createpath([proj_root,"output","_".join([dataset,basenet,expid])]);
+    solver_file = op.join(output_path,"solver.prototxt");
+    snapshot_path = createpath([output_path,"snapshot"]);
+    DATE = datetime.now().strftime('%Y%m%d_%H%M%S')
+    log_file = op.join(output_path, '%s_%s.log' %(basenet, DATE));
+    caffe_log_file = op.join(output_path, '%s_caffe_'%(basenet));
+    model_pattern = "%s/%s_faster_rcnn_iter_*.caffemodel"%(snapshot_path,basenet.split('_')[0].lower());
+    deploy_path = createpath([output_path,"deploy"]);
+    eval_output =  op.join(output_path, '%s_%s_testeval.tsv' %(basenet, DATE));
+    return { "snapshot":snapshot_path, "solver":solver_file, "log":log_file, "output":output_path, "cfg":default_cfg, 'data_root':data_root, 'data':data_path, 'basemodel':basemodel_file, 'model_pattern':model_pattern, 'deploy':deploy_path, 'caffe_log':caffe_log_file, 'eval':eval_output};
 
 def encode_array(nparray):
     shapestr = ",".join([str(x) for x in nparray.shape])

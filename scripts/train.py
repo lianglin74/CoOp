@@ -13,7 +13,6 @@
 #   2) "-u" flag stands for unbuffered std output
 import _init_paths
 import sys, os, os.path as op
-from datetime import datetime
 import time
 import glob
 import numpy as np
@@ -25,7 +24,7 @@ import datasets.imdb
 import caffe
 from shutil import copyfile
 from pprint import pprint
-from tsvdet import tsvdet
+from tsvdet import tsvdet,setup_paths;
 import deteval;
 #import deteval_voc;
 import gen_prototxt;
@@ -66,12 +65,17 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Train a Fast R-CNN network')
     parser.add_argument('-g', '--gpu', dest='GPU_ID', help='GPU device id to use [0].',  default=0, type=int)
     parser.add_argument('-n', '--net', required=True, type=str.lower, help='CNN archiutecture')
-    parser.add_argument('-t', '--iters', dest='max_iters',  help='number of iterations to train', default=70000,    required=True, type=int)
-    parser.add_argument('-d', '--data', help='the name of the dataset', required=True);
-    parser.add_argument('-e', '--expid', help='the experiment id', required=True);
+    parser.add_argument('-ts', '--train_sizes', help='image target sizes and max size', default=[600,1000], nargs='+', required=False, type=int)
+    parser.add_argument('-t', '--iters', dest='max_iters',  help='number of iterations to train', default=70000, required=True, type=int)
+    parser.add_argument('-d', '--data', help='the name of the dataset', required=True)
+    parser.add_argument('-e', '--expid', help='the experiment id', required=True)
+    parser.add_argument(
+        '-c', '--model_config', default="", type=str, required=False,
+        help='model config path, default: models/faster_rcnn_end2end.yml')
     parser.add_argument('--precth', required=False, type=float, nargs='+', default=[0.8,0.9,0.95], help="get precision, recall, threshold above given precision threshold")
     parser.add_argument('--ovth', required=False, type=float, nargs='+', default=[0.3,0.4,0.5], help="get precision, recall, threshold above given precision threshold")
-    
+    parser.add_argument('-sg', '--skip_genprototxt', default=False, action='store_true', help='Flag to skip generating prototxt, default: False')
+
     return parser.parse_args()
 
 def combined_roidb(imdb_names):
@@ -93,41 +97,23 @@ def combined_roidb(imdb_names):
         imdb = get_imdb(imdb_names)
     return imdb, roidb
 
-def createpath( pparts ):
-    fpath = op.join(*pparts);
-    if not os.path.exists(fpath):
-        os.makedirs(fpath);
-    return fpath;   
 def latest_model(model_pattern):
     searchedfile = glob.glob(model_pattern)
     assert (len(searchedfile)>0), "0 file matched by %s!"%(model_pattern)
     files = sorted( searchedfile, key = lambda file: os.path.getmtime(file));
     return files[-1];
 
-def setup_paths(basenet, dataset, expid):
-    proj_root = op.dirname(op.dirname(op.realpath(__file__)));
-    model_path = op.join (proj_root,"models");
-    data_root = op.join(proj_root,"data");
-    data_path = op.join(data_root,dataset);
-    basemodel_file = op.join(model_path ,basenet+'.caffemodel');
-    default_cfg = op.join(model_path,"faster_rcnn_end2end.yml")
-    output_path = createpath([proj_root,"output","_".join([dataset,basenet,expid])]);
-    solver_file = op.join(output_path,"solver.prototxt");
-    snapshot_path = createpath([output_path,"snapshot"]);
-    DATE = datetime.now().strftime('%Y%m%d_%H%M%S')    
-    log_file = op.join(output_path, '%s_%s.log' %(basenet, DATE));
-    caffe_log_file = op.join(output_path, '%s_caffe_'%(basenet));
-    model_pattern = "%s/%s_faster_rcnn_iter_*.caffemodel"%(snapshot_path,basenet.split('_')[0].lower());
-    deploy_path = createpath([output_path,"deploy"]);
-    eval_output =  op.join(output_path, '%s_%s_testeval.tsv' %(basenet, DATE));
-    return { "snapshot":snapshot_path, "solver":solver_file, "log":log_file, "output":output_path, "cfg":default_cfg, 'data_root':data_root, 'data':data_path, 'basemodel':basemodel_file, 'model_pattern':model_pattern, 'deploy':deploy_path, 'caffe_log':caffe_log_file, 'eval':eval_output};
-
 if __name__ == "__main__":
     args = parse_args()
-    path_env = setup_paths( args.net, args.data, args.expid);
-    cfg_from_file(path_env['cfg'])
-    cfg.GPU_ID = args.GPU_ID;
-    cfg.DATA_DIR = path_env['data_root'];
+    path_env = setup_paths( args.net, args.data, args.expid)
+    # Get model train config copy it to the output path.
+    cfg_config = args.model_config or path_env["cfg"]
+    cfg_from_file(cfg_config)
+    copyfile(cfg_config, os.path.join(path_env["output"], "config.yml"))
+    cfg.GPU_ID = args.GPU_ID
+    cfg.DATA_DIR = path_env['data_root']
+    cfg.TRAIN.SCALES = args.train_sizes[:-1]
+    cfg.TRAIN.MAX_SIZE = args.train_sizes[-1]
 
     # fix the random seeds (numpy and caffe) for reproducibility
     #np.random.seed(cfg.RNG_SEED)
@@ -146,7 +132,8 @@ if __name__ == "__main__":
         print 'Loaded dataset `{:s}` for training'.format(imdb.name)
 
         #generate training/testing prototxt
-        gen_prototxt.generate_prototxt(path_env['basemodel'].split('_')[0], imdb.num_images, imdb.num_classes, path_env['output']);
+        if not args.skip_genprototxt :
+            gen_prototxt.generate_prototxt(path_env['basemodel'].split('_')[0], imdb.num_images, imdb.num_classes, path_env['output']);
 
         imdb.set_proposal_method(cfg.TRAIN.PROPOSAL_METHOD)
         print 'Set proposal method: {:s}'.format(cfg.TRAIN.PROPOSAL_METHOD)

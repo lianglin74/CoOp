@@ -25,12 +25,7 @@ def prepare_roidb(imdb):
     sizes = []
     for i in xrange(len(imdb.image_index)):
         image_path = imdb.image_path_at(i)
-        if len(image_path) < 1000:
-            # image path for voc and coco
-            sizes.append(PIL.Image.open(image_path).size)
-        else:
-            # image buffer string for tsv
-            sizes.append(PIL.Image.open(StringIO.StringIO(image_path)).size)
+        sizes.append(PIL.Image.open(StringIO.StringIO(image_path)).size)
         roidb[i]['image'] = image_path
 
         roidb[i]['width'] = sizes[i][0]

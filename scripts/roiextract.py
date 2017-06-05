@@ -89,7 +89,7 @@ def parse_args():
     parser.add_argument('--net', dest='net', help='Network to use ' )
     parser.add_argument('--intsv', required=True,   help='input tsv file for images, col_0:key, col_1:imgbase64')
     parser.add_argument('--colkey', required=False, type=int, default=0,  help='key col index');
-    parser.add_argument('--colimg', required=False, type=int, default=1,  help='imgdata col index');
+    parser.add_argument('--colimg', required=False, type=int, default=2,  help='imgdata col index');
     parser.add_argument('--outtsv', required=False, default="",  help='output tsv file with roi info')
     parser.add_argument('--count',  required=False, default=300, type=int, help='number of rois outputed by RPN')
     args = parser.parse_args()

@@ -112,6 +112,8 @@ class tsv(imdb):
         with open(label_file, 'r') as f:
             for line in f:
                 cols = [x.strip() for x in line.split("\t")];
+		if cols[1].strip() == "":
+			cols[1] = "[]"
                 rects = json.loads(cols[1]);
                 #exclude difficult examples
                 rects = [ obj for obj in rects if 'diff' not in obj or obj['diff']==0 ]

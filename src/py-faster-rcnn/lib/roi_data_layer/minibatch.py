@@ -135,13 +135,9 @@ def _get_image_blob(roidb, scale_inds):
     im_scales = []
     for i in xrange(num_images):
         img_path = roidb[i]['image']
-        if len(img_path) < 1000:
-            # for voc and coco data
-            im = cv2.imread(img_path)
-        else:
-            # for tsv data
-            img_array = np.asarray(bytearray(img_path), dtype=np.uint8)
-            im = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+        # for tsv data
+        img_array = np.asarray(bytearray(img_path), dtype=np.uint8)
+        im = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
         if roidb[i]['flipped']:
             im = im[:, ::-1, :]
         target_size = cfg.TRAIN.SCALES[scale_inds[i]]
