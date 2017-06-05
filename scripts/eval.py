@@ -15,10 +15,6 @@ import json
 import tsvdet,deteval
 from fast_rcnn.config import cfg
 
-# TODO(zhengxu): This is a temp fix for supporting legacy eval script. We might want to find a 
-#                better one in the future.
-from train import setup_paths
-
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("-d", "--data", required=True, help="data folder")
@@ -40,7 +36,7 @@ if __name__ == "__main__":
     caffe.set_device(gpuid)
     cfg.GPU_ID = gpuid
 
-    path_env = setup_paths(cmd.net, cmd.data, cmd.expid)
+    path_env = tsvdet.setup_paths(cmd.net, cmd.data, cmd.expid)
     modelname = cmd.net
     datafolder = path_env["data"]
     jobfolder = path_env["output"]
