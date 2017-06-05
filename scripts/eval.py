@@ -15,9 +15,13 @@ import json
 import tsvdet,deteval
 from fast_rcnn.config import cfg
 
+# TODO(zhengxu): This is a temp fix for supporting legacy eval script. We might want to find a 
+#                better one in the future.
+from train import setup_paths
+
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-d", "--datafolder", required=True, help="data folder")
+    parser.add_argument("-d", "--data", required=True, help="data folder")
     parser.add_argument("-n", "--net", required=True, help="model name, e.g., zf.")
     parser.add_argument("-e", "--expid", required=True, help="experiment id.")
     parser.add_argument("-t", "--iteration", required=True, type=int, nargs="+", help="the iteration count of the snapshot, users can pass in [0] to evaluate all snapshots.")
@@ -32,13 +36,14 @@ def parse_args():
 if __name__ == "__main__":
     cmd = parse_args()
     gpuid = int(cmd.gpu)
-    caffe.set_mode_gpu()    
+    caffe.set_mode_gpu()
     caffe.set_device(gpuid)
     cfg.GPU_ID = gpuid
+
+    path_env = setup_paths(cmd.net, cmd.data, cmd.expid)
     modelname = cmd.net
-    datafolder = cmd.datafolder
-    jobfolder = datafolder if datafolder[-1] != "/" else datafolder[:-1]
-    jobfolder += "_%s_%s" % (modelname, str(cmd.expid))
+    datafolder = path_env["data"]
+    jobfolder = path_env["output"]
     testdata = op.join(datafolder, "test.tsv")
     proto = op.join(jobfolder, "test.prototxt")
     labelmap = op.join(datafolder, "labelmap.txt")
