@@ -7,7 +7,8 @@ import numpy as np;
 from sklearn import metrics;
 import matplotlib.pyplot as plt
 import glob;
-
+from pytablemd import write_tablemd
+from functools import partial
 #load ground-truth, organized by classes
 def load_truths(filein):
     retdict = dict();
@@ -113,17 +114,20 @@ def splitpath (filepath) :
 def parse_args():
     """Parse input arguments."""
     parser = argparse.ArgumentParser(description='Object Detection evaluation')
-    parser.add_argument('--truthfolder', required=True,   help='import groundtruth and baseline files')
-    parser.add_argument('--dets', required=False, default='',  help='import detection results')
-    parser.add_argument('--vocdets', required=False, default='',  help='import voc2007 detection results')
-    parser.add_argument('--name', default="", required=False,   help='the name of the experiment')
-    parser.add_argument('--ovthresh', required=False, type=float, default=0.5,  help='IoU overlap threshold, default=0.5')
-    parser.add_argument('--precth', required=False, type=float, nargs='+', default=[0.8,0.9,0.95], help="get precision, recall, threshold above given precision threshold")
+    parser.add_argument('-t', '--truth', required=True,   help='import groundtruth')
+    parser.add_argument('-b', '--baselinefolder', required=False,   help='import baseline files')
+    parser.add_argument('-d', '--dets', required=False, default='',  help='import detection results')
+    parser.add_argument('-v', '--vocdets', required=False, default='',  help='import voc2007 detection results')
+    parser.add_argument('-n', '--name', default="", required=False,   help='the name of the experiment')
+    parser.add_argument('-o', '--ovthresh', required=False, type=float, nargs='+', default=[0.3,0.4,0.5],  help='IoU overlap threshold, default=0.5')
+    parser.add_argument('-p', '--precth', required=False, type=float, nargs='+', default=[0.8,0.9,0.95], help="get precision, recall, threshold above given precision threshold")
+    parser.add_argument('-ms', '--multiscale', default=False, action='store_true', help='Flag to enable report metrics on small, medium, large object, default: False')
+
     args = parser.parse_args()
     return args
 
-def load_baseline(truthfolder) :
-    file_pattern = truthfolder+"/*.report";
+def load_baseline(baselinefolder) :
+    file_pattern = baselinefolder+"/*.report";
     baseline_files = glob.glob(file_pattern)    
     baseline_files = sorted(baseline_files);
     retdict = dict();
@@ -186,7 +190,7 @@ def get_pr(report, thresh):
     maxid = np.argmax(np.array(recall_));
     maxid = idx[0][maxid]
     return report['thresholds'][maxid], report['precision'][maxid], report['recall'][maxid]
-    
+'''    
 def print_pr(report, thresh):
     th,prec,rec = get_pr(report, thresh)
     print("\t%9.6f\t%9.6f\t%9.6f"%(th,prec,rec));
@@ -208,7 +212,7 @@ def drawfigs(report, baselines, exp_name,report_fig):
     plt.title('Object detection PR Curve on %s dataset'%dataset_name)
     plt.legend(loc="lower right")
     fig.savefig(report_fig,dpi=fig.dpi)
-
+'''    
 def  gen_truthslist(truths):
     truths_small = dict()
     truths_medium = dict()
@@ -241,26 +245,41 @@ def  gen_truthslist(truths):
             truths_small[label][key] = crects_small;
             truths_medium[label][key] = crects_medium;
             truths_large[label][key] = crects_large;
-    return [('small',truths_small), ('medium',truths_medium), ('large',truths_large), ('overall',truths)];  
+    return {'small':truths_small, 'medium':truths_medium, 'large':truths_large, 'overall':truths};  
 
-def mseval (truths, dets, ovths, precths):
-    truths_list = gen_truthslist(truths);
-    for ov_th in ovths:
-        for part in truths_list:
-            report = _eval(part[1], dets, ov_th);
-            print('Overlap_threshold=%g, %s(%d objs), MAP=%g'%(ov_th,part[0],report['npos'],report['map']))
-            print("\tthreshold\tprecision\t recall")
-            print("\t-----------------------------------------")
-            for prec_th in precths:
-                print_pr(report,prec_th);
-            #for item in   report['class_ap'].items():  
-            #    print("\t%s\t%g"%(item[0],item[1]))
-    return report;   #return the overal reports
-                    
+def get_report (truths, dets, ovths, msreport):
+    truths_list = gen_truthslist(truths) if msreport==True else {'overall':truths};
+    reports = dict();
+    for part in truths_list:
+        reports[part] = dict()
+        for ov_th in ovths:    
+            reports[part][ov_th] = _eval(truths_list[part], dets, ov_th);
+    return reports;   #return the overal reports
+
+def print_reports(reports, precths):
+    for key in reports:
+        table = []
+        headings = ['IOU', 'MAP']
+        mv_report = reports[key]
+        for precth in precths:
+            headings += ['Th@%g'%precth, 'Prec@%g'%precth, 'Rec@%g'%precth ]
+        for ov_th in sorted(mv_report.keys()):
+            report = mv_report[ov_th]
+            data = [ov_th, report['map']]
+            for precth in precths:
+                pr = get_pr(report, precth)
+                data += list(pr);
+            data = tuple([round(x,4) for x in data])
+            table +=[data]
+        fields = list(range(len(data)));
+        align = [('^', '<')] + [('^', '^')]*len(data)
+        print('Results on %s objects (%d)'% (key, mv_report[mv_report.keys()[0]]['npos']))
+        write_tablemd(sys.stdout, table,fields,headings,align)
+    
 if __name__ == '__main__':
     # parse arguments
     args = parse_args();
-    truthsfile = args.truthfolder + "/test.tsv";
+    truthsfile = args.truth;
     assert  os.path.isfile(truthsfile), truthsfile + " is not found"
 
     #Load data
@@ -277,19 +296,16 @@ if __name__ == '__main__':
         assert False, "argument dets/vocdets is missing!"
         
     #brief report on different object size
-    report = mseval(truths, detresults, args.ovthresh, args.precth)
+    reports = get_report(truths, detresults, args.ovthresh, args.multiscale)
     # detail report with p-r curve
     
-    exp_name = args.name if args.name !="" else fbase;
-    exp_name = '%s_%g'%(exp_name,args.ovthresh);    
-    report_name = exp_name if report_dir=='' else '/'.join([report_dir,exp_name]);
-    report_fig = report_name + ".png";
-    report_file = report_name + ".report" 
-    dataset_name = os.path.basename(args.truthfolder);
-    
     #save the evaluation result to the report file, which can be used as baseline
-    with open(report_file,"w") as fout:
-        fout.write(json.dumps(report,indent=4, sort_keys=True));
+    exp_name = args.name if args.name !="" else fbase;
+    report_name = exp_name if report_dir=='' else '/'.join([report_dir,exp_name]);
+    report_file = report_name + ".report" 
 
-    baselines = load_baseline(args.truthfolder);
-    drawfigs(report, baselines, exp_name, report_fig);
+    with open(report_file,"w") as fout:
+        fout.write(json.dumps(reports,indent=4, sort_keys=True));
+    
+    #draw figs
+    print_reports(reports, args.precth)
