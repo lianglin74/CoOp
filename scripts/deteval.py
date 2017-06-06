@@ -122,7 +122,8 @@ def parse_args():
     parser.add_argument('-o', '--ovthresh', required=False, type=float, nargs='+', default=[0.3,0.4,0.5],  help='IoU overlap threshold, default=0.5')
     parser.add_argument('-p', '--precth', required=False, type=float, nargs='+', default=[0.8,0.9,0.95], help="get precision, recall, threshold above given precision threshold")
     parser.add_argument('-ms', '--multiscale', default=False, action='store_true', help='Flag to enable report metrics on small, medium, large object, default: False')
-
+    parser.add_argument('-c', '--classap', required=False, type=float,  help='the per class precision on given IOU')
+    
     args = parser.parse_args()
     return args
 
@@ -307,5 +308,8 @@ if __name__ == '__main__':
     with open(report_file,"w") as fout:
         fout.write(json.dumps(reports,indent=4, sort_keys=True));
     
-    #draw figs
     print_reports(reports, args.precth)
+    if args.classap is not None and args.classap in args.ovthresh:
+        caplist = sorted(reports['overall'][args.classap]['class_ap'].items(), key=lambda x:-x[1])
+        for pair in caplist:
+            print('%s\t%.4g'%pair)
