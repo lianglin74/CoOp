@@ -165,4 +165,5 @@ if __name__ == "__main__":
         nimgs = tsvdet(model_dst, intsv_file, 0,2,outtsv_file, proto = proto_src, cmap = labelmap_src);
         time_used = time.time() - start
         print ( 'detect %d images, used %g s (avg: %g s)' % (nimgs,time_used, time_used/nimgs ) )  
-        deteval.mseval(deteval.load_truths(intsv_file), deteval.load_dets(outtsv_file), args.ovth, args.precth );
+        reports = deteval.get_report(deteval.load_truths(intsv_file), deteval.load_dets(outtsv_file), args.ovth, True)
+        deteval.print_reports(reports, args.precth)  
