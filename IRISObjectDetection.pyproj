@@ -24,6 +24,7 @@
     <PtvsTargetsFile>$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Python Tools\Microsoft.PythonTools.targets</PtvsTargetsFile>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="scripts\deteval.py" />
     <Compile Include="scripts\deteval_voc.py" />
     <Compile Include="scripts\gen_prototxt.py">
       <SubType>Code</SubType>
@@ -31,6 +32,7 @@
     <Compile Include="scripts\prepare_voc.py" />
     <Compile Include="scripts\train.py" />
     <Compile Include="scripts\tsvdet.py" />
+    <Compile Include="scripts\yolodet.py" />
     <Compile Include="scripts\_init_paths.py" />
     <Compile Include="src\py-faster-rcnn\lib\datasets\coco.py" />
     <Compile Include="src\py-faster-rcnn\lib\datasets\ds_utils.py" />

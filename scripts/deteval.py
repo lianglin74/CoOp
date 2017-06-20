@@ -25,6 +25,7 @@ def load_truths(filein):
                     retdict[label]=dict();
                 if key not in retdict[label]:
                     retdict[label][key]=[];
+                # groundtruth coords are 0-based. +1
                 bbox = [ x+1 for x in rect['rect'] ];
                 retdict[label][key]+=[(rect['diff'] if 'diff' in rect else 0,bbox)];
     return retdict;
@@ -42,6 +43,7 @@ def load_voc_dets(folderin):
                 if len(cols)<6: continue
                 key = cols[0];
                 conf = float(cols[1])
+                # voc coords are 1-based. no need to +1.
                 rect = [float(x) for x in cols[2:]];
                 clist += [(key, conf, rect)];
         retdict[cname]= sorted(clist, key=lambda x:-x[1]);
@@ -59,7 +61,8 @@ def load_dets(filein):
             rects = json.loads(cols[1]);
             for rect in rects:
                 label = rect['class'].strip();
-                bbox =  rect['rect'];
+                # coords +1 as we did for load_truths
+                bbox = [ x+1 for x in rect['rect'] ];
                 if label not in retdict:
                     retdict[label]=[]
                 retdict[label] += [ (key,rect['conf'],bbox)]
