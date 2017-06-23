@@ -2,6 +2,8 @@
 ## Introduction 
 This repo is for the algorithm development for IRIS object detection. The current implementation is mainly based on `caffe` and `py-faster-rcnn`.
 
+# Windows
+
 ## Prerequisite
 
 1.	NVidia Cuda 8.0
@@ -31,8 +33,30 @@ This repo is for the algorithm development for IRIS object detection. The curren
    ```
    python scripts\train.py --gpu 0 --net zf --data voc20 --iters 7000 --expid dbg
    ```
-   
 
+# Linux
+
+## Installation
+1. Clone the repository
+   ```
+   git clone --recursive https://github.com/leizhangcn/quickdetection.git 
+   ```
+2. Compile the source code by
+   ```
+   ./compile.sh
+   ```
+3. (Optional) Download the data and imagenet models. Run the training with testing.
+
+   Copy the data from //ivm-server2/IRIS/IRISObjectDetection/Data/datasets to QuickDetectionRoot/data. 
+   Copy the model from //ivm-server2/IRIS/IRISObjectDetection/Data/imagenet_models to QuickDetectionRoot/models.
+
+   Note: currently, you have to copy the data from the network share to the
+   local windows desktop/laptop and then upload it to the linux server.
+
+   Run the following to train the model, followed by testing
+   ```
+   python scripts/train.py --gpu 0 --net zf --data voc20 --iters 7000 --expid dbg
+   ```
     
 ## Contribute
 TODO: Explain how other colleagues can contribute. 

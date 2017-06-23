@@ -1,0 +1,22 @@
+# don't continue if there is any error
+set -e
+
+# save the root folder so that we can always cd back
+QUICKDETECTION_ROOT=$(pwd)
+
+# compile caffe
+CAFFE_ROOT="${QUICKDETECTION_ROOT}/src/CCSCaffe/"
+cd $CAFFE_ROOT
+if [ ! -f 'Makefile.config' ]; then
+    cp Makefile.config.example Makefile.config
+    echo "USE_CUDNN := 1" >> Makefile.config
+    echo "WITH_PYTHON_LAYER := 1" >> Makefile.config
+fi
+make -j
+make pycaffe
+
+# compile faster-rcnn
+PY_FASTER_RCNN_ROOT="${QUICKDETECTION_ROOT}/src/py-faster-rcnn"
+cd "${PY_FASTER_RCNN_ROOT}/lib"
+make
+
