@@ -1,6 +1,6 @@
 #!python2
 import os.path as op
-#import _init_paths
+import _init_paths
 # import sys
 # sys.path.insert(0, r'd:\github\caffe-msrccs\pythond')
 import numpy as np
@@ -225,7 +225,8 @@ def result2json(im, probs, boxes, class_map):
 def tsvdet(caffenet, caffemodel, intsv_file, key_idx,img_idx, pixel_mean, outtsv_file, **kwargs):
     if not caffemodel:
         caffemodel = op.splitext(caffenet)[0] + '.caffemodel'
-    cmapfile = op.split(caffenet)[0] + '\\labelmap.txt' if 'cmap' not in kwargs else kwargs['cmap']
+    labelmapfile = 'labelmap.txt' if 'cmap' not in kwargs else kwargs['cmap']
+    cmapfile = os.path.join(op.split(caffenet)[0], labelmapfile)
     if not os.path.isfile(caffemodel) :
         raise IOError(('{:s} not found.').format(caffemodel))
     if not os.path.isfile(caffenet) :

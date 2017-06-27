@@ -11,6 +11,8 @@ if [ ! -f 'Makefile.config' ]; then
     cp Makefile.config.example Makefile.config
     echo "USE_CUDNN := 1" >> Makefile.config
     echo "WITH_PYTHON_LAYER := 1" >> Makefile.config
+    # under ubuntu, compilation will fail without c++11 option
+    echo "CUSTOM_CXX := g++ --std=c++11" >> Makefile.config
 fi
 make -j
 make pycaffe
