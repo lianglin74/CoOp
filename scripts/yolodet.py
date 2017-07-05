@@ -227,6 +227,9 @@ def tsvdet(caffenet, caffemodel, intsv_file, key_idx,img_idx, pixel_mean, outtsv
         caffemodel = op.splitext(caffenet)[0] + '.caffemodel'
     labelmapfile = 'labelmap.txt' if 'cmap' not in kwargs else kwargs['cmap']
     cmapfile = os.path.join(op.split(caffenet)[0], labelmapfile)
+    if not os.path.isfile(cmapfile):
+        cmapfile = os.path.join(os.path.dirname(intsv_file), 'labelmap.txt')
+        assert os.path.isfile(cmapfile)
     if not os.path.isfile(caffemodel) :
         raise IOError(('{:s} not found.').format(caffemodel))
     if not os.path.isfile(caffenet) :
@@ -263,7 +266,7 @@ if __name__ =="__main__":
     else:
         caffe.set_mode_gpu()
         caffe.set_device(args.gpu_id)
-
+    
     pixel_mean = [float(x) for x in args.mean.split(',')]
     tsvdet(args.net, args.model, args.intsv, args.colkey, args.colimg, pixel_mean, outtsv_file)
     

@@ -7,3 +7,4 @@ from resnet import *
 from squeezenet import *
 from fasterrcnn import *
 from darknet import *
+from yolo import Yolo

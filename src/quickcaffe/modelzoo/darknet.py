@@ -76,7 +76,7 @@ class DarkNet(CNNModel):
         ks = 1 if s.endswith('_1') else 3
         pad = 0 if ks==1 else 1
         n[s+'/conv'], n[s+'/bn'], n[s+'/scale'] = conv_bn(bottom, ks=ks, stride=stride, pad=pad, bn_no_train=bn_no_train, nout=nout_dark, lr = lr, deploy = deploy)
-        n[s+'/leaky'] = L.ReLU(n[s+'/scale'], negative_slope=0.1)
+        n[s+'/leaky'] = L.ReLU(n[s+'/scale'], in_place=True, negative_slope=0.1)
         
     def add_body(self, netspec, depth=-1, lr=1, deploy=True):
         n = netspec
@@ -114,6 +114,7 @@ class DarkNet(CNNModel):
                     n[s[0]] = max_pool(last_layer(n), 2, stride=2, pad=1);
                 else:
                     n[s[0]] = max_pool(last_layer(n), 2, stride=2);
+
     def add_body_for_roi(self, netspec, bottom, lr=1, deploy=True):
         n = netspec
         net_defs = self.get_netdefs();
