@@ -239,7 +239,8 @@ def tsvdet(caffenet, caffemodel, intsv_file, key_idx,img_idx, pixel_mean, outtsv
 
     net = caffe.Net(caffenet, caffemodel, caffe.TEST)
     print ('\n\nLoaded network {:s}'.format(caffemodel))
-    with open(outtsv_file,"w") as tsv_out:
+    outtsv_file_tmp = outtsv_file + '.tmp'
+    with open(outtsv_file_tmp,"w") as tsv_out:
         with open(intsv_file,"r") as tsv_in :
             bar = FileProgressingbar(tsv_in)
             for line in tsv_in:
@@ -254,6 +255,7 @@ def tsvdet(caffenet, caffemodel, intsv_file, key_idx,img_idx, pixel_mean, outtsv
                     tsv_out.write(cols[key_idx] + "\t" + results+"\n")
                     count += 1
                 bar.update()
+    os.rename(outtsv_file_tmp, outtsv_file)
     caffe.print_perf(count)
     return count
 

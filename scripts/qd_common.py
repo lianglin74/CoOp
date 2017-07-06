@@ -2,8 +2,10 @@ import _init_paths
 import sys
 import os
 from multiprocessing import Process
+from multiprocessing import Event
 
 import caffe
+import time
 
 def ensure_directory(path):
     if not os.path.exists(path):
@@ -19,6 +21,28 @@ def write_to_file(contxt, file_name):
     ensure_directory(p)
     with open(file_name, 'w') as fp:
         fp.write(contxt)
+
+class LoopProcess(Process):
+    def __init__(self, group=None, target=None, name=None, args=(), kwargs={}):
+        '''
+        same signiture with Process.__init__
+        The process will keep running the function of target and will wait for
+        several seconds in between. This is useful to run some monitoring job
+        or regular job
+        '''
+        super(LoopProcess, self).__init__(group, target, name, args, kwargs)
+        self._exit = Event()
+
+    def run(self):
+        sleep_time = 5
+        while not self._exit.is_set():
+            if self._target:
+                self._target(*self._args, **self._kwargs)
+            time.sleep(sleep_time)
+
+    def init_shutdown(self):
+        self._exit.set()
+
 
 class PyTee(object):
     def __init__(self, logstream, stream_name):
@@ -63,7 +87,6 @@ def parallel_train(
     # NCCL uses a uid to identify a session
     uid = caffe.NCCL.new_uid()
 
-    caffe.init_log()
     caffe.log('Using devices %s' % str(gpus))
 
     procs = []
@@ -76,7 +99,7 @@ def parallel_train(
     for p in procs:
         p.join()
 
-def time(solver, nccl):
+def register_timing(solver, nccl):
     fprop = []
     bprop = []
     total = caffe.Timer()
@@ -125,7 +148,7 @@ def solve(proto, snapshot, weights, gpus, timing, uid, rank):
     nccl.bcast()
 
     if timing and rank == 0:
-        time(solver, nccl)
+        register_timing(solver, nccl)
     else:
         solver.add_callback(nccl)
 
