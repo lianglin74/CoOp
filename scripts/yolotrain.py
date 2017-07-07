@@ -7,20 +7,18 @@ import quickcaffe.modelzoo as mzoo
 from caffe.proto import caffe_pb2
 import numpy as np
 from google.protobuf import text_format
+from qd_common import PyTee
 
 from tsvdet import setup_paths
 from deteval import deteval
 from yolodet import tsvdet
+import time
+from multiprocessing import Process 
 
-def ensure_directory(path):
-    if not os.path.exists(path):
-        os.makedirs(path)
-
-def write_to_file(contxt, file_name):
-    p = os.path.dirname(file_name)
-    ensure_directory(p)
-    with open(file_name, 'w') as fp:
-        fp.write(contxt)
+from qd_common import write_to_file, read_to_buffer, ensure_directory
+from qd_common import parallel_train, LoopProcess
+import matplotlib.pyplot as plt
+import json
 
 def num_non_empty_lines(file_name):
     with open(file_name) as fp:
@@ -93,13 +91,12 @@ class ProtoGenerator:
                 'train_net': train_net_file, 
                 'lr_policy': 'multifixed',
                 'gamma': 0.1,
-                'stepsize': 50000,
-                'display': 1,
+                'display': 100,
                 'momentum': 0.9,
                 'weight_decay': 0.0005,
-                'snapshot': 2000,
+                'snapshot': kwargs.get('snapshot', 2000),
                 'snapshot_prefix': snapshot_prefix,
-                'iter_size': 10,
+                'iter_size': 1,
                 'max_iter': kwargs.get('max_iters', 10000),
                 'stagelr': [0.0001, 0.001, 0.0001, 0.00001],
                 'stageiter': [100, 5000, 9000, 10000000]
@@ -141,6 +138,8 @@ class CaffeWrapper(object):
         expid = kwargs.get('expid', '777')
         path_env = default_paths(net, data, expid)
 
+        model = self._construct_model(path_env['solver'], path_env['test_proto_file'])
+
         if 'num_classes' not in kwargs:
             num_classes = num_non_empty_lines(path_env['labelmap'])
         else:
@@ -148,38 +147,57 @@ class CaffeWrapper(object):
         
         source = path_env['source']
         labelmap = path_env['labelmap'] 
-
+        
         p = ProtoGenerator()
         p.generate_prototxt(net, num_classes, 
                  path_env['train_proto_file'], path_env['test_proto_file'],
                  path_env['solver'], detmodel='Yolo', 
                  source=source, labelmap=labelmap, **kwargs)
+     
+        caffe.init_glog(path_env['log'])
 
-        #self._train(path_env['solver'], pretrained_model=path_env['basemodel'], **kwargs)
-
-        solver_param = self._load_solver(path_env['solver'])
-        last_model = '{0}_iter_{1}.caffemodel'.format(
-                solver_param.snapshot_prefix, solver_param.max_iter)
-        train_net_param = self._load_net(path_env['train_proto_file'])
-        data_layer = train_net_param.layer[0]
-        mean_value = train_net_param.layer[0].transform_param.mean_value
-        model = (path_env['test_proto_file'], last_model, mean_value)
-
+        self._monitor_process = LoopProcess(target=self._train_monitor_once,
+                args=(data, path_env['solver'], path_env['test_proto_file']))
+        self._monitor_process.start()
+        #self._train_monitor_once(data, path_env['solver'],
+                #path_env['test_proto_file'])
+        
+        print 'log file: {0}'.format(path_env['log'])
+        if not os.path.isfile(model[0]) or not os.path.isfile(model[1]):
+            with open(path_env['log'], 'w') as fp, PyTee(fp, 'stdout'):
+                self._train(path_env['solver'], pretrained_model=path_env['basemodel'], **kwargs)
+        
+        print 'log file: {0}'.format(path_env['log'])
+       
+        self._monitor_process.init_shutdown()
+        self._monitor_process.join()
         return model
 
     def predict(self, data, model, **kwargs):
-        test_proto_file, model_param, mean_value = model
+        test_proto_file, model_param, mean_value, train_iter = model
+
+        if not os.path.isfile(test_proto_file) or \
+                not os.path.isfile(model_param):
+            return None
+
         path_env = default_data_path(data)
         colkey = 0
         colimg = 2
-        outtsv_file = model_param + '.eval'
 
-        gpu = kwargs.get('gpu', 0)
-        if gpu<0:
-            caffe.set_mode_cpu()
-        else:
+        outtsv_file = self._predict_file(model)
+
+        if os.path.isfile(outtsv_file):
+            print 'skip to predict since the output exists: ', outtsv_file
+            return outtsv_file 
+
+        gpus = kwargs.get('gpus', '-1')
+        gpus = gpus.split(',')
+        if len(gpus) >= 1 and float(gpus[0]) >= 0:
             caffe.set_mode_gpu()
-            caffe.set_device(gpu)
+            caffe.set_device(int(float(gpus[0])))
+        else:
+            caffe.set_mode_cpu()
+
         tsvdet(test_proto_file, 
                 model_param, 
                 path_env['test_source'], 
@@ -187,14 +205,75 @@ class CaffeWrapper(object):
                 colimg, 
                 mean_value, 
                 outtsv_file)
+
         return outtsv_file
 
     def evaluate(self, data, predict_result, **kwargs):
         path_env = default_data_path(data)
 
-        deteval(truth=path_env['test_source'],
+        eval_file = deteval(truth=path_env['test_source'],
                 dets=predict_result)
 
+        return eval_file
+
+    def _predict_file(self, model):
+        test_proto_file, model_param, mean_value, model_iter = model
+        return model_param + '.eval'
+
+    def _perf_file(self, model):
+        test_proto_file, model_param, mean_value, model_iter = model
+        return model_param + '.report'
+
+
+    def _construct_model(self, solver, test_proto_file, is_last=True):
+        solver_param = self._load_solver(solver)
+        train_net_param = self._load_net(solver_param.train_net)
+        data_layer = train_net_param.layer[0]
+        mean_value = train_net_param.layer[0].transform_param.mean_value
+
+        if is_last:
+            last_model = '{0}_iter_{1}.caffemodel'.format(
+                    solver_param.snapshot_prefix, solver_param.max_iter)
+            return (test_proto_file, last_model, mean_value,
+                    solver_param.max_iter)
+        else:
+            total = (solver_param.max_iter + solver_param.snapshot - 1) / solver_param.snapshot
+            all_model = []
+            for i in xrange(total):
+                j = i * solver_param.snapshot
+                j = min(solver_param.max_iter, j)
+                last_model = '{0}_iter_{1}.caffemodel'.format(
+                        solver_param.snapshot_prefix, j)
+                all_model.append((test_proto_file, last_model, mean_value, j))
+            return all_model
+
+    def _train_monitor_once(self, data, solver_file, test_net_file):
+        print 'monitoring'
+        all_model = self._construct_model(solver_file, test_net_file, False) 
+        valid = []
+        for m in all_model:
+            predict_result = self.predict(data, m)
+            if predict_result:
+                eval_result = self.evaluate(data, predict_result)
+                valid.append((m, eval_result))
+
+        self._display(valid)
+
+    def _display(self, valid):
+        xs = []
+        ys = []
+        for v in valid:
+            model, eval_result = v
+            test_proto_file, model_param, mean_value, model_iter = model
+            xs.append(model_iter)
+            with open(eval_result, 'r') as fp:
+                perf = json.loads(fp.read())
+            ys.append(perf['overall']['0.5']['map'])
+
+        fig = plt.figure()
+        plt.plot(xs, ys, '-o')
+        fig.savefig(os.path.join(os.path.dirname(model_param), 'map.png'))
+    
     def _load_net(self, file_name):
         with open(file_name, 'r') as fp:
             all_line = fp.read()
@@ -210,24 +289,27 @@ class CaffeWrapper(object):
         return solver_param
 
     def _train(self, solver_prototxt, **kwargs):
-        gpu = kwargs.get('gpu', 0)
-        if gpu >= 0:
-            caffe.set_mode_gpu()
-            caffe.set_device(gpu)
-
-        caffe.set_random_seed(777)
-    
         if kwargs.get('chdir', False):
             os.chdir(os.path.dirname(solver_prototxt))
-    
-        solver = caffe.SGDSolver(solver_prototxt)
 
-        pretrained_model = kwargs.get('pretrained_model', None)
+        gpus = [int(float(s)) for s in kwargs.get('gpus', '-1').split(',')]
 
-        if pretrained_model:
-            solver.net.copy_from(pretrained_model)
-    
-        solver.solve()
+        if len(gpus) > 1:
+            pretrained_model = kwargs.get('pretrained_model', '')
+            parallel_train(solver_prototxt, None,
+                pretrained_model, gpus, timing=False)
+        elif len(gpus) == 1:
+            gpu = gpus[0]
+            if gpu >= 0:
+                caffe.set_mode_gpu()
+                caffe.set_device(gpu)
+            caffe.set_random_seed(777)
+            solver = caffe.SGDSolver(solver_prototxt)
+            pretrained_model = kwargs.get('pretrained_model', None)
+            if pretrained_model:
+                solver.net.copy_from(pretrained_model)
+            solver.solve()
+
 
 def Analyser(object):
     def AnalyzeSolver(self, solver):
@@ -273,20 +355,23 @@ def default_paths(net, data, expid):
 
     return path_env
 
-def yolotrain(data, net, expid, **kwargs):
+def yolotrain(data, net, **kwargs):
     c = CaffeWrapper()
 
     model = c.train(data, net, **kwargs)
-    p = c.predict(data, model, **kwargs)
 
-    c.evaluate(data, p, **kwargs)
+    p = c.predict(data, model, **kwargs)
+    
+    if p:
+        c.evaluate(data, p, **kwargs)
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a Yolo network')
-    parser.add_argument('-g', '--gpu', dest='GPU_ID', help='GPU device id to use [0].',  default=0, type=int)
+    parser.add_argument('-g', '--gpus', dest='GPU_ID', help='GPU device id to use [0].',  
+            default='0')
     #parser.add_argument('-n', '--net', required=True, type=str.lower, help='CNN archiutecture')
-    parser.add_argument('-t', '--iters', dest='max_iters',  help='number of
-            iterations to train', default=10000, required=False, type=int)
+    parser.add_argument('-t', '--iters', dest='max_iters',  help='number of iterations to train', 
+            default=10000, required=False, type=int)
     parser.add_argument('-d', '--data', help='the name of the dataset', required=True)
     parser.add_argument('-e', '--expid', help='the experiment id', required=True)
     return parser.parse_args()
@@ -294,11 +379,11 @@ def parse_args():
 if __name__ == '__main__':
     '''
     e.g. python scripts/yolotrain.py --data voc20 --iters 10000 --expid 789 \
-            --gpu 1
+            --gpus 5,6,7,8
     '''
     args = parse_args()
-    #yolotrain(data='voc20', net='darknet19', max_iters=10000, expid='777', gpu=1,
-            #prefetch=4)
+    #yolotrain(data='voc20', net='darknet19', max_iters=10000, expid='772',
+            #gpus='4,5,6,7', snapshot=500)
     yolotrain(args.data, net='darknet19', max_iters=args.iters,
             expid=args.expid, gpu=args.gpu)
 

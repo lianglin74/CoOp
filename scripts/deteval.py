@@ -288,27 +288,36 @@ def deteval(truth='', dets='', vocdets='', name='',
     assert  os.path.isfile(truthsfile), truthsfile + " is not found"
 
     #Load data
-    truths = load_truths(truthsfile);
     if dets!='' :
         detsfile = dets
         (report_dir, fbase, ext) = splitpath(detsfile);
-        detresults = load_dets(detsfile);
     elif vocdets!='':
         report_dir = vocdets
         fbase = 'voc2007'
-        detresults = load_voc_dets(vocdets);
     else:
         assert False, "argument dets/vocdets is missing!"
-        
-    #brief report on different object size
-    reports = get_report(truths, detresults, ovthresh, multiscale)
-    # detail report with p-r curve
-    
+
     #save the evaluation result to the report file, which can be used as baseline
     exp_name = name if name !="" else fbase;
     report_name = exp_name if report_dir=='' else '/'.join([report_dir,exp_name]);
     report_file = report_name + ".report" 
 
+    if os.path.isfile(report_file):
+        print 'skip to evaluate since the report file exists, ', report_file
+        return report_file
+
+    if dets!='' :
+        detresults = load_dets(detsfile);
+    elif vocdets!='':
+        detresults = load_voc_dets(vocdets);
+    else:
+        assert False, "argument dets/vocdets is missing!"
+        
+    truths = load_truths(truthsfile);
+    #brief report on different object size
+    reports = get_report(truths, detresults, ovthresh, multiscale)
+    # detail report with p-r curve
+    
     with open(report_file,"w") as fout:
         fout.write(json.dumps(reports,indent=4, sort_keys=True));
     
@@ -317,6 +326,8 @@ def deteval(truth='', dets='', vocdets='', name='',
         caplist = sorted(reports['overall'][classap]['class_ap'].items(), key=lambda x:-x[1])
         for pair in caplist:
             print('%s\t%.4g'%pair)
+
+    return report_file
 
 if __name__ == '__main__':
     args = parse_args();

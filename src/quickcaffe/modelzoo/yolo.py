@@ -13,7 +13,7 @@ class Yolo(object):
         source_file = kwargs.get('source', 'train.tsv')
 
         tsv_data_param = {'source': source_file, 
-                'batch_size': 8, 
+                'batch_size': 16, 
                 'new_height': 256,
                 'new_width': 256,
                 'col_data': 2,
@@ -90,7 +90,7 @@ class Yolo(object):
                     class_scale=1.0,
                     coord_scale=1.0,
                     thresh=0.6,
-                    debug_info=True,
+                    debug_info=False,
                     biases=biases)
         else:
             n.bbox, n.prob = L.RegionOutput(n['conv_reg'], n['im_info'],
