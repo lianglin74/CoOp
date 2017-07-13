@@ -11,12 +11,14 @@ import base64
 import progressbar 
 import json
 import matplotlib.pyplot as plt
+import multiprocessing as mp
 
 def parse_args(arg_list):
     """Parse input arguments."""
     parser = argparse.ArgumentParser(description='dnn finetune')
     parser = argparse.ArgumentParser(description='Faster R-CNN demo')
-    parser.add_argument('--gpu', dest='gpu_id', help='GPU device id to use [0]', default=0, type=int)
+    parser.add_argument('--gpus', dest='gpus', help='GPU device id to use [0]',
+            default='0')
     parser.add_argument('--net', dest='net', help='Network to use')
     parser.add_argument('--model', required=False, default='', help='caffe model file')
     parser.add_argument('--intsv', required=True,   help='input tsv file for images, col_0:key, col_1:imgbase64')
@@ -222,6 +224,30 @@ def result2json(im, probs, boxes, class_map):
     
     return json.dumps(det_results)
 
+def detprocess(caffenet, caffemodel, pixel_mean, cmap, gpu, key_idx, img_idx, in_queue, out_queue):
+    if gpu >= 0:
+        caffe.set_mode_gpu()
+        caffe.set_device(gpu)
+    else:
+        caffe.set_mode_cpu()
+
+    net = caffe.Net(caffenet, caffemodel, caffe.TEST)
+    count = 0
+    while True:
+        cols = in_queue.get()
+        if cols is None:
+            print 'exiting: {0}'.format(in_queue.qsize())
+            return 
+        if len(cols)> 1:
+            # Load the image
+            im = img_from_base64(cols[img_idx])
+            # Detect all object classes and regress object bounds
+            scores, boxes = im_detect(net, im, pixel_mean)
+            # vis_detections(im, scores, boxes, cmap, thresh=0.5)
+            results = result2json(im, scores, boxes, cmap)
+            out_queue.put(cols[key_idx] + "\t" + results+"\n")
+            count = count + 1
+
 def tsvdet(caffenet, caffemodel, intsv_file, key_idx,img_idx, pixel_mean, outtsv_file, **kwargs):
     if not caffemodel:
         caffemodel = op.splitext(caffenet)[0] + '.caffemodel'
@@ -237,24 +263,42 @@ def tsvdet(caffenet, caffemodel, intsv_file, key_idx,img_idx, pixel_mean, outtsv
     cmap = load_labelmap_list(cmapfile)
     count = 0
 
-    net = caffe.Net(caffenet, caffemodel, caffe.TEST)
-    print ('\n\nLoaded network {:s}'.format(caffemodel))
+    if 'gpus' in kwargs:
+        gpus = [int(float(g)) for g in kwargs['gpus'].split(',')]
+    else:
+        gpus = [0]
+    
+    in_queue = mp.Queue(len(gpus)*2);  # thread/process safe
+    out_queue = mp.Queue();
+    worker_pool = [];
+    for gpu in gpus:
+        worker = mp.Process(target=detprocess, args=(caffenet, caffemodel,
+            pixel_mean, cmap, gpu, key_idx, 
+            img_idx, in_queue, out_queue));
+        worker.daemon = True
+        worker_pool.append(worker)
+        worker.start()
+
+    with open(intsv_file,"r") as tsv_in :
+        bar = FileProgressingbar(tsv_in)
+        for line in tsv_in:
+            cols = [x.strip() for x in line.split("\t")]
+            if len(cols) > img_idx:
+                in_queue.put(cols)
+                count = count + 1
+                bar.update()
+
+    for _ in worker_pool:
+        in_queue.put(None)  # kill all workers
+
     outtsv_file_tmp = outtsv_file + '.tmp'
     with open(outtsv_file_tmp,"w") as tsv_out:
-        with open(intsv_file,"r") as tsv_in :
-            bar = FileProgressingbar(tsv_in)
-            for line in tsv_in:
-                cols = [x.strip() for x in line.split("\t")]
-                if len(cols)> 1:
-                    # Load the image
-                    im = img_from_base64(cols[img_idx])
-                    # Detect all object classes and regress object bounds
-                    scores, boxes = im_detect(net, im, pixel_mean)
-                    # vis_detections(im, scores, boxes, cmap, thresh=0.5)
-                    results = result2json(im, scores, boxes, cmap)
-                    tsv_out.write(cols[key_idx] + "\t" + results+"\n")
-                    count += 1
-                bar.update()
+        for i in xrange(count):
+            tsv_out.write(out_queue.get())
+
+    for proc in worker_pool: #wait all process finished.
+        proc.join()
+
     os.rename(outtsv_file_tmp, outtsv_file)
     caffe.print_perf(count)
     return count
@@ -263,12 +307,8 @@ if __name__ =="__main__":
     args = parse_args(sys.argv[1:])
     outtsv_file = args.outtsv if args.outtsv!="" else os.path.splitext(args.intsv)[0]+".eval"
 
-    if args.gpu_id<0:
-        caffe.set_mode_cpu()
-    else:
-        caffe.set_mode_gpu()
-        caffe.set_device(args.gpu_id)
-    
     pixel_mean = [float(x) for x in args.mean.split(',')]
-    tsvdet(args.net, args.model, args.intsv, args.colkey, args.colimg, pixel_mean, outtsv_file)
+
+    tsvdet(args.net, args.model, args.intsv, args.colkey, args.colimg,
+            pixel_mean, outtsv_file, gpus=args.gpus)
     
