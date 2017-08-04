@@ -164,7 +164,7 @@ class CaffeWrapper(object):
                  path_env['train_proto_file'], path_env['test_proto_file'],
                  path_env['solver'], detmodel='Yolo', 
                  source=source, labelmap=labelmap, **kwargs)
-     
+        
         caffe.init_glog(path_env['log'])
 
         model = self._construct_model(path_env['solver'], path_env['test_proto_file'])
@@ -385,7 +385,7 @@ def parse_args():
             default='0')
     parser.add_argument('-n', '--net', required=False, type=str.lower,
             help='only darknet19 is not supported', default='darknet19')
-    parser.add_argument('-t', '--max_iters', dest='max_iters',  help='number of iterations to train', 
+    parser.add_argument('-t', '--iters', dest='max_iters',  help='number of iterations to train', 
             default=10000, required=False, type=int)
     parser.add_argument('-d', '--data', help='the name of the dataset', required=True)
     parser.add_argument('-e', '--expid', help='the experiment id', required=True)
@@ -394,7 +394,6 @@ def parse_args():
             type=int,
             default=500)
     parser.add_argument('-m', '--monitor_train_only', required=False, type=bool)
-            type=float)
     return parser.parse_args()
 
 if __name__ == '__main__':

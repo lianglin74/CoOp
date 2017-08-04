@@ -101,7 +101,7 @@ class ResNet(CNNModel):
                 else:
                     self.residual_bottleneck_unit(n, nout, s, last_stage, newdepth = unit is 1, lr=lr, bn_no_train=bn_no_train, deploy=deploy)
 
-    def add_body(self, netspec, depth=18, lr=1, deploy=True):
+    def add_body(self, netspec, depth=18, lr=1, deploy=True, **kwargs):
         """
         Generates nets from "Deep Residual Learning for Image Recognition". Nets follow architectures outlined in Table 1.
         """
