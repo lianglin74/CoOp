@@ -159,3 +159,14 @@ def solve(proto, snapshot, weights, gpus, timing, uid, rank):
     if rank == 0:
         solver.snapshot()
 
+def default_data_path(dataset):
+    proj_root = os.path.dirname(os.path.dirname(os.path.realpath(__file__)));
+    result = {}
+    data_root = os.path.join(proj_root, 'data', dataset)
+    result['source'] = os.path.join(data_root, 'train.tsv')
+    result['test_source'] = os.path.join(data_root, 'test.tsv')
+    result['labelmap'] = os.path.join(data_root, 'labelmap.txt')
+    result['source_idx'] = os.path.join(data_root, 'train.lineidx')
+    result['test_source_idx'] = os.path.join(data_root, 'test.lineidx')
+    return result
+

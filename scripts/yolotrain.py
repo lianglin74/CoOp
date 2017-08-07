@@ -19,6 +19,7 @@ import time
 from multiprocessing import Process 
 
 from qd_common import write_to_file, read_to_buffer, ensure_directory
+from qd_common import default_data_path
 from qd_common import parallel_train, LoopProcess
 import matplotlib.pyplot as plt
 import json
@@ -90,6 +91,27 @@ class ProtoGenerator:
         train_net_dir = os.path.dirname(train_net_file)
         snapshot_prefix = os.path.join(train_net_dir, 'snapshot', 'model')
         ensure_directory(os.path.dirname(snapshot_prefix))
+
+        max_iters = kwargs.get('max_iters', None)
+
+        if type(max_iters) is str:
+            if max_iters.endswith('e'):
+                num_train_images = kwargs.get('num_train_images', 5011)
+                effective_batch_size = kwargs.get('effective_batch_size', 64)
+                iter_each_epoch = num_train_images / effective_batch_size
+                epoch = int(max_iters[:-1])
+                max_iters = int(epoch * iter_each_epoch)
+            else:
+                max_iters = int(max_iters)
+        elif max_iters == None:
+            max_iters = 10000 # default values
+        
+        if 'stageiter' in kwargs:
+            stageiter = kwargs['stageiter']
+        else:
+            stageiter = map(lambda x:int(x*max_iters/10000), 
+                    [100,5000,9000,10000000])
+
         solver_param = {
                 'train_net': train_net_file, 
                 'lr_policy': 'multifixed',
@@ -100,9 +122,9 @@ class ProtoGenerator:
                 'snapshot': kwargs.get('snapshot', 2000),
                 'snapshot_prefix': snapshot_prefix,
                 'iter_size': 1,
-                'max_iter': kwargs.get('max_iters', 10000),
+                'max_iter': max_iters,
                 'stagelr': [0.0001, 0.001, 0.0001, 0.00001],
-                'stageiter': [100, 5000, 9000, 10000000]
+                'stageiter': stageiter
                 }
 
         if 'base_lr' in kwargs:
@@ -158,12 +180,17 @@ class CaffeWrapper(object):
         
         source = path_env['source']
         labelmap = path_env['labelmap'] 
-        
-        p = ProtoGenerator()
-        p.generate_prototxt(net, num_classes, 
-                 path_env['train_proto_file'], path_env['test_proto_file'],
-                 path_env['solver'], detmodel='Yolo', 
-                 source=source, labelmap=labelmap, **kwargs)
+
+        if not kwargs.get('skip_genprototxt', False):
+            with open(path_env['source_idx'], 'r') as fp:
+                num_train_images = len(fp.readlines())
+            p = ProtoGenerator()
+            p.generate_prototxt(net, num_classes, 
+                     path_env['train_proto_file'], path_env['test_proto_file'],
+                     path_env['solver'], detmodel='Yolo', 
+                     source=source, labelmap=labelmap, 
+                     num_train_images=num_train_images,
+                     **kwargs)
         
         caffe.init_glog(path_env['log'])
 
@@ -338,15 +365,6 @@ def Analyser(object):
             v = solver.net.blobs[key]
             print key, np.mean(v.data)
 
-def default_data_path(dataset):
-    proj_root = os.path.dirname(os.path.dirname(os.path.realpath(__file__)));
-    result = {}
-    data_root = os.path.join(proj_root, 'data', dataset)
-    result['source'] = os.path.join(data_root, 'train.tsv')
-    result['test_source'] = os.path.join(data_root, 'test.tsv')
-    result['labelmap'] = os.path.join(data_root, 'labelmap.txt')
-    return result
-
 def default_paths(net, data, expid):
     path_env = setup_paths(net, data, expid)
 
@@ -356,12 +374,13 @@ def default_paths(net, data, expid):
     test_file_base = 'test.prototxt'
     solver_file_base = 'solver.prototxt'
 
+    data_path = default_data_path(data)
+    for key in data_path:
+        path_env[key] = data_path[key]
+
     path_env['train_proto_file'] = os.path.join(output_path, train_file_base)
     path_env['test_proto_file'] = os.path.join(output_path, test_file_base)
     path_env['solver'] = os.path.join(output_path, solver_file_base)
-
-    path_env['source'] = os.path.join(path_env['data'], 'train.tsv')
-    path_env['test_source'] = os.path.join(path_env['data'], 'test.tsv')
 
     path_env['labelmap'] = os.path.join(path_env['data'], 'labelmap.txt')
 
@@ -386,22 +405,25 @@ def parse_args():
     parser.add_argument('-n', '--net', required=False, type=str.lower,
             help='only darknet19 is not supported', default='darknet19')
     parser.add_argument('-t', '--iters', dest='max_iters',  help='number of iterations to train', 
-            default=10000, required=False, type=int)
+            default=10000, required=False, type=str)
     parser.add_argument('-d', '--data', help='the name of the dataset', required=True)
     parser.add_argument('-e', '--expid', help='the experiment id', required=True)
+    parser.add_argument('-sg', '--skip_genprototxt', default=False,
+            help='skip the proto file generation',
+            required=False, 
+            type=bool)
     parser.add_argument('-s', '--snapshot', 
             help='the number of iterations to snaphot', required=False,
             type=int,
             default=500)
-    parser.add_argument('-m', '--monitor_train_only', required=False, type=bool)
     return parser.parse_args()
 
 if __name__ == '__main__':
     '''
     e.g. python scripts/yolotrain.py --data voc20 --iters 10000 --expid 789 \
             --net darknet19 \
-            --iters 10000 --expid 789 \
-            --gpus 5,6,7,8 \
+            --expid 789 \
+            --gpus 4,5,6,7 \
             --snapshot 500
     '''
     args = parse_args()

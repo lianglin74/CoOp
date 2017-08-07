@@ -2,6 +2,7 @@ from caffe import layers as L, params as P, to_proto
 from caffe.proto import caffe_pb2
 from layerfactory import conv_bn, last_layer, conv
 from darknet import DarkNet
+import math
 
 class Yolo(object):
     def add_input_data(self, n, num_classes, **kwargs):
@@ -12,8 +13,14 @@ class Yolo(object):
 
         source_file = kwargs.get('source', 'train.tsv')
 
+        if 'gpus' in kwargs:
+            num_threads = len(kwargs['gpus'].split(','))
+        else:
+            num_threads = 1
+        effective_batch_size = kwargs.get('effective_batch_size', 64.0)
+        batch_size = int(math.ceil(effective_batch_size / num_threads))
         tsv_data_param = {'source': source_file, 
-                'batch_size': 16, 
+                'batch_size': batch_size, 
                 'new_height': 256,
                 'new_width': 256,
                 'col_data': 2,
