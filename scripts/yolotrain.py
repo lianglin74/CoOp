@@ -20,6 +20,7 @@ from multiprocessing import Process
 
 from qd_common import write_to_file, read_to_buffer, ensure_directory
 from qd_common import default_data_path
+from qd_common import parse_basemodel_with_depth
 from qd_common import parallel_train, LoopProcess
 import matplotlib.pyplot as plt
 import json
@@ -185,7 +186,7 @@ class CaffeWrapper(object):
             with open(path_env['source_idx'], 'r') as fp:
                 num_train_images = len(fp.readlines())
             p = ProtoGenerator()
-            p.generate_prototxt(net, num_classes, 
+            p.generate_prototxt(parse_basemodel_with_depth(net), num_classes, 
                      path_env['train_proto_file'], path_env['test_proto_file'],
                      path_env['solver'], detmodel='Yolo', 
                      source=source, labelmap=labelmap, 
