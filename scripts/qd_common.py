@@ -77,6 +77,17 @@ class PyTee(object):
         else:
             sys.stderr = self.fstream;
 
+def parse_basemodel_with_depth(net):
+    '''
+    darknet19->darknet19
+    darknet19_abc->darknet19
+    '''
+    if '_' not in net:
+        return net
+    else:
+        i = net.index('_')
+        return net[: i]
+
 def parallel_train(
         solver,  # solver proto definition
         snapshot,  # solver snapshot to restore
