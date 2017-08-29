@@ -166,7 +166,7 @@ def _eval(truths, detresults,ovthresh):
     map = sum(apdict.values())/len(truths);
     y_trues = np.hstack(y_trues)
     y_scores = np.hstack(y_scores)
-    coverage_ratio = float(np.sum(y_trues))/npos;
+    coverage_ratio = float(np.sum(y_trues))/npos if npos !=0 else 0
     precision, recall, thresholds = metrics.precision_recall_curve(y_trues,y_scores);
     precision = list(precision);
     thresholds = list(thresholds);
