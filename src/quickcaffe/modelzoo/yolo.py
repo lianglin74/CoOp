@@ -81,7 +81,6 @@ class Yolo(object):
 
     def add_body(self, n, lr, num_classes, cnnmodel, 
             deploy=False, cpp_version=False, **kwargs):
-        last = last_layer(n)
         kernal_size = 3
         stride = 1
         pad = 1
@@ -105,19 +104,19 @@ class Yolo(object):
                 deploy=deploy)
         biases = [1.08,1.19,3.42,4.41,6.63,11.38,9.42,5.11,16.62,10.52]
         if not deploy:
-            n['loss'] = L.RegionLoss(n['last_conv'], 
+            n['region_loss'] = L.RegionLoss(n['last_conv'], 
                     n['label'],
                     classes=num_classes,
                     coords=4,
                     softmax=True,
                     rescore=True,
                     bias_match=True,
+                    param={'decay_mult': 0, 'lr_mult': 0},
                     object_scale=5,
                     noobject_scale=1.0,
                     class_scale=1.0,
                     coord_scale=1.0,
                     thresh=0.6,
-                    debug_info=False,
                     biases=biases)
         else:
             n.bbox, n.prob = L.RegionOutput(n['last_conv'], n['im_info'],
