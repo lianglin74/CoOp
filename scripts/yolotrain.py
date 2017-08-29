@@ -409,10 +409,14 @@ def parse_args():
             default=10000, required=False, type=str)
     parser.add_argument('-d', '--data', help='the name of the dataset', required=True)
     parser.add_argument('-e', '--expid', help='the experiment id', required=True)
+    parser.add_argument('-ft', '--force_train', 
+            default=False,
+            action='store_true', 
+            help='train the model even if the model is there', 
+            required=False)
     parser.add_argument('-sg', '--skip_genprototxt', default=False,
-            help='skip the proto file generation',
-            required=False, 
-            type=bool)
+            action='store_true', 
+            help='skip the proto file generation')
     parser.add_argument('-s', '--snapshot', 
             help='the number of iterations to snaphot', required=False,
             type=int,
@@ -423,7 +427,6 @@ if __name__ == '__main__':
     '''
     e.g. python scripts/yolotrain.py --data voc20 --iters 10000 --expid 789 \
             --net darknet19 \
-            --expid 789 \
             --gpus 4,5,6,7 \
             --snapshot 500
     '''
