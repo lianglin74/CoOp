@@ -9,8 +9,11 @@ import matplotlib.pyplot as plt
 import glob;
 from pytablemd import write_tablemd
 from functools import partial
-#load ground-truth, organized by classes
+
 def load_truths(filein):
+    '''
+    Return: dict [class][image id] => bboxes
+    '''
     retdict = dict();
     with open(filein, "r") as tsvin:
         for line in tsvin:
@@ -51,6 +54,9 @@ def load_voc_dets(folderin):
     
 #load the detection results, organized by classes
 def load_dets(filein):
+    '''
+    Return: dict [class] => list of (image id, conf, bbox), in ascending order of conf
+    '''
     retdict = dict();
     with open(filein, "r") as tsvin:
         for line in tsvin:
@@ -66,8 +72,8 @@ def load_dets(filein):
                 if label not in retdict:
                     retdict[label]=[]
                 retdict[label] += [ (key,rect['conf'],bbox)]
-    for key in retdict:
-        retdict[key] = sorted(retdict[key], key=lambda x:-x[1])
+    for label in retdict:
+        retdict[label] = sorted(retdict[label], key=lambda x:-x[1])
     return retdict;
 
 def rect_area(rc):
@@ -81,32 +87,44 @@ def IoU(rc1, rc2):
     return (float(iw))*ih/(rect_area(rc1)+rect_area(rc2)-iw*ih) if (iw>0 and ih>0) else 0;
 
 #evaluate the detection results
-def evaluate_ (c_detects, c_truths, ovthresh):
+def evaluate_(c_detects, c_truths, ovthresh):
+    '''
+    For each detection in a class, check whether it hits a ground truth box or not
+    Return: (a list of confs, a list of hit or miss, number of ground truth boxes) 
+    '''
     #calculate npos
+    c_truths_not_hard = dict()
     npos = 0;
-    for key in c_truths:
-        npos += len([x for x in c_truths[key] if x[0]==0])
-    nd = len(c_detects)
-    y_trues = [];
-    y_scores = [];
-    dettag = set();
-    for i in range(nd):
+    for img_id in c_truths:
+        npos += len([difficulty_gtbox for difficulty_gtbox in c_truths[img_id] if difficulty_gtbox[0] == 0])
+
+    y_trues = []
+    y_scores = []
+
+    dettag = set()
+
+    for i in range(len(c_detects)):
         det = c_detects[i]
         y_true = 0;
-        if det[0] in c_truths :
-            overlaps = np.array([ IoU(det[2],truthrect[1]) for truthrect in  c_truths[det[0]]]);       # get overlaps with truth rectangles
-            ovmax = np.max(overlaps)
-            jmax = np.argmax(overlaps)
-            if ovmax> ovthresh:
-                if c_truths[det[0]][jmax][0]==0 :   #if the truth label is not difficult
-                    if (det[0],jmax) not in dettag:
-                        y_true=1;
-                        dettag.add((det[0],jmax))
-                else:   #skip difficult examples
-                    continue;
-        y_trues += [ y_true ];
-        y_scores += [ det[1] ];
-    return (np.array(y_scores),np.array(y_trues), npos);
+        img_id = det[0]
+        conf = det[1]
+        bbox = det[2]
+        if img_id in c_truths:
+            # get overlaps with truth rectangles
+            overlaps = np.array([IoU(bbox, gtbox[1]) for gtbox in c_truths[img_id]])
+            bbox_idx_max = np.argmax(overlaps)
+            if overlaps[bbox_idx_max] > ovthresh:
+                # if a detection hits a difficult gt_box, skip this detection
+                if c_truths[img_id][bbox_idx_max][0] != 0:
+                    continue
+
+                if (img_id, bbox_idx_max) not in dettag:
+                    y_true = 1
+                    dettag.add((img_id, bbox_idx_max))
+
+        y_trues += [ y_true ]
+        y_scores += [ conf ]
+    return (np.array(y_scores), np.array(y_trues), npos)
 
 #split the file path into (directory, basename, ext)
 def splitpath (filepath) :
@@ -142,7 +160,7 @@ def load_baseline(baselinefolder) :
             retdict[expname] = report_metrics;
     return retdict;
 
-def _eval(truths, detresults,ovthresh):
+def _eval(truths, detresults, ovthresh):
     #calculate metrics
     y_scores = [];
     y_trues = [];
@@ -153,10 +171,10 @@ def _eval(truths, detresults,ovthresh):
             continue;
         c_detects = detresults[label];        #detection results for current class
         c_truths = truths[label];             #truths for current class
-        (c_y_scores, c_y_trues, c_npos) = evaluate_(c_detects,c_truths, ovthresh);
+        (c_y_scores, c_y_trues, c_npos) = evaluate_(c_detects, c_truths, ovthresh)
         if len(c_detects)>0:
             c_true_sum = np.sum(c_y_trues)
-            ap = metrics.average_precision_score(c_y_trues,c_y_scores) * c_true_sum/c_npos if c_true_sum>0 else 0;
+            ap = metrics.average_precision_score(c_y_trues, c_y_scores) * c_true_sum/c_npos if c_true_sum > 0 else 0
             y_scores += [c_y_scores];
             y_trues += [c_y_trues];
             apdict[label] = ap;
@@ -164,9 +182,9 @@ def _eval(truths, detresults,ovthresh):
             apdict[label]=0;
         npos += c_npos;
     map = sum(apdict.values())/len(truths);
-    y_trues = np.hstack(y_trues)
-    y_scores = np.hstack(y_scores)
-    coverage_ratio = float(np.sum(y_trues))/npos if npos !=0 else 0
+    y_trues = np.hstack(y_trues) if len(y_trues) != 0 else np.array([0])
+    y_scores = np.hstack(y_scores) if len(y_scores) != 0 else np.array([0])
+    coverage_ratio = float(np.sum(y_trues))/npos if npos != 0 else 0
     precision, recall, thresholds = metrics.precision_recall_curve(y_trues,y_scores);
     precision = list(precision);
     thresholds = list(thresholds);
@@ -183,7 +201,8 @@ def _eval(truths, detresults,ovthresh):
             'npos': npos,
             'coverage_ratio' : coverage_ratio
             }
-def eval( truthsfile, detsfile, ovthresh):
+
+def eval(truthsfile, detsfile, ovthresh):
     truths = load_truths(truthsfile);
     detresults = load_dets(detsfile);
     return _eval(truths, detresults, ovthresh);
