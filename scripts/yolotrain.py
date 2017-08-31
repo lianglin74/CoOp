@@ -16,7 +16,7 @@ from tsvdet import setup_paths
 from deteval import deteval
 from yolodet import tsvdet
 import time
-from multiprocessing import Process 
+from multiprocessing import Process, Queue
 
 from qd_common import write_to_file, read_to_buffer, ensure_directory
 from qd_common import default_data_path
@@ -24,6 +24,7 @@ from qd_common import parse_basemodel_with_depth
 from qd_common import parallel_train, LoopProcess
 import matplotlib.pyplot as plt
 import json
+import yoloinit
 
 def num_non_empty_lines(file_name):
     with open(file_name) as fp:
@@ -170,6 +171,30 @@ class CaffeWrapper(object):
                 break
             time.sleep(5)
 
+    def run_in_process(self, func, *args):
+        def run_in_queue(que, *args):
+            que.put(func(*args))
+
+        que = Queue()
+        process_args = [que]
+        process_args.extend(args)
+        p = Process(target=run_in_queue, args=tuple(process_args))
+        p.daemon = False
+        p.start()
+        p.join()
+        return que.get()
+
+    def initialize_linear_layer_with_data(self, path_env, gpus):
+        if len(gpus) > 0:
+            caffe.set_device(gpus[0])
+            caffe.set_mode_gpu()
+
+        base_model_proto_test_file = path_env['basemodel'][:-11]+"_test.prototxt"
+        new_base_net = yoloinit.data_dependent_init(path_env['basemodel'], base_model_proto_test_file, path_env['train_proto_file'])
+        new_base_net_filepath = os.path.join(path_env['output'], path_env['basemodel'][:-11]+"_dpi.caffemodel")
+        new_base_net.save(new_base_net_filepath)
+        return new_base_net_filepath
+
     def train(self, data, net, **kwargs):
         expid = kwargs.get('expid', '777')
         path_env = default_paths(net, data, expid)
@@ -193,6 +218,8 @@ class CaffeWrapper(object):
                      num_train_images=num_train_images,
                      **kwargs)
         
+        gpus = [int(float(s)) for s in kwargs.get('gpus', '-1').split(',')]
+        pretrained_model_file_path = self.run_in_process(self.initialize_linear_layer_with_data, path_env, gpus) if kwargs.get('data_dependent_init', False) else path_env['basemodel']
         caffe.init_glog(path_env['log'])
 
         model = self._construct_model(path_env['solver'], path_env['test_proto_file'])
@@ -201,8 +228,8 @@ class CaffeWrapper(object):
                 or not os.path.isfile(model[1]) \
                 or kwargs.get('force_train', False):
             with open(path_env['log'], 'w') as fp, PyTee(fp, 'stdout'):
-                self._train(path_env['solver'], pretrained_model=path_env['basemodel'], **kwargs)
-        
+                self._train(path_env['solver'], pretrained_model=pretrained_model_file_path, **kwargs)
+
         return model
 
     def predict(self, data, model, **kwargs):
@@ -391,7 +418,7 @@ def yolotrain(data, net, **kwargs):
     c = CaffeWrapper()
 
     monitor_train_only = kwargs.get('monitor_train_only', False)
-    
+
     if not monitor_train_only:
         model = c.train(data, net, **kwargs)
         predict_result = c.predict(data, model, **kwargs)
@@ -421,6 +448,11 @@ def parse_args():
             help='the number of iterations to snaphot', required=False,
             type=int,
             default=500)
+    parser.add_argument('-dpi', '--data_dependent_init',
+            default=False,
+            action='store_true',
+            help='initialize the last linear layer of the model with data',
+            required=False)
     return parser.parse_args()
 
 if __name__ == '__main__':
