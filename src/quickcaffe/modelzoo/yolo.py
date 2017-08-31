@@ -86,28 +86,36 @@ class Yolo(object):
         pad = 1
         bn_no_train = deploy
         num_output = 1024
-
-        for name in ['extra_conv19', 'extra_conv20']:
+        num_extra_convs = kwargs.get('num_extra_convs', 3)
+        conv_id = 19
+        for i in range(0, num_extra_convs - 1):
+            name = 'extra_conv{}'.format(conv_id)
+            conv_id = conv_id + 1
             self.dark_block(n, name, num_output, stride, lr, deploy,
                     bn_no_train)
         
         if kwargs.get('add_reorg', True):
+            assert num_extra_convs == 3, 'when add_reorg is true, add 3 conv'
             reorg_from = self.before_last_reduce_spatial_resolution(n)
             n['reorg'] = L.Reorg(reorg_from, stride=2)
             n.concat20 = L.Concat(n['reorg'], n['extra_conv20/leaky'])
 
-        self.dark_block(n, 'extra_conv21', num_output, stride, lr, deploy,
-            bn_no_train)
+        if num_extra_convs > 0:
+            name = 'extra_conv{}'.format(conv_id)
+            self.dark_block(n, name, num_output, stride, lr, deploy,
+                    bn_no_train)
 
-        num_output = (num_classes + 1 + 4) * 5
-        n['last_conv'] = conv(n['extra_conv21/leaky'], num_output, ks=1,
-                deploy=deploy)
         biases = [1.08,1.19,3.42,4.41,6.63,11.38,9.42,5.11,16.62,10.52]
+        coords = 4
+        num_output = (num_classes + 1 + coords) * len(biases) / 2
+        last = last_layer(n)
+        n['last_conv'] = conv(last, num_output, ks=1,
+                deploy=deploy)
         if not deploy:
             n['region_loss'] = L.RegionLoss(n['last_conv'], 
                     n['label'],
                     classes=num_classes,
-                    coords=4,
+                    coords=coords,
                     softmax=True,
                     rescore=True,
                     bias_match=True,
