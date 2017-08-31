@@ -71,7 +71,8 @@ class ProtoGenerator:
             n.im_info = caffe.layers.Layer()
 
         model.add_body(n, depth=model_depth, lr=1, deploy=deploy)
-        det.add_body(n, lr=1, num_classes=num_classes, cnnmodel=model, deploy=deploy, cpp_version=cpp_version)
+        det.add_body(n, lr=1, num_classes=num_classes, cnnmodel=model,
+                cpp_version=cpp_version, **kwargs)
 
         layers = str(n.to_proto()).split('layer {')[1:]
         layers = ['layer {' + x for x in layers]
@@ -441,6 +442,19 @@ def parse_args():
             action='store_true', 
             help='train the model even if the model is there', 
             required=False)
+    parser.add_argument('-no-ar', '--no-add_reorg', dest='add_reorg',
+            action='store_false',
+            default=True,
+            required=False,
+            help='if the reorg layer should be added')
+    parser.add_argument('-nc', '--num_extra_convs', 
+            default=3,
+            type=int,
+            help='the number of extra conv layers')
+    parser.add_argument('-eb', '--effective_batch_size', 
+            default=64,
+            type=int,
+            help='effective batch size')
     parser.add_argument('-sg', '--skip_genprototxt', default=False,
             action='store_true', 
             help='skip the proto file generation')
@@ -459,8 +473,7 @@ if __name__ == '__main__':
     '''
     e.g. python scripts/yolotrain.py --data voc20 --iters 10000 --expid 789 \
             --net darknet19 \
-            --gpus 4,5,6,7 \
-            --snapshot 500
+            --gpus 4,5,6,7
     '''
     args = parse_args()
     yolotrain(**vars(args))
