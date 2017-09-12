@@ -369,8 +369,8 @@ class CaffeWrapper(object):
         elif len(gpus) == 1:
             gpu = gpus[0]
             if gpu >= 0:
-                caffe.set_mode_gpu()
                 caffe.set_device(gpu)
+                caffe.set_mode_gpu()
             caffe.set_random_seed(777)
             solver = caffe.SGDSolver(solver_prototxt)
             pretrained_model = kwargs.get('pretrained_model', None)
