@@ -35,6 +35,54 @@ def load_labelmap(label_file):
     cnames.insert(0, '__background__')    # always index 0
     return dict(zip(cnames, xrange(len(cnames))))
 
+def weight_normalize(W,B,avgnorm2):
+    W -= np.average(W, axis=0);
+    B -=  np.average(B)
+    W_normavg = np.average(np.add.reduce(W*W,axis=1));
+    alpha = np.sqrt(avgnorm2/W_normavg)
+    return alpha*W, alpha*B
+    
+def ncc2_train(X, Y, avgnorm2, epsilon=0.001):
+    cmax = np.max(Y)+1;
+    means = np.zeros((cmax, X.shape[1]), dtype=np.float32)
+    for i in range(cmax):
+        idxs = np.where(Y==i)
+        means[i,:] = np.average(X[idxs,:], axis=1)
+        X[idxs,:] -= means[i,:]
+    cov = np.dot(X.T,X)/(X.shape[0]-1)
+    W = LA.solve(cov+epsilon*np.identity(X.shape[1]),means.T).T
+    #W = LA.solve(cov,means.T).T
+    B = -0.5*np.add.reduce(W*means,axis=1)
+    return weight_normalize(W,B,avgnorm2)
+
+def extract_training_data( new_net,anchor_num, lname, tr_cnt=200):
+    feature_blob_name = new_net.bottom_names[lname][0]
+    feature_blob_shape = new_net.blobs[feature_blob_name].data.shape
+    feature_outdim = new_net.params[lname][1].data.shape[0]
+    class_num = feature_outdim//anchor_num -5
+    wcnt = np.zeros(class_num, dtype=np.float32)
+    xlist =[]
+    ylist = []
+    while True:
+        new_net.forward(end=lname)
+        feature_map = new_net.blobs[feature_blob_name].data.copy()
+        fh = feature_map.shape[2]-1    
+        fw = feature_map.shape[3]-1
+        labels = new_net.blobs['label'].data;
+        batch_size = labels.shape[0];
+        for i in range(batch_size):
+            cid =int(labels[i,4]);
+            if np.sum(labels[i,:])==0:          #no more foreground objects
+                break;
+            bbox_x = int(labels[i,0]*fw+0.5)
+            bbox_y = int(labels[i,1]*fh+0.5)
+            xlist += [feature_map[i,:,bbox_y,bbox_x]]
+            ylist += [cid]
+            wcnt[cid]+=1;
+        if  np.min(wcnt) > tr_cnt:    break;
+    return np.vstack(xlist).astype(float), np.array(ylist).astype(int);
+    
+    
 def data_dependent_init(pretrained_weights_filename, pretrained_prototxt_filename, new_prototxt_filename):
     pretrained_net = caffe.Net(pretrained_prototxt_filename, pretrained_weights_filename, caffe.TEST)
     new_net = caffe.Net(new_prototxt_filename, caffe.TRAIN)
@@ -52,11 +100,13 @@ def data_dependent_init(pretrained_weights_filename, pretrained_prototxt_filenam
     print("# of anchors: %s" % anchor_num)
     #model surgery 1, copy bbox regression
     conv_w, conv_b = [p.data for p in pretrained_net.params[pretrain_last_layer_name]]
-    conv_w = conv_w.reshape(anchor_num,-1,conv_w.shape[1])
+    featuredim = conv_w.shape[1]    
+    conv_w = conv_w.reshape(anchor_num,-1,featuredim)
     conv_b = conv_b.reshape(anchor_num,-1)
 
     new_w, new_b = [p.data for p in new_net.params[new_last_layer_name]];    
-    new_w = new_w.reshape(anchor_num,-1,new_w.shape[1])
+
+    new_w = new_w.reshape(anchor_num,-1,featuredim)
     new_b = new_b.reshape(anchor_num,-1)
     new_w[:,:5,:] = conv_w[:,:5,:]
     new_b[:,:5] = conv_b[:,:5]
@@ -64,45 +114,16 @@ def data_dependent_init(pretrained_weights_filename, pretrained_prototxt_filenam
     #data dependent model init   
     class_to_ind = load_labelmap(parse_labelfile_path(model_from_new_proto))
     
-    feature_blob_name = new_net.bottom_names[new_last_layer_name][0]
-    feature_blob_shape = new_net.blobs[feature_blob_name].data.shape
-    featuredim = feature_blob_shape[1]
-
-    new_class_num = new_w.shape[1] - 5
-    wsum = np.zeros((new_class_num, featuredim), dtype=np.float32)
-    wcnt = np.zeros((new_class_num), dtype=np.float32)
+    X,Y = extract_training_data(new_net,anchor_num, new_last_layer_name, tr_cnt=60  )
+    #calculate the empirical norm of the yolo classification weights
+    base_cw= conv_w[:,5:,:].reshape(-1,featuredim)
+    base_avgnorm2 = np.average(np.add.reduce(base_cw*base_cw,axis=1))    
     
-    while True:
-        new_net.forward(end=new_last_layer_name)
-        feature_map = new_net.blobs[feature_blob_name].data.copy()
-        fh = feature_map.shape[2]-1    
-        fw = feature_map.shape[3]-1
-        labels = new_net.blobs['label'].data
-        batch_size = labels.shape[0]
-        for i in range(batch_size):
-            cid =int(labels[i,4])
-            if np.sum(labels[i,:])==0:          #no more foreground objects
-                break
-            bbox_x = int(labels[i,0]*fw+0.5)
-            bbox_y = int(labels[i,1]*fh+0.5)
-            wsum[cid,:] += feature_map[i,:,bbox_y,bbox_x]
-            wcnt[cid]+=1
-        min_cnt = np.min(wcnt)
-        if  min_cnt > 20:
-            break
-
-    class_means = wsum/wcnt[:,None]
-    norm_avg = np.average(LA.norm(conv_w[:,5:,:], axis=2))
-    class_norms = LA.norm(class_means, axis=1)
-    class_b = -0.5*(class_norms**2)
-    class_normavg = np.average(class_norms)
-    class_means *= norm_avg/class_normavg
-    class_b *= norm_avg/class_normavg
-    class_b -= np.average(class_b)
+    W,B = ncc2_train(X,Y,base_avgnorm2)    
     
     for i in range(anchor_num):
-        new_w[i,5:] = class_means
-        new_b[i,5:] = class_b
+        new_w[i,5:] = W
+        new_b[i,5:] = B
         
     new_net.params[new_last_layer_name][0].data[...] = new_w.reshape(-1, featuredim, 1,1)
     new_net.params[new_last_layer_name][1].data[...] = new_b.reshape(-1)
@@ -127,4 +148,4 @@ if __name__ == "__main__":
 
     new_proto = "yolo_voc20_train.prototxt"
     new_net = data_dependent_init(pretrained_weights, pretrained_proto, new_proto)
-    new_net.save('models/darknet19_voc20b.caffemodel')
+    new_net.save('models/darknet19_voc20c.caffemodel')
