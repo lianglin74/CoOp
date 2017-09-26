@@ -5,8 +5,15 @@ from layerfactory import *
 from cnnmodel import *
 
 class DarkNet(CNNModel):
+    def get_stages(self):
+        return self.stages
     def roi_size(self):
         return 7
+    def get_stagedefs(self):
+        stages8 = [('dark6/conv',1024,32),('dark5/conv',512,16),('dark4/conv',256,8)]
+        stages16 = [('dark5e_1/conv',128,16),('dark4d/conv',256,16),('dark3d/conv',128,4)]
+        stages19 = [('dark6e/conv',1024,32),('dark5e/conv',512,16),('dark4c/conv',256,8)]
+        return {8:stages8, 16:stages16, 19:stages19}
     def get_netdefs(self):
         net_defs8 = [
             ('dark1', 16),
@@ -82,6 +89,7 @@ class DarkNet(CNNModel):
         n = netspec
         net_defs = self.get_netdefs();
         assert depth in net_defs.keys(), 'darknet only support depths' + str(net_defs.keys())            
+        self.stages= self.get_stagedefs()[depth]
         for s in net_defs[depth]:
             if s[0].startswith('dark'):
                 nout = s[1]

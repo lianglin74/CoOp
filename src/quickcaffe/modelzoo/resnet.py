@@ -6,6 +6,7 @@ from layerfactory import *
 from cnnmodel import *
 
 class ResNet(CNNModel):
+    
     def roi_size(self):
         return 14
 
@@ -31,6 +32,7 @@ class ResNet(CNNModel):
             n[s_] = L.Eltwise(n[s + 'scale2'], bottom)
 
         n[s + 'relu'] = L.ReLU(n[s_], in_place=True)
+        return s_
 
     def residual_bottleneck_unit(self, n, nout, s, last_stage, newdepth = False, lr = 1, bn_no_train=False, deploy=True):
         """
@@ -58,6 +60,7 @@ class ResNet(CNNModel):
             n[s_] = L.Eltwise(n[s + 'scale3'], n[bottom])
 
         n[s + 'relu'] = L.ReLU(n[s_], in_place=True)
+        return s_
 
     def add_stem(self, netspec, lr=1, bn_no_train=False, deploy=True):
         n = netspec
@@ -81,8 +84,9 @@ class ResNet(CNNModel):
 
         nunits_list, unit_type = net_defs[depth] # nunits_list a list of integers indicating the number of layers in each depth.
         nouts = [64, 128, 256, 512] # same for all nets
-
+        strides = [4,8,16,32]   # stride of each stages
         n = netspec
+        self.stages=[]
         # make the convolutional body
         for s in stage_range:
             # s is 2-based, assuming stage 1 is the stem part
@@ -97,9 +101,11 @@ class ResNet(CNNModel):
                     s = 'res' + str(stage+2) + chr(ord('a')+unit-1) + '_' # layer name prefix
                 last_stage = True if stage == len(nouts) - 1 else False
                 if unit_type == "standard":
-                    self.residual_standard_unit(n, nout, s, last_stage, newdepth = unit is 1 and nout > 64, lr=lr, bn_no_train=bn_no_train, deploy=deploy)
+                    stage_name = self.residual_standard_unit(n, nout, s, last_stage, newdepth = unit is 1 and nout > 64, lr=lr, bn_no_train=bn_no_train, deploy=deploy)
                 else:
-                    self.residual_bottleneck_unit(n, nout, s, last_stage, newdepth = unit is 1, lr=lr, bn_no_train=bn_no_train, deploy=deploy)
+                    stage_name = self.residual_bottleneck_unit(n, nout, s, last_stage, newdepth = unit is 1, lr=lr, bn_no_train=bn_no_train, deploy=deploy)
+                if unit== nunits:
+                    self.stages.append((stage_name,nouts[stage], strides[stage]))
 
     def add_body(self, netspec, depth=18, lr=1, deploy=True, **kwargs):
         """
@@ -122,3 +128,6 @@ class ResNet(CNNModel):
     def add_body_for_roi(self, netspec, bottom, lr=1, deploy=True):
         self.add_stages(netspec, stage_range=[5], depth=self.model_depth, lr=lr, bn_no_train=True, deploy=deploy)
         netspec.pool5 = ave_pool_global(last_layer(netspec))
+    
+    def get_stages(self):
+        return self.stages

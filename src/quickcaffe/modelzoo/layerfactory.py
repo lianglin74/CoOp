@@ -6,6 +6,15 @@ import caffe
 def last_layer(n):
     return n.__dict__['tops'][n.__dict__['tops'].keys()[-1]]
 
+def deconv(bottom, nout, ks=3, stride=1, pad=0, lr=1, weight_filler=dict(type='msra'), bias_filler=dict(type='constant', value=0), deploy=True):
+    if deploy:
+        _deconv = L.Deconvolution(bottom,convolution_param=dict(num_output=nout, kernel_size=ks, stride=stride, pad=pad))
+    else:
+        param = [dict(lr_mult=lr, decay_mult=1), dict(lr_mult=2 * lr, decay_mult=0) ]
+        _deconv = L.Deconvolution(bottom,convolution_param=dict(num_output=nout, kernel_size=ks, stride=stride, pad=pad, weight_filler=weight_filler, bias_filler=bias_filler), param = param)
+        
+    return _deconv
+
 def conv(bottom, nout, ks=3, stride=1, pad=0, lr=1, weight_filler=dict(type='msra'), bias_filler=dict(type='constant', value=0), deploy=True):
     if deploy:
         _conv = L.Convolution(bottom, kernel_size=ks, stride=stride,

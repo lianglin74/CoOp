@@ -6,10 +6,14 @@ class CNNModel(object):
         # to ensure the feature map size is divided by 16, not by 32, assuming the input_size being 224.
         self.add_last_pooling_layer = add_last_pooling_layer
         self.rcnn_mode = rcnn_mode
+        self.stages = [];
 
     def crop_size(self):
         return 224
-
+        
+    def get_stages(self):
+        pass
+        
     def roi_size(self):
         return 6
 
