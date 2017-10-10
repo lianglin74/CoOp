@@ -32,7 +32,7 @@ def name_suggestions(phrase):
 
 def _synset_offset(name, parent_synset=None, parent=None):
     """synset ofset of name that descends from (or is closest to) the parent synset
-    Original paper keeps shortest paths to root, but that is not useful: e.g. food, rhea, bench ...
+    Simple word-sense disambiguation based on super-category
     """
 
     for label in name_suggestions(name):
