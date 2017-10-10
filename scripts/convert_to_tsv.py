@@ -309,7 +309,7 @@ convert_to_tsv.py d:/data/fridge -a d:/data/coco/annotations_fridge/
 
     parser.add_argument('-k', '--keep', help='Maximum number of images to keep for each label',
                         type=float, default=np.inf)
-    parser.add_argument('-a', '--annotation', action='append', required=True,
+    parser.add_argument('-a', '--annotation', action='append', required=True, default=[],
                         help='Annotation archive file, or directory (can be specified multiple times)')
     parser.add_argument('root_path', metavar='PATH', help='path to the images dataset')
 
