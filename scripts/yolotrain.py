@@ -18,12 +18,14 @@ from yolodet import tsvdet
 import time
 from multiprocessing import Process, Queue
 
+from qd_common import init_logging
 from qd_common import write_to_file, read_to_buffer, ensure_directory
 from qd_common import default_data_path
 from qd_common import parse_basemodel_with_depth
 from qd_common import parallel_train, LoopProcess
 import matplotlib.pyplot as plt
 import json
+import logging
 import yoloinit
 
 def num_non_empty_lines(file_name):
@@ -97,27 +99,33 @@ class ProtoGenerator:
 
         max_iters = kwargs.get('max_iters', None)
 
-        if type(max_iters) is str:
-            if max_iters.endswith('e'):
+        def to_iter(e):
+            if type(e) is str and e.endswith('e'):
                 num_train_images = kwargs.get('num_train_images', 5011)
                 effective_batch_size = kwargs.get('effective_batch_size', 64)
                 iter_each_epoch = num_train_images / effective_batch_size
-                epoch = int(max_iters[:-1])
-                max_iters = int(epoch * iter_each_epoch)
+                return int(e[:-1]) * iter_each_epoch
             else:
-                max_iters = int(max_iters)
+                return int(e)
+
+        if type(max_iters) is str:
+            max_iters = to_iter(max_iters)
         elif max_iters == None:
             max_iters = 10000 # default values
         
-        if 'stageiter' in kwargs:
-            stageiter = kwargs['stageiter']
+        logging.info('max iter: {}'.format(max_iters))
+
+        if 'stageiter' in kwargs and kwargs['stageiter']:
+            stageiter = [to_iter(si) for si in kwargs['stageiter']]
         else:
             stageiter = map(lambda x:int(x*max_iters/10000), 
                     [100,5000,9000,10000000])
 
+        lr_policy = kwargs.get('lr_policy', 'multifixed')
+
         solver_param = {
                 'train_net': train_net_file, 
-                'lr_policy': 'multifixed',
+                'lr_policy': lr_policy,
                 'gamma': 0.1,
                 'display': 100,
                 'momentum': 0.9,
@@ -125,10 +133,15 @@ class ProtoGenerator:
                 'snapshot': kwargs.get('snapshot', 2000),
                 'snapshot_prefix': snapshot_prefix,
                 'iter_size': 1,
-                'max_iter': max_iters,
-                'stagelr': [0.0001, 0.001, 0.0001, 0.00001],
-                'stageiter': stageiter
+                'max_iter': max_iters
                 }
+
+        if lr_policy == 'multifixed':
+            if kwargs.get('stagelr', None):
+                solver_param['stagelr'] = kwargs['stagelr']
+            else:
+                solver_param['stagelr'] = [0.0001,0.001,0.0001,0.00001]
+            solver_param['stageiter'] = stageiter
 
         if 'base_lr' in kwargs:
             solver_param['base_lr'] = kwargs['base_lr']
@@ -416,6 +429,7 @@ def default_paths(net, data, expid):
     return path_env
 
 def yolotrain(data, net, **kwargs):
+    init_logging()
     c = CaffeWrapper()
 
     monitor_train_only = kwargs.get('monitor_train_only', False)
@@ -467,6 +481,19 @@ def parse_args():
             action='store_true',
             help='initialize the last linear layer of the model with data',
             required=False)
+    parser.add_argument('-si', '--stageiter',
+            default=None,
+            help='e.g. 30e,30e,30e',
+            type=lambda s: s.split(','),
+            required=False)
+    parser.add_argument('-sl', '--stagelr',
+            default=None,
+            help='e.g. 0.002,0.01',
+            type=lambda s: [float(x) for x in s.split(',')],
+            required=False)
+    parser.add_argument('-fg', '--yolo_full_gpu', default=False,
+            action='store_true', 
+            help='full gpu')
     return parser.parse_args()
 
 if __name__ == '__main__':
