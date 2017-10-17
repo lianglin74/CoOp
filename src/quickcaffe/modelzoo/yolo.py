@@ -112,26 +112,84 @@ class Yolo(object):
         n['last_conv'] = conv(last, num_output, ks=1,
                 deploy=deploy)
         if not deploy:
-            n['region_loss'] = L.RegionLoss(n['last_conv'], 
-                    n['label'],
-                    classes=num_classes,
-                    coords=coords,
-                    softmax=True,
-                    rescore=True,
-                    bias_match=True,
-                    param={'decay_mult': 0, 'lr_mult': 0},
-                    object_scale=5,
-                    noobject_scale=1.0,
-                    class_scale=1.0,
-                    coord_scale=1.0,
-                    thresh=0.6,
-                    biases=biases)
+            if not kwargs.get('yolo_full_gpu', False):
+                n['region_loss'] = L.RegionLoss(n['last_conv'], 
+                        n['label'],
+                        classes=num_classes,
+                        coords=coords,
+                        softmax=True,
+                        rescore=True,
+                        bias_match=True,
+                        param={'decay_mult': 0, 'lr_mult': 0},
+                        object_scale=5,
+                        noobject_scale=1.0,
+                        class_scale=1.0,
+                        coord_scale=1.0,
+                        thresh=0.6,
+                        biases=biases)
+            else:
+                add_yolo_train_loss(n, biases, num_classes)
         else:
-            n.bbox, n.prob = L.RegionOutput(n['last_conv'], n['im_info'],
-                    ntop=2,
-                    classes=num_classes,
-                    thresh=0.005, # 0.24
-                    nms=0.45,
-                    biases=biases)
+            if not kwargs.get('yolo_full_gpu', False):
+                n.bbox, n.prob = L.RegionOutput(n['last_conv'], n['im_info'],
+                        ntop=2,
+                        classes=num_classes,
+                        thresh=0.005, # 0.24
+                        nms=0.45,
+                        biases=biases)
+            else:
+                add_yolo_test_loss(n, biases, num_classes)
 
+def add_yolo_train_loss(n, biases, num_classes):
+    last_top = last_layer(n)
+    num_anchor = len(biases) / 2
+
+    n.xy, n.wh, n.obj, n.conf = L.Slice(last_top, 
+            ntop=4,
+            name='slice_region',
+            slice_point=[num_anchor * 2, num_anchor * 4,
+                num_anchor * 5])
+    n.sigmoid_xy = L.Sigmoid(n.xy, in_place=True)
+    n.sigmoid_obj = L.Sigmoid(n.obj, in_place=True)
+    regionTargetOutput = L.RegionTarget(n.sigmoid_xy, n.wh, n.sigmoid_obj,
+            n.label, 
+            name='region_target',
+            param={'decay_mult': 0, 'lr_mult': 0},
+            ntop=6, 
+            propagate_down=[False, False, False, False],
+            biases=biases)
+    n.t_xy, n.t_wh, n.t_xywh_weight, n.t_o_obj, n.t_o_noobj, n.t_label = regionTargetOutput
+    n.xy_loss = L.EuclideanLoss(n.xy, n.t_xy, n.t_xywh_weight, 
+            propagate_down=[True, False, False], 
+            loss_weight=1)
+    n.wh_loss = L.EuclideanLoss(n.wh, n.t_wh, n.t_xywh_weight, 
+            propagate_down=[True, False, False], 
+            loss_weight=1)
+    n.o_obj_loss = L.EuclideanLoss(n.obj, n.t_o_obj, 
+            propagate_down=[True, False], loss_weight=5)
+    n.o_noobj_loss = L.EuclideanLoss(n.obj, n.t_o_noobj, 
+            propagate_down=[True, False], loss_weight=1)
+    n.reshape_t_label = L.Reshape(n.t_label, shape={'dim': [-1, 1, 0, 0]})
+    n.reshape_conf = L.Reshape(n.conf, shape={'dim': [-1, num_classes, 0, 0]})
+    n.softmax_loss = L.SoftmaxWithLoss(n.reshape_conf, n.reshape_t_label,
+            propagate_down=[True, False],
+            loss_weight=num_anchor, loss_param={'ignore_label': -1, 'normalization':
+                P.Loss.BATCH_SIZE})
+
+def add_yolo_test_loss(n, biases, num_classes):
+    last_top = last_layer(n)
+    num_anchor = len(biases) / 2
+
+    n.xy, n.wh, n.obj, n.conf = L.Slice(last_top, 
+            ntop=4,
+            name='slice_region',
+            slice_point=[num_anchor * 2, num_anchor * 4, num_anchor * 5])
+    n.sigmoid_xy = L.Sigmoid(n.xy, in_place=True)
+    n.sigmoid_obj = L.Sigmoid(n.obj, in_place=True)
+    n.reshape_conf = L.Reshape(n.conf, shape={'dim': [-1, num_classes, 0, 0]})
+    n.softmax_conf = L.Softmax(n.reshape_conf)
+    n.bbox, n.prob = L.RegionPrediction(n.sigmoid_xy, n.wh, n.sigmoid_obj,
+            n.softmax_conf, n.im_info, ntop=2, 
+            thresh=0.005, # 0.24
+            biases=biases)
 

@@ -147,6 +147,10 @@ def im_detect(net, im, pixel_mean, target_size=416):
     bbox = net.blobs['bbox'].data[0]
     prob = net.blobs['prob'].data[0]
 
+    prob = prob.reshape(-1, prob.shape[-1])
+    assert bbox.shape[-1] == 4
+    bbox = bbox.reshape(-1, 4)
+
     return prob, bbox
 
 def postfilter(im, scores, boxes, class_map, max_per_image=1000, thresh=0.005):

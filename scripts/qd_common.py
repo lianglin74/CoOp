@@ -3,9 +3,18 @@ import sys
 import os
 from multiprocessing import Process
 from multiprocessing import Event
+import numpy as np
+import logging
 
 import caffe
 import time
+
+def init_logging():
+    np.seterr(all='raise')
+    logging.basicConfig(level=logging.INFO,
+    format='%(asctime)s.%(msecs)03d %(filename)s:%(lineno)s: %(message)s',
+    datefmt='%m-%d %H:%M:%S',
+    )
 
 def ensure_directory(path):
     if not os.path.exists(path):
