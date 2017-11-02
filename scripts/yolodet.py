@@ -117,17 +117,36 @@ def im_rescale(im, target_size):
 #        data = data[::-1, ...]
 #    return data
 
-def im_detect(net, im, pixel_mean, target_size=416):
+def im_detect(net, im, pixel_mean, target_size=416, **kwargs):
     im_orig = im.astype(np.float32, copy=True)
     im_orig -= pixel_mean
+
+    if kwargs.get('yolo_test_maintain_ratio'):
+        h, w = im_orig.shape[0:2]
+        alpha = target_size / np.sqrt(h * w)
+        height2 = int(np.round(alpha * h))
+        width2 = int(np.round(alpha * w))
+        if h > w:
+            network_input_height = (height2 + 31) / 32 * 32
+            network_input_width = ((network_input_height * w + h - 1) / h
+                    + 31) / 32 * 32
+        else:
+            network_input_width = (width2 + 31) / 32 * 32
+            network_input_height = ((network_input_width * h + w - 1) / w +
+                    31) / 32 * 32
+        target_size = max(network_input_width, 
+                network_input_height)
+    else:
+        network_input_width = target_size 
+        network_input_height = target_size 
     
     im_resized = im_rescale(im_orig, target_size)
 
     new_h, new_w = im_resized.shape[0:2]
-    left = (target_size - new_w) / 2
-    right = target_size - new_w - left
-    top = (target_size - new_h) / 2
-    bottom = target_size - new_h - top
+    left = (network_input_width - new_w) / 2
+    right = network_input_width - new_w - left
+    top = (network_input_height - new_h) / 2
+    bottom = network_input_height - new_h - top
     im_squared  = cv2.copyMakeBorder(im_resized, top=top, bottom=bottom, left=left, right=right, borderType= cv2.BORDER_CONSTANT, value=[0,0,0] )
     # change blob dim order from h.w.c to c.h.w
     channel_swap = (2, 0, 1)
@@ -228,7 +247,8 @@ def result2json(im, probs, boxes, class_map):
     
     return json.dumps(det_results)
 
-def detprocess(caffenet, caffemodel, pixel_mean, cmap, gpu, key_idx, img_idx, in_queue, out_queue):
+def detprocess(caffenet, caffemodel, pixel_mean, cmap, gpu, key_idx, img_idx,
+        in_queue, out_queue, **kwargs):
     if gpu >= 0:
         caffe.set_mode_gpu()
         caffe.set_device(gpu)
@@ -246,7 +266,7 @@ def detprocess(caffenet, caffemodel, pixel_mean, cmap, gpu, key_idx, img_idx, in
             # Load the image
             im = img_from_base64(cols[img_idx])
             # Detect all object classes and regress object bounds
-            scores, boxes = im_detect(net, im, pixel_mean)
+            scores, boxes = im_detect(net, im, pixel_mean, **kwargs)
             # vis_detections(im, scores, boxes, cmap, thresh=0.5)
             results = result2json(im, scores, boxes, cmap)
             out_queue.put(cols[key_idx] + "\t" + results+"\n")
@@ -278,7 +298,7 @@ def tsvdet(caffenet, caffemodel, intsv_file, key_idx,img_idx, pixel_mean, outtsv
     for gpu in gpus:
         worker = mp.Process(target=detprocess, args=(caffenet, caffemodel,
             pixel_mean, cmap, gpu, key_idx, 
-            img_idx, in_queue, out_queue));
+            img_idx, in_queue, out_queue), kwargs=kwargs);
         worker.daemon = True
         worker_pool.append(worker)
         worker.start()
