@@ -389,7 +389,8 @@ class CaffeWrapper(object):
             solver = caffe.SGDSolver(solver_prototxt)
             pretrained_model = kwargs.get('pretrained_model', None)
             if pretrained_model:
-                solver.net.copy_from(pretrained_model)
+                solver.net.copy_from(pretrained_model, 
+                        ignore_shape_mismatch=True)
             solver.solve()
 
 
