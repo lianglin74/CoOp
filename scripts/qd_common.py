@@ -162,7 +162,8 @@ def solve(proto, snapshot, weights, gpus, timing, uid, rank):
         solver.restore(snapshot)
 
     if weights and len(weights) != 0:
-        solver.net.copy_from(weights)
+        solver.net.copy_from(weights,
+                ignore_shape_mismatch=True)
 
     nccl = caffe.NCCL(solver, uid)
     nccl.bcast()

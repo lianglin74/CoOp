@@ -259,8 +259,9 @@ class CaffeWrapper(object):
 
         outtsv_file = self._predict_file(model)
 
-        if os.path.isfile(outtsv_file):
-            print 'skip to predict since the output exists: ', outtsv_file
+        if os.path.isfile(outtsv_file) and not kwargs.get('force_predict',
+                False):
+            logging.info('skip to predict (exist): {}'.format(outtsv_file))
             return outtsv_file 
 
         tsvdet(test_proto_file, 
@@ -388,7 +389,8 @@ class CaffeWrapper(object):
             solver = caffe.SGDSolver(solver_prototxt)
             pretrained_model = kwargs.get('pretrained_model', None)
             if pretrained_model:
-                solver.net.copy_from(pretrained_model)
+                solver.net.copy_from(pretrained_model, 
+                        ignore_shape_mismatch=True)
             solver.solve()
 
 
@@ -494,6 +496,12 @@ def parse_args():
     parser.add_argument('-fg', '--yolo_full_gpu', default=False,
             action='store_true', 
             help='full gpu')
+    parser.add_argument('-ma', '--yolo_test_maintain_ratio', default=False,
+            action='store_true', 
+            help='maintain the aspect ratio')
+    parser.add_argument('-fp', '--force_predict', default=False,
+            action='store_true', 
+            help='force to predict even if the predict file exists')
     return parser.parse_args()
 
 if __name__ == '__main__':
