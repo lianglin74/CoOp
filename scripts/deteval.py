@@ -21,7 +21,7 @@ def load_truths(filein):
             if len(cols)<2:
                 continue;
             key = cols[0]
-            rects = json.loads(cols[1]);
+            rects = json.loads(cols[1]) if cols[1]!='' else [];
             for rect in rects:
                 label = rect['class'].strip();
                 if label not in retdict:

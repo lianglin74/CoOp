@@ -42,16 +42,21 @@ def weight_normalize(W,B,avgnorm2):
     alpha = np.sqrt(avgnorm2/W_normavg)
     return alpha*W, alpha*B
     
-def ncc2_train(X, Y, avgnorm2, epsilon=0.001):
+def calc_epsilon(dnratio):
+    if dnratio>10: return 0.1
+    elif dnratio<2:  return 10
+    else: return 1;
+        
+def ncc2_train(X,Y, avgnorm2):
     cmax = np.max(Y)+1;
+    epsilon = calc_epsilon(X.shape[0]/X.shape[1]);
     means = np.zeros((cmax, X.shape[1]), dtype=np.float32)
     for i in range(cmax):
         idxs = np.where(Y==i)
         means[i,:] = np.average(X[idxs,:], axis=1)
         X[idxs,:] -= means[i,:]
-    cov = np.dot(X.T,X)/(X.shape[0]-1)
-    W = LA.solve(cov+epsilon*np.identity(X.shape[1]),means.T).T
-    #W = LA.solve(cov,means.T).T
+    cov = np.dot(X.T,X)/(X.shape[0]-1) + epsilon*np.identity(X.shape[1])
+    W = LA.solve(cov,means.T).T
     B = -0.5*np.add.reduce(W*means,axis=1)
     return weight_normalize(W,B,avgnorm2)
 
@@ -133,7 +138,8 @@ def data_dependent_init(pretrained_weights_filename, pretrained_prototxt_filenam
 def parse_args():
     parser = argparse.ArgumentParser(description='Initialzie a model')
     parser.add_argument('-g', '--gpuid',  help='GPU device id to be used.',  type=int, default='0')
-    parser.add_argument('-n', '--net', required=True, type=str.lower, help='CNN archiutecture')
+    parser.add_argument('-n', '--net', required=True, type=str, help='CNN archiutecture')
+    parser.add_argument('-j', '--jobfolder', required=True, type=str, help='job folder')
 
     return parser.parse_args()
 
@@ -146,6 +152,6 @@ if __name__ == "__main__":
     pretrained_weights = op.join('models', args.net+".caffemodel")
     pretrained_proto = op.join('models', args.net+"_test.prototxt")
 
-    new_proto = "yolo_voc20_train.prototxt"
+    new_proto = op.join(args.jobfolder, "train.prototxt");
     new_net = data_dependent_init(pretrained_weights, pretrained_proto, new_proto)
-    new_net.save('models/darknet19_voc20c.caffemodel')
+    new_net.save(op.join(args.jobfolder,'init.caffemodel'))
