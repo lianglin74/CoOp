@@ -41,7 +41,7 @@ if __name__ == "__main__":
     datafolder = path_env["data"]
     jobfolder = path_env["output"]
     testdata = op.join(datafolder, "test.tsv")
-    proto = op.join(jobfolder, "test.prototxt")
+    proto = op.join(jobfolder, "test_cpp.prototxt")
     labelmap = op.join(datafolder, "labelmap.txt")
 
     if cmd.iteration == [0]:

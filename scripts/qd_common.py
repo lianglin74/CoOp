@@ -3,9 +3,18 @@ import sys
 import os
 from multiprocessing import Process
 from multiprocessing import Event
+import numpy as np
+import logging
 
 import caffe
 import time
+
+def init_logging():
+    np.seterr(all='raise')
+    logging.basicConfig(level=logging.INFO,
+    format='%(asctime)s.%(msecs)03d %(filename)s:%(lineno)s: %(message)s',
+    datefmt='%m-%d %H:%M:%S',
+    )
 
 def ensure_directory(path):
     if not os.path.exists(path):
@@ -57,11 +66,11 @@ class PyTee(object):
         self.logstream.write(data);
         self.fstream.write(data);
         self.logstream.flush();
-        self.fstream.flush();        
+        self.fstream.flush();
 
     def flush(self):
         self.logstream.flush();
-        self.fstream.flush();        
+        self.fstream.flush();
 
     def __enter__(self):
         if self.stream_name=='stdout' :
@@ -180,4 +189,3 @@ def default_data_path(dataset):
     result['source_idx'] = os.path.join(data_root, 'train.lineidx')
     result['test_source_idx'] = os.path.join(data_root, 'test.lineidx')
     return result
-
