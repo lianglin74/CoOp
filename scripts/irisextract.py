@@ -49,7 +49,7 @@ if __name__ == "__main__":
 
     pretrained_weights = args.net
     new_proto = args.proto
-    new_net = caffe.Net(new_proto,pretrained_weights, caffe.TRAIN)
+    new_net = caffe.Net(new_proto,pretrained_weights, caffe.TEST)
     feaout = args.output if args.output is not None else op.join(op.split(new_proto)[0],'features.h5');
     #new_proto = "dark19_voc20_train.prototxt"
     #X, Y = extract_training_data(new_net, 'res5c', 'label', 784 )  #5 epoches
