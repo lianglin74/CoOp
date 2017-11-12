@@ -1,8 +1,122 @@
+import logging
+from collections import OrderedDict
+from nltk.corpus import wordnet as wn
 import yaml
 from ete2 import Tree
 import glob
 import os.path as op
 from qd_common import write_to_file, read_to_buffer
+from qd_common import init_logging, ensure_directory
+
+def dump_tree(root):
+    result = OrderedDict()
+    for f in root.features:
+        if f in ['support', 'name', 'dist', 'synset']:
+            continue
+        result[f] = root.__getattribute__(f)
+    result[root.name] = []
+    for c in root.children:
+        result[root.name].append(dump_tree(c))
+    return result
+
+def synset_to_noffset(synset):
+    return '{}{:0>8}'.format(synset.pos(), synset.offset())
+
+def synonym_list():
+    p = []
+    p.append(('airplane', 'aeroplane'))
+    #p.append(('tv', 'tvmonitor'))
+    p.append(('motorcycle', 'motorbike'))
+    p.append(('couch', 'sofa'))
+    return p
+
+def synonym():
+    p = synonym_list()
+    result = {}
+    for a, b in p:
+        result[a] = b
+        result[b] = a
+    return result
+
+class LabelToSynset(object):
+    def __init__(self):
+        self._white_list = {'apple': wn.synset_from_pos_and_offset('n', 7739125),
+                    'banana': wn.synset_from_pos_and_offset('n', 7753592),
+                    'bear': wn.synset_from_pos_and_offset('n', 2131653),
+                    'bed': wn.synset_from_pos_and_offset('n', 2818832),
+                    'bench': wn.synset_from_pos_and_offset('n', 2828884),
+                    'device': wn.synset_from_pos_and_offset('n', 3183080),
+                    'chair': wn.synset_from_pos_and_offset('n', 3001627),
+                    'pen': wn.synset_from_pos_and_offset('n', 3906997),
+                    'marker': wn.synset_from_pos_and_offset('n', 3722007),
+                    'book': wn.synset_from_pos_and_offset('n', 6410904),
+                    'coke': wn.synset_from_pos_and_offset('n', 7928696),
+                    'ring': wn.synset_from_pos_and_offset('n', 4092609),
+                    'tv': wn.synset_from_pos_and_offset('n', 6277280),
+                    'television': wn.synset_from_pos_and_offset('n', 6277280),
+                    }
+        s = synonym()
+        for k1 in s:
+            k2 = s[k1]
+            if k1 in self._white_list:
+                if k2 in self._white_list:
+                    assert self._white_list[k1] == self._white_list[k2]
+                else:
+                    self._white_list[k2] = self._white_list[k1]
+            elif k2 in self._white_list:
+                self._white_list[k1] = self._white_list[k2]
+
+        labels = self._white_list.keys()
+        for label in labels:
+            anchor = self._white_list[label]
+            equal_ls = self._equal_labels(label)
+            for l in equal_ls:
+                if l in self._white_list:
+                    assert self._white_list[l] == anchor 
+                else:
+                    self._white_list[l] = anchor 
+
+    def convert(self, label):
+        if len(label) == 9 and label[0] == 'n':
+            return noffset_to_synset(label)
+
+        labels = self._equal_labels(label)
+        for label in labels:
+            if label in self._white_list:
+                return self._white_list[label]
+        
+        result  = []
+        for label in labels:
+            sss = [ss for ss in wn.synsets(label) if ss.pos() == 'n']
+            result.extend(sss)
+        if len(result) == 1:
+            return result[0]
+        return result
+
+    def _equal_labels(self, label):
+        r = [label]
+        if ' ' in label:
+            r += [label.replace(' ', '_'), label.replace(' ', '')]
+        return r
+
+def populate_noffset(root):
+    if not hasattr(root, 'noffset') or root.noffset is None:
+        mapper = LabelToSynset()
+        s = mapper.convert(root.name)
+        if s is not None and type(s) is not list:
+            root.add_feature('noffset', synset_to_noffset(s))
+        else:
+            root.add_feature('noffset', None)
+            if type(s) is list and len(s) > 1:
+                #root.add_feature('noffsets', ','.join(
+                    #['[{0}](http://www.image-net.org/synset?wnid={0})'.format(
+                        #synset_to_noffset(o)) for o in s]))
+                root.add_feature('noffsets', ','.join([synset_to_noffset(o) for o in
+                    s]))
+            else:
+                logging.info('cannot find {}'.format(root.name.encode('UTF-8')))
+    for c in root.children:
+        populate_noffset(c)
 
 class Taxonomy(object):
     def __init__(self, tax, name='root'):
