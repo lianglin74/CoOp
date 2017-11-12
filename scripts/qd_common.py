@@ -1,4 +1,6 @@
 import _init_paths
+import yaml
+from collections import OrderedDict
 import sys
 import os
 from multiprocessing import Process
@@ -8,6 +10,12 @@ import logging
 
 import caffe
 import time
+
+def setup_yaml():
+    """ https://stackoverflow.com/a/8661021 """
+    represent_dict_order = lambda self, data:  self.represent_mapping('tag:yaml.org,2002:map', data.items())
+    yaml.add_representer(OrderedDict, represent_dict_order)    
+    setup_yaml()
 
 def init_logging():
     np.seterr(all='raise')
