@@ -7,6 +7,7 @@ from multiprocessing import Process
 from multiprocessing import Event
 import numpy as np
 import logging
+import os.path as op
 
 import caffe
 import time
@@ -25,19 +26,39 @@ def init_logging():
     )
 
 def ensure_directory(path):
-    if not os.path.exists(path):
-        os.makedirs(path)
+    if path == '' or path == '.':
+        return
+    if path != None and len(path) > 0:
+        if not os.path.exists(path):
+            os.makedirs(path)
 
 def read_to_buffer(file_name):
     with open(file_name, 'r') as fp:
         all_line = fp.read()
     return all_line
 
+def write_to_yaml_file(context, file_name):
+    ensure_directory(op.dirname(file_name))
+    with open(file_name, 'w') as fp:
+        yaml.dump(context, fp, default_flow_style=False)
+
+def load_from_yaml_file(file_name):
+    with open(file_name, 'r') as fp:
+        return yaml.safe_load(fp)
+
 def write_to_file(contxt, file_name):
     p = os.path.dirname(file_name)
     ensure_directory(p)
     with open(file_name, 'w') as fp:
         fp.write(contxt)
+
+def load_list_file(fname):
+    with open(fname, 'r') as fp:
+        lines = fp.readlines()
+    result = [line.strip() for line in lines]
+    if len(result) > 0 and result[-1] == '':
+        result = result[:-1]
+    return result
 
 class LoopProcess(Process):
     def __init__(self, group=None, target=None, name=None, args=(), kwargs={}):

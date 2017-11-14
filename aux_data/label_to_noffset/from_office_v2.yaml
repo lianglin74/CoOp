@@ -1,0 +1,37 @@
+- definitions:
+  - definition: a glass or plastic vessel used for storing drinks or other liquids;
+      typically cylindrical without handles and with a narrow neck that can be plugged
+      or capped
+    noffset: n02876657 
+  - definition: a vessel fitted with a flexible teat and filled with milk or formula;
+      used as a substitute for breast feeding infants and very young children
+    noffset: n02877266
+  markdown_url: '[n02876657](http://www.image-net.org/synset?wnid=n02876657),[n02877266](http://www.image-net.org/synset?wnid=n02877266)'
+  name: bottle
+  noffset: n02876657
+- definitions:
+  - definition: a member of the genus Canis (probably descended from the common wolf)
+      that has been domesticated by man since prehistoric times; occurs in many breeds
+    noffset: n02084071
+  - definition: metal supports for logs in a fireplace
+    noffset: n02710044
+  markdown_url: '[n02084071](http://www.image-net.org/synset?wnid=n02084071),[n02710044](http://www.image-net.org/synset?wnid=n02710044)'
+  name: dog
+  noffset: n02084071
+- definitions:
+  - definition: 'feline mammal usually having thick soft fur and no ability to roar:
+      domestic cats; wildcats'
+    noffset: n02121620
+  - definition: an informal term for a youth or man
+    noffset: n10153414
+  - definition: a whip with nine knotted cords
+    noffset: n02985606
+  - definition: a large tracked vehicle that is propelled by two endless metal belts;
+      frequently used for moving earth in construction and farm work
+    noffset: n02983507
+  - definition: any of several large cats typically able to roar and living in the
+      wild
+    noffset: n02127808
+  markdown_url: '[n02121620](http://www.image-net.org/synset?wnid=n02121620),[n10153414](http://www.image-net.org/synset?wnid=n10153414),[n02985606](http://www.image-net.org/synset?wnid=n02985606),[n02983507](http://www.image-net.org/synset?wnid=n02983507),[n02127808](http://www.image-net.org/synset?wnid=n02127808)'
+  name: cat
+  noffset: n02121620

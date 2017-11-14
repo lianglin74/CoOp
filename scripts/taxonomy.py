@@ -7,6 +7,7 @@ import glob
 import os.path as op
 from qd_common import write_to_file, read_to_buffer
 from qd_common import init_logging, ensure_directory
+from qd_common import load_from_yaml_file
 
 def dump_tree(root):
     result = OrderedDict()
@@ -38,6 +39,9 @@ def synonym():
         result[b] = a
     return result
 
+def noffset_to_synset(noffset):
+    return wn.synset_from_pos_and_offset(noffset[0], int(noffset[1:]))
+
 class LabelToSynset(object):
     def __init__(self):
         self._white_list = {'apple': wn.synset_from_pos_and_offset('n', 7739125),
@@ -54,7 +58,15 @@ class LabelToSynset(object):
                     'ring': wn.synset_from_pos_and_offset('n', 4092609),
                     'tv': wn.synset_from_pos_and_offset('n', 6277280),
                     'television': wn.synset_from_pos_and_offset('n', 6277280),
+                    'projector': wn.synset_from_pos_and_offset('n', 4009552),
+                    'telephone': wn.synset_from_pos_and_offset('n', 4401088),
+                    'dish': wn.synset_from_pos_and_offset('n', 3206908),
+                    'monitor': wn.synset_from_pos_and_offset('n', 3782190),
+                    'eyeglasses': wn.synset_from_pos_and_offset('n', 4272054),
+                    'sun glasses': wn.synset_from_pos_and_offset('n', 4356056),
+                    'pencil': wn.synset_from_pos_and_offset('n', 3908204),
                     }
+        self._update_by_name_map('./aux_data/label_to_noffset')
         s = synonym()
         for k1 in s:
             k2 = s[k1]
@@ -80,6 +92,8 @@ class LabelToSynset(object):
         if len(label) == 9 and label[0] == 'n':
             return noffset_to_synset(label)
 
+        label = label.lower()
+
         labels = self._equal_labels(label)
         for label in labels:
             if label in self._white_list:
@@ -99,24 +113,67 @@ class LabelToSynset(object):
             r += [label.replace(' ', '_'), label.replace(' ', '')]
         return r
 
-def populate_noffset(root):
-    if not hasattr(root, 'noffset') or root.noffset is None:
-        mapper = LabelToSynset()
-        s = mapper.convert(root.name)
-        if s is not None and type(s) is not list:
-            root.add_feature('noffset', synset_to_noffset(s))
-        else:
-            root.add_feature('noffset', None)
-            if type(s) is list and len(s) > 1:
-                #root.add_feature('noffsets', ','.join(
-                    #['[{0}](http://www.image-net.org/synset?wnid={0})'.format(
-                        #synset_to_noffset(o)) for o in s]))
-                root.add_feature('noffsets', ','.join([synset_to_noffset(o) for o in
-                    s]))
+    def populate_noffset(self, root):
+        if not hasattr(root, 'noffset') or root.noffset is None:
+            s = self.convert(root.name)
+            if s is not None and type(s) is not list:
+                root.add_feature('noffset', synset_to_noffset(s))
             else:
-                logging.info('cannot find {}'.format(root.name.encode('UTF-8')))
+                root.add_feature('noffset', None)
+                if type(s) is list and len(s) > 1:
+                    #root.add_feature('noffsets', ','.join(
+                        #['[{0}](http://www.image-net.org/synset?wnid={0})'.format(
+                            #synset_to_noffset(o)) for o in s]))
+                    root.add_feature('noffsets', ','.join([synset_to_noffset(o) for o in
+                        s]))
+                else:
+                    logging.info('cannot find {}'.format(root.name.encode('UTF-8')))
+        for c in root.children:
+            self.populate_noffset(c)
+
+    def _update_by_name_map(self, folder):
+        for yaml_file in glob.glob(op.join(folder, '*.yaml')):
+            logging.info('loadding {}'.format(yaml_file))
+            wl = load_from_yaml_file(yaml_file)
+            for d in wl:
+                if d['name'] in self._white_list:
+                    assert synset_to_noffset(self._white_list[d['name']]) == \
+                            d['noffset']
+                elif d['noffset'] != None:
+                    self._white_list[d['name']] = noffset_to_synset(d['noffset'])
+
+def populate_url_for_offset(root):
+    if not hasattr(root, 'noffset'):
+        populate_noffset(root)
+    if root.noffset:
+        root.add_feature('url',
+                'http://www.image-net.org/synset?wnid={}'.format(root.noffset))
+    if hasattr(root, 'noffsets'):
+        noffsets = root.noffsets.split(',')
+        urls = ['[{0}](http://www.image-net.org/synset?wnid={0})'.format(noffset) for
+                noffset in noffsets]
+        root.add_feature('markdown_url', ','.join(urls))
     for c in root.children:
-        populate_noffset(c)
+        populate_url_for_offset(c)
+
+def populate_noffset(root):
+    mapper = LabelToSynset()
+    mapper.populate_noffset(root)
+
+def disambibuity_noffsets(root, keys):
+    if hasattr(root, 'noffsets'):
+        noffsets = root.noffsets.split(',')
+        exists = [noffset in keys for noffset in noffsets]
+        left = [noffset for noffset, exist in zip(noffsets, exists) if exist]
+        if len(left) == 1:
+            root.del_feature('noffsets')
+            root.add_feature('noffset', left[0])
+        elif len(left) != noffsets and len(left) > 0:
+            root.noffsets = ','.join(left)
+        elif len(left) == 0:
+            root.del_feature('noffsets')
+    for c in root.children:
+        disambibuity_noffsets(c, keys)
 
 class Taxonomy(object):
     def __init__(self, tax, name='root'):
