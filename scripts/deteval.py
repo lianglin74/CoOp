@@ -279,7 +279,8 @@ def get_report (truths, dets, ovths, msreport):
             reports[part][ov_th] = _eval(truths_list[part], dets, ov_th);
     return reports;   #return the overal reports
 
-def print_reports(reports, precths):
+def print_reports(reports, precths, report_file_table):
+    fp = open(report_file_table, 'w')
     for key in reports:
         table = []
         headings = ['IOU', 'MAP']
@@ -296,11 +297,15 @@ def print_reports(reports, precths):
             table +=[data]
         fields = list(range(len(data)));
         align = [('^', '<')] + [('^', '^')]*len(data)
-        print('Results on %s objects (%d)'% (key, mv_report[mv_report.keys()[0]]['npos']))
+        note = ('Results on %s objects (%d)'% (key, mv_report[mv_report.keys()[0]]['npos']))
+        print note
         write_tablemd(sys.stdout, table,fields,headings,align)
+        fp.write(note + '\n')
+        write_tablemd(fp, table,fields,headings,align)
+    fp.close()
    
 def deteval(truth='', dets='', vocdets='', name='', 
-        precth=[0.8,0.9,0.95], multiscale=False, ovthresh=[0.3,0.4,0.5],
+        precth=[0.8,0.9,0.95], multiscale=True, ovthresh=[0.3,0.4,0.5],
         classap=None, baselinefolder=None):
     truthsfile = truth
     # parse arguments
@@ -340,7 +345,7 @@ def deteval(truth='', dets='', vocdets='', name='',
     with open(report_file,"w") as fout:
         fout.write(json.dumps(reports,indent=4, sort_keys=True));
     
-    print_reports(reports, precth)
+    print_reports(reports, precth, report_file + '.table')
     if classap is not None and classap in ovthresh:
         caplist = sorted(reports['overall'][classap]['class_ap'].items(), key=lambda x:-x[1])
         for pair in caplist:

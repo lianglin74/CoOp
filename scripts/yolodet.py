@@ -12,6 +12,7 @@ import progressbar
 import json
 import matplotlib.pyplot as plt
 import multiprocessing as mp
+from fast_rcnn.nms_wrapper import nms
 
 def parse_args(arg_list):
     """Parse input arguments."""
@@ -116,6 +117,43 @@ def im_rescale(im, target_size):
 #        data = np.reshape(data, [3, h, w])
 #        data = data[::-1, ...]
 #    return data
+
+def xywh_to_xyxy(bbox):
+    result = np.zeros_like(bbox)
+    result[:, 0] = bbox[:, 0] - bbox[:, 2] / 2.
+    result[:, 2] = bbox[:, 0] + bbox[:, 2] / 2.
+    result[:, 1] = bbox[:, 1] - bbox[:, 3] / 2.
+    result[:, 3] = bbox[:, 1] + bbox[:, 3] / 2.
+    return result
+
+def im_multi_scale_detect(net, im, pixel_mean, gpu,
+        test_input_sizes=[416], **kwargs):
+    all_prob = []
+    all_bbox = []
+    for test_input_size in test_input_sizes:
+        prob, bbox = im_detect(net, im, pixel_mean, test_input_size, **kwargs)
+        if len(test_input_sizes) == 1:
+            return prob, bbox
+        all_prob.append(np.copy(prob))
+        all_bbox.append(np.copy(bbox))
+    prob = np.concatenate(all_prob)
+    bbox = np.concatenate(all_bbox)
+    bbox_xyxy = xywh_to_xyxy(bbox)
+
+    if kwargs.get('class_specific_nms', True):
+        for c in range(prob.shape[1] - 1):
+            nms_input = np.concatenate((bbox_xyxy, prob[:, c][:, np.newaxis]), axis=1)
+            keep = nms(nms_input, 0.45, False, device_id=gpu)
+            removed = np.ones(prob.shape[0], dtype=np.bool)
+            removed[keep] = False
+            prob[removed, c] = 0
+    else:
+        nms_input = np.concatenate((bbox_xyxy, prob[:, -1][:, np.newaxis]), axis=1)
+        keep = nms(nms_input, 0.45, False, device_id=gpu)
+        removed = np.ones(prob.shape[0], dtype=np.bool)
+        removed[keep] = False
+        prob[removed, :] = 0
+    return prob, bbox
 
 def im_detect(net, im, pixel_mean, target_size=416, **kwargs):
     im_orig = im.astype(np.float32, copy=True)
@@ -255,7 +293,7 @@ def detprocess(caffenet, caffemodel, pixel_mean, cmap, gpu, key_idx, img_idx,
     else:
         caffe.set_mode_cpu()
 
-    net = caffe.Net(caffenet, caffemodel, caffe.TEST)
+    net = caffe.Net(str(caffenet), str(caffemodel), caffe.TEST)
     count = 0
     while True:
         cols = in_queue.get()
@@ -266,7 +304,7 @@ def detprocess(caffenet, caffemodel, pixel_mean, cmap, gpu, key_idx, img_idx,
             # Load the image
             im = img_from_base64(cols[img_idx])
             # Detect all object classes and regress object bounds
-            scores, boxes = im_detect(net, im, pixel_mean, **kwargs)
+            scores, boxes = im_multi_scale_detect(net, im, pixel_mean, gpu, **kwargs)
             # vis_detections(im, scores, boxes, cmap, thresh=0.5)
             results = result2json(im, scores, boxes, cmap)
             out_queue.put(cols[key_idx] + "\t" + results+"\n")
