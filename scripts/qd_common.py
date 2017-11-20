@@ -8,9 +8,27 @@ from multiprocessing import Event
 import numpy as np
 import logging
 import os.path as op
-
 import caffe
 import time
+from google.protobuf import text_format
+
+
+def load_net_from_str(all_line):
+    net_param = caffe.proto.caffe_pb2.NetParameter()
+    text_format.Merge(all_line, net_param)
+    return net_param
+
+def load_net(file_name):
+    with open(file_name, 'r') as fp:
+        all_line = fp.read()
+    return load_net_from_str(all_line)
+
+def remove_nms(n):
+    for l in n.layer:
+        if l.type == 'RegionOutput':
+            l.region_output_param.nms = -1
+        if l.type == 'RegionPrediction':
+            l.region_prediction_param.nms = -1
 
 def setup_yaml():
     """ https://stackoverflow.com/a/8661021 """

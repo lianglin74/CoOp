@@ -12,7 +12,6 @@ import numpy as np
 from google.protobuf import text_format
 from qd_common import PyTee
 
-from tsvdet import setup_paths
 from deteval import deteval
 from yolodet import tsvdet
 import time
@@ -23,6 +22,10 @@ from qd_common import write_to_file, read_to_buffer, ensure_directory
 from qd_common import default_data_path
 from qd_common import parse_basemodel_with_depth
 from qd_common import parallel_train, LoopProcess
+from qd_common import remove_nms
+from qd_common import load_net
+import os.path as op
+from datetime import datetime
 import matplotlib.pyplot as plt
 import json
 import logging
@@ -175,6 +178,10 @@ class ProtoGenerator:
             return mzoo.Yolo()
 
 class CaffeWrapper(object):
+    def __init__(self, data, net, **kwargs):
+        self._data = data
+        self._net = net
+        self._kwargs = kwargs
 
     def monitor_train(self, data, net, **kwargs):
         expid = kwargs.get('expid', '777')
@@ -209,7 +216,8 @@ class CaffeWrapper(object):
         new_base_net.save(new_base_net_filepath)
         return new_base_net_filepath
 
-    def train(self, data, net, **kwargs):
+    def train(self):
+        data, net, kwargs = self._data, self._net, self._kwargs
         expid = kwargs.get('expid', '777')
         path_env = default_paths(net, data, expid)
 
@@ -234,7 +242,7 @@ class CaffeWrapper(object):
         
         gpus = [int(float(s)) for s in kwargs.get('gpus', '-1').split(',')]
         pretrained_model_file_path = self.run_in_process(self.initialize_linear_layer_with_data, path_env, gpus) if kwargs.get('data_dependent_init', False) else path_env['basemodel']
-        caffe.init_glog(path_env['log'])
+        caffe.init_glog(str(path_env['log']))
 
         model = self._construct_model(path_env['solver'], path_env['test_proto_file'])
         print 'log file: {0}'.format(path_env['log'])
@@ -246,8 +254,12 @@ class CaffeWrapper(object):
 
         return model
 
-    def predict(self, data, model, **kwargs):
-        test_proto_file, model_param, mean_value, train_iter = model
+    def predict(self, model):
+        data = self._data
+        kwargs = self._kwargs
+        _, model_param, mean_value, train_iter = model
+
+        test_proto_file = self._get_test_proto_file(model)
 
         if not os.path.isfile(test_proto_file) or \
                 not os.path.isfile(model_param):
@@ -275,7 +287,9 @@ class CaffeWrapper(object):
 
         return outtsv_file
 
-    def evaluate(self, data, predict_result, **kwargs):
+    def evaluate(self, predict_result):
+        data = self._data
+        kwargs = self._kwargs
         path_env = default_data_path(data)
 
         eval_file = deteval(truth=path_env['test_source'],
@@ -283,9 +297,36 @@ class CaffeWrapper(object):
 
         return eval_file
 
+    def _get_test_proto_file(self, model):
+        surgery = False
+        test_proto_file = model[0]
+
+        test_input_sizes = self._kwargs.get('test_input_sizes', [416])
+        if len(test_input_sizes) > 1:
+            surgery = True
+
+        if surgery:
+            n = load_net(test_proto_file)
+            out_file = test_proto_file
+            if len(test_input_sizes) > 1:
+                out_file = '{}.noNms'.format(out_file)
+                remove_nms(n)
+            write_to_file(str(n), out_file)
+            test_proto_file = out_file
+
+        return test_proto_file
+
     def _predict_file(self, model):
         test_proto_file, model_param, mean_value, model_iter = model
-        return model_param + '.eval'
+        cc = [model_param]
+        test_input_sizes = self._kwargs.get('test_input_sizes', [416])
+        if self._kwargs.get('yolo_test_maintain_ratio', False):
+            cc.append('maintainRatio')
+        if len(test_input_sizes) != 1 or test_input_sizes[0] != 416:
+            cc.append('testInput{}'.format('.'.join(map(str,
+                test_input_sizes))))
+        cc.append('predict')
+        return '.'.join(cc)
 
     def _perf_file(self, model):
         test_proto_file, model_param, mean_value, model_iter = model
@@ -322,8 +363,8 @@ class CaffeWrapper(object):
         need_predict_model = [m for m in all_ready_model if not os.path.isfile(self._predict_file(m))]
         is_monitoring = len(all_model) > len(all_ready_model) or  len(need_predict_model) > 1 
         for m in need_predict_model:
-            predict_result = self.predict(data, m, **kwargs)
-            self.evaluate(data, predict_result)
+            predict_result = self.predict(m)
+            self.evaluate(predict_result)
 
         self._display([(m, self._perf_file(m)) for m in all_ready_model if
                 os.path.isfile(self._perf_file(m))])
@@ -409,6 +450,23 @@ def Analyser(object):
             v = solver.net.blobs[key]
             print key, np.mean(v.data)
 
+def setup_paths(basenet, dataset, expid):
+    proj_root = op.dirname(op.dirname(op.realpath(__file__)));
+    model_path = op.join (proj_root,"models");
+    data_root = op.join(proj_root,"data");
+    data_path = op.join(data_root,dataset);
+    basemodel_file = op.join(model_path ,basenet+'.caffemodel');
+    output_path = op.join(proj_root,"output", "_".join([dataset,basenet,expid]));
+    solver_file = op.join(output_path,"solver.prototxt");
+    snapshot_path = op.join([output_path,"snapshot"]);
+    DATE = datetime.now().strftime('%Y%m%d_%H%M%S')
+    log_file = op.join(output_path, '%s_%s.log' %(basenet, DATE));
+    caffe_log_file = op.join(output_path, '%s_caffe_'%(basenet));
+    model_pattern = "%s/%s_faster_rcnn_iter_*.caffemodel"%(snapshot_path,basenet.split('_')[0].lower());
+    deploy_path = op.join(output_path, "deploy");
+    eval_output =  op.join(output_path, '%s_%s_testeval.tsv' %(basenet, DATE));
+    return { "snapshot":snapshot_path, "solver":solver_file, "log":log_file, "output":output_path, 'data_root':data_root, 'data':data_path, 'basemodel':basemodel_file, 'model_pattern':model_pattern, 'deploy':deploy_path, 'caffe_log':caffe_log_file, 'eval':eval_output};
+
 def default_paths(net, data, expid):
     path_env = setup_paths(net, data, expid)
 
@@ -432,14 +490,14 @@ def default_paths(net, data, expid):
 
 def yolotrain(data, net, **kwargs):
     init_logging()
-    c = CaffeWrapper()
+    c = CaffeWrapper(data, net, **kwargs)
 
     monitor_train_only = kwargs.get('monitor_train_only', False)
 
     if not monitor_train_only:
-        model = c.train(data, net, **kwargs)
-        predict_result = c.predict(data, model, **kwargs)
-        c.evaluate(data, predict_result, **kwargs)
+        model = c.train()
+        predict_result = c.predict(model)
+        c.evaluate(predict_result)
     else:
         c.monitor_train(data, net, **kwargs)
 
@@ -502,6 +560,9 @@ def parse_args():
     parser.add_argument('-fp', '--force_predict', default=False,
             action='store_true', 
             help='force to predict even if the predict file exists')
+    parser.add_argument('-ti', '--test_input_sizes', default=[416],
+            nargs='+', type=int, 
+            help='test input sizes')
     return parser.parse_args()
 
 if __name__ == '__main__':
