@@ -8,16 +8,75 @@ import os.path as op
 from qd_common import write_to_file, read_to_buffer
 from qd_common import init_logging, ensure_directory
 from qd_common import load_from_yaml_file
+import Queue
 
-def dump_tree(root):
+def get_nick_name(s):
+    n = s.name()
+    return n[: -5]
+
+def create_markdown_url(noffsets):
+    urls = ['[{0}](http://www.image-net.org/synset?wnid={0})'.format(noffset) for
+            noffset in noffsets]
+    return urls
+
+def child_parent_print_tree2(root, field):
+    def get_field(n):
+        key = n.__getattribute__(field)
+        key = key.replace(' ', '_')
+        return key
+    name_to_lineidx = {}
+    q = Queue.Queue()
+    q.put(root)
+    idx = -1
+    while not q.empty(): 
+        n = q.get()
+        key = get_field(n)
+        name_to_lineidx[key] = idx
+        idx = idx + 1
+        for c in n.children:
+            q.put(c)
+    q.put(root)
+    lines = []
+    labels = []
+    while not q.empty():
+        n = q.get()
+        ps = n.get_ancestors()
+        if len(ps) >= 1:
+            key = get_field(n) 
+            lines.append((key, name_to_lineidx[get_field(ps[0])]))
+            labels.append(n.__getattribute__(field))
+        for c in n.children:
+            q.put(c)
+    return labels, lines
+
+def populate_cum_images(root):
+    cum_images_with_bb = root.images_with_bb
+    cum_images_no_bb = root.images_no_bb
+    for c in root.children:
+        populate_cum_images(c)
+        cum_images_with_bb = cum_images_with_bb + c.cum_images_with_bb
+        cum_images_no_bb = cum_images_no_bb + c.cum_images_no_bb
+
+    root.add_feature('cum_images_with_bb', cum_images_with_bb)
+    root.add_feature('cum_images_no_bb', cum_images_no_bb)
+
+
+def dump_tree(root, feature_name=None):
     result = OrderedDict()
-    for f in root.features:
-        if f in ['support', 'name', 'dist', 'synset']:
-            continue
-        result[f] = root.__getattribute__(f)
+    if feature_name is None:
+        for f in root.features:
+            if f in ['support', 'name', 'dist', 'synset']:
+                continue
+            result[f] = root.__getattribute__(f)
+    elif type(feature_name) == list:
+        for f in feature_name:
+            result[f] = root.__getattribute__(f)
+    elif type(feature_name) == str:
+        if feature_name != 'name':
+            result[feature_name] = root.__getattribute__(feature_name)
     result[root.name] = []
     for c in root.children:
-        result[root.name].append(dump_tree(c))
+        result[root.name].append(dump_tree(c, feature_name))
     return result
 
 def synset_to_noffset(synset):
@@ -217,10 +276,10 @@ class Taxonomy(object):
         for one in tax:
             self._add_current_as_child(one, self.root)
 
-    def dump(self):
+    def dump(self, feature_name=None):
         result = []
         for c in self.root.children:
-            result.append(dump_tree(c))
+            result.append(dump_tree(c, feature_name))
         return result
 
     def _add_children(self, one, root):

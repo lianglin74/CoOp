@@ -11,6 +11,8 @@ import os.path as op
 import caffe
 import time
 from google.protobuf import text_format
+import base64
+import cv2
 
 
 def load_net_from_str(all_line):
@@ -34,14 +36,14 @@ def setup_yaml():
     """ https://stackoverflow.com/a/8661021 """
     represent_dict_order = lambda self, data:  self.represent_mapping('tag:yaml.org,2002:map', data.items())
     yaml.add_representer(OrderedDict, represent_dict_order)    
-    setup_yaml()
 
 def init_logging():
     np.seterr(all='raise')
     logging.basicConfig(level=logging.INFO,
-    format='%(asctime)s.%(msecs)03d %(filename)s:%(lineno)s: %(message)s',
+    format='%(asctime)s.%(msecs)03d %(filename)s:%(lineno)s %(funcName)10s(): %(message)s',
     datefmt='%m-%d %H:%M:%S',
     )
+    setup_yaml()
 
 def ensure_directory(path):
     if path == '' or path == '.':
@@ -49,6 +51,14 @@ def ensure_directory(path):
     if path != None and len(path) > 0:
         if not os.path.exists(path):
             os.makedirs(path)
+
+def img_from_base64(imagestring):
+    jpgbytestring = base64.b64decode(imagestring)
+    nparr = np.fromstring(jpgbytestring, np.uint8)
+    try:
+        return cv2.imdecode(nparr, cv2.IMREAD_COLOR);
+    except:
+        return None;
 
 def read_to_buffer(file_name):
     with open(file_name, 'r') as fp:
