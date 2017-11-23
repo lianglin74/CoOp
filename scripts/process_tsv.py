@@ -1,6 +1,7 @@
 from qd_common import init_logging
 import os.path as op
 import argparse
+import json
 import logging
 from taxonomy import gen_term_list
 from taxonomy import gen_noffset
@@ -11,6 +12,7 @@ from taxonomy import noffset_to_synset
 from taxonomy import disambibuity_noffsets
 from qd_common import write_to_yaml_file, load_from_yaml_file
 from tsv_io import TSVDataset
+from tsv_io import tsv_reader, tsv_writer
 
 def gen_tsv_from_labeling(input_folder, output_folder):
     fs = glob.glob(op.join(input_folder, '*'))
@@ -147,6 +149,19 @@ def output_ambigous_noffsets_main(tax_input_folder, ambigous_file_out):
 
     output_ambigous_noffsets(tax.root, ambigous_file_out)
 
+def standarize_crawled(tsv_input, tsv_output):
+    rows = tsv_reader(tsv_input)
+    def gen_rows():
+        for i, row in enumerate(rows):
+            if (i % 1000) == 0:
+                logging.info(i)
+            image_str = row[-1]
+            image_label = row[0]
+            rects = [{'rect': [0, 0, 0, 0], 'class': image_label}]
+            image_name = '{}_{}'.format(op.basename(tsv_input), i)
+            yield image_name, json.dumps(rects), image_str
+    tsv_writer(gen_rows(), tsv_output)
+
 def process_tsv_main(**kwargs):
     if kwargs['type'] == 'gen_tsv':
         input_folder = kwargs['input']
@@ -164,6 +179,10 @@ def process_tsv_main(**kwargs):
         tax_input_folder = kwargs['input']
         ambigous_file_out = kwargs['output']
         output_ambigous_noffsets_main(tax_input_folder, ambigous_file_out)
+    elif kwargs['type'] == 'standarize_crawled':
+        tsv_input = kwargs['input']
+        tsv_output = kwargs['output']
+        standarize_crawled(tsv_input, tsv_output)
 
 def parse_args():
     parser = argparse.ArgumentParser(description='TSV Management')

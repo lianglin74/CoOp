@@ -1,6 +1,7 @@
 import os
 import os.path as op
 from qd_common import read_to_buffer, load_list_file
+from qd_common import ensure_directory
 
 class TSVDataset(object):
     def __init__(self, name):
@@ -45,3 +46,25 @@ class TSVDataset(object):
 
     def load_noffsets(self):
         return load_list_file(self.get_noffsets_file()) 
+
+def tsv_writer(values, tsv_file_name):
+    ensure_directory(os.path.dirname(tsv_file_name))
+    tsv_lineidx_file = os.path.splitext(tsv_file_name)[0] + '.lineidx'
+    idx = 0
+    tsv_file_name_tmp = tsv_file_name + '.tmp'
+    tsv_lineidx_file_tmp = tsv_lineidx_file + '.tmp'
+    with open(tsv_file_name_tmp, 'w') as fp, open(tsv_lineidx_file_tmp, 'w') as fpidx:
+        for value in values:
+            assert value
+            v = '{0}\n'.format('\t'.join(value))
+            fp.write(v)
+            fpidx.write(str(idx) + '\n')
+            idx = idx + len(v)
+    os.rename(tsv_file_name_tmp, tsv_file_name)
+    os.rename(tsv_lineidx_file_tmp, tsv_lineidx_file)
+
+def tsv_reader(tsv_file_name):
+    with open(tsv_file_name, 'r') as fp:
+        for i, line in enumerate(fp):
+            yield [x.strip() for x in line.split('\t')]
+
