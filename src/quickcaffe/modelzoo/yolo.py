@@ -1,55 +1,115 @@
 from caffe import layers as L, params as P, to_proto
 from caffe.proto import caffe_pb2
+import numpy as np
 from layerfactory import conv_bn, last_layer, conv
 from darknet import DarkNet
 import math
 
 class Yolo(object):
     def add_input_data(self, n, num_classes, **kwargs):
-        include = {'phase': getattr(caffe_pb2, 'TRAIN')}
-        transform_param = {'mirror': True, 
+        #include = {'phase': getattr(caffe_pb2, 'TRAIN')}
+        transform_param = {'mirror': kwargs.get('yolo_mirror', True), 
                     'crop_size': 224,
                     'mean_value': [104, 117, 123]}
+        data_param = {}
+        if 'prefetch' in kwargs:
+            data_param['prefetch'] = kwargs['prefetch']
+        net_input_size_min = kwargs.get('net_input_size_min', 416)
+        net_input_size_max = kwargs.get('net_input_size_max', 416)
+        
+        jitter = kwargs.get('yolo_jitter', 0.2)
+        hue = kwargs.get('yolo_hue', 0.1)
+        exposure = kwargs.get('yolo_exposure', 1.5)
+        saturation = kwargs.get('yolo_saturation', 1.5)
 
-        source_file = kwargs.get('source', 'train.tsv')
+        box_data_param = {'jitter': jitter, 
+                'hue': hue,
+                'exposure': exposure,
+                'saturation': saturation,
+                'max_boxes': 30,
+                'iter_for_resize': 80,
+                'random_min': net_input_size_min,
+                'random_max': net_input_size_max}
+        if 'yolo_random_scale_min' in kwargs:
+            box_data_param['random_scale_min'] = kwargs['yolo_random_scale_min']
+        if 'yolo_random_scale_max' in kwargs:
+            box_data_param['random_scale_max'] = kwargs['yolo_random_scale_max']
+        if 'rotate_max' in kwargs:
+            box_data_param['rotate_max'] = kwargs['rotate_max']
+        box_data_param['labelmap'] = kwargs.get('labelmap', 'labelmap.txt')
 
+        source_files = kwargs.get('sources', ['train.tsv'])
+        assert 'source' not in kwargs, 'not supported, use sources: a list'
+       
         if 'gpus' in kwargs:
-            num_threads = len(kwargs['gpus'].split(','))
+            num_threads = len(kwargs['gpus'])
         else:
             num_threads = 1
         effective_batch_size = kwargs.get('effective_batch_size', 64.0)
         batch_size = int(math.ceil(effective_batch_size / num_threads))
-        tsv_data_param = {'source': source_file, 
-                'batch_size': batch_size, 
-                'new_height': 256,
-                'new_width': 256,
-                'col_data': 2,
-                'col_label': 1}
+        assert batch_size > 0
+        if len(source_files) == 1:
+            assert batch_size > 0
+            tsv_data_param = {'batch_size': batch_size, 
+                    'new_height': 256,
+                    'new_width': 256,
+                    'col_data': 2,
+                    'col_label': 1}
 
-        if 'source_label' in kwargs:
-            tsv_data_param['source_label'] = kwargs['source_label']
+            tsv_data_param['source'] = source_files[0]
 
-        data_param = {}
-        if 'prefetch' in kwargs:
-            data_param['prefetch'] = kwargs['prefetch']
+            if 'source_labels' in kwargs and kwargs['source_labels']:
+                assert len(kwargs['source_labels']) == 1
+                tsv_data_param['source_label'] = kwargs['source_labels'][0]
 
-        box_data_param = {'jitter': 0.2,
-                'hue': 0.1,
-                'exposure': 1.5,
-                'saturation': 1.5,
-                'max_boxes': 30,
-                'iter_for_resize': 80,
-                'random_min': 416,
-                'random_max': 416}
+            if 'source_shuffles' in kwargs and kwargs['source_shuffles']:
+                assert len(kwargs['source_shuffles']) == 1
+                tsv_data_param['source_shuffle'] = kwargs['source_shuffles'][0]
+            
+            n.data, n.label = L.TsvBoxData(ntop=2, 
+                    transform_param=transform_param, 
+                    tsv_data_param=tsv_data_param,
+                    box_data_param=box_data_param,
+                    data_param=data_param)
+        else:
+            data_weights = kwargs['data_batch_weights']
+            assert len(data_weights) == len(source_files)
+            np_weights = np.asarray(data_weights)
+            np_weights = np_weights * batch_size / np.sum(np_weights)
+            data_blobs, label_blobs = [], []
+            for i in xrange(len(source_files)):
+                w = float(np_weights[i])
+                assert w > 0
+                assert w.is_integer()
+                tsv_data_param = {'batch_size': int(w), 
+                        'new_height': 256,
+                        'new_width': 256,
+                        'col_data': 2,
+                        'col_label': 1}
 
-        box_data_param['labelmap'] = kwargs.get('labelmap', 'labelmap.txt')
-        
-        n.data, n.label = L.TsvBoxData(ntop=2, 
-                include=include,
-                transform_param=transform_param, 
-                tsv_data_param=tsv_data_param,
-                box_data_param=box_data_param,
-                data_param=data_param)
+                tsv_data_param['source'] = source_files[i]
+
+                if 'source_labels' in kwargs and kwargs['source_labels']:
+                    if len(kwargs['source_labels']) != 0:
+                        assert len(kwargs['source_labels']) == len(source_files)
+                        tsv_data_param['source_labels'] = kwargs['source_labels'][i]
+
+                if 'source_shuffles' in kwargs and kwargs['source_shuffles']:
+                    if len(kwargs['source_shuffles']) != 0:
+                        assert len(kwargs['source_shuffles']) == len(source_files)
+                        tsv_data_param['source_shuffle'] = kwargs['source_shuffles'][i]
+                
+                n['data' + str(i)], n['label' + str(i)] = L.TsvBoxData(ntop=2, 
+                        #include=include,
+                        transform_param=transform_param, 
+                        tsv_data_param=tsv_data_param,
+                        box_data_param=box_data_param,
+                        data_param=data_param)
+                data_blobs.append(n['data' + str(i)])
+                label_blobs.append(n['label' + str(i)])
+
+            n.data = L.Concat(*data_blobs, axis=0)
+            n.label = L.Concat(*label_blobs, axis=0)
 
     def dark_block(self, n, s, nout_dark,stride,  lr, deploy, bn_no_train=False):
         bottom = n.data if s.startswith('dark1') else last_layer(n);
@@ -81,6 +141,7 @@ class Yolo(object):
 
     def add_body(self, n, lr, num_classes, cnnmodel, 
             deploy=False, cpp_version=False, **kwargs):
+        extra_train_param, extra_test_param = get_region_param(**kwargs)
         kernal_size = 3
         stride = 1
         pad = 1
@@ -117,16 +178,11 @@ class Yolo(object):
                         n['label'],
                         classes=num_classes,
                         coords=coords,
-                        softmax=True,
-                        rescore=True,
                         bias_match=True,
                         param={'decay_mult': 0, 'lr_mult': 0},
-                        object_scale=5,
-                        noobject_scale=1.0,
-                        class_scale=1.0,
-                        coord_scale=1.0,
                         thresh=0.6,
-                        biases=biases)
+                        biases=biases,
+                        **extra_train_param)
             else:
                 add_yolo_train_loss(n, biases, num_classes)
         else:
@@ -136,7 +192,8 @@ class Yolo(object):
                         classes=num_classes,
                         thresh=0.005, # 0.24
                         nms=0.45,
-                        biases=biases)
+                        biases=biases,
+                        **extra_test_param)
             else:
                 add_yolo_test_loss(n, biases, num_classes)
 
@@ -192,4 +249,37 @@ def add_yolo_test_loss(n, biases, num_classes):
             n.softmax_conf, n.im_info, ntop=2, 
             thresh=0.005, # 0.24
             biases=biases)
+
+def get_region_param(**kwargs):
+    extra_train_param, extra_test_param = {}, {}
+    train_test_keys = []
+
+    train_keys = ['object_scale', 
+            'noobject_scale',
+            'class_scale',
+            'rescore', 
+            'coord_scale']
+
+    test_keys = ['nms']
+
+    train_keys.extend(train_test_keys)
+    test_keys.extend(train_test_keys)
+
+    for key in test_keys:
+        yolo_key = 'yolo_' + key
+        if yolo_key in kwargs:
+            extra_test_param[key] = kwargs[yolo_key]
+
+    for key in train_keys:
+        yolo_key = 'yolo_' + key
+        if yolo_key in kwargs:
+            extra_train_param[key] = kwargs[yolo_key]
+
+    if 'target_synset_tree' in kwargs:
+        extra_train_param['tree'] = kwargs['target_synset_tree']
+        extra_test_param['tree'] = kwargs['target_synset_tree']
+
+    if 'region_layer_map' in kwargs:
+        extra_test_param['map'] = kwargs['region_layer_map']
+    return extra_train_param, extra_test_param
 

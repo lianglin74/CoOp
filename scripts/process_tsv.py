@@ -382,9 +382,13 @@ def create_info_for_ambigous_noffset(name, noffsets):
 
 def build_taxonomy_impl(taxonomy_folder, **kwargs):
     random.seed(777)
-    #dataset_name = 'office_v2.11'
-    #taxonomy_folder = op.join('./aux_data', 'taxonomy', dataset_name)
-    dataset_name = op.basename(taxonomy_folder)
+    dataset_name = kwargs.get('data', 
+            op.basename(taxonomy_folder))
+    overall_dataset = TSVDataset(dataset_name)
+    if op.isfile(overall_dataset.get_labelmap_file()):
+        logging.info('ignore to build taxonomy since {} exists'.format(
+            overall_dataset.get_labelmap_file()))
+        return
     all_tax = load_all_tax(taxonomy_folder)
     tax = merge_all_tax(all_tax)
     initialize_images_count(tax.root)
@@ -406,20 +410,17 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
     datas = kwargs.get('datas', ['voc20', 'coco2017', 'imagenet3k_448',
         'crawl_office_v2', 'crawl_office_v1'])
     logging.info('extract the images from: {}'.format(','.join(datas)))
-    for data in datas:
-        data_sources.append(TSVDatasetSource(data, tax.root))
+
+    for d in datas:
+        data_sources.append(TSVDatasetSource(d, tax.root))
     
-    # populate the information
     for s in data_sources:
         s.populate_info(tax.root)
 
     populate_cum_images(tax.root)
 
-    overall_dataset = TSVDataset(dataset_name)
-
     labels, child_parents = child_parent_print_tree2(tax.root, 'name')
 
-    # save the label map
     label_map_file = overall_dataset.get_labelmap_file() 
     write_to_file('\n'.join(map(lambda l: l.encode('utf-8'), labels)), 
             label_map_file)
@@ -627,6 +628,8 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
                                     dataset._datasetlabel_to_rootlabel)
                             assert len(rects) > 0
                             row[1] = json.dumps(rects)
+                            row[0] = '{}_{}_{}'.format(dataset.name,
+                                    split, row[0])
                             yield row
             tsv_writer(gen_test_rows(), 
                     out_dataset[label_type].get_test_tsv_file())

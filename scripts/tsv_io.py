@@ -11,7 +11,7 @@ class TSVDataset(object):
         proj_root = os.path.dirname(os.path.dirname(os.path.realpath(__file__)));
         result = {}
         data_root = os.path.join(proj_root, 'data', name)
-        self._data_root = data_root
+        self._data_root = op.relpath(data_root)
     
     def load_labelmap(self):
         return load_list_file(self.get_labelmap_file())
@@ -37,6 +37,19 @@ class TSVDataset(object):
     def get_test_tsv_lineidx_file(self):
         return op.join(self._data_root, 'test.lineidx') 
 
+    def get_train_tsvs(self, t=None):
+        if op.isfile(self.get_data('train', t)):
+            return [self.get_data('train', t)]
+        trainx_file = op.join(self._data_root, 'trainX.tsv')
+        if not op.isfile(trainx_file):
+            return []
+        train_x = load_list_file(trainx_file)
+        if t is None:
+            return train_x
+        elif t =='label':
+            files = [op.splitext(f)[0] + '.label.tsv' for f in train_x]
+            return files
+
     def get_train_tsv(self):
         return op.join(self._data_root, 'train.tsv') 
 
@@ -58,9 +71,6 @@ class TSVDataset(object):
 
     def get_num_train_image(self):
         return len(load_list_file(op.join(self._data_root, 'train.lineidx')))
-
-    def get_train_shuffle_file(self):
-        return op.join(self._data_root, 'train_shuffle.txt')
 
     def get_trainval_tsv(self):
         return op.join(self._data_root, 'trainval.tsv')
