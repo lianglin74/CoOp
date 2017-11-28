@@ -57,6 +57,34 @@ This repo is for the algorithm development for IRIS object detection. The curren
    ```
    python scripts/train.py --gpu 0 --net zf --data voc20 --iters 7000 --expid dbg
    ```
+
+## Examples
+1. Run Yolo with a customized taxonomy
+   1. Prepare the data. 
+      1. Create a sub folder, named 'data' under $QD_ROOT (the root folder of
+         this quickdetection folder)
+      2. Link the data of voc20, coco2017, e.t.c. under data. 
+         If you are working on DL cluster, the data are at /glusterfs/public/data, and you
+         can link it by 
+         ```
+         ln -s /glusterfs/public/data/* data/
+         ```
+         If it is vig-gpu01, the data are located at /gpu02_raid/data/.
+         If it is vig-gpu02, the data are located at /raid/data.
+         If it is Windows, the data can be accessed by \\\\vig-gpu02\raid_data.
+    2. Download the taxonomy data from https://github.com/leizhangcn/taxonomy10k
+    3. Train the model with an extra parameter of --taxonomy_folder. One
+       example is:
+       ```
+       python scripts/yolotrain.py --data office_v2.1 \
+                --iters 128e \
+                --expid 789 \
+                --net darknet19 \
+                --gpus 4 5 6 7 \
+                --taxonomy_folder the_path_to_taxonomy
+       ```
+       Replace the_path_to_taxonomy by the path of the taxonomy folder
+
     
 ## Contribute
 TODO: Explain how other colleagues can contribute. 
