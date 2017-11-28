@@ -92,7 +92,7 @@ class Yolo(object):
                 if 'source_labels' in kwargs and kwargs['source_labels']:
                     if len(kwargs['source_labels']) != 0:
                         assert len(kwargs['source_labels']) == len(source_files)
-                        tsv_data_param['source_labels'] = kwargs['source_labels'][i]
+                        tsv_data_param['source_label'] = kwargs['source_labels'][i]
 
                 if 'source_shuffles' in kwargs and kwargs['source_shuffles']:
                     if len(kwargs['source_shuffles']) != 0:
