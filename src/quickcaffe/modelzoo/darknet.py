@@ -85,7 +85,7 @@ class DarkNet(CNNModel):
         n[s+'/conv'], n[s+'/bn'], n[s+'/scale'] = conv_bn(bottom, ks=ks, stride=stride, pad=pad, bn_no_train=bn_no_train, nout=nout_dark, lr = lr, deploy = deploy)
         n[s+'/leaky'] = L.ReLU(n[s+'/scale'], in_place=True, negative_slope=0.1)
         
-    def add_body(self, netspec, depth=-1, lr=1, deploy=True):
+    def add_body(self, netspec, depth=-1, lr=1, deploy=True, **kwargs):
         n = netspec
         net_defs = self.get_netdefs();
         assert depth in net_defs.keys(), 'darknet only support depths' + str(net_defs.keys())            

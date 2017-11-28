@@ -24,12 +24,18 @@ from qd_common import parse_basemodel_with_depth
 from qd_common import parallel_train, LoopProcess
 from qd_common import remove_nms
 from qd_common import load_net
+from qd_common import construct_model
 import os.path as op
 from datetime import datetime
 import matplotlib.pyplot as plt
 import json
 import logging
 import yoloinit
+from tsv_io import TSVDataset
+from pprint import pformat
+from process_tsv import build_taxonomy_impl
+from process_dataset import dynamic_process_tsv
+from process_tsv import TSVFile
 
 def num_non_empty_lines(file_name):
     with open(file_name) as fp:
@@ -37,28 +43,30 @@ def num_non_empty_lines(file_name):
     lines = context.split('\n')
     return sum([1 if len(line.strip()) > 0 else 0 for line in lines])
 
-class ProtoGenerator:
-    def generate_prototxt(self, base_model_with_depth, num_classes, 
-            train_net_file, test_net_file, solver_file, **kwargs):
+class ProtoGenerator(object):
+    def __init__(self, base_model_with_depth, num_classes, **kwargs):
+        self._base_model_with_depth = base_model_with_depth
+        self._num_classes = num_classes
+        self._kwargs = kwargs
+
+    def generate_prototxt(self, train_net_file, test_net_file, solver_file):
+        base_model_with_depth, num_classes = self._base_model_with_depth, self._num_classes
     
-        net = self.gen_net(base_model_with_depth, num_classes, 
-                deploy=False, **kwargs)
+        net = self._gen_net(deploy=False)
         write_to_file(net, train_net_file)
     
-        net = self.gen_net(base_model_with_depth, num_classes, 
-                deploy=True, **kwargs)
+        net = self._gen_net(deploy=True)
         write_to_file(net, test_net_file)
     
-        solver = self.gen_solver(train_net_file, **kwargs)
+        solver = self._gen_solver(train_net_file)
         write_to_file(solver, solver_file)
 
-    def gen_net(self, base_model_with_depth, num_classes, **kwargs):
-        deploy = kwargs.get('deploy', False)
-        cpp_version = kwargs.get('cpp_version', False)
-        detmodel = kwargs.get('detmodel', 'FasterRCNN')
+    def _gen_net(self, deploy=False):
+        base_model_with_depth, num_classes = self._base_model_with_depth, self._num_classes
+        kwargs = self._kwargs
 
-        assert base_model_with_depth.lower() in self._list_models(), 'Unsupported basemodel: %s' %base_model_with_depth 
-        assert detmodel in self._list_detmodel(), 'Unsupported detmodel: %s' % detmodel
+        cpp_version = kwargs.get('cpp_version', False)
+        detmodel = kwargs.get('detmodel', 'fasterrcnn')
 
         model_parts = re.findall(r'\d+|\D+', base_model_with_depth)
         model_name = model_parts[0].lower()
@@ -71,31 +79,51 @@ class ProtoGenerator:
         if not deploy:
             det.add_input_data(n, num_classes, **kwargs)
         else:
-            # create a placeholder, and replace later
             n.data = caffe.layers.Layer()
-            n.im_info = caffe.layers.Layer()
+            if detmodel == 'yolo' or detmodel == 'fasterrcnn':
+                # create a placeholder, and replace later
+                n.im_info = caffe.layers.Layer()
+            elif detmodel == 'classification':
+                n.label = caffe.layers.Layer()
+            else:
+                assert False, '{} is not supported'.format(detmodel)
 
-        model.add_body(n, depth=model_depth, lr=1, deploy=deploy)
+        model.add_body(n, depth=model_depth, lr=1, deploy=deploy, **kwargs)
         det.add_body(n, lr=1, num_classes=num_classes, cnnmodel=model,
-                cpp_version=cpp_version, **kwargs)
+                deploy=deploy, cpp_version=cpp_version, **kwargs)
 
         layers = str(n.to_proto()).split('layer {')[1:]
         layers = ['layer {' + x for x in layers]
-        im_info2 = 3 if detmodel == 'FasterRCNN' else 2
-        image_dim = 224 if detmodel == 'FasterRCNN' else 416
+        if detmodel == 'fasterrcnn':
+            im_info2 = 3
+            image_dim = 224
+        elif detmodel == 'yolo':
+            im_info2 = 2
+            image_dim = 416
+        elif detmodel == 'classification':
+            image_dim = 224
+        else:
+            assert False
+
         if deploy:
             layers[0] = 'input: {}\ninput_shape {{\n  dim: {}\n  dim: {}\n  dim: {}\n  dim: {}\n}}\n'.format(
                     '"data"', 1, 3, image_dim, image_dim)
-            layers[1] = 'input: {}\ninput_shape {{\n  dim: {}\n  dim: {}\n}}\n'.format(
-                    '"im_info"', 1, im_info2)
+            if detmodel == 'classification':
+                layers[1] = ''
+            else:
+                layers[1] = 'input: {}\ninput_shape {{\n  dim: {}\n  dim: {}\n}}\n'.format(
+                        '"im_info"', 1, im_info2)
         proto_str = ''.join(layers)
         proto_str = proto_str.replace("\\'", "'")
         
-        prefix = 'Faster-RCNN' if detmodel == 'FasterRCNN' else 'Yolo'
-        
-        return 'name: "{}-{}"\n{}'.format(prefix, base_model_with_depth, proto_str)
+        prefix = detmodel
 
-    def gen_solver(self, train_net_file, **kwargs):
+        proto_str = 'name: "{}-{}"\n{}'.format(prefix, base_model_with_depth, proto_str)
+        
+        return proto_str
+
+    def _gen_solver(self, train_net_file):
+        kwargs = self._kwargs
         train_net_dir = os.path.dirname(train_net_file)
         snapshot_prefix = os.path.join(train_net_dir, 'snapshot', 'model')
         ensure_directory(os.path.dirname(snapshot_prefix))
@@ -157,7 +185,7 @@ class ProtoGenerator:
         return ['zf', 'zfb', 'vgg16', 'vgg19', 'resnet10', 'resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152', 'squeezenet', 'darknet19']
 
     def _list_detmodel(self):
-        return ['FasterRCNN', 'Yolo']
+        return ['fasterrcnn', 'yolo']
 
     def _create_model(self, model_name):
         if model_name == 'zf':
@@ -172,16 +200,26 @@ class ProtoGenerator:
             return mzoo.DarkNet(add_last_pooling_layer=False)
         elif model_name == 'squeezenet': 
             return mzoo.SqueezeNet(add_last_pooling_layer=False)
-        elif model_name == 'FasterRCNN':
+        elif model_name == 'fasterrcnn':
             return mzoo.FasterRCNN()
-        elif model_name == 'Yolo':
+        elif model_name == 'yolo':
             return mzoo.Yolo()
+        else:
+            assert False
 
 class CaffeWrapper(object):
     def __init__(self, data, net, **kwargs):
         self._data = data
         self._net = net
         self._kwargs = kwargs
+
+        self._expid = kwargs['expid']
+        self._path_env = default_paths(self._net, self._data, self._expid)
+
+        source_dataset = TSVDataset(self._data)
+        self._labelmap = source_dataset.get_labelmap_file()
+
+        self._tree = None
 
     def monitor_train(self, data, net, **kwargs):
         expid = kwargs.get('expid', '777')
@@ -216,48 +254,80 @@ class CaffeWrapper(object):
         new_base_net.save(new_base_net_filepath)
         return new_base_net_filepath
 
+    def _gpus(self):
+        return self._kwargs.get('gpus', [0])
+
+    def _is_train_finished(self):
+        if not op.isfile(self._path_env['solver']) or \
+                not op.isfile(self._path_env['test_proto_file']):
+            return False
+
+        model = construct_model(self._path_env['solver'], 
+                self._path_env['test_proto_file'])
+        train_proto = self._path_env['train_proto_file']
+        finished = os.path.isfile(model.test_proto_file) \
+                and os.path.isfile(model.model_param)
+
+        return finished
+
     def train(self):
         data, net, kwargs = self._data, self._net, self._kwargs
-        expid = kwargs.get('expid', '777')
-        path_env = default_paths(net, data, expid)
+        path_env = self._path_env
 
-        if 'num_classes' not in kwargs:
-            num_classes = num_non_empty_lines(path_env['labelmap'])
-        else:
-            num_classes = kwargs['num_classes']
-        
-        source = path_env['source']
-        labelmap = path_env['labelmap'] 
+        write_to_file(pformat(self._kwargs), op.join(path_env['output'],
+            'parameters.txt'))
+
+        source_dataset = TSVDataset(self._data)
+
+        x = dynamic_process_tsv(source_dataset, path_env['output_data_root'], 
+                self._tree,
+                **kwargs)
+
+        num_classes = self._get_num_classes()
+
+        sources, source_labels, source_shuffles, data_batch_weights, labelmap = x
 
         if not kwargs.get('skip_genprototxt', False):
-            with open(path_env['source_idx'], 'r') as fp:
-                num_train_images = len(fp.readlines())
-            p = ProtoGenerator()
-            p.generate_prototxt(parse_basemodel_with_depth(net), num_classes, 
-                     path_env['train_proto_file'], path_env['test_proto_file'],
-                     path_env['solver'], detmodel='Yolo', 
-                     source=source, labelmap=labelmap, 
-                     num_train_images=num_train_images,
-                     **kwargs)
+            if len(source_shuffles) > 0:
+                num_train_images = sum([TSVFile(s).num_rows() for s in
+                        source_shuffles])
+            else:
+                num_train_images = sum([TSVFile(s).num_rows() 
+                    for ss in sources
+                    for s in ss])
+            if kwargs.get('yolo_tree', False):
+                kwargs['target_synset_tree'] = source_dataset.get_tree_file()
+            p = ProtoGenerator(parse_basemodel_with_depth(net), num_classes, sources=sources, 
+                    labelmap=labelmap,
+                    source_labels=source_labels, 
+                    source_shuffles=source_shuffles,
+                    data_batch_weights=data_batch_weights,
+                    num_train_images=num_train_images,
+                    **kwargs)
+            p.generate_prototxt(path_env['train_proto_file'], 
+                    path_env['test_proto_file'], path_env['solver'])
         
-        gpus = [int(float(s)) for s in kwargs.get('gpus', '-1').split(',')]
-        pretrained_model_file_path = self.run_in_process(self.initialize_linear_layer_with_data, path_env, gpus) if kwargs.get('data_dependent_init', False) else path_env['basemodel']
-        caffe.init_glog(str(path_env['log']))
+        pretrained_model_file_path = self.run_in_process(
+                self.initialize_linear_layer_with_data, path_env,
+                self._gpus()) if kwargs.get('data_dependent_init', False) else path_env['basemodel']
+        
+        # one process can only call init_glog once. For this script, the glog
+        # is not required to initialize and the log file will be in the output
+        # folder
+        #caffe.init_glog(str(path_env['log']))
 
-        model = self._construct_model(path_env['solver'], path_env['test_proto_file'])
-        print 'log file: {0}'.format(path_env['log'])
-        if not os.path.isfile(model[0]) \
-                or not os.path.isfile(model[1]) \
-                or kwargs.get('force_train', False):
-            with open(path_env['log'], 'w') as fp, PyTee(fp, 'stdout'):
-                self._train(path_env['solver'], pretrained_model=pretrained_model_file_path, **kwargs)
+        model = construct_model(path_env['solver'], path_env['test_proto_file'])
+        if not self._is_train_finished() or kwargs.get('force_train', False):
+            with open(path_env['log'], 'w') as fp:
+                self._train()
 
         return model
 
     def predict(self, model):
         data = self._data
         kwargs = self._kwargs
-        _, model_param, mean_value, train_iter = model
+        model_param = model.model_param
+        mean_value = model.mean_value
 
         test_proto_file = self._get_test_proto_file(model)
 
@@ -297,9 +367,22 @@ class CaffeWrapper(object):
 
         return eval_file
 
+    def _get_num_classes(self):
+        if 'num_classes' not in self._kwargs:
+            if 'target_synset_tree' in self._kwargs:
+                self._tree = SynsetTree(self._kwargs['target_synset_tree'])
+                num_classes = len(self._tree.noffsets)
+            else:
+                num_classes = num_non_empty_lines(self._labelmap)
+        else:
+            assert False
+            num_classes = kwargs['num_classes']
+
+        return num_classes
+
     def _get_test_proto_file(self, model):
         surgery = False
-        test_proto_file = model[0]
+        test_proto_file = model.test_proto_file
 
         test_input_sizes = self._kwargs.get('test_input_sizes', [416])
         if len(test_input_sizes) > 1:
@@ -317,8 +400,7 @@ class CaffeWrapper(object):
         return test_proto_file
 
     def _predict_file(self, model):
-        test_proto_file, model_param, mean_value, model_iter = model
-        cc = [model_param]
+        cc = [model.model_param]
         test_input_sizes = self._kwargs.get('test_input_sizes', [416])
         if self._kwargs.get('yolo_test_maintain_ratio', False):
             cc.append('maintainRatio')
@@ -333,6 +415,7 @@ class CaffeWrapper(object):
         return model_param + '.report'
 
     def _construct_model(self, solver, test_proto_file, is_last=True):
+        logging.info('deprecating... use construct_model instead')
         solver_param = self._load_solver(solver)
         train_net_param = self._load_net(solver_param.train_net)
         data_layer = train_net_param.layer[0]
@@ -411,28 +494,48 @@ class CaffeWrapper(object):
         text_format.Merge(all_line, solver_param)
         return solver_param
 
-    def _train(self, solver_prototxt, **kwargs):
-        if kwargs.get('chdir', False):
-            os.chdir(os.path.dirname(solver_prototxt))
+    def _train(self):
+        solver_prototxt = self._path_env['solver']
+        if self._kwargs.get('use_pretrained', True):
+            pretrained_model = self._kwargs.get('basemodel', self._path_env['basemodel'])
+        else:
+            pretrained_model = None
 
-        gpus = [int(float(s)) for s in kwargs.get('gpus', '-1').split(',')]
+        gpus = self._gpus() 
+        restore_snapshot_iter = self._kwargs.get('restore_snapshot_iter', None)
+        restore_snapshot = None
+        if restore_snapshot_iter != None:
+            if restore_snapshot_iter < 0:
+                pattern = os.path.join(self._path_env['output'],
+                        'snapshot',
+                        'model_iter_*.solverstate')
+                all_solverstate = glob.glob(pattern)
+                if len(all_solverstate) > 0:
+                    def parse_iter(p):
+                        return int(p[p.rfind('_') + 1 : p.rfind('.')])
+                    restore_snapshot_iter = max([parse_iter(p) for p in all_solverstate])
+            if restore_snapshot_iter >= 0:
+                restore_snapshot = os.path.join(self._path_env['output'],
+                        'snapshot',
+                        'model_iter_{}.solverstate'.format(restore_snapshot_iter))
+            else:
+               restore_snapshot_iter = None
 
-        if len(gpus) > 1:
-            pretrained_model = kwargs.get('pretrained_model', '')
-            parallel_train(solver_prototxt, None,
-                pretrained_model, gpus, timing=False)
-        elif len(gpus) == 1:
+        if len(gpus) == 1 and self._kwargs.get('debug_train', False):
             gpu = gpus[0]
             if gpu >= 0:
                 caffe.set_device(gpu)
                 caffe.set_mode_gpu()
             caffe.set_random_seed(777)
-            solver = caffe.SGDSolver(solver_prototxt)
+            solver = caffe.SGDSolver(str(solver_prototxt))
             pretrained_model = kwargs.get('pretrained_model', None)
             if pretrained_model:
-                solver.net.copy_from(pretrained_model, 
+                solver.net.copy_from(str(pretrained_model), 
                         ignore_shape_mismatch=True)
             solver.solve()
+        else:
+            parallel_train(solver_prototxt, restore_snapshot,
+                pretrained_model, gpus, timing=False)
 
 
 def Analyser(object):
@@ -483,10 +586,70 @@ def default_paths(net, data, expid):
     path_env['train_proto_file'] = os.path.join(output_path, train_file_base)
     path_env['test_proto_file'] = os.path.join(output_path, test_file_base)
     path_env['solver'] = os.path.join(output_path, solver_file_base)
+    path_env['output_root'] = os.path.dirname(path_env['output'])
+    path_env['output_data_root'] = op.join(path_env['output_root'], 'data')
+    path_env['output_data'] = os.path.join(path_env['output_root'], 'data', 
+            data)
 
     path_env['labelmap'] = os.path.join(path_env['data'], 'labelmap.txt')
 
     return path_env
+
+def yolotrain_main(**kwargs):
+    has_tax_folder = 'taxonomy_folder' in kwargs
+    if not has_tax_folder:
+        yolotrain(**kwargs)
+    else:
+        yolo_tree_train(**kwargs)
+
+def yolo_tree_train(**kwargs):
+    assert 'data' in kwargs
+    assert 'taxonomy_folder' in kwargs
+    build_taxonomy_impl(**kwargs)
+    
+    assert 'yolo_tree' not in kwargs or kwargs['yolo_tree']
+    kwargs['yolo_tree'] = True
+
+    # train only on the data with bbox
+    bb_data = '{}_with_bb'.format(kwargs['data'])
+    if len(TSVDataset(bb_data).get_train_tsvs()) == 0:
+        logging.info('there is no image with bounding box labels')
+        return
+    dataset_ops = [{'op':'remove'},
+            {'op':'add',
+             'name': bb_data,
+             'source':'train',
+             'weight': 1},
+            ]
+    assert 'dataset_ops' not in kwargs or \
+            len(kwargs['dataset_ops']) == 0
+    kwargs['dataset_ops'] = dataset_ops
+    expid = kwargs['expid']
+    kwargs['expid'] = expid + '_bb_only'
+    c = CaffeWrapper(**kwargs)
+    model = c.train()
+    
+    # train it with no_bb as well
+    no_bb_data = '{}_no_bb'.format(kwargs['data'])
+    if len(TSVDataset(no_bb_data).get_train_tsvs()) == 0:
+        logging.info('there is no training image for image-level label')
+        return
+
+    dataset_ops = [{'op':'remove'},
+            {'op':'add',
+             'name':bb_data,
+             'source':'train',
+             'weight': 1},
+            {'op': 'add',
+             'name': no_bb_data,
+             'source': 'train',
+             'weight': 3},
+            ]
+    kwargs['basemodel'] = model.model_param
+    kwargs['expid'] = expid + '_bb_nobb'
+    kwargs['dataset_ops'] = dataset_ops
+    c = CaffeWrapper(**kwargs)
+    c.train()
 
 def yolotrain(data, net, **kwargs):
     init_logging()
@@ -496,17 +659,22 @@ def yolotrain(data, net, **kwargs):
 
     if not monitor_train_only:
         model = c.train()
-        predict_result = c.predict(model)
-        c.evaluate(predict_result)
+        if not kwargs.get('debug_train', False) and model and \
+                not kwargs.get('yolo_tree', False):
+            predict_result = c.predict(model)
+            c.evaluate(predict_result)
     else:
         c.monitor_train(data, net, **kwargs)
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a Yolo network')
-    parser.add_argument('-g', '--gpus', help='GPU device id to use [0].',  
-            default='0')
+    parser.add_argument('-g', '--gpus', help='GPU device id to use [0].',
+            type=int,
+            nargs='+')
     parser.add_argument('-n', '--net', required=False, type=str.lower,
             help='only darknet19 is not supported', default='darknet19')
+    parser.add_argument('-dm', '--detmodel', required=False, type=str,
+            help='detection model', default='yolo')
     parser.add_argument('-t', '--iters', dest='max_iters',  help='number of iterations to train', 
             default=10000, required=False, type=str)
     parser.add_argument('-d', '--data', help='the name of the dataset', required=True)
@@ -563,6 +731,10 @@ def parse_args():
     parser.add_argument('-ti', '--test_input_sizes', default=[416],
             nargs='+', type=int, 
             help='test input sizes')
+    parser.add_argument('-tf', '--taxonomy_folder', 
+            default=argparse.SUPPRESS,
+            type=str,
+            help='taxonomy folder when -yt is specified')
     return parser.parse_args()
 
 if __name__ == '__main__':
@@ -571,6 +743,7 @@ if __name__ == '__main__':
             --net darknet19 \
             --gpus 4,5,6,7
     '''
+    init_logging()
     args = parse_args()
-    yolotrain(**vars(args))
+    yolotrain_main(**vars(args))
 

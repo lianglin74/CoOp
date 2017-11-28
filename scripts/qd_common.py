@@ -11,7 +11,60 @@ import os.path as op
 import caffe
 import time
 from google.protobuf import text_format
+import base64
+import cv2
 
+def load_solver(file_name):
+    with open(file_name, 'r') as fp:
+        all_line = fp.read()
+    solver_param = caffe.proto.caffe_pb2.SolverParameter()
+    text_format.Merge(all_line, solver_param)
+    return solver_param
+
+class Model(object):
+    def __init__(self, test_proto_file, train_proto_file, model_param, mean_value, scale, model_iter):
+        self.test_proto_file = test_proto_file
+        self.model_param = model_param
+        self.mean_value = mean_value
+        self.model_iter = model_iter
+        self.scale = scale
+        self.train_proto_file = train_proto_file
+
+def construct_model(solver, test_proto_file, is_last=True, iteration=None):
+    solver_param = load_solver(solver)
+    train_net_param = load_net(solver_param.train_net)
+    data_layer = train_net_param.layer[0]
+    mean_value = train_net_param.layer[0].transform_param.mean_value
+    scale = train_net_param.layer[0].transform_param.scale
+
+    if is_last:
+        last_model = '{0}_iter_{1}.caffemodel'.format(
+                solver_param.snapshot_prefix, solver_param.max_iter)
+        return Model(test_proto_file, solver_param.train_net, 
+                last_model, mean_value, scale,
+                solver_param.max_iter)
+    elif iteration:
+        last_model = '{0}_iter_{1}.caffemodel'.format(
+                solver_param.snapshot_prefix, iteration)
+        return Model(test_proto_file, solver_param.train_net,
+                last_model, mean_value, scale,
+                solver_param.max_iter)
+    else:
+        total = (solver_param.max_iter + solver_param.snapshot - 1) / solver_param.snapshot
+        all_model = []
+        for i in xrange(total + 1, 0, -1):
+            if i == 0:
+                continue
+            j = i * solver_param.snapshot
+            j = min(solver_param.max_iter, j)
+            if j == solver_param.max_iter:
+                continue
+            last_model = '{0}_iter_{1}.caffemodel'.format(
+                    solver_param.snapshot_prefix, j)
+            all_model.append(Model(test_proto_file, solver_param.train_net,
+                last_model, mean_value,
+                scale, j))
+        return all_model
 
 def load_net_from_str(all_line):
     net_param = caffe.proto.caffe_pb2.NetParameter()
@@ -34,14 +87,14 @@ def setup_yaml():
     """ https://stackoverflow.com/a/8661021 """
     represent_dict_order = lambda self, data:  self.represent_mapping('tag:yaml.org,2002:map', data.items())
     yaml.add_representer(OrderedDict, represent_dict_order)    
-    setup_yaml()
 
 def init_logging():
     np.seterr(all='raise')
     logging.basicConfig(level=logging.INFO,
-    format='%(asctime)s.%(msecs)03d %(filename)s:%(lineno)s: %(message)s',
+    format='%(asctime)s.%(msecs)03d %(filename)s:%(lineno)s %(funcName)10s(): %(message)s',
     datefmt='%m-%d %H:%M:%S',
     )
+    setup_yaml()
 
 def ensure_directory(path):
     if path == '' or path == '.':
@@ -49,6 +102,14 @@ def ensure_directory(path):
     if path != None and len(path) > 0:
         if not os.path.exists(path):
             os.makedirs(path)
+
+def img_from_base64(imagestring):
+    jpgbytestring = base64.b64decode(imagestring)
+    nparr = np.fromstring(jpgbytestring, np.uint8)
+    try:
+        return cv2.imdecode(nparr, cv2.IMREAD_COLOR);
+    except:
+        return None;
 
 def read_to_buffer(file_name):
     with open(file_name, 'r') as fp:
@@ -204,12 +265,12 @@ def solve(proto, snapshot, weights, gpus, timing, uid, rank):
     caffe.set_solver_rank(rank)
     caffe.set_multiprocess(True)
 
-    solver = caffe.SGDSolver(proto)
+    solver = caffe.SGDSolver(str(proto))
     if snapshot and len(snapshot) != 0:
-        solver.restore(snapshot)
+        solver.restore(str(snapshot))
 
     if weights and len(weights) != 0:
-        solver.net.copy_from(weights,ignore_shape_mismatch=True)
+        solver.net.copy_from(str(weights),ignore_shape_mismatch=True)
 
     nccl = caffe.NCCL(solver, uid)
     nccl.bcast()

@@ -325,10 +325,7 @@ def tsvdet(caffenet, caffemodel, intsv_file, key_idx,img_idx, pixel_mean, outtsv
     cmap = load_labelmap_list(cmapfile)
     count = 0
 
-    if 'gpus' in kwargs:
-        gpus = [int(float(g)) for g in kwargs['gpus'].split(',')]
-    else:
-        gpus = [0]
+    gpus = kwargs.get('gpus', [0]) * 10
     
     in_queue = mp.Queue(len(gpus)*2);  # thread/process safe
     out_queue = mp.Queue();
