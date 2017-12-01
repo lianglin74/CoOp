@@ -4,11 +4,13 @@ import sys
 import json
 import argparse
 import numpy as np;
+from taxonomy import LabelTree
 from sklearn import metrics;
 import matplotlib.pyplot as plt
 import glob;
 from pytablemd import write_tablemd
 from functools import partial
+import logging
 
 def load_truths(filein):
     '''
@@ -185,7 +187,13 @@ def _eval(truths, detresults, ovthresh):
     y_trues = np.hstack(y_trues) if len(y_trues) != 0 else np.array([0])
     y_scores = np.hstack(y_scores) if len(y_scores) != 0 else np.array([0])
     coverage_ratio = float(np.sum(y_trues))/npos if npos != 0 else 0
-    precision, recall, thresholds = metrics.precision_recall_curve(y_trues,y_scores);
+    if np.sum(y_trues) == 0:
+        # in this case, metrics.precision_recall_curve will crash
+        precision = np.asarray([0.])
+        recall = np.asarray([0.])
+        thresholds = np.asarray([0.])
+    else:
+        precision, recall, thresholds = metrics.precision_recall_curve(y_trues,y_scores);
     precision = list(precision);
     thresholds = list(thresholds);
     if len(thresholds)<len(precision):
@@ -209,7 +217,11 @@ def eval(truthsfile, detsfile, ovthresh):
     
 def get_pr(report, thresh):
     idx = np.where(np.array(report['precision'])>thresh);
+    if len(idx) == 0:
+        return 0, 0, 0
     recall_ = np.array(report['recall'])[idx];
+    if len(recall_) == 0:
+        return 0, 0, 0
     maxid = np.argmax(np.array(recall_));
     maxid = idx[0][maxid]
     return report['thresholds'][maxid], report['precision'][maxid], report['recall'][maxid]
@@ -304,9 +316,52 @@ def print_reports(reports, precths, report_file_table):
         write_tablemd(fp, table,fields,headings,align)
     fp.close()
    
+def lift_detects(detresults, label_tree):
+    result = {}
+    for label in detresults:
+        dets = detresults[label]
+        all_label = [label]
+        nodes = label_tree.root.search_nodes(name=label)
+        assert len(nodes) == 1
+        node = nodes[0]
+        for n in node.get_ancestors()[: -1]:
+            all_label.append(n.name)
+        for l in all_label:
+            if l not in result:
+                result[l] = dets
+            else:
+                result[l].extend(dets)
+    return result
+
+def lift_truths(truths, label_tree):
+    result = {}
+    expanded = {}
+    for label in truths:
+        imid_to_rects = truths[label]
+        all_label = [label]
+        nodes = label_tree.root.search_nodes(name=label)
+        assert len(nodes) == 1
+        node = nodes[0]
+        for n in node.get_ancestors()[: -1]:
+            all_label.append(n.name)
+        logging.info('->{}'.format(','.join(all_label)))
+        for l in all_label:
+            if l not in result:
+                result[l] = imid_to_rects
+            else:
+                for imid in imid_to_rects:
+                    rects = imid_to_rects[imid]
+                    r = result[l]
+                    if imid in r:
+                        r[imid].extend(rects)
+                    else:
+                        r[imid] = rects
+    return result
+
+    
 def deteval(truth='', dets='', vocdets='', name='', 
         precth=[0.8,0.9,0.95], multiscale=True, ovthresh=[0.3,0.4,0.5],
-        classap=None, baselinefolder=None):
+        classap=None, baselinefolder=None, **kwargs):
     truthsfile = truth
     # parse arguments
     assert  os.path.isfile(truthsfile), truthsfile + " is not found"
@@ -338,6 +393,13 @@ def deteval(truth='', dets='', vocdets='', name='',
         assert False, "argument dets/vocdets is missing!"
         
     truths = load_truths(truthsfile);
+    if kwargs.get('yolo_tree', False) and \
+            kwargs.get('target_synset_tree', None) and \
+            kwargs.get('yolo_tree_eval_label_lift', True):
+        label_tree = LabelTree(kwargs['target_synset_tree']) 
+        truths = lift_truths(truths, label_tree)
+        detresults = lift_detects(detresults, label_tree)
+
     #brief report on different object size
     reports = get_report(truths, detresults, ovthresh, multiscale)
     # detail report with p-r curve
