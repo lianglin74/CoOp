@@ -27,6 +27,8 @@ from qd_common import load_net
 from qd_common import construct_model
 import os.path as op
 from datetime import datetime
+from taxonomy import LabelTree
+
 import matplotlib.pyplot as plt
 import json
 import logging
@@ -220,6 +222,58 @@ class CaffeWrapper(object):
         self._labelmap = source_dataset.get_labelmap_file()
 
         self._tree = None
+        self._test_data = kwargs.get('test_data', data)
+        self._test_source = self._path_env['test_source']
+        if self._test_data != self._data:
+            test_data_path = default_data_path(self._test_data)
+            self._test_source = test_data_path['test_source']
+            source_dataset = TSVDataset(self._test_data)
+            if kwargs.get('test_on_train', False):
+                self._test_source = source_dataset.get_train_tsv()
+            else:
+                self._test_source = source_dataset.get_test_tsv_file()
+        else:
+            source_dataset = TSVDataset(self._data)
+            source_dataset.dynamic_update(self._kwargs.get('dataset_ops', []))
+            if kwargs.get('test_on_train', False):
+                self._test_source = source_dataset.get_train_tsv()
+            else:
+                self._test_source = source_dataset.get_test_tsv_file()
+        self._labelmap = source_dataset.get_labelmap_file()
+
+        if 'yolo_extract_target_prediction' in self._kwargs:
+            assert 'extract_features' not in self._kwargs
+            self._kwargs['extract_features'] = 'target_prediction'
+
+    def demo(self, source_image_tsv=None):
+        labels = load_list_file(self._labelmap)
+        all_model = [construct_model(self._path_env['solver'],
+                self._path_env['test_proto_file'],
+                is_last=True)]
+        all_model.extend(construct_model(self._path_env['solver'],
+                self._path_env['test_proto_file'],
+                is_last=False))
+        best_avail_model = [m for m in all_model if op.isfile(m.model_param)][0]
+        pixel_mean = best_avail_model.mean_value
+        model_param = best_avail_model.model_param
+        logging.info('param: {}'.format(model_param))
+        test_proto_file = self._get_test_proto_file(best_avail_model)
+        waitkey = 0 if source_image_tsv else 1
+        thresh = 0.24
+        from demo_detection import predict_online
+        predict_online(test_proto_file, model_param, pixel_mean, labels,
+                source_image_tsv, thresh, waitkey)
+    
+    def _get_num_classes(self):
+        if 'num_classes' not in self._kwargs:
+            if 'target_synset_tree' in self._kwargs:
+                self._tree = LabelTree(self._kwargs['target_synset_tree'])
+                num_classes = len(self._tree.noffsets)
+            else:
+                num_classes = num_non_empty_lines(self._labelmap)
+        else:
+            assert False
+            num_classes = kwargs['num_classes']
 
     def monitor_train(self, data, net, **kwargs):
         expid = kwargs.get('expid', '777')
@@ -348,7 +402,7 @@ class CaffeWrapper(object):
 
         tsvdet(test_proto_file, 
                 model_param, 
-                path_env['test_source'], 
+                self._test_source, 
                 colkey, 
                 colimg, 
                 mean_value, 
@@ -357,28 +411,15 @@ class CaffeWrapper(object):
 
         return outtsv_file
 
-    def evaluate(self, predict_result):
+    def evaluate(self, model, predict_result):
         data = self._data
         kwargs = self._kwargs
         path_env = default_data_path(data)
 
-        eval_file = deteval(truth=path_env['test_source'],
-                dets=predict_result)
+        eval_file = deteval(truth=self._test_source,
+                dets=predict_result, **self._kwargs)
 
         return eval_file
-
-    def _get_num_classes(self):
-        if 'num_classes' not in self._kwargs:
-            if 'target_synset_tree' in self._kwargs:
-                self._tree = SynsetTree(self._kwargs['target_synset_tree'])
-                num_classes = len(self._tree.noffsets)
-            else:
-                num_classes = num_non_empty_lines(self._labelmap)
-        else:
-            assert False
-            num_classes = kwargs['num_classes']
-
-        return num_classes
 
     def _get_test_proto_file(self, model):
         surgery = False
@@ -400,7 +441,7 @@ class CaffeWrapper(object):
         return test_proto_file
 
     def _predict_file(self, model):
-        cc = [model.model_param]
+        cc = [model.model_param, self._test_data]
         test_input_sizes = self._kwargs.get('test_input_sizes', [416])
         if self._kwargs.get('yolo_test_maintain_ratio', False):
             cc.append('maintainRatio')
@@ -447,7 +488,7 @@ class CaffeWrapper(object):
         is_monitoring = len(all_model) > len(all_ready_model) or  len(need_predict_model) > 1 
         for m in need_predict_model:
             predict_result = self.predict(m)
-            self.evaluate(predict_result)
+            self.evaluate(m, predict_result)
 
         self._display([(m, self._perf_file(m)) for m in all_ready_model if
                 os.path.isfile(self._perf_file(m))])
@@ -609,6 +650,7 @@ def yolo_tree_train(**kwargs):
     
     assert 'yolo_tree' not in kwargs or kwargs['yolo_tree']
     kwargs['yolo_tree'] = True
+    kwargs['yolo_tree_eval_label_lift'] = True
 
     # train only on the data with bbox
     bb_data = '{}_with_bb'.format(kwargs['data'])
@@ -626,8 +668,12 @@ def yolo_tree_train(**kwargs):
     kwargs['dataset_ops'] = dataset_ops
     expid = kwargs['expid']
     kwargs['expid'] = expid + '_bb_only'
+    kwargs['test_data'] = bb_data
     c = CaffeWrapper(**kwargs)
     model = c.train()
+
+    p = c.predict(model)
+    c.evaluate(model, p)
     
     # train it with no_bb as well
     no_bb_data = '{}_no_bb'.format(kwargs['data'])
@@ -649,7 +695,17 @@ def yolo_tree_train(**kwargs):
     kwargs['expid'] = expid + '_bb_nobb'
     kwargs['dataset_ops'] = dataset_ops
     c = CaffeWrapper(**kwargs)
-    c.train()
+    model = c.train()
+    p = c.predict(model)
+    c.evaluate(model, p)
+
+    kwargs['ovthresh'] = [-1]
+    kwargs['test_data'] = no_bb_data
+    c = CaffeWrapper(**kwargs)
+    model = c.train()
+    p = c.predict(model)
+    c.evaluate(model, p)
+
 
 def yolotrain(data, net, **kwargs):
     init_logging()
@@ -662,7 +718,7 @@ def yolotrain(data, net, **kwargs):
         if not kwargs.get('debug_train', False) and model and \
                 not kwargs.get('yolo_tree', False):
             predict_result = c.predict(model)
-            c.evaluate(predict_result)
+            c.evaluate(model, predict_result)
     else:
         c.monitor_train(data, net, **kwargs)
 

@@ -5,6 +5,7 @@ import yaml
 from ete2 import Tree
 import glob
 import os.path as op
+from qd_common import load_list_file
 from qd_common import write_to_file, read_to_buffer
 from qd_common import init_logging, ensure_directory
 from qd_common import load_from_yaml_file
@@ -18,6 +19,112 @@ def create_markdown_url(noffsets):
     urls = ['[{0}](http://www.image-net.org/synset?wnid={0})'.format(noffset) for
             noffset in noffsets]
     return urls
+
+def update_with_path(root, path, psudo=False):
+    curr_root = root
+    for i in xrange(len(path)):
+        s = path[i]
+        existings = curr_root.search_nodes(noffset=synset_to_noffset(s))
+        assert len(existings) <= 1
+        if len(existings) == 1:
+            curr_root = existings[0]
+            continue
+        else:
+            if psudo:
+                return len(path) - i
+            else:
+                curr_root = curr_root.add_child(name=s.name())
+                curr_root.add_features(nick_name=get_nick_name(s),
+                        noffset=synset_to_noffset(s))
+    if psudo:
+        return 0
+
+def update_with_synsets(root, ss):
+    '''
+    build the tree based on the method described in yolo9k paper
+    '''
+    ambiguities = []
+    c = 0
+    for i, s in enumerate(ss):
+        ps = [p for p in s.hypernym_paths() if any(pn for pn in p if
+            synset_to_noffset(pn)==root.noffset)]
+        if len(ps) == 0:
+            logging.info('ignore {}'.format(s))
+            continue
+        c = c + 1
+        if len(ps) == 1:
+            update_with_path(root, ps[0])
+        else:
+            ambiguities.append(ps)
+        if (i % 500) == 0:
+            logging.info('non-ambiguities: {}/{}'.format(i, len(ss)))
+
+    for j, ps in enumerate(ambiguities):
+        ns = [update_with_path(root, p, psudo=True) for p in ps]
+        i = np.argmin(np.asarray(ns))
+        update_with_path(root, ps[i])
+        if (j % 500) == 0:
+            logging.info('ambiguities: {}/{}'.format(j, len(ambiguities)))
+
+def prune_root(root):
+    curr = root
+    while True:
+        if len(curr.children) == 1:
+            curr = curr.children[0]
+        else:
+            break
+    root = curr
+    return root
+
+def prune(root):
+    '''
+    remove any node who has only one child
+    '''
+    root = prune_root(root)
+    cs = []
+    for c in root.children:
+        cs.append(prune(c))
+    root.children = cs
+    return root
+
+def check_prune(root):
+    if len(root.children) == 1: 
+        logging.info('{}->{}'.format(root.synset.name(),
+            root.children[0].synset.name()))
+    for c in root.children:
+        check_prune(c)
+
+def tree_size(root):
+    if root == None:
+        return 0
+    else:
+        s = 0
+        for c in root.children:
+            s = s + tree_size(c)
+        return 1 + s
+
+def populate_dataset_count(root, images_root):
+    for n in root.iter_search_nodes():
+        noffset = '{}{}'.format(n.synset.pos(), n.synset.offset())
+        image_dir = op.join(images_root, noffset)
+        if not op.exists(image_dir):
+            num_image = 0
+        else:
+            num_image = len(glob.glob(op.join(image_dir, '*.*')))
+        n.add_feature('num_image', num_image)
+
+class LabelTree(object):
+    def __init__(self, tree_file):
+        r = load_label_parent(tree_file)
+        self.noffset_idx, self.noffset_parentidx, self.noffsets = r
+        self.root, self.noffset_node = load_label_tree(self.noffset_parentidx, self.noffsets)
+        self.basefilename = op.basename(tree_file)
+
+def synset_to_noffset(synset):
+    return '{}{:0>8}'.format(synset.pos(), synset.offset())
+
+def noffset_to_synset(noffset):
+    return wn.synset_from_pos_and_offset(noffset[0], int(noffset[1:]))
 
 def child_parent_print_tree2(root, field):
     def get_field(n):
@@ -59,6 +166,46 @@ def populate_cum_images(root):
 
     root.add_feature('cum_images_with_bb', cum_images_with_bb)
     root.add_feature('cum_images_no_bb', cum_images_no_bb)
+
+def load_label_tree(noffset_parentidx, noffsets):
+    root = Tree()
+    root_synset = wn.synset('physical_entity.n.01')
+    root.name = root_synset.name()
+    root.add_feature('synset', root_synset)
+    noffset_node = {}
+    for noffset in noffsets:
+        parientid = noffset_parentidx[noffset] 
+        if parientid == -1:
+            c = root.add_child(name=noffset)
+        else:
+            parentnode = noffset_node[noffsets[parientid]]
+            c = parentnode.add_child(name=noffset)
+        noffset_node[noffset] = c
+    return prune_root(root), noffset_node
+
+def load_label_parent(label_tree_file):
+    buf = read_to_buffer(label_tree_file).split('\n')
+    label_map = [b.split(' ') for b in buf]
+    # hack: the labelmap should be in the same folder with the tree file
+    # sometimes, the label in the tree file is different than the name in
+    # labelmap because there should be no whitespace in the label part. Thus,
+    # we have to use the labelmap to replace the labels in the tree file
+    true_labels = load_list_file(op.join(op.dirname(label_tree_file), 'labelmap.txt'))
+    for i, true_label in enumerate(true_labels):
+        label_map[i][0] = true_label
+    if len(label_map[-1]) == 1:
+        label_map = label_map[:-1]
+    label_idx, label_parentidx = {}, {}
+    labels = []
+    idx = 0
+    for l_pi in label_map:
+        label, pi = l_pi
+        pi = int(pi)
+        label_parentidx[label] = pi
+        label_idx[label] = idx
+        idx = idx + 1
+        labels.append(label)
+    return label_idx, label_parentidx, labels 
 
 
 def dump_tree(root, feature_name=None):
