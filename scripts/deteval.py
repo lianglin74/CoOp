@@ -11,6 +11,7 @@ import glob;
 from pytablemd import write_tablemd
 from functools import partial
 import logging
+import copy
 
 def load_truths(filein):
     '''
@@ -328,7 +329,7 @@ def lift_detects(detresults, label_tree):
             all_label.append(n.name)
         for l in all_label:
             if l not in result:
-                result[l] = dets
+                result[l] = copy.deepcopy(dets)
             else:
                 result[l].extend(dets)
     return result
@@ -347,11 +348,11 @@ def lift_truths(truths, label_tree):
         logging.info('->{}'.format(','.join(all_label)))
         for l in all_label:
             if l not in result:
-                result[l] = imid_to_rects
+                result[l] = copy.deepcopy(imid_to_rects)
             else:
+                r = result[l]
                 for imid in imid_to_rects:
                     rects = imid_to_rects[imid]
-                    r = result[l]
                     if imid in r:
                         r[imid].extend(rects)
                     else:
@@ -393,9 +394,8 @@ def deteval(truth='', dets='', vocdets='', name='',
         assert False, "argument dets/vocdets is missing!"
         
     truths = load_truths(truthsfile);
-    if kwargs.get('yolo_tree', False) and \
-            kwargs.get('target_synset_tree', None) and \
-            kwargs.get('yolo_tree_eval_label_lift', True):
+    if kwargs.get('yolo_tree_eval_label_lift', True) and \
+            'target_synset_tree' in kwargs:
         label_tree = LabelTree(kwargs['target_synset_tree']) 
         truths = lift_truths(truths, label_tree)
         detresults = lift_detects(detresults, label_tree)
