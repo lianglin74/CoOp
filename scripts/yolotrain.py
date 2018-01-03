@@ -275,6 +275,8 @@ class CaffeWrapper(object):
             assert False
             num_classes = kwargs['num_classes']
 
+        return num_classes
+
     def monitor_train(self, data, net, **kwargs):
         expid = kwargs.get('expid', '777')
         path_env = default_paths(net, data, expid)
