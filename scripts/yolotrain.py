@@ -234,7 +234,6 @@ class CaffeWrapper(object):
                 self._test_source = source_dataset.get_test_tsv_file()
         else:
             source_dataset = TSVDataset(self._data)
-            source_dataset.dynamic_update(self._kwargs.get('dataset_ops', []))
             if kwargs.get('test_on_train', False):
                 self._test_source = source_dataset.get_train_tsv()
             else:
