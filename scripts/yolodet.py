@@ -126,12 +126,12 @@ def xywh_to_xyxy(bbox):
     result[:, 3] = bbox[:, 1] + bbox[:, 3] / 2.
     return result
 
-def im_multi_scale_detect(net, im, pixel_mean, gpu,
+def im_multi_scale_detect(caffe_net, im, pixel_mean, gpu,
         test_input_sizes=[416], **kwargs):
     all_prob = []
     all_bbox = []
     for test_input_size in test_input_sizes:
-        prob, bbox = im_detect(net, im, pixel_mean, test_input_size, **kwargs)
+        prob, bbox = im_detect(caffe_net, im, pixel_mean, test_input_size, **kwargs)
         if len(test_input_sizes) == 1:
             return prob, bbox
         all_prob.append(np.copy(prob))
@@ -155,7 +155,7 @@ def im_multi_scale_detect(net, im, pixel_mean, gpu,
         prob[removed, :] = 0
     return prob, bbox
 
-def im_detect(net, im, pixel_mean, target_size=416, **kwargs):
+def im_detect(caffe_net, im, pixel_mean, target_size=416, **kwargs):
     im_orig = im.astype(np.float32, copy=True)
     im_orig -= pixel_mean
 
@@ -194,15 +194,15 @@ def im_detect(net, im, pixel_mean, target_size=416, **kwargs):
 
     # blob = load_image_data(r'detection-image.bin')      // for parity check
 
-    net.blobs['data'].reshape(1, *blob.shape)
-    net.blobs['data'].data[...]=blob.reshape(1, *blob.shape)
-    net.blobs['im_info'].reshape(1,2)
-    net.blobs['im_info'].data[...] = (im_orig.shape[0:2],)
+    caffe_net.blobs['data'].reshape(1, *blob.shape)
+    caffe_net.blobs['data'].data[...]=blob.reshape(1, *blob.shape)
+    caffe_net.blobs['im_info'].reshape(1,2)
+    caffe_net.blobs['im_info'].data[...] = (im_orig.shape[0:2],)
 
-    net.forward()
+    caffe_net.forward()
 
-    bbox = net.blobs['bbox'].data[0]
-    prob = net.blobs['prob'].data[0]
+    bbox = caffe_net.blobs['bbox'].data[0]
+    prob = caffe_net.blobs['prob'].data[0]
 
     prob = prob.reshape(-1, prob.shape[-1])
     assert bbox.shape[-1] == 4
