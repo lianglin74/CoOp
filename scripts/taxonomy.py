@@ -10,6 +10,7 @@ from qd_common import write_to_file, read_to_buffer
 from qd_common import init_logging, ensure_directory
 from qd_common import load_from_yaml_file
 import Queue
+from itertools import izip
 
 def get_nick_name(s):
     n = s.name()
@@ -294,8 +295,8 @@ class LabelToSynset(object):
                 else:
                     self._white_list[l] = anchor 
 
-    def convert(self, label):
-        if len(label) == 9 and label[0] == 'n':
+    def convert(self, label, parent_synset=None):
+        if re.match('^n[0-9]{8}$', label):
             return noffset_to_synset(label)
 
         label = label.lower()
@@ -307,10 +308,29 @@ class LabelToSynset(object):
         
         result  = []
         for label in labels:
-            sss = [ss for ss in wn.synsets(label) if ss.pos() == 'n']
+            sss = [ss for ss in wn.synsets(label, pos='n')]
             result.extend(sss)
+        result = list(set(result))
+
+        if len(result) > 1 and parent_synset:
+            matched_parent = [True] * len(result)
+            for i, r in enumerate(result):
+                matched = False
+                for p in r.hypernym_paths():
+                    for n in p:
+                        if n == parent_synset:
+                            matched = True
+                            break
+                if not matched:
+                    matched_parent[i] = False
+            result = [r for r, m in izip(result, matched_parent) if m]
+            if len(result) == 1:
+                logging.info('successfully disambiguate {} based on the parent {}'.format(
+                    label, parent_synset.name()))
+
         if len(result) == 1:
             return result[0]
+
         return result
 
     def _equal_labels(self, label):
@@ -321,7 +341,10 @@ class LabelToSynset(object):
 
     def populate_noffset(self, root):
         if not hasattr(root, 'noffset') or root.noffset is None:
-            s = self.convert(root.name)
+            if root.up and hasattr(root.up, 'noffset') and root.up.noffset:
+                s = self.convert(root.name, noffset_to_synset(root.up.noffset))
+            else:
+                s = self.convert(root.name)
             if s is not None and type(s) is not list:
                 root.add_feature('noffset', synset_to_noffset(s))
             else:
