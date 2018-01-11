@@ -541,7 +541,7 @@ def gen_term_list(tax_folder, term_list):
     all_tax = load_all_tax(tax_folder)
     root_tax = merge_all_tax(all_tax)
 
-    all_term = [node.name for node in root_tax.root.iter_search_nodes() if
+    all_term = ['\n'.join(['\t'.join([node.name, node.name + query_aug_str, node.name]) for query_aug_str in ['', ' instagram', ' pinterest']]) for node in root_tax.root.iter_search_nodes() if
             node.name != root_tax.root.name]
 
     write_to_file('\n'.join(map(lambda x: x.encode('utf-8'), all_term)),
