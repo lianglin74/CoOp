@@ -136,8 +136,8 @@ class ProtoGenerator(object):
             if type(e) is str and e.endswith('e'):
                 num_train_images = kwargs.get('num_train_images', 5011)
                 effective_batch_size = kwargs.get('effective_batch_size', 64)
-                iter_each_epoch = num_train_images / effective_batch_size
-                return int(e[:-1]) * iter_each_epoch
+                iter_each_epoch = 1. * num_train_images / effective_batch_size
+                return int(float(e[:-1]) * iter_each_epoch)
             else:
                 return int(e)
 
