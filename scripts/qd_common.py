@@ -13,6 +13,72 @@ import time
 from google.protobuf import text_format
 import base64
 import cv2
+from itertools import izip
+
+
+def yolo_old_to_new(old_proto, old_model, new_model):
+    '''
+    input: old_proto, old_model
+    old_proto: train or test proto
+    output: new_model
+    '''
+    assert op.isfile(old_proto)
+    assert op.isfile(old_model)
+
+    ensure_directory(op.dirname(new_model))
+
+    # infer the number of anchors and the number of classes
+    proto = load_net(old_proto)
+    last_layer = proto.layer[-1]
+    if last_layer.type == 'RegionLoss':
+        num_classes = last_layer.region_loss_param.classes
+        biases_length = len(last_layer.region_loss_param.biases)
+    else:
+        assert last_layer.type == 'RegionOutput'
+        num_classes = last_layer.region_output_param.classes
+        biases_length = len(last_layer.region_output_param.biases)
+    num_anchor = biases_length / 2
+    assert num_anchor * 2 == biases_length
+
+    target_layer = proto.layer[-2]
+    assert target_layer.type == 'Convolution'
+    assert target_layer.convolution_param.num_output == ((5 + num_classes) *
+        num_anchor)
+    net = caffe.Net(old_proto, old_model, caffe.TRAIN)
+    target_param = net.params[target_layer.name]
+    old_weight = target_param[0].data
+    new_weight = np.zeros_like(old_weight)
+    has_bias = len(target_param) > 0
+    all_old = [old_weight]
+    all_new = [new_weight]
+    if has_bias:
+        old_bias = target_param[1].data
+        new_bias = np.zeros_like(old_bias)
+        all_old.append(old_bias[:, np.newaxis])
+        all_new.append(new_bias[:, np.newaxis])
+
+    for i in xrange(num_anchor):
+        for old_p, new_p in izip(all_old, all_new):
+            x = old_p[0 + i * (5 + num_classes), :]
+            y = old_p[1 + i * (5 + num_classes), :]
+            w = old_p[2 + i * (5 + num_classes), :]
+            h = old_p[3 + i * (5 + num_classes), :]
+            o = old_p[4 + i * (5 + num_classes), :]
+            old_cls_start = 5 + i * (5 + num_classes)
+            cls = old_p[old_cls_start: (old_cls_start + num_classes),
+                    :]
+            new_p[i + 0 * num_anchor, :] = x
+            new_p[i + 1 * num_anchor, :] = y
+            new_p[i + 2 * num_anchor, :] = w
+            new_p[i + 3 * num_anchor, :] = h
+            new_p[i + 4 * num_anchor, :] = o
+            new_cls_start = i * num_classes + 5 * num_anchor
+            new_p[new_cls_start : (new_cls_start + num_classes), :] = cls
+    
+    for old_p, new_p in izip(all_old, all_new):
+        old_p[...] = new_p
+
+    net.save(new_model)
 
 def load_solver(file_name):
     with open(file_name, 'r') as fp:
