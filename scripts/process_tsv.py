@@ -28,6 +28,7 @@ import numpy as np
 import shutil
 import os
 from qd_common import img_from_base64
+from qd_common import yolo_old_to_new
 
 def tsv_details(tsv_file):
     rows = tsv_reader(tsv_file)
@@ -750,6 +751,11 @@ def process_tsv_main(**kwargs):
     elif kwargs['type'] == 'taxonomy_to_tsv':
         taxonomy_folder = kwargs['input']
         build_taxonomy_impl(taxonomy_folder)
+    elif kwargs['type'] == 'yolo_model_convert':
+        old_proto = kwargs['prototxt']
+        old_model = kwargs['model']
+        new_model = kwargs['output']
+        yolo_old_to_new(old_proto, old_model, new_model)
     else:
         logging.info('unknown task {}'.format(kwargs['type']))
 
@@ -758,6 +764,10 @@ def parse_args():
     parser.add_argument('-t', '--type', help='what type it is: gen_tsv',
             type=str, required=True)
     parser.add_argument('-i', '--input', help='input',
+            type=str, required=False)
+    parser.add_argument('-p', '--prototxt', help='proto file',
+            type=str, required=False)
+    parser.add_argument('-m', '--model', help='model file',
             type=str, required=False)
     parser.add_argument('-o', '--output', help='output',
             type=str, required=False)
