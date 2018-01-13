@@ -126,8 +126,8 @@ class NeuralNetwork :
         blacklist=None, whitelist=None
         ):
         for layer in self.getlayers(blacklist,whitelist):
-            layerobj = self.n[layer] if isinstance(layer,str) else layerobj
-            layertype = layeobj.fn.type_name
+            layerobj = self.n[layer] if isinstance(layer,str) else layer
+            layertype = layerobj.fn.type_name
             layerparams = layerobj.fn.params
             if layertype in ['Convolution', 'Deconvolution', 'InnerProduct']:
                 if 'bias_term' not in layerparams or  layerparams['bias_term']==True:
@@ -146,7 +146,7 @@ class NeuralNetwork :
             if layertype == 'BatchNorm':
                 if lockbn:
                     layerparams['batch_norm_param']=dict(use_global_stats=True)
-    @layerinit('dropout')                    
+    @layerinit('drop')                    
     def dropout(self,  dropout_ratio=0.5, in_place=True,deploy=False,**kwargs):
         if deploy==True: return None;
         return  _dropout(self.bottom,dropout_ratio,in_place)

@@ -172,14 +172,16 @@ def test_caffenet(nclass):
     n = CaffeNet(name)
     n.tsv_inception_layer("tsv480/train.resize480.shuffled.tsv",227,batchsize=(64,50),new_image_size =(256,256),phases=[caffe.TRAIN,caffe.TEST])
     n.caffenet(nclass,deploy=False)
-    n.set_conv_params()
-    n.softmaxwithloss('fc7','label',layername='loss')
-    n.accuracy('fc7','label',layername='accuracy')
-    n.accuracy('fc7','label',top_k=5, testonly=True, layername='accuracy_top_5')
+    n.set_conv_params( weight_filler = dict(type='gaussian', std=0.01), whitelist=['conv1','conv3','fc8'] )
+    n.set_conv_params( weight_filler = dict(type='gaussian', std=0.01), bias_filler= dict(type='constant', value=1), whitelist=['conv2','conv4','conv5'] )
+    n.set_conv_params( weight_filler = dict(type='gaussian', std=0.005), bias_filler= dict(type='constant', value=1), whitelist=['fc6','fc7'] )
+    n.softmaxwithloss('fc8','label',layername='loss')
+    n.accuracy('fc8','label',testonly=True, layername='accuracy')
+    n.accuracy('fc8','label',top_k=5, testonly=True, layername='accuracy_top_5')
     with open(name+'_trainval.prototxt','w') as fout:
         fout.write(n.toproto());
 
 if __name__ == "__main__":
-    test_resnet(101);
+    #test_resnet(101);
     #test_darknet(1000)
-    #test_caffenet(1000)
+    test_caffenet(1000)
