@@ -119,14 +119,15 @@ def extract_training_data( new_net,anchor_num, lname, trainX, trainY, datalayer,
         fw = feature_map.shape[3]-1
         batch_size = labels.shape[0];
         for i in range(batch_size):
-            cid =int(labels[i,4]);
-            if np.sum(labels[i,:])==0:          #no more foreground objects
-                break;
-            bbox_x = int(labels[i,0]*fw+0.5)
-            bbox_y = int(labels[i,1]*fh+0.5)
-            xlist += [feature_map[i,:,bbox_y,bbox_x]]
-            ylist += [cid]
-            wcnt[cid]+=1;
+            for j in range(labels.shape[1]//5):
+                if np.sum(labels[i,5*j:])==0:          #no more foreground objects
+                    break;
+                cid =int(labels[i,5*j+4]);                    
+                bbox_x = int(labels[i,5*j]*fw+0.5)
+                bbox_y = int(labels[i,5*j+1]*fh+0.5)
+                xlist += [feature_map[i,:,bbox_y,bbox_x]]
+                ylist += [cid]
+                wcnt[cid]+=1;
         if  np.min(wcnt) > tr_cnt:    break;
     return np.vstack(xlist).astype(float), np.array(ylist).astype(int);
 
