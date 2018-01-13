@@ -6,7 +6,30 @@ import caffe
 import os.path as op
 from quickercaffe import NeuralNetwork
 
-#class VggNet(NeuralNetwork):
+
+class VggNet(NeuralNetwork):
+    def __init__ (self, name ):
+        NeuralNetwork.__init__(self,name)
+    def get_topname(self, layertype, prefix, layername, postfix):
+        prefix =  self.prefix if prefix is None and self.prefix is not None else prefix
+        layername = layertype if layername is None else layername
+        name = ''.join([layername,postfix]) if postfix is not None else layername
+        if name=='' and prefix is not None:     return prefix;
+        return '_'.join([prefix,name]) if prefix is not None else name
+    def vggnet(self,nclass,depth,deploy=False):
+        netdefs ={16: [(64,2),(128,2),(256,3),(512,3),(512,3)], 16: [(64,2),(128,2),(256,4),(512,4),(512,4)] }
+        assert (depth in netdefs)
+        for i,stagedef in enumerate(netdefs[depth]): 
+            nout = stagedef[0];
+            for j in range(stagedef[1]):
+                postfix=str(i+1)+'_'+str(j+1) 
+                self.convrelu(nout,3,pad=1,postfix=postfix)
+            self.maxpool(2,stride=2,layername='pool'+str(i+1))
+        self.fcrelu(4096,postfix='6')
+        self.dropout(deploy=deploy,postfix='6')        
+        self.fcrelu(4096,postfix='7')
+        self.dropout(deploy=deploy,postfix='7')
+        self.fc(nclass,bias=True,postfix='8')
 
 class CaffeNet(NeuralNetwork):
     def __init__ (self, name ):
@@ -181,7 +204,26 @@ def test_caffenet(nclass):
     with open(name+'_trainval.prototxt','w') as fout:
         fout.write(n.toproto());
 
+def test_vggnet(nclass,depth):
+    name = 'vgg'+str(depth)
+    n = VggNet(name)
+    n.input([1,3,227,227])
+    n.vggnet(nclass,depth,deploy=True)
+    with open(name+'_deploy.prototxt','w') as fout:
+        fout.write(n.toproto());
+    n = VggNet(name)
+    n.tsv_inception_layer("tsv480/train.resize480.shuffled.tsv",227,batchsize=(64,50),new_image_size =(256,256),phases=[caffe.TRAIN,caffe.TEST])
+    n.vggnet(nclass,depth,deploy=False)
+    n.set_conv_params( weight_filler = dict(type='gaussian', std=0.01), blacklist=['fc6','fc7','fc8'] )
+    n.set_conv_params( weight_filler = dict(type='gaussian', std=0.005), bias_filler= dict(type='constant', value=0.1), whitelist=['fc6','fc7','fc8'] )
+    n.softmaxwithloss('fc8','label',layername='loss')
+    n.accuracy('fc8','label',testonly=True, layername='accuracy')
+    n.accuracy('fc8','label',top_k=5, testonly=True, layername='accuracy_top_5')
+    with open(name+'_trainval.prototxt','w') as fout:
+        fout.write(n.toproto());
+
 if __name__ == "__main__":
     #test_resnet(101);
     #test_darknet(1000)
-    test_caffenet(1000)
+    #test_caffenet(1000)
+    test_vggnet(1000,16)
