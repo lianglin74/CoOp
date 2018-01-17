@@ -4,8 +4,12 @@ import numpy as np
 from layerfactory import conv_bn, last_layer, conv
 from darknet import DarkNet
 import math
+import logging
 
 class Yolo(object):
+    def __init__(self):
+        self.batch_size = []
+
     def add_input_data(self, n, num_classes, **kwargs):
         #include = {'phase': getattr(caffe_pb2, 'TRAIN')}
         transform_param = {'mirror': kwargs.get('yolo_mirror', True), 
@@ -40,16 +44,19 @@ class Yolo(object):
 
         source_files = kwargs.get('sources', ['train.tsv'])
         assert 'source' not in kwargs, 'not supported, use sources: a list'
-       
         if 'gpus' in kwargs:
             num_threads = len(kwargs['gpus'])
         else:
             num_threads = 1
+
+        # Only with -fg set use the new layer structure
+        with_new_layers = kwargs.get('yolo_full_gpu', False) and kwargs.get('target_synset_tree', False)
         effective_batch_size = kwargs.get('effective_batch_size', 64.0)
         batch_size = int(math.ceil(effective_batch_size / num_threads))
         assert batch_size > 0
         if len(source_files) == 1:
             assert batch_size > 0
+            self.batch_size.append(batch_size)
             tsv_data_param = {'batch_size': batch_size, 
                     'new_height': 256,
                     'new_width': 256,
@@ -66,7 +73,7 @@ class Yolo(object):
                 assert len(kwargs['source_shuffles']) == 1
                 tsv_data_param['source_shuffle'] = kwargs['source_shuffles'][0]
             
-            n.data, n.label = L.TsvBoxData(ntop=2, 
+            n.data, n.label = L.TsvBoxData(ntop=2,
                     transform_param=transform_param, 
                     tsv_data_param=tsv_data_param,
                     box_data_param=box_data_param,
@@ -81,7 +88,8 @@ class Yolo(object):
                 w = float(np_weights[i])
                 assert w > 0
                 assert w.is_integer()
-                tsv_data_param = {'batch_size': int(w), 
+                self.batch_size.append(w)
+                tsv_data_param = {'batch_size': int(w),
                         'new_height': 256,
                         'new_width': 256,
                         'col_data': 2,
@@ -98,18 +106,31 @@ class Yolo(object):
                     if len(kwargs['source_shuffles']) != 0:
                         assert len(kwargs['source_shuffles']) == len(source_files)
                         tsv_data_param['source_shuffle'] = kwargs['source_shuffles'][i]
-                
-                n['data' + str(i)], n['label' + str(i)] = L.TsvBoxData(ntop=2, 
+
+                label_name = 'label%s' % (i if i > 0 or not with_new_layers else '')
+                n['data' + str(i)], n[label_name] = L.TsvBoxData(ntop=2,
                         #include=include,
                         transform_param=transform_param, 
                         tsv_data_param=tsv_data_param,
                         box_data_param=box_data_param,
                         data_param=data_param)
                 data_blobs.append(n['data' + str(i)])
-                label_blobs.append(n['label' + str(i)])
+                if not with_new_layers:
+                    label_blobs.append(n[label_name])
 
             n.data = L.Concat(*data_blobs, axis=0)
-            n.label = L.Concat(*label_blobs, axis=0)
+            if not with_new_layers:
+                n.label = L.Concat(*label_blobs, axis=0)
+                return
+
+            assert len(self.batch_size) == 2
+            # assume second one is always nobb
+            n.label_nobb_xywh, n.label_nobb, n.label_nobb_multi = L.Slice(n.label1,
+                                                ntop=3,
+                                                name='slice_label',
+                                                slice_point=[4, 5])
+            n.silence_label_nobb = L.Silence(n.label_nobb_xywh, n.label_nobb_multi,
+                                             ntop=0, name='ignore_label_nobb')
 
     def dark_block(self, n, s, nout_dark,stride,  lr, deploy, bn_no_train=False):
         bottom = n.data if s.startswith('dark1') else last_layer(n);
@@ -184,7 +205,7 @@ class Yolo(object):
                         biases=biases,
                         **extra_train_param)
             else:
-                add_yolo_train_loss(n, biases, num_classes)
+                add_yolo_train_loss(n, biases, num_classes, self.batch_size, kwargs.get('target_synset_tree'))
         else:
             if not kwargs.get('yolo_full_gpu', False):
                 n.bbox, n.prob = L.RegionOutput(n['last_conv'], n['im_info'],
@@ -195,45 +216,113 @@ class Yolo(object):
                         biases=biases,
                         **extra_test_param)
             else:
-                add_yolo_test_loss(n, biases, num_classes)
+                add_yolo_test_loss(n, biases, num_classes, kwargs.get('target_synset_tree'))
 
-def add_yolo_train_loss(n, biases, num_classes):
-    last_top = last_layer(n)
+def add_yolo_train_loss_bb_only(n, bb_top, biases, num_classes, tree_file, weight_scale=1):
     num_anchor = len(biases) / 2
-
-    n.xy, n.wh, n.obj, n.conf = L.Slice(last_top, 
+    n.xy, n.wh, n.obj, n.conf = L.Slice(bb_top,
             ntop=4,
             name='slice_region',
-            slice_point=[num_anchor * 2, num_anchor * 4,
-                num_anchor * 5])
+            slice_point=[num_anchor * 2, num_anchor * 4, num_anchor * 5])
     n.sigmoid_xy = L.Sigmoid(n.xy, in_place=True)
     n.sigmoid_obj = L.Sigmoid(n.obj, in_place=True)
-    regionTargetOutput = L.RegionTarget(n.sigmoid_xy, n.wh, n.sigmoid_obj,
-            n.label, 
-            name='region_target',
-            param={'decay_mult': 0, 'lr_mult': 0},
-            ntop=6, 
-            propagate_down=[False, False, False, False],
-            biases=biases)
-    n.t_xy, n.t_wh, n.t_xywh_weight, n.t_o_obj, n.t_o_noobj, n.t_label = regionTargetOutput
-    n.xy_loss = L.EuclideanLoss(n.xy, n.t_xy, n.t_xywh_weight, 
-            propagate_down=[True, False, False], 
-            loss_weight=1)
-    n.wh_loss = L.EuclideanLoss(n.wh, n.t_wh, n.t_xywh_weight, 
-            propagate_down=[True, False, False], 
-            loss_weight=1)
-    n.o_obj_loss = L.EuclideanLoss(n.obj, n.t_o_obj, 
-            propagate_down=[True, False], loss_weight=5)
-    n.o_noobj_loss = L.EuclideanLoss(n.obj, n.t_o_noobj, 
-            propagate_down=[True, False], loss_weight=1)
-    n.reshape_t_label = L.Reshape(n.t_label, shape={'dim': [-1, 1, 0, 0]})
-    n.reshape_conf = L.Reshape(n.conf, shape={'dim': [-1, num_classes, 0, 0]})
-    n.softmax_loss = L.SoftmaxWithLoss(n.reshape_conf, n.reshape_t_label,
-            propagate_down=[True, False],
-            loss_weight=num_anchor, loss_param={'ignore_label': -1, 'normalization':
-                P.Loss.BATCH_SIZE})
+    n.t_xy, n.t_wh, n.t_xywh_weight, n.t_o_obj, n.t_o_noobj, n.t_label = L.RegionTarget(
+        n.sigmoid_xy, n.wh, n.sigmoid_obj,
+        n.label,
+        name='region_target',
+        param={'decay_mult': 0, 'lr_mult': 0},
+        ntop=6,
+        propagate_down=[False, False, False, False],
+        biases=biases)
+    n.xy_loss = L.EuclideanLoss(n.xy, n.t_xy, n.t_xywh_weight,
+                                propagate_down=[True, False, False],
+                                loss_weight=1 * weight_scale)
+    n.wh_loss = L.EuclideanLoss(n.wh, n.t_wh, n.t_xywh_weight,
+                                propagate_down=[True, False, False],
+                                loss_weight=1 * weight_scale)
+    n.o_obj_loss = L.EuclideanLoss(n.obj, n.t_o_obj,
+                                   propagate_down=[True, False],
+                                   loss_weight=5 * weight_scale)
+    n.o_noobj_loss = L.EuclideanLoss(n.obj, n.t_o_noobj,
+            propagate_down=[True, False], loss_weight=1 * weight_scale)
 
-def add_yolo_test_loss(n, biases, num_classes):
+    if not tree_file:
+        # flat structure (uses softmax)
+        n.reshape_t_label = L.Reshape(n.t_label, shape={'dim': [-1, 1, 0, 0]})
+        n.reshape_conf = L.Reshape(n.conf, shape={'dim': [-1, num_classes, 0, 0]})
+        n.softmax_loss = L.SoftmaxWithLoss(n.reshape_conf, n.reshape_t_label,
+                                           propagate_down=[True, False],
+                                           loss_weight=num_anchor,
+                                           loss_param={
+                                               'ignore_label': -1,
+                                               'normalization': P.Loss.BATCH_SIZE
+                                            })
+        return
+
+    n.reshape_conf = L.Reshape(n.conf, axis=1, num_axes=1, shape={'dim': [num_classes, num_anchor]})
+    n.softmaxtree_loss = L.SoftmaxTreeWithLoss(n.reshape_conf, n.t_label,
+                                           propagate_down=[True, False],
+                                           loss_weight=1 * weight_scale,
+                                           loss_param={
+                                               'ignore_label': -1,
+                                               'normalization': P.Loss.BATCH_SIZE
+                                           },
+                                           softmaxtree_param={
+                                               'tree': tree_file
+                                           })
+
+def add_yolo_train_loss(n, biases, num_classes, batch_size, tree_file):
+    last_top = last_layer(n)
+
+    if len(batch_size) == 1 or not tree_file:
+        add_yolo_train_loss_bb_only(n, last_top, biases, num_classes, tree_file)
+        return
+    assert len(batch_size) == 2
+    n.conv_bb, n.conv_no_bb = L.Slice(last_top,
+                                      ntop=2,
+                                      name='slice_batch',
+                                      axis=0,
+                                      slice_point=[int(batch_size[0])]
+                                      )
+    weight_bb = float(batch_size[0]) / np.sum(batch_size)
+    weight_nobb = float(batch_size[1]) / np.sum(batch_size)
+    add_yolo_train_loss_bb_only(n, n.conv_bb, biases, num_classes, tree_file, weight_scale=weight_bb)
+
+    num_anchor = len(biases) / 2
+
+    n.xywh_nobb, n.obj_nobb, n.conf_nobb = L.Slice(n.conv_no_bb,
+                                                   ntop=3,
+                                                   name='slice_region_nobb',
+                                                   slice_point=[num_anchor * 4, num_anchor * 5])
+    n.silence_nobb = L.Silence(n.xywh_nobb,
+                               ntop=0, name='ignore_nobb')
+    n.sigmoid_obj_nobb = L.Sigmoid(n.obj_nobb, in_place=True)
+
+
+    n.reshape_conf_nobb = L.Reshape(n.conf_nobb, axis=1, num_axes=1,
+                                    shape={'dim': [num_classes, num_anchor]})
+    n.softmaxtree_loss_nobb, n.obj_index = L.SoftmaxTreeWithLoss(
+        n.reshape_conf_nobb, n.label_nobb, n.sigmoid_obj_nobb,
+        ntop=2,
+        propagate_down=[True, False, False],
+        loss_weight=[weight_nobb, 0],
+        loss_param={
+            'normalization': P.Loss.BATCH_SIZE
+        },
+        softmaxtree_param={
+            'tree': tree_file
+        },
+        softmaxtree_loss_param={
+            'with_objectness': True
+        })
+
+    n.obj_loss_nobb = L.IndexedThresholdLoss(
+        n.sigmoid_obj_nobb, n.obj_index,
+        loss_weight=weight_nobb,
+        propagate_down=[True, False])
+
+
+def add_yolo_test_loss(n, biases, num_classes, tree_file):
     last_top = last_layer(n)
     num_anchor = len(biases) / 2
 
@@ -243,6 +332,41 @@ def add_yolo_test_loss(n, biases, num_classes):
             slice_point=[num_anchor * 2, num_anchor * 4, num_anchor * 5])
     n.sigmoid_xy = L.Sigmoid(n.xy, in_place=True)
     n.sigmoid_obj = L.Sigmoid(n.obj, in_place=True)
+    if tree_file:
+        n.reshape_conf = L.Reshape(n.conf, axis=1, num_axes=1,
+                                   shape={'dim': [num_classes, num_anchor]})
+        n.softmaxtree_conf = L.SoftmaxTree(n.reshape_conf,
+                                           softmaxtree_param={
+                                               'tree': tree_file
+                                           })
+        n.top_class = L.TreePrediction(n.softmaxtree_conf,
+                                       treeprediction_param={
+                                           'tree': tree_file,
+                                           'threshold': 0.5
+                                           })
+        n.bbox = L.YoloBBs(n.sigmoid_xy, n.wh, n.im_info,
+                           yolobbs_param={
+                               'biases': biases,
+                               })
+        # convert objectness to dense form, and append the max column, but do not move the axis
+        n.dense_obj = L.YoloEvalCompat(n.sigmoid_obj, n.top_class,
+                                       yoloevalcompat_param={
+                                           'classes': num_classes,
+                                           'move_axis': False
+                                       })
+        # per-class NMS on the classes (leave the last column unchanged for compatibility)
+        n.nms_prob = L.NMSFilter(n.bbox, n.dense_obj,
+                             nmsfilter_param={
+                                 'classes': num_classes,
+                                 'threshold': 0.45,
+                                 'pre_threshold': 0.005  # 0.24
+                             })
+        # just move the axis to the end for compatibility
+        n.prob = L.YoloEvalCompat(n.nms_prob,
+                                  yoloevalcompat_param={
+                                      'append_max': False
+                                      })
+        return
     n.reshape_conf = L.Reshape(n.conf, shape={'dim': [-1, num_classes, 0, 0]})
     n.softmax_conf = L.Softmax(n.reshape_conf)
     n.bbox, n.prob = L.RegionPrediction(n.sigmoid_xy, n.wh, n.sigmoid_obj,

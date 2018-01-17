@@ -273,6 +273,7 @@ class CaffeWrapper(object):
         else:
             assert False
             num_classes = kwargs['num_classes']
+        return num_classes
 
         return num_classes
 
