@@ -17,6 +17,11 @@ def _conv(bottomlayer, nout, ks, stride, pad, bias, **kwargs):
         return L.Convolution(bottomlayer, kernel_size=ks, stride=stride, num_output=nout, pad=pad, **kwargs);
     else:
         return L.Convolution(bottomlayer, kernel_size=ks, stride=stride, num_output=nout, pad=pad, bias_term=bias,**kwargs);
+def _dwconv(bottomlayer, nout, ks, stride, pad, bias, **kwargs):
+    if bias==True:
+        return L.DepthwiseConvolution(bottomlayer, convolution_param=dict(kernel_size=ks, stride=stride, num_output=nout, pad=pad, **kwargs));
+    else:
+        return L.DepthwiseConvolution(bottomlayer, convolution_param=dict(kernel_size=ks, stride=stride, num_output=nout, pad=pad, bias_term=bias,**kwargs));
 def _deconv(bottomlayer, nout, ks, stride, pad, bias):
     return L.Deconvolution(bottomlayer, convolution_param=dict(kernel_size=ks, stride=stride, num_output=nout, pad=pad, bias_term=bias));
 def _fc(bottomlayer, nout, bias, **kwargs):
@@ -56,11 +61,17 @@ def _accuracy(bottomlayer, label, top_k, testonly=False):
         return L.Accuracy(bottomlayer, label, include=evalphase, accuracy_param=dict(top_k=top_k))
     else:
         return L.Accuracy(bottomlayer, label, accuracy_param=dict(top_k=top_k))
-def _resize(bottomlayer, target, intepolation=1):            #Nearest: 1, Bilinear=2
-    return L.Resize(bottomlayer,target, function_type=2, intepolation_type=intepolation);
 def _concat(bottomlayer,layer, axis=1):
     return L.Concat(bottomlayer,layer,concat_param=dict(axis=axis))
-def _reorg(bottomlayer, stride=2, reverse=False):        #reverse=False   C*stride*stride, W/stride, H/stride,  
+#Customized caffe layers, only for CCSCaffe
+def _shuffle(bottomlayer, group=1):
+    if group==1:
+        return L.ShuffleChannel(bottomlayer)
+    else:
+        return L.ShuffleChannel(bottomlayer,group=group)
+def _resize(bottomlayer, target, intepolation=1):            #Nearest: 1, Bilinear=2
+    return L.Resize(bottomlayer,target, function_type=2, intepolation_type=intepolation);
+def _reorg(bottomlayer, stride=2, reverse=False):        #reverse=False   C*stride*stride, W/stride, H/stride,
     return L.Reorg(bottomlayer,stride=stride, reverse=reverse)
 
 #layer_name syntax   {prefix}/{layername|layertype}_{postfix}
@@ -81,7 +92,7 @@ class NeuralNetwork :
     def __init__ (self, name):
         self.n = caffe.NetSpec();
         self.bottom = None;
-        self.name = 'name: "%s"'%name;
+        self.name = name;
         self.trainstr = '';
         self.prefix = None
 
@@ -111,7 +122,7 @@ class NeuralNetwork :
         net = self.n.to_proto()
         #net.input.extend(inputs)
         #net.input_dim.extend(dims)
-        return '\n'.join([self.name, self.trainstr,str(net)])
+        return '\n'.join(['name: "%s"'%self.name, self.trainstr,str(net)])
     def set_bottom(self,layer):
         if layer is None: return;
         if isinstance(layer, str):
@@ -129,16 +140,14 @@ class NeuralNetwork :
             layerobj = self.n[layer] if isinstance(layer,str) else layer
             layertype = layerobj.fn.type_name
             layerparams = layerobj.fn.params
-            if layertype in ['Convolution', 'Deconvolution', 'InnerProduct']:
-                if 'bias_term' not in layerparams or  layerparams['bias_term']==True:
+            if layertype in ['Convolution', 'DepthwiseConvolution', 'Deconvolution', 'InnerProduct']:
+                convparams = layerparams['convolution_param'] if 'convolution_param' in layerparams else layerparams
+                if 'bias_term' not in convparams or  convparams['bias_term']==True:
                     layerparams['param']=[weight_param, bias_param]
+                    layerparams['bias_filler']=bias_filler
                 else:
                     layerparams['param']=[weight_param]
-                if 'convolution_param' in layerparams:
-                    layerparams = layerparams['convolution_param']
-                if 'bias_term' not in layerparams or  layerparams['bias_term']==True:
-                    layerparams['bias_filler']=bias_filler
-                layerparams['weight_filler']=weight_filler
+                convparams['weight_filler']=weight_filler
     def lock_batchnorm(self, lockbn=False, blacklist=None, whitelist=None):
         for layer in self.getlayers(blacklist,whitelist):
             layertype = layer.fn.type_name
@@ -146,17 +155,20 @@ class NeuralNetwork :
             if layertype == 'BatchNorm':
                 if lockbn:
                     layerparams['batch_norm_param']=dict(use_global_stats=True)
-    @layerinit('drop')                    
+    @layerinit('drop')
     def dropout(self,  dropout_ratio=0.5, in_place=True,deploy=False,**kwargs):
         if deploy==True: return None;
         return  _dropout(self.bottom,dropout_ratio,in_place)
-    @layerinit('lrn')                    
+    @layerinit('lrn')
     def lrn(self, local_size=5, alpha=1e-4, beta=0.75, **kwargs):
         return _lrn(self.bottom,local_size,alpha,beta)
-    @layerinit('conv')       
+    @layerinit('conv')
     def conv(self, nout, ks, stride=1, pad=0, bias=False,  **kwargs):
         return _conv(self.bottom, nout,ks,stride,pad,bias,**kwargs)
-    @layerinit('conv3x3')       
+    @layerinit('dwconv')
+    def dwconv(self, nout, ks, stride=1, pad=0, bias=False,  **kwargs):
+        return _dwconv(self.bottom, nout,ks,stride,pad,bias,**kwargs)
+    @layerinit('conv3x3')
     def conv3x3(self, nout, stride=1, pad=1, bias=False, **kwargs):
         return _conv(self.bottom, nout,3,stride,pad,bias,**kwargs)
     @layerinit('conv1x1')
@@ -215,24 +227,27 @@ class NeuralNetwork :
     def resize(self, target, **kwargs ):
         layerobj = self.n[target]   if isinstance(target, str) else target
         return _resize(self.bottom, layerobj)
-    @layerinit('reorg')    
+    @layerinit('reorg')
     def reorg(self, stride=2,reverse=False,**kwargs):
         return _reorg(self.bottom, stride=stride, reverse=reverse)
+    @layerinit('shuffle')
+    def shuffle(self, **kwargs):
+        return _shuffle(self.bottom, **kwargs)
     def convrelu(self, nout,ks, bias=True, **kwargs):
-        nameargs = {k:kwargs.get(k,None) for k in ['prefix','postfix']}
+        nameargs = {k:kwargs[k] for k in ['prefix','postfix'] if k in kwargs}
         self.conv(nout,ks, bias=bias,**kwargs)
         return self.relu(**nameargs)
     def fcrelu(self, nout,  bias=True,**kwargs):
-        nameargs = {k:kwargs.get(k,None) for k in ['prefix','postfix']}
+        nameargs = {k:kwargs[k] for k in ['prefix','postfix'] if k in kwargs}
         self.fc(nout, bias=bias,**kwargs)
         return self.relu(**nameargs)
     def bnscale(self,  in_place=True,**kwargs):
-        nameargs = {k:kwargs.get(k,None) for k in ['prefix','postfix']}
+        nameargs = {k:kwargs[k] for k in ['prefix','postfix'] if k in kwargs}
         self.bn(in_place=in_place,**kwargs)
         return self.scale(**nameargs)
     def bnscalerelu(self, in_place=True,**kwargs):
-        nameargs = {k:kwargs.get(k,None) for k in ['prefix','postfix']}
-        self.bn(in_place=in_place,**kwargs)
+        nameargs = {k:kwargs[k] for k in ['prefix','postfix'] if k in kwargs}
+        self.bn(in_place=in_place,**nameargs)
         self.scale(**nameargs)
         return self.relu(**nameargs)
     def _tsv_inception_layer(self, data_path, crop_size, phase, batchsize=(256,50), new_image_size = (256, 256)):
@@ -252,7 +267,21 @@ class NeuralNetwork :
                 self.trainstr = str(self.n.to_proto())
             else:
                 self.bottom=self.n['data']
-''' #the trick to find output channels from previous linear layer       
+
+def saveproto(trainnet, testnet, scorelayer, labellayer, nclass, imgsize, batchsize, **kwargs  ):
+    testnet.input([1,3,imgsize[0],imgsize[0]])
+    testnet.gen_net(nclass, deploy=True, **kwargs)
+    with open(testnet.name+'_deploy.prototxt','w') as fout:
+        fout.write(testnet.toproto());
+    trainnet.tsv_inception_layer("tsv480/train.resize480.shuffled.tsv",imgsize[0],batchsize=batchsize,new_image_size =(imgsize[1],imgsize[1]),phases=[caffe.TRAIN,caffe.TEST])
+    trainnet.gen_net(nclass, **kwargs)
+    trainnet.softmaxwithloss(scorelayer,labellayer,layername='loss')
+    trainnet.accuracy(scorelayer,labellayer,layername='accuracy')
+    trainnet.accuracy(scorelayer,labellayer, top_k=5, testonly=True, layername='accuracy_top5')
+    with open(trainnet.name+'_trainval.prototxt','w') as fout:
+        fout.write(trainnet.toproto());
+
+''' #the trick to find output channels from previous linear layer
     def get_nin(self):
         nout = self.bottom.fn.params.get('num_output')
         if nout is None:
@@ -264,4 +293,4 @@ class NeuralNetwork :
                 if btlayer_param.type=='Convolution':
                     return btlayer_param.convolution_param.num_output
         return nout;
-'''        
+'''
