@@ -205,7 +205,7 @@ class Yolo(object):
                         biases=biases,
                         **extra_train_param)
             else:
-                add_yolo_train_loss(n, biases, num_classes, self.batch_size, kwargs.get('target_synset_tree'))
+                add_yolo_train_loss(n, biases, num_classes, self.batch_size, **kwargs)
         else:
             if not kwargs.get('yolo_full_gpu', False):
                 n.bbox, n.prob = L.RegionOutput(n['last_conv'], n['im_info'],
@@ -219,7 +219,9 @@ class Yolo(object):
                 add_yolo_test_loss(n, biases, num_classes, kwargs.get('target_synset_tree'),
                                    kwargs.get('class_specific_nms', True))
 
-def add_yolo_train_loss_bb_only(n, bb_top, biases, num_classes, tree_file, weight_scale=1):
+def add_yolo_train_loss_bb_only(n, bb_top, biases, num_classes, tree_file,
+        weight_scale=1,
+        **kwargs):
     num_anchor = len(biases) / 2
     n.xy, n.wh, n.obj, n.conf = L.Slice(bb_top,
             ntop=4,
@@ -247,16 +249,23 @@ def add_yolo_train_loss_bb_only(n, bb_top, biases, num_classes, tree_file, weigh
     n.o_noobj_loss = L.EuclideanLoss(n.obj, n.t_o_noobj,
             propagate_down=[True, False], loss_weight=1 * weight_scale)
 
+    norm_type = P.Loss.BATCH_SIZE
+    loss_weight = num_anchor if not tree_file else 1 * weight_scale
+    if kwargs.get('yolo_softmax_norm_by_valid', False):
+        norm_type = P.Loss.VALID
+        assert not tree_file, 'not tested yet'
+        loss_weight = 1
+
     if not tree_file:
         # flat structure (uses softmax)
         n.reshape_t_label = L.Reshape(n.t_label, shape={'dim': [-1, 1, 0, 0]})
         n.reshape_conf = L.Reshape(n.conf, shape={'dim': [-1, num_classes, 0, 0]})
         n.softmax_loss = L.SoftmaxWithLoss(n.reshape_conf, n.reshape_t_label,
                                            propagate_down=[True, False],
-                                           loss_weight=num_anchor,
+                                           loss_weight=loss_weight,
                                            loss_param={
                                                'ignore_label': -1,
-                                               'normalization': P.Loss.BATCH_SIZE
+                                               'normalization': norm_type 
                                             })
         return
 
@@ -272,11 +281,14 @@ def add_yolo_train_loss_bb_only(n, bb_top, biases, num_classes, tree_file, weigh
                                                'tree': tree_file
                                            })
 
-def add_yolo_train_loss(n, biases, num_classes, batch_size, tree_file):
+def add_yolo_train_loss(n, biases, num_classes, batch_size, 
+        **kwargs):
+    tree_file = kwargs.get('target_synset_tree')
     last_top = last_layer(n)
 
     if len(batch_size) == 1 or not tree_file:
-        add_yolo_train_loss_bb_only(n, last_top, biases, num_classes, tree_file)
+        add_yolo_train_loss_bb_only(n, last_top, biases, num_classes,
+                tree_file, **kwargs)
         return
     assert len(batch_size) == 2
     n.conv_bb, n.conv_no_bb = L.Slice(last_top,
@@ -287,7 +299,9 @@ def add_yolo_train_loss(n, biases, num_classes, batch_size, tree_file):
                                       )
     weight_bb = float(batch_size[0]) / np.sum(batch_size)
     weight_nobb = float(batch_size[1]) / np.sum(batch_size)
-    add_yolo_train_loss_bb_only(n, n.conv_bb, biases, num_classes, tree_file, weight_scale=weight_bb)
+    add_yolo_train_loss_bb_only(n, n.conv_bb, biases, num_classes, tree_file,
+            weight_scale=weight_bb,
+            **kwargs)
 
     num_anchor = len(biases) / 2
 

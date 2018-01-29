@@ -793,6 +793,10 @@ def parse_args():
             default=argparse.SUPPRESS,
             type=str,
             help='taxonomy folder when -yt is specified')
+    parser.add_argument('-snbv', '--yolo_softmax_norm_by_valid', 
+            default=False,
+            action='store_true', 
+            help='normalize the softmax loss by VALID')
     return parser.parse_args()
 
 if __name__ == '__main__':
