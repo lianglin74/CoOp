@@ -88,7 +88,7 @@ def vis_detections(im, prob, bboxes, labelmap, thresh=0.3, save_filename=None):
 
 def img_from_base64(imagestring):
     jpgbytestring = base64.b64decode(imagestring)
-    nparr = np.fromstring(jpgbytestring, np.uint8)
+    nparr = np.frombuffer(jpgbytestring, np.uint8)
     try:
         return cv2.imdecode(nparr, cv2.IMREAD_COLOR);
     except:

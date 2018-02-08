@@ -16,28 +16,34 @@ from deteval import deteval
 from yolodet import tsvdet
 import time
 from multiprocessing import Process, Queue
-
+from qd_common import worth_create
 from qd_common import init_logging
 from qd_common import write_to_file, read_to_buffer, ensure_directory
 from qd_common import default_data_path
 from qd_common import parse_basemodel_with_depth
 from qd_common import parallel_train, LoopProcess
 from qd_common import remove_nms
+from qd_common import process_run
 from qd_common import load_net
 from qd_common import construct_model
 import os.path as op
 from datetime import datetime
 from taxonomy import LabelTree
-
+from yolodet import im_detect
+from qd_common import img_from_base64
+from qd_common import caffe_param_check
+import glob
 import matplotlib.pyplot as plt
 import json
 import logging
 import yoloinit
-from tsv_io import TSVDataset
+from vis.eval import parse_loss
+from tsv_io import TSVDataset, tsv_reader
 from pprint import pformat
 from process_tsv import build_taxonomy_impl
 from process_dataset import dynamic_process_tsv
 from process_tsv import TSVFile
+from qd_common import plot_to_file
 
 def num_non_empty_lines(file_name):
     with open(file_name) as fp:
@@ -221,6 +227,10 @@ class CaffeWrapper(object):
         source_dataset = TSVDataset(self._data)
         self._labelmap = source_dataset.get_labelmap_file()
 
+        if 'detmodel' not in kwargs:
+            kwargs['detmodel'] = 'yolo'
+        self._detmodel = kwargs['detmodel']
+
         self._tree = None
         self._test_data = kwargs.get('test_data', data)
         self._test_source = self._path_env['test_source']
@@ -273,18 +283,8 @@ class CaffeWrapper(object):
         else:
             assert False
             num_classes = kwargs['num_classes']
-        return num_classes
 
         return num_classes
-
-    def monitor_train(self, data, net, **kwargs):
-        expid = kwargs.get('expid', '777')
-        path_env = default_paths(net, data, expid)
-        while True:
-            if not self._train_monitor_once(data, path_env['solver'],
-                    path_env['test_proto_file'], **kwargs):
-                break
-            time.sleep(5)
 
     def run_in_process(self, func, *args):
         def run_in_queue(que, *args):
@@ -309,6 +309,84 @@ class CaffeWrapper(object):
         new_base_net_filepath = os.path.join(path_env['output'], path_env['basemodel'][:-11]+"_dpi.caffemodel")
         new_base_net.save(new_base_net_filepath)
         return new_base_net_filepath
+
+    def monitor_train(self):
+        while True:
+            logging.info('monitoring')
+            if self._is_train_finished():
+                self.cpu_test_time()
+                self.gpu_test_time()
+            is_unfinished = self.tracking()
+            self.plot_loss()
+            self.param_distribution()
+            s = self.get_iter_acc()
+            self._display(s)
+            if not is_unfinished:
+                break 
+            time.sleep(5)
+
+    def cpu_test_time(self):
+        result_file = op.join(self._path_env['output'], 'cpu_test_time.txt')
+
+        if not op.isfile(result_file):
+            process_run(self._test_time, -1, result_file)
+
+        r = read_to_buffer(result_file)
+        return float(r)
+        
+    def gpu_test_time(self):
+        result_file = op.join(self._path_env['output'], 'gpu_test_time.txt')
+        if not op.isfile(result_file):
+            gpus = self._gpus()
+            tested = False
+            for g in gpus:
+                if g >= 0:
+                    process_run(self._test_time, g,result_file)
+                    tested = True
+                    break
+            if not tested:
+                return 0;
+        r = read_to_buffer(result_file)
+        return float(r)
+
+    def _test_time(self, gpu, result_file):
+        if gpu >= 0:
+            caffe.set_device(gpu)
+            caffe.set_mode_gpu()
+        else:
+            caffe.set_mode_cpu()
+
+        model = construct_model(self._path_env['solver'],
+                self._path_env['test_proto_file'],
+                is_last=True)
+
+        net = caffe.Net(str(model.test_proto_file), 
+                str(model.model_param), caffe.TEST)
+
+        logging.info('gpu:{}->result_file:{}'.format(gpu, result_file))
+
+        cols = tsv_reader(self._test_source)
+
+        ims = []
+        for i, col in enumerate(cols):
+            im = img_from_base64(col[2])
+            ims.append(im)
+            if i > 48:
+                break
+
+        start_time = time.time()
+        for im in ims:
+            if self._kwargs['detmodel'] == 'yolo':
+                scores, boxes = im_detect(net, im, model.mean_value,
+                        **self._kwargs)
+            else:
+                scores = im_classify(net, im, model.mean_value,
+                        scale=model.scale,
+                        **self._kwargs)
+        end_time = time.time()
+
+        avg_time = (end_time - start_time) / len(ims)
+        write_to_file(str(avg_time), result_file)
 
     def _gpus(self):
         return self._kwargs.get('gpus', [0])
@@ -453,9 +531,14 @@ class CaffeWrapper(object):
         cc.append('predict')
         return '.'.join(cc)
 
+    def _param_dist_file(self, model):
+        return model.model_param + '.param'
+
     def _perf_file(self, model):
-        test_proto_file, model_param, mean_value, model_iter = model
-        return model_param + '.report'
+        if self._detmodel != 'classification':
+            return op.splitext(self._predict_file(model))[0] + '.report'
+        else:
+            return self._predict_file(model) + '.report'
 
     def _construct_model(self, solver, test_proto_file, is_last=True):
         logging.info('deprecating... use construct_model instead')
@@ -482,46 +565,132 @@ class CaffeWrapper(object):
                 all_model.append((test_proto_file, last_model, mean_value, j))
             return all_model
 
-    def _train_monitor_once(self, data, solver_file, test_net_file, **kwargs):
-        print 'monitoring'
-        all_model = self._construct_model(solver_file, test_net_file, False) 
-        all_ready_model = [m for m in all_model if os.path.isfile(m[1])]
-        need_predict_model = [m for m in all_ready_model if not os.path.isfile(self._predict_file(m))]
-        is_monitoring = len(all_model) > len(all_ready_model) or  len(need_predict_model) > 1 
-        for m in need_predict_model:
-            predict_result = self.predict(m)
-            self.evaluate(m, predict_result)
-
-        self._display([(m, self._perf_file(m)) for m in all_ready_model if
-                os.path.isfile(self._perf_file(m))])
-
-        return is_monitoring 
-
-    def _display(self, valid):
-        xs = []
-        ys = []
-        best_model_iter = -1
-        best_model_class_ap = None
+    def get_iter_acc(self):
+        solver, test_proto_file = self._path_env['solver'], self._path_env['test_proto_file']
+        if not os.path.exists(solver) or \
+                not os.path.exists(test_proto_file):
+            return [0], [0]
+        all_model = [construct_model(solver, test_proto_file,
+                is_last=True)]
+        all_model.extend(construct_model(solver, test_proto_file,
+                is_last=False))
+        all_ready_model = [m for m in all_model if os.path.isfile(m.model_param)]
+        valid = [(m, self._perf_file(m)) for m in all_ready_model if
+                        os.path.isfile(self._perf_file(m))] 
+        
+        ious = None
+        xs, ys = [], []
         for v in valid:
             model, eval_result = v
-            test_proto_file, model_param, mean_value, model_iter = model
+            model_iter = model.model_iter
             xs.append(model_iter)
             with open(eval_result, 'r') as fp:
                 perf = json.loads(fp.read())
-            if best_model_iter < model_iter:
-                best_model_iter = model_iter
-                best_model_class_ap = perf['overall']['0.5']['class_ap']
-            ys.append(perf['overall']['0.5']['map'])
+            if 'overall' in perf:
+                if ious == None:
+                    ious = perf['overall'].keys()
+                    ys = {}
+                    for key in ious:
+                        ys[key] = []
+                for key in ious:
+                    if key not in perf['overall']:
+                        return [0], [0]
+                    ys[key].append(perf['overall'][key]['map'])
+            else:
+                ys.append(perf['acc'])
 
-        if best_model_class_ap:
-            pprint((best_model_iter, best_model_class_ap))
-        
+        return xs, ys
+
+    def plot_acc(self):
+        xs, ys = self.get_iter_acc()
+        self._display((xs, ys))
+
+    def tracking(self):
+        data, net, kwargs = self._data, self._net, self._kwargs
+        expid = kwargs.get('expid', '777')
+        solver = self._path_env['solver']
+        test_proto_file = self._path_env['test_proto_file']
+        if not os.path.isfile(solver) or not os.path.isfile(test_proto_file):
+            logging.info('proto file does not exist')
+            return True
+        all_model = construct_model(solver, test_proto_file,
+                is_last=False)
+        logging.info('there are {} models in total'.format(len(all_model)))
+        all_ready_model = [m for m in all_model if os.path.isfile(m.model_param)]
+        need_predict_model = any(not op.isfile(self._predict_file(m)) for m in
+                all_ready_model)
+        is_unfinished = len(all_model) > len(all_ready_model) or \
+                need_predict_model
+
+        last_plot_time = time.time()
+        for m in all_ready_model:
+            predict_result = self.predict(m)
+            if predict_result:
+                self.evaluate(m, predict_result)
+            if time.time() - last_plot_time > 10 * 60:
+                self.plot_loss()
+                self.plot_acc()
+                last_plot_time = time.time()
+
+        return is_unfinished
+
+    def _tracking_one(self, iteration):
+        solver = self._path_env['solver']
+        test_proto_file = self._path_env['test_proto_file']
+        m = construct_model(solver, test_proto_file,
+                is_last=False, iteration=iteration)
+        predict_result = self.predict(m)
+        if predict_result:
+            self.evaluate(m, predict_result)
+
+    def param_distribution(self):
+        if not os.path.exists(self._path_env['solver']) or \
+                not os.path.exists(self._path_env['test_proto_file']):
+                    return
+        all_model = construct_model(self._path_env['solver'],
+                self._path_env['test_proto_file'],
+                is_last=False)
+        all_ready_model = [m for m in all_model if os.path.isfile(m.model_param)]
+        need_check_model = [m for m in all_ready_model if not
+                os.path.isfile(self._param_dist_file(m))]
+        for m in need_check_model:
+            p = pcaffe_param_check(m.test_proto_file, m.model_param)
+            with open(self._param_dist_file(m), 'w') as fp:
+                fp.write(json.dumps(p, indent=4))
+
+    def _display(self, s):
+        xs, ys = s
+
         if len(xs) > 0:
-            fig = plt.figure()
-            plt.plot(xs, ys, '-o')
-            plt.grid()
-            fig.savefig(os.path.join(os.path.dirname(model_param), 'map.png'))
-            plt.close(fig)
+            plot_to_file(xs, ys, os.path.join(self._path_env['output'], 'map.png'))
+
+    def _get_log_files(self):
+        return [file_name for file_name in glob.glob(os.path.join(self._path_env['output'],
+            '*_*')) if not file_name.endswith('png')]
+
+    def plot_loss(self):
+        xy = {}
+        log_files = self._get_log_files() 
+        worth_run = False
+        for file_name in log_files:
+            png_file = os.path.splitext(file_name)[0] + '.png'
+            if worth_create(file_name, png_file):
+                worth_run = True
+                break
+        if not worth_run:
+            return
+        for file_name in log_files:
+            png_file = os.path.splitext(file_name)[0] + '.png'
+            xs, ys = parse_loss(file_name)
+            for x, y in zip(xs, ys):
+                xy[x] = y
+            if len(xs) > 0 and worth_create(file_name, png_file):
+                plot_to_file(xs, ys, png_file)
+        png_file = os.path.join(self._path_env['output'], 'loss.png')
+        xys = sorted([(x, xy[x]) for x in xy], key=lambda i: i[0])
+        xs = [xy[0] for xy in xys]
+        ys = [xy[1] for xy in xys]
+        plot_to_file(xs, ys, png_file)
     
     def _load_net(self, file_name):
         with open(file_name, 'r') as fp:
@@ -595,6 +764,15 @@ def Analyser(object):
         for key in net.blobs:
             v = solver.net.blobs[key]
             print key, np.mean(v.data)
+
+def pcaffe_param_check(caffenet, caffemodel):
+    def wcaffe_param_check(caffenet, caffemodel, result):
+        result.put(caffe_param_check(caffenet, caffemodel))
+    result = Queue()
+    p = Process(target=wcaffe_param_check, args=(caffenet, caffemodel, result))
+    p.start()
+    p.join()
+    return result.get()
 
 def setup_paths(basenet, dataset, expid):
     proj_root = op.dirname(op.dirname(op.realpath(__file__)));
@@ -672,10 +850,16 @@ def yolo_tree_train(**kwargs):
     kwargs['expid'] = expid + '_bb_only'
     kwargs['test_data'] = bb_data
     c = CaffeWrapper(**kwargs)
-    model = c.train()
 
-    p = c.predict(model)
-    c.evaluate(model, p)
+    monitor_train_only = kwargs.get('monitor_train_only', False)
+    if not monitor_train_only:
+        model = c.train()
+        p = c.predict(model)
+        c.evaluate(model, p)
+    else:
+        c.monitor_train()
+        assert c._is_train_finished()
+        model = c.train()
     
     # train it with no_bb as well
     no_bb_data = '{}_no_bb'.format(kwargs['data'])
@@ -697,17 +881,24 @@ def yolo_tree_train(**kwargs):
     kwargs['expid'] = expid + '_bb_nobb'
     kwargs['dataset_ops'] = dataset_ops
     c = CaffeWrapper(**kwargs)
-    model = c.train()
-    p = c.predict(model)
-    c.evaluate(model, p)
+    if not monitor_train_only:
+        model = c.train()
+        p = c.predict(model)
+        c.evaluate(model, p)
+    else:
+        assert c._is_train_finished()
+        c.monitor_train()
 
     kwargs['ovthresh'] = [-1]
     kwargs['test_data'] = no_bb_data
     c = CaffeWrapper(**kwargs)
-    model = c.train()
-    p = c.predict(model)
-    c.evaluate(model, p)
-
+    if not monitor_train_only:
+        model = c.train()
+        p = c.predict(model)
+        c.evaluate(model, p)
+    else:
+        assert c._is_train_finished()
+        c.monitor_train()
 
 def yolotrain(data, net, **kwargs):
     init_logging()
@@ -722,7 +913,7 @@ def yolotrain(data, net, **kwargs):
             predict_result = c.predict(model)
             c.evaluate(model, predict_result)
     else:
-        c.monitor_train(data, net, **kwargs)
+        c.monitor_train()
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a Yolo network')
@@ -797,6 +988,10 @@ def parse_args():
             default=False,
             action='store_true', 
             help='normalize the softmax loss by VALID')
+    parser.add_argument('-monitor', '--monitor_train_only',
+            default=False,
+            action='store_true',
+            help='track the intermediate results')
     return parser.parse_args()
 
 if __name__ == '__main__':

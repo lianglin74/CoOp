@@ -25,6 +25,8 @@ def parse_loss(log_path):
     with open(log_path) as fin:
         str_buff = fin.read()
     iter_loss = re.findall(r"Iteration\s+(\d+).+loss\s+=\s+([0-9\.]+)", str_buff)
+    if len(iter_loss) == 0:
+        return [], []
     iters, losses = zip(*iter_loss)
     iters = map(lambda x: float(x), iters)
     losses = map(lambda x: float(x), losses)

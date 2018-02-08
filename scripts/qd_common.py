@@ -3,6 +3,7 @@ import yaml
 from collections import OrderedDict
 import sys
 import os
+import multiprocessing as mp
 from multiprocessing import Process
 from multiprocessing import Event
 import numpy as np
@@ -10,6 +11,7 @@ import logging
 import os.path as op
 import caffe
 import time
+import matplotlib.pyplot as plt
 from google.protobuf import text_format
 import base64
 import cv2
@@ -149,6 +151,17 @@ def remove_nms(n):
         if l.type == 'RegionPrediction':
             l.region_prediction_param.nms = -1
 
+def process_run(func, *args):
+    def internal_func(queue):
+        result = func(*args)
+        queue.put(result)
+    queue = mp.Queue()
+    p = Process(target=internal_func, args=(queue,))
+    p.start()
+    p.join()
+    assert p.exitcode == 0
+    return queue.get()
+
 def setup_yaml():
     """ https://stackoverflow.com/a/8661021 """
     represent_dict_order = lambda self, data:  self.represent_mapping('tag:yaml.org,2002:map', data.items())
@@ -171,7 +184,7 @@ def ensure_directory(path):
 
 def img_from_base64(imagestring):
     jpgbytestring = base64.b64decode(imagestring)
-    nparr = np.fromstring(jpgbytestring, np.uint8)
+    nparr = np.frombuffer(jpgbytestring, np.uint8)
     try:
         return cv2.imdecode(nparr, cv2.IMREAD_COLOR);
     except:
@@ -181,6 +194,26 @@ def read_to_buffer(file_name):
     with open(file_name, 'r') as fp:
         all_line = fp.read()
     return all_line
+
+def plot_to_file(xs, ys, file_name, **kwargs):
+    fig = plt.figure()
+    if all(isinstance(x, str) or isinstance(x, unicode) for x in xs):
+        xs2 = range(len(xs))
+        #plt.xticks(xs2, xs, rotation=15, ha='right')
+        plt.xticks(xs2, xs, rotation='vertical')
+        xs = xs2
+    if type(ys) is dict:
+        for key in ys:
+            plt.plot(xs, ys[key], '-o')
+    else:
+        plt.plot(xs, ys, '-o')
+    plt.grid()
+    if 'ylim' in kwargs:
+        plt.ylim(kwargs['ylim'])
+    ensure_directory(op.dirname(file_name))
+    plt.tight_layout()
+    fig.savefig(file_name)
+    plt.close(fig)
 
 def write_to_yaml_file(context, file_name):
     ensure_directory(op.dirname(file_name))
@@ -293,6 +326,32 @@ def parallel_train(
     for p in procs:
         p.join()
 
+def caffe_param_check(caffenet, caffemodel):
+    if not os.path.exists(caffenet) or not os.path.exists(caffemodel):
+        return {}
+
+    caffe.set_mode_cpu()
+    net = caffe.Net(str(caffenet), str(caffemodel), caffe.TEST)
+
+    return caffe_net_check(net)
+
+def caffe_net_check(net):
+    result = {}
+    result['param'] = {}
+    for key in net.params:
+        value = net.params[key]
+        result['param'][key] = []
+        for i, v in enumerate(value):
+            result['param'][key].append((float(np.mean(v.data)),
+                float(np.std(v.data))))
+
+    result['blob'] = {}
+    for key in net.blobs:
+        v = net.blobs[key]
+        result['blob'][key] = (float(np.mean(v.data)), float(np.std(v.data)))
+
+    return result
+
 def register_timing(solver, nccl):
     fprop = []
     bprop = []
@@ -352,6 +411,13 @@ def solve(proto, snapshot, weights, gpus, timing, uid, rank):
     solver.step(solver.param.max_iter)
     if rank == 0:
         solver.snapshot()
+
+def worth_create(base_file_name, derived_file_name):
+    if os.path.isfile(derived_file_name) and \
+            os.path.getmtime(derived_file_name) > os.path.getmtime(base_file_name):
+        return False
+    else:
+        return True
 
 def default_data_path(dataset):
     proj_root = os.path.dirname(os.path.dirname(os.path.realpath(__file__)));
