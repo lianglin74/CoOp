@@ -8,6 +8,7 @@ import os.path as op
 from qd_common import load_list_file
 from qd_common import write_to_file, read_to_buffer
 from qd_common import init_logging, ensure_directory
+import re
 from qd_common import load_from_yaml_file
 import Queue
 from itertools import izip
@@ -247,31 +248,32 @@ def synonym():
     return result
 
 def noffset_to_synset(noffset):
+    noffset = noffset.strip()
     return wn.synset_from_pos_and_offset(noffset[0], int(noffset[1:]))
 
 class LabelToSynset(object):
     def __init__(self):
-        self._white_list = {'apple': wn.synset_from_pos_and_offset('n', 7739125),
-                    'banana': wn.synset_from_pos_and_offset('n', 7753592),
-                    'bear': wn.synset_from_pos_and_offset('n', 2131653),
-                    'bed': wn.synset_from_pos_and_offset('n', 2818832),
-                    'bench': wn.synset_from_pos_and_offset('n', 2828884),
-                    'device': wn.synset_from_pos_and_offset('n', 3183080),
-                    'chair': wn.synset_from_pos_and_offset('n', 3001627),
-                    'pen': wn.synset_from_pos_and_offset('n', 3906997),
-                    'marker': wn.synset_from_pos_and_offset('n', 3722007),
-                    'book': wn.synset_from_pos_and_offset('n', 6410904),
-                    'coke': wn.synset_from_pos_and_offset('n', 7928696),
-                    'ring': wn.synset_from_pos_and_offset('n', 4092609),
-                    'tv': wn.synset_from_pos_and_offset('n', 6277280),
-                    'television': wn.synset_from_pos_and_offset('n', 6277280),
-                    'projector': wn.synset_from_pos_and_offset('n', 4009552),
-                    'telephone': wn.synset_from_pos_and_offset('n', 4401088),
-                    'dish': wn.synset_from_pos_and_offset('n', 3206908),
-                    'monitor': wn.synset_from_pos_and_offset('n', 3782190),
-                    'eyeglasses': wn.synset_from_pos_and_offset('n', 4272054),
-                    'sun glasses': wn.synset_from_pos_and_offset('n', 4356056),
-                    'pencil': wn.synset_from_pos_and_offset('n', 3908204),
+        self._white_list = {'apple': [wn.synset_from_pos_and_offset('n', 7739125)],
+                    'banana': [wn.synset_from_pos_and_offset('n', 7753592)],
+                    'bear': [wn.synset_from_pos_and_offset('n', 2131653)],
+                    'bed': [wn.synset_from_pos_and_offset('n', 2818832)],
+                    'bench': [wn.synset_from_pos_and_offset('n', 2828884)],
+                    'device': [wn.synset_from_pos_and_offset('n', 3183080)],
+                    'chair': [wn.synset_from_pos_and_offset('n', 3001627)],
+                    'pen': [wn.synset_from_pos_and_offset('n', 3906997)],
+                    'marker': [wn.synset_from_pos_and_offset('n', 3722007)],
+                    'book': [wn.synset_from_pos_and_offset('n', 6410904)],
+                    'coke': [wn.synset_from_pos_and_offset('n', 7928696)],
+                    'ring': [wn.synset_from_pos_and_offset('n', 4092609)],
+                    'tv': [wn.synset_from_pos_and_offset('n', 6277280)],
+                    'television': [wn.synset_from_pos_and_offset('n', 6277280)],
+                    'projector': [wn.synset_from_pos_and_offset('n', 4009552)],
+                    'telephone': [wn.synset_from_pos_and_offset('n', 4401088)],
+                    'dish': [wn.synset_from_pos_and_offset('n', 3206908)],
+                    'monitor': [wn.synset_from_pos_and_offset('n', 3782190)],
+                    'eyeglasses': [wn.synset_from_pos_and_offset('n', 4272054)],
+                    'sun glasses': [wn.synset_from_pos_and_offset('n', 4356056)],
+                    'pencil': [wn.synset_from_pos_and_offset('n', 3908204)],
                     }
         self._update_by_name_map('./aux_data/label_to_noffset')
         s = synonym()
@@ -295,68 +297,26 @@ class LabelToSynset(object):
                 else:
                     self._white_list[l] = anchor 
 
-    def convert(self, label, parent_synset=None):
-        if re.match('^n[0-9]{8}$', label):
-            return noffset_to_synset(label)
-
-        label = label.lower()
-
-        labels = self._equal_labels(label)
-        for label in labels:
-            if label in self._white_list:
-                return self._white_list[label]
-        
-        result  = []
-        for label in labels:
-            sss = [ss for ss in wn.synsets(label, pos='n')]
-            result.extend(sss)
-        result = list(set(result))
-
-        if len(result) > 1 and parent_synset:
-            matched_parent = [True] * len(result)
-            for i, r in enumerate(result):
-                matched = False
-                for p in r.hypernym_paths():
-                    for n in p:
-                        if n == parent_synset:
-                            matched = True
-                            break
-                if not matched:
-                    matched_parent[i] = False
-            result = [r for r, m in izip(result, matched_parent) if m]
-            if len(result) == 1:
-                logging.info('successfully disambiguate {} based on the parent {}'.format(
-                    label, parent_synset.name()))
-
-        if len(result) == 1:
-            return result[0]
-
-        return result
-
-    def _equal_labels(self, label):
-        r = [label]
-        if ' ' in label:
-            r += [label.replace(' ', '_'), label.replace(' ', '')]
-        return r
-
     def populate_noffset(self, root):
         if not hasattr(root, 'noffset') or root.noffset is None:
             if root.up and hasattr(root.up, 'noffset') and root.up.noffset:
-                s = self.convert(root.name, noffset_to_synset(root.up.noffset))
+                cresult, s = self.convert(root.name, 
+                        [noffset_to_synset(no) for no in
+                            root.up.noffset.split(',')])
             else:
-                s = self.convert(root.name)
-            if s is not None and type(s) is not list:
-                root.add_feature('noffset', synset_to_noffset(s))
+                cresult, s = self.convert(root.name)
+            assert type(s) is list
+            if cresult:
+                root.add_feature('noffset', ','.join([synset_to_noffset(x) for
+                    x in s]))
             else:
                 root.add_feature('noffset', None)
-                if type(s) is list and len(s) > 1:
-                    #root.add_feature('noffsets', ','.join(
-                        #['[{0}](http://www.image-net.org/synset?wnid={0})'.format(
-                            #synset_to_noffset(o)) for o in s]))
+                if len(s) >= 1:
                     root.add_feature('noffsets', ','.join([synset_to_noffset(o) for o in
                         s]))
                 else:
                     logging.info('cannot find {}'.format(root.name.encode('UTF-8')))
+
         for c in root.children:
             self.populate_noffset(c)
 
@@ -365,11 +325,60 @@ class LabelToSynset(object):
             logging.info('loadding {}'.format(yaml_file))
             wl = load_from_yaml_file(yaml_file)
             for d in wl:
-                if d['name'] in self._white_list:
-                    assert synset_to_noffset(self._white_list[d['name']]) == \
-                            d['noffset']
-                elif d['noffset'] != None:
-                    self._white_list[d['name']] = noffset_to_synset(d['noffset'])
+                if d['noffset'] is None:
+                    continue
+                if d['name'] not in self._white_list:
+                    self._white_list[d['name']] = []
+                self._white_list[d['name']].extend([noffset_to_synset(x) for x in
+                        d['noffset'].split(',')])
+                self._white_list[d['name']] = list(set(self._white_list[d['name']]))
+
+    def convert(self, label, parent_synsets=None):
+        '''
+        return: correct, list
+        '''
+        if re.match('^n[0-9]{8}$', label):
+            return True, [noffset_to_synset(label)]
+        label = label.lower()
+
+        labels = self._equal_labels(label)
+        for label in labels:
+            if label in self._white_list:
+                return True, self._white_list[label]
+        
+        result  = []
+        for label in labels:
+            sss = [ss for ss in wn.synsets(label, pos='n')]
+            result.extend(sss)
+        result = list(set(result))
+
+        if len(result) > 1 and parent_synsets:
+            matched_parent = [True] * len(result)
+            for i, r in enumerate(result):
+                matched = False
+                for p in r.hypernym_paths():
+                    for n in p:
+                        if n in parent_synsets:
+                            matched = True
+                            break
+                if not matched:
+                    matched_parent[i] = False
+            result = [r for r, m in izip(result, matched_parent) if m]
+            if len(result) == 1:
+                logging.info('successfully disambiguate {} based on the parent {}'.format(
+                    label, [ps.name() for ps in parent_synsets]))
+
+        if len(result) == 1:
+            return True, result
+
+        return False, result
+
+    def _equal_labels(self, label):
+        r = [label]
+        if ' ' in label:
+            r += [label.replace(' ', '_'), label.replace(' ', '')]
+        return r
+
 
 def populate_url_for_offset(root):
     if not hasattr(root, 'noffset'):

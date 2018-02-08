@@ -61,6 +61,118 @@ def tsv_details(tsv_file):
             'max_image_size': max_size, 
             'mean_image_size': mean_size}
 
+def populate_dataset_details(data):
+    dataset = TSVDataset(data)
+
+    def details_tsv(tsv_file):
+        out_file = get_meta_file(tsv_file)
+        if not op.isfile(out_file) and op.isfile(tsv_file):
+            details = tsv_details(tsv_file)
+            write_to_yaml_file(details, out_file)
+
+    splits = ['trainval', 'train', 'test']
+    for split in splits:
+        details_tsv(dataset.get_data(split))
+
+    # for each data tsv, generate the label tsv and the inverted file
+    for split in splits:
+        full_tsv = dataset.get_data(split)
+        label_tsv = dataset.get_data(split, 'label')
+        if not op.isfile(label_tsv) and op.isfile(full_tsv):
+            extract_label(full_tsv, label_tsv)
+        inverted = dataset.get_data(split, 'inverted.label')
+        if not op.isfile(inverted) and op.isfile(label_tsv):
+            create_inverted_tsv(label_tsv, inverted)
+
+    if op.isfile(dataset.get_data('trainX')):
+        inverted_file = dataset.get_data('train', 'inverted.label')
+        if not op.isfile(inverted_file):
+            train_files = load_list_file(dataset.get_data('trainX'))
+            train_label_files = ['{}.label{}'.format(*op.splitext(f)) 
+                    for f in train_files]
+            train_label_tsvs = [TSVFile(f) for f in train_label_files]
+            shuffle_file = dataset.get_shuffle_file('train')
+            shuffle_tsv_rows = tsv_reader(shuffle_file)
+            inverted = {}
+            for i, row in enumerate(shuffle_tsv_rows):
+                if (i % 1000) == 0:
+                    logging.info(i)
+                label_row = train_label_tsvs[int(row[0])].seek(int(row[1]))
+                all_class = []
+                for l in json.loads(label_row[1]):
+                    all_class.append(l['class'])
+                for c in set(all_class):
+                    if c in inverted:
+                        inverted[c].append(i)
+                    else:
+                        inverted[c] = [i]
+            def gen_inverted_trainX():
+                for c in inverted:
+                    yield c, ' '.join(map(str, inverted[c]))
+            tsv_writer(gen_inverted_trainX(), inverted_file)
+    
+    # generate lineidx if it is not generated
+    for split in splits:
+        lineidx = dataset.get_lineidx(split)
+        full_tsv = dataset.get_data(split)
+        if not op.isfile(lineidx) and op.isfile(full_tsv):
+            logging.info('no lineidx for {}. generating...'.format(split))
+            generate_lineidx(full_tsv, lineidx)
+
+    # generate the label map if there is no
+    if not op.isfile(dataset.get_labelmap_file()) and \
+            not op.islink(dataset.get_labelmap_file()):
+        logging.info('no labelmap, generating...')
+        labelmap = []
+        for split in splits:
+            label_tsv = dataset.get_data(split, 'label')
+            if not op.isfile(label_tsv):
+                continue
+            for row in tsv_reader(label_tsv):
+                labelmap.extend(set([rect['class'] for rect in
+                    json.loads(row[1])]))
+        if len(labelmap) == 0: 
+            logging.warning('there are no labels!')
+        labelmap = list(set(labelmap))
+        logging.info('find {} labels'.format(len(labelmap)))
+        write_to_file('\n'.join(labelmap), dataset.get_labelmap_file())
+
+    if not op.isfile(dataset.get_noffsets_file()):
+        logging.info('no noffset file. generating...')
+        labelmap = dataset.load_labelmap()
+        mapper = LabelToSynset()
+        ambigous = []
+        ss = [mapper.convert(l) for l in labelmap]
+        for l, s in zip(labelmap, ss):
+            if type(s) is list and len(s) > 1:
+                d = create_info_for_ambigous_noffset(l, [synset_to_noffset(s1)
+                    for s1 in s])
+                ambigous.append(d)
+        if len(ambigous) > 0:
+            logging.info('ambigous term which has no exact noffset: {}'.format(
+                dataset.name))
+            write_to_yaml_file(ambigous, dataset.get_noffsets_file() +
+                    '.ambigous.yaml')
+        noffsets = []
+        for success, s in ss:
+            if not success:
+                noffsets.append('')
+            else:
+                noffsets.append(','.join([synset_to_noffset(o) for o in s]))
+        write_to_file('\n'.join(noffsets), dataset.get_noffsets_file())
+
+    if not op.isfile(dataset.get_labelmap_of_noffset_file()):
+        noffsets = dataset.load_noffsets()
+        all_line = []
+        for noffset in noffsets:
+            if len(noffset) == 0:
+                all_line.append('unkown')
+            else:
+                s = noffset_to_synset(noffset)
+                all_line.append(get_nick_name(s))
+        write_to_file('\n'.join(all_line),
+                dataset.get_labelmap_of_noffset_file())
+
 def gen_tsv_from_labeling(input_folder, output_folder):
     fs = glob.glob(op.join(input_folder, '*'))
     labels = set()
@@ -250,88 +362,6 @@ class TSVDatasetSource(TSVDataset, DatasetSource):
                 yield data_row
         return
 
-def populate_dataset_details(data):
-    dataset = TSVDataset(data)
-
-    def details_tsv(tsv_file):
-        out_file = get_meta_file(tsv_file)
-        if not op.isfile(out_file) and op.isfile(tsv_file):
-            details = tsv_details(tsv_file)
-            write_to_yaml_file(details, out_file)
-
-    splits = ['trainval', 'train', 'test']
-    for split in splits:
-        details_tsv(dataset.get_data(split))
-
-    # for each data tsv, generate the label tsv and the inverted file
-    for split in splits:
-        full_tsv = dataset.get_data(split)
-        label_tsv = dataset.get_data(split, 'label')
-        if not op.isfile(label_tsv) and op.isfile(full_tsv):
-            extract_label(full_tsv, label_tsv)
-        inverted = dataset.get_data(split, 'inverted.label')
-        if not op.isfile(inverted) and op.isfile(label_tsv):
-            create_inverted_tsv(label_tsv, inverted)
-    
-    # generate lineidx if it is not generated
-    for split in splits:
-        lineidx = dataset.get_lineidx(split)
-        full_tsv = dataset.get_data(split)
-        if not op.isfile(lineidx) and op.isfile(full_tsv):
-            logging.info('no lineidx for {}. generating...'.format(split))
-            generate_lineidx(full_tsv, lineidx)
-
-    # generate the label map if there is no
-    if not op.isfile(dataset.get_labelmap_file()):
-        logging.info('no labelmap, generating...')
-        labelmap = []
-        for split in splits:
-            label_tsv = dataset.get_data(split, 'label')
-            if not op.isfile(label_tsv):
-                continue
-            for row in tsv_reader(label_tsv):
-                labelmap.extend(set([rect['class'] for rect in
-                    json.loads(row[1])]))
-        assert len(labelmap) > 0, 'there are no labels!'
-        labelmap = list(set(labelmap))
-        logging.info('find {} labels'.format(len(labelmap)))
-        write_to_file('\n'.join(labelmap), dataset.get_labelmap_file())
-
-    if not op.isfile(dataset.get_noffsets_file()):
-        logging.info('no noffset file. generating...')
-        labelmap = dataset.load_labelmap()
-        mapper = LabelToSynset()
-        ambigous = []
-        ss = [mapper.convert(l) for l in labelmap]
-        for l, s in zip(labelmap, ss):
-            if type(s) is list and len(s) > 1:
-                d = create_info_for_ambigous_noffset(l, [synset_to_noffset(s1)
-                    for s1 in s])
-                ambigous.append(d)
-        if len(ambigous) > 0:
-            logging.info('ambigous term which has no exact noffset: {}'.format(
-                dataset.name))
-            write_to_yaml_file(ambigous, dataset.get_noffsets_file() +
-                    '.ambigous.yaml')
-        noffsets = []
-        for s in ss:
-            if type(s) is list:
-                noffsets.append('')
-            else:
-                noffsets.append(synset_to_noffset(s))
-        write_to_file('\n'.join(noffsets), dataset.get_noffsets_file())
-
-    if not op.isfile(dataset.get_labelmap_of_noffset_file()):
-        noffsets = dataset.load_noffsets()
-        all_line = []
-        for noffset in noffsets:
-            if len(noffset) == 0:
-                all_line.append('unkown')
-            else:
-                s = noffset_to_synset(noffset)
-                all_line.append(get_nick_name(s))
-        write_to_file('\n'.join(all_line),
-                dataset.get_labelmap_of_noffset_file())
 
 def initialize_images_count(root):
     for node in root.iter_search_nodes():
@@ -381,6 +411,22 @@ def create_info_for_ambigous_noffset(name, noffsets):
             'markdown_url': create_markdown_url(noffsets)}
     return d
 
+def node_should_have_images(root, th, fname):
+    enough = True
+    few_training = []
+    for node in root.iter_search_nodes():
+        if node.cum_images_no_bb + node.cum_images_with_bb < th:
+            few_training.append({'name': node.name, 
+                'cum_images_no_bb': node.cum_images_no_bb,
+                'cum_images_with_bb': node.cum_images_with_bb,
+                'parent list': [p.name for p in node.get_ancestors()[:-1]]})
+            enough = False
+            logging.warn('no images: {}'.format(node.name.encode('utf-8')))
+    if enough:
+        logging.info('con. every node has at least {} images'.format(th))
+    else:
+        write_to_yaml_file(few_training, fname)
+
 def build_taxonomy_impl(taxonomy_folder, **kwargs):
     random.seed(777)
     dataset_name = kwargs.get('data', 
@@ -390,6 +436,7 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
         logging.info('ignore to build taxonomy since {} exists'.format(
             overall_dataset.get_labelmap_file()))
         return
+    init_logging()
     all_tax = load_all_tax(taxonomy_folder)
     tax = merge_all_tax(all_tax)
     initialize_images_count(tax.root)
@@ -450,8 +497,9 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
     write_to_file('\n'.join(['{} {}'.format(c.encode('utf-8'), p) for c, p in child_parents]), 
             tree_file)
 
-    #leaves_should_have_images(tax.root, 200)
-    
+    node_should_have_images(tax.root, 200, 
+            op.join(overall_dataset._data_root, 'labels_with_few_images.yaml'))
+
     def gen_rows(label_type):
         for s in data_sources:
             for i, row in enumerate(s.gen_tsv_rows(tax.root, label_type)):
@@ -509,7 +557,6 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
                 if len(dsi) < num_test:
                     logging.info('rootlabel={}; label_type={}->less than {} images'.format(
                         rootlabel, label_type, len(dsi)))
-                assert len(dsi) > 1
                 curr_num_test = min(num_test, int(len(dsi) / 2))
                 random.shuffle(dsi)
                 test_ldtsi.extend([(rootlabel, d, label_type, s, i) for d, s, i
