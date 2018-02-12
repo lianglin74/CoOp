@@ -88,8 +88,10 @@ def populate_dataset_details(data):
         inverted_file = dataset.get_data('train', 'inverted.label')
         if not op.isfile(inverted_file):
             train_files = load_list_file(dataset.get_data('trainX'))
-            train_label_files = ['{}.label{}'.format(*op.splitext(f)) 
-                    for f in train_files]
+            #train_label_files = ['{}.label{}'.format(*op.splitext(f)) 
+                    #for f in train_files]
+            train_label_files = load_list_file(dataset.get_data('trainX',
+                'label'))
             train_label_tsvs = [TSVFile(f) for f in train_label_files]
             shuffle_file = dataset.get_shuffle_file('train')
             shuffle_tsv_rows = tsv_reader(shuffle_file)
@@ -168,8 +170,8 @@ def populate_dataset_details(data):
             if len(noffset) == 0:
                 all_line.append('unkown')
             else:
-                s = noffset_to_synset(noffset)
-                all_line.append(get_nick_name(s))
+                ss = [noffset_to_synset(n) for n in noffset.split(',')]
+                all_line.append(','.join([get_nick_name(s) for s in ss]))
         write_to_file('\n'.join(all_line),
                 dataset.get_labelmap_of_noffset_file())
 
@@ -573,6 +575,7 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
             d_to_lsi = list_to_dict(ldsi, 1)
             k = 0
             sources = []
+            sources_label = []
             for dataset in d_to_lsi:
                 lsi = d_to_lsi[dataset]
                 s_li = list_to_dict(lsi, 1)
@@ -588,25 +591,33 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
                     k = k + 1
                     dest = out_dataset[label_type].get_data(
                             out_split)
-                    sources.append(dest)
-                    if op.islink(dest):
-                        os.remove(dest)
-                    os.symlink(op.relpath(source, op.dirname(dest)), dest)
-                    # link the lineidx
-                    source = dataset.get_lineidx(split)
-                    dest = out_dataset[label_type].get_lineidx(out_split)
-                    if op.islink(dest):
-                        os.remove(dest)
-                    os.symlink(op.relpath(source, op.dirname(dest)), dest)
-                    # create the label tsv
+                    remove_depend_symlink = True
+                    if remove_depend_symlink:
+                        sources.append(source)
+                    else:
+                        logging.warn('not supported any longer since philly does not support softlink')
+                        sources.append(dest)
+                        if op.islink(dest):
+                            os.remove(dest)
+                        os.symlink(op.relpath(source, op.dirname(dest)), dest)
+                        # link the lineidx
+                        source = dataset.get_lineidx(split)
+                        dest = out_dataset[label_type].get_lineidx(out_split)
+                        if op.islink(dest):
+                            os.remove(dest)
+                        os.symlink(op.relpath(source, op.dirname(dest)), dest)
+                        # create the label tsv
                     logging.info('converting labels: {}-{}'.format(
                         dataset.name, split))
                     converted_label = convert_label(dataset.get_data(split, 'label'),
                             idx, dataset._datasetlabel_to_rootlabel)
-                    tsv_writer(converted_label,
-                            out_dataset[label_type].get_data(out_split, 'label'))
+                    label_file = out_dataset[label_type].get_data(out_split, 'label')
+                    tsv_writer(converted_label, label_file)
+                    sources_label.append(label_file)
             write_to_file('\n'.join(sources),
                     out_dataset[label_type].get_data('trainX'))
+            write_to_file('\n'.join(sources_label), 
+                    out_dataset[label_type].get_data('trainX', 'label'))
         logging.info('duplicating or removing the train images')
         # for each label, let's duplicate the image or remove the image
         max_image = 1000

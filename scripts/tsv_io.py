@@ -47,11 +47,14 @@ class TSVDataset(object):
         if t is None:
             return train_x
         elif t =='label':
-            files = [op.splitext(f)[0] + '.label.tsv' for f in train_x]
-            return files
+            if op.isfile(self.get_data('trainX', 'label')):
+                return load_list_file(self.get_data('trainX', 'label'))
+            else:
+                files = [op.splitext(f)[0] + '.label.tsv' for f in train_x]
+                return files
 
-    def get_train_tsv(self):
-        return op.join(self._data_root, 'train.tsv') 
+    def get_train_tsv(self, t=None):
+        return self.get_data('train', t)
 
     def get_lineidx(self, split_name):
         return op.join(self._data_root, '{}.lineidx'.format(split_name))
@@ -79,6 +82,7 @@ class TSVDataset(object):
         return op.join(self._data_root, 'noffsets.txt')
 
     def load_noffsets(self):
+        logging.info('deprecated: pls generate it on the fly')
         return load_list_file(self.get_noffsets_file()) 
 
     def load_inverted_label(self, split):
