@@ -158,7 +158,7 @@ class ProtoGenerator(object):
             stageiter = [to_iter(si) for si in kwargs['stageiter']]
         else:
             stageiter = map(lambda x:int(x*max_iters/10000), 
-                    [100,5000,9000,10000000])
+                    [100,5000,9000,10000])
 
         lr_policy = kwargs.get('lr_policy', 'multifixed')
 
