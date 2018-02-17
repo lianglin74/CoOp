@@ -534,6 +534,17 @@ def merge_all_tax(all_tax):
             assert len(all_tax) == len(all_tax2) + 1, \
                     '{} can not be merged'.format(','.join([t.root.name for t in all_tax]))
             all_tax = all_tax2
+    all_node_names = {}
+    duplicate_names = []
+    for n in root_tax.root:
+        if n.name in all_node_names:
+            duplicate_names.append(n.name)
+        else:
+            all_node_names[n.name] = True
+    if len(duplicate_names) > 0:
+        raise Exception('duplicate names detected: {}'.format(', '.join(duplicate_names)))
+    else:
+        logging.info('Good: no duplicate names detected. ')
     return root_tax
 
 
