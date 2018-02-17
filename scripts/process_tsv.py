@@ -61,6 +61,26 @@ def tsv_details(tsv_file):
             'max_image_size': max_size, 
             'mean_image_size': mean_size}
 
+def detect_duplicate_key(tsv, duplicate_tsv):
+    rows = tsv_reader(tsv)
+    key_to_idx = {}
+    for i, row in enumerate(rows):
+        key = row[0]
+        if key in key_to_idx:
+            key_to_idx[key].append(i)
+        else:
+            key_to_idx[key] = [i]
+    found_error = False
+    def gen_rows():
+        for key in key_to_idx:
+            idxs = key_to_idx[key]
+            if len(idxs) > 1:
+                logging.info('duplicate key: {}: {}'.format(key, ', '.join(map(str,
+                    idxs))))
+                yield key, ','.join(map(str, idxs))
+    tsv_writer(gen_rows(), duplicate_tsv)
+    return TSVFile(duplicate_tsv).num_rows()
+
 def populate_dataset_details(data):
     dataset = TSVDataset(data)
 
@@ -83,6 +103,13 @@ def populate_dataset_details(data):
         inverted = dataset.get_data(split, 'inverted.label')
         if not op.isfile(inverted) and op.isfile(label_tsv):
             create_inverted_tsv(label_tsv, inverted)
+
+    # generate the rows with duplicate keys
+    for split in splits: 
+        label_tsv = dataset.get_data(split, 'label')
+        duplicate_tsv = dataset.get_data(split, 'key_duplicate')
+        if op.isfile(label_tsv) and not op.isfile(duplicate_tsv):
+            assert detect_duplicate_key(label_tsv, duplicate_tsv) == 0
 
     if op.isfile(dataset.get_data('trainX')):
         inverted_file = dataset.get_data('train', 'inverted.label')
@@ -814,6 +841,9 @@ def process_tsv_main(**kwargs):
         old_model = kwargs['model']
         new_model = kwargs['output']
         yolo_old_to_new(old_proto, old_model, new_model)
+    elif kwargs['type'] == 'build_data_index':
+        data = kwargs['input']
+        populate_dataset_details(data)
     else:
         logging.info('unknown task {}'.format(kwargs['type']))
 

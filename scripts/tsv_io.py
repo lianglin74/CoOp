@@ -60,23 +60,17 @@ class TSVDataset(object):
         return op.join(self._data_root, '{}.lineidx'.format(split_name))
 
     def get_data(self, split_name, t=None):
-        label_tsv = op.join(self._data_root, '{}.label.tsv'.format(split_name))
-        full_tsv = op.join(self._data_root, '{}.tsv'.format(split_name)) 
-        inverted_label_file = op.join(self._data_root,
-                '{}.inverted.label.tsv'.format(split_name))
-        if t == 'label':
-            return label_tsv
-        elif t == 'inverted.label':
-            return inverted_label_file
+        if t is None:
+            return op.join(self._data_root, '{}.tsv'.format(split_name)) 
         else:
-            assert t == None
-            return full_tsv
+            return op.join(self._data_root, '{}.{}.tsv'.format(split_name,
+                t))
 
     def get_num_train_image(self):
         return len(load_list_file(op.join(self._data_root, 'train.lineidx')))
 
-    def get_trainval_tsv(self):
-        return op.join(self._data_root, 'trainval.tsv')
+    def get_trainval_tsv(self, t=None):
+        return self.get_data('trainval', t)
 
     def get_noffsets_file(self):
         return op.join(self._data_root, 'noffsets.txt')
