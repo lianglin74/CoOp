@@ -992,6 +992,9 @@ def parse_args():
             default=False,
             action='store_true',
             help='track the intermediate results')
+    parser.add_argument('-rsi', '--restore_snapshot_iter',
+            type=int,
+            help='The iteration of the model used to restore the training. -1 for the last one')
     return parser.parse_args()
 
 if __name__ == '__main__':

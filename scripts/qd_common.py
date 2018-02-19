@@ -384,18 +384,23 @@ def register_timing(solver, nccl):
     solver.add_callback(lambda: '', lambda: (allrd.stop(), show_time()))
 
 def solve(proto, snapshot, weights, gpus, timing, uid, rank):
-    caffe.set_mode_gpu()
+    caffe.init_glog(str(os.path.join(os.path.dirname(proto),
+        'log_rank_{}_'.format(str(rank)))))
     caffe.set_device(gpus[rank])
+    caffe.set_mode_gpu()
     caffe.set_solver_count(len(gpus))
     caffe.set_solver_rank(rank)
     caffe.set_multiprocess(True)
 
     solver = caffe.SGDSolver(str(proto))
-    if snapshot and len(snapshot) != 0:
+    logging.info('solve: {}'.format(str(proto)))
+    assert solver is not None
+    has_snapshot = snapshot and len(snapshot) != 0
+    has_weight = weights and len(weights) != 0
+    if has_snapshot:
         solver.restore(str(snapshot))
-
-    if weights and len(weights) != 0:
-        solver.net.copy_from(str(weights),ignore_shape_mismatch=True)
+    elif has_weight:
+        solver.net.copy_from(str(weights), ignore_shape_mismatch=True)
 
     nccl = caffe.NCCL(solver, uid)
     nccl.bcast()
@@ -408,7 +413,8 @@ def solve(proto, snapshot, weights, gpus, timing, uid, rank):
     if solver.param.layer_wise_reduce:
         solver.net.after_backward(nccl)
 
-    solver.step(solver.param.max_iter)
+    iters = solver.param.max_iter - solver.iter
+    solver.step(iters)
     if rank == 0:
         solver.snapshot()
 
