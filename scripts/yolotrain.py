@@ -992,9 +992,30 @@ def parse_args():
             default=False,
             action='store_true',
             help='track the intermediate results')
+    # 1. if the restore_snapshot_iter is specified, we will use that snapshot to
+    # continue the training, and ignore the basemodel
+    # 2. if the restore_snapshot_iter is None (not specified) or it is specified
+    # as -1, but there is no snapshot in the output folder, we will try to use
+    # the --basemodel as the initial weights. If the --basemodel is not
+    # specified, we will try to use the model in models/${net}.caffemodel as
+    # the initial model. 
+    # Thus, it is ok to copy the pre-trained model to the
+    # folder of models and rename it properly, and then specify the net
+    # accordingly. However, this approach couples together how the network is
+    # constructed and how the parameter is initialized, and may be deprecated
+    # in the future.
+    # Suggestions: always specify the restore_snapshot_iter
+    # as -1 so that it can be trained continuously. Specify the basemodel only
+    # if you know what is happening. A typical scenario is that we changed the
+    # data, and the output will be in different folders, and we want to use
+    # that model to initialize the current model.
     parser.add_argument('-rsi', '--restore_snapshot_iter',
             type=int,
             help='The iteration of the model used to restore the training. -1 for the last one')
+    parser.add_argument('-bm', '--basemodel', 
+            default=argparse.SUPPRESS,
+            type=str,
+            help='The pre-trained (weight) model path')
     return parser.parse_args()
 
 if __name__ == '__main__':
