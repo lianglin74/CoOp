@@ -494,10 +494,45 @@ class CaffeWrapper(object):
     def evaluate(self, model, predict_result):
         data = self._data
         kwargs = self._kwargs
-        path_env = default_data_path(data)
 
-        eval_file = deteval(truth=self._test_source,
-                dets=predict_result, **self._kwargs)
+        if self._detmodel != 'classification':
+            eval_file = deteval(truth=self._test_source,
+                    dets=predict_result, **kwargs)
+            # create the index of the eval file so that others can load the
+            # information fast
+            result = None
+            simple_file = eval_file + '.map.json'
+            if worth_create(eval_file, simple_file):
+                if result is None:
+                    logging.info('data reading...')
+                    eval_result= read_to_buffer(eval_file)
+                    logging.info('json parsing...')
+                    result = json.loads(eval_result)
+                s = {}
+                for size_type in result:
+                    if size_type not in s:
+                        s[size_type] = {}
+                    for thresh in result[size_type]:
+                        if thresh not in s[size_type]:
+                            s[size_type][thresh] = {}
+                        s[size_type][thresh]['map'] = \
+                                result[size_type][thresh]['map']
+                write_to_file(json.dumps(s), simple_file)
+            simple_file = eval_file + '.class_ap.json'
+            if worth_create(eval_file, simple_file):
+                if result is None:
+                    eval_result= read_to_buffer(eval_file)
+                    result = json.loads(eval_result)
+                s = {}
+                for size_type in result:
+                    if size_type not in s:
+                        s[size_type] = {}
+                    for thresh in result[size_type]:
+                        if thresh not in s[size_type]:
+                            s[size_type][thresh] = {}
+                        s[size_type][thresh]['class_ap'] = \
+                                result[size_type][thresh]['class_ap']
+                write_to_file(json.dumps(s), simple_file)
 
         return eval_file
 
@@ -582,9 +617,13 @@ class CaffeWrapper(object):
         xs, ys = [], []
         for v in valid:
             model, eval_result = v
+            eval_result_simple = eval_result + '.map.json'
+            if not op.isfile(eval_result_simple):
+                continue
             model_iter = model.model_iter
             xs.append(model_iter)
-            with open(eval_result, 'r') as fp:
+            logging.info('loading eval result: {}'.format(eval_result_simple))
+            with open(eval_result_simple, 'r') as fp:
                 perf = json.loads(fp.read())
             if 'overall' in perf:
                 if ious == None:
