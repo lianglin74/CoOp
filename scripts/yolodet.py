@@ -1,5 +1,7 @@
 #!python2
 import os.path as op
+import time
+import logging
 import _init_paths
 # import sys
 # sys.path.insert(0, r'd:\github\caffe-msrccs\pythond')
@@ -13,6 +15,8 @@ import json
 import matplotlib.pyplot as plt
 import multiprocessing as mp
 from fast_rcnn.nms_wrapper import nms
+
+from tsv_io import tsv_writer
 
 def parse_args(arg_list):
     """Parse input arguments."""
@@ -288,8 +292,8 @@ def result2json(im, probs, boxes, class_map):
 def detprocess(caffenet, caffemodel, pixel_mean, cmap, gpu, key_idx, img_idx,
         in_queue, out_queue, **kwargs):
     if gpu >= 0:
-        caffe.set_mode_gpu()
         caffe.set_device(gpu)
+        caffe.set_mode_gpu()
     else:
         caffe.set_mode_cpu()
 
@@ -298,8 +302,8 @@ def detprocess(caffenet, caffemodel, pixel_mean, cmap, gpu, key_idx, img_idx,
     while True:
         cols = in_queue.get()
         if cols is None:
-            print 'exiting: {0}'.format(in_queue.qsize())
-            return 
+            out_queue.put(None)
+            break  
         if len(cols)> 1:
             # Load the image
             im = img_from_base64(cols[img_idx])
@@ -307,8 +311,9 @@ def detprocess(caffenet, caffemodel, pixel_mean, cmap, gpu, key_idx, img_idx,
             scores, boxes = im_multi_scale_detect(net, im, pixel_mean, gpu, **kwargs)
             # vis_detections(im, scores, boxes, cmap, thresh=0.5)
             results = result2json(im, scores, boxes, cmap)
-            out_queue.put(cols[key_idx] + "\t" + results+"\n")
+            out_queue.put((cols[key_idx], results))
             count = count + 1
+    logging.info('detprocess finished')
 
 def tsvdet(caffenet, caffemodel, intsv_file, key_idx,img_idx, pixel_mean, outtsv_file, **kwargs):
     if not caffemodel:
@@ -317,49 +322,106 @@ def tsvdet(caffenet, caffemodel, intsv_file, key_idx,img_idx, pixel_mean, outtsv
     cmapfile = os.path.join(op.split(caffenet)[0], labelmapfile)
     if not os.path.isfile(cmapfile):
         cmapfile = os.path.join(os.path.dirname(intsv_file), 'labelmap.txt')
-        assert os.path.isfile(cmapfile)
+        assert os.path.isfile(cmapfile), cmapfile
     if not os.path.isfile(caffemodel) :
         raise IOError(('{:s} not found.').format(caffemodel))
     if not os.path.isfile(caffenet) :
         raise IOError(('{:s} not found.').format(caffenet))
     cmap = load_labelmap_list(cmapfile)
     count = 0
+    debug = kwargs.get('debug_detect', False)
 
     gpus = kwargs.get('gpus', [0])
-    
-    in_queue = mp.Queue(len(gpus)*2);  # thread/process safe
-    out_queue = mp.Queue();
+
+    in_queue = mp.Queue(10 * len(gpus));  # thread/process safe
+    if debug:
+        out_queue = mp.Queue()
+    else:
+        out_queue = mp.Queue(10 * len(gpus));
+    num_worker = len(gpus)
+
+    def reader_process(intsv_file, in_queue, num_worker, img_idx):
+        logging.info('start to read {}'.format(intsv_file))
+        last_print_time = 0
+        count = 0
+        with open(intsv_file,"r") as tsv_in :
+            bar = FileProgressingbar(tsv_in)
+            for i, line in enumerate(tsv_in):
+                cols = [x.strip() for x in line.split("\t")]
+                if len(cols) > img_idx:
+                    if in_queue.full():
+                        if time.time() - last_print_time > 10:
+                            logging.info('reader is waiting. {}'.format(count))
+                            last_print_time = time.time()
+                    count = count + 1
+                    in_queue.put(cols)
+                    bar.update()
+        for _ in xrange(num_worker):
+            in_queue.put(None)  # kill all workers
+        logging.info('finished reader')
+    reader = mp.Process(target=reader_process, args=(intsv_file, in_queue,
+        num_worker, img_idx))
+    reader.daemon = True
+    reader.start()
+
     worker_pool = [];
-    for gpu in gpus:
-        worker = mp.Process(target=detprocess, args=(caffenet, caffemodel,
-            pixel_mean, cmap, gpu, key_idx, 
-            img_idx, in_queue, out_queue), kwargs=kwargs);
-        worker.daemon = True
-        worker_pool.append(worker)
-        worker.start()
+    if debug:
+        detprocess(caffenet, caffemodel,
+            pixel_mean, cmap, gpus[0], key_idx, 
+            img_idx, in_queue, out_queue, **kwargs)
+    else:
+        for gpu in gpus:
+            worker = mp.Process(target=detprocess, args=(caffenet, caffemodel,
+                pixel_mean, cmap, gpu, key_idx, 
+                img_idx, in_queue, out_queue), kwargs=kwargs);
+            worker.daemon = True
+            worker_pool.append(worker)
+            worker.start()
 
-    with open(intsv_file,"r") as tsv_in :
-        bar = FileProgressingbar(tsv_in)
-        for line in tsv_in:
-            cols = [x.strip() for x in line.split("\t")]
-            if len(cols) > img_idx:
-                in_queue.put(cols)
-                count = count + 1
-                bar.update()
-
-    for _ in worker_pool:
-        in_queue.put(None)  # kill all workers
+    assert not kwargs.get('debug_detect', False)
 
     outtsv_file_tmp = outtsv_file + '.tmp'
-    with open(outtsv_file_tmp,"w") as tsv_out:
-        for i in xrange(count):
-            tsv_out.write(out_queue.get())
+    def writer_process(out_queue, num_worker, outtsv_file_tmp):
+        def yield_output():
+            num_finished = 0
+            last_print_time = 0
+            count = 0
+            while True:
+                if num_finished == num_worker:
+                    break
+                else:
+                    if out_queue.qsize() == 0:
+                        if time.time() - last_print_time > 10:
+                            logging.info('writer is waiting. {}'.format(count))
+                            last_print_time = time.time()
+                    if out_queue.empty():
+                        if time.time() - last_print_time > 10:
+                            logging.info('writer waiting to get the data. {}'.format(count))
+                            last_print_time = time.time()
+                    x = out_queue.get()
+                    if x is None:
+                        num_finished = num_finished + 1
+                    else:
+                        count = count + 1
+                        yield x
+        tsv_writer(yield_output(), outtsv_file_tmp)
 
+    writer = mp.Process(target=writer_process, args=(out_queue, num_worker,
+        outtsv_file_tmp))
+    writer.daemon = True
+    writer.start()
+    
+    reader.join()
+    logging.info('reader finished')
     for proc in worker_pool: #wait all process finished.
         proc.join()
+    logging.info('worker finished')
+    writer.join()
+    logging.info('writer finished')
 
     os.rename(outtsv_file_tmp, outtsv_file)
-    caffe.print_perf(count)
+    #caffe.print_perf(count)
+
     return count
 
 if __name__ =="__main__":
