@@ -6,6 +6,7 @@ import os
 import gen_prototxt
 import caffe
 import re
+import copy
 import quickcaffe.modelzoo as mzoo
 from caffe.proto import caffe_pb2
 import numpy as np
@@ -451,7 +452,7 @@ class CaffeWrapper(object):
         #caffe.init_glog(str(path_env['log']))
 
         model = construct_model(path_env['solver'], path_env['test_proto_file'])
-        if not self._is_train_finished() or kwargs.get('force_train', False):
+        if not kwargs.get('skip_train', False) and (not self._is_train_finished() or kwargs.get('force_train', False)):
             with open(path_env['log'], 'w') as fp:
                 self._train()
 
@@ -465,8 +466,7 @@ class CaffeWrapper(object):
 
         test_proto_file = self._get_test_proto_file(model)
 
-        if not os.path.isfile(test_proto_file) or \
-                not os.path.isfile(model_param):
+        if not os.path.isfile(test_proto_file) or not os.path.isfile(model_param):
             return None
 
         path_env = default_data_path(data)
@@ -494,6 +494,11 @@ class CaffeWrapper(object):
     def evaluate(self, model, predict_result):
         data = self._data
         kwargs = self._kwargs
+
+        if not model or not os.path.isfile(model.model_param):
+            if model:
+                logging.info('skip evaluation because model does not exist: {}'.format(model.model_param))
+            return None
 
         if self._detmodel != 'classification':
             eval_file = deteval(truth=self._test_source,
@@ -996,7 +1001,11 @@ def parse_args():
     parser.add_argument('-sg', '--skip_genprototxt', default=False,
             action='store_true', 
             help='skip the proto file generation')
-    parser.add_argument('-s', '--snapshot', 
+    parser.add_argument('-st', '--skip_train',
+            default=False,
+            action='store_true',
+            help='skip the training phase (only generate prototxt, taxonomy, ...)')
+    parser.add_argument('-s', '--snapshot',
             help='the number of iterations to snaphot', required=False,
             type=int,
             default=500)
