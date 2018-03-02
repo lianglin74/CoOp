@@ -102,7 +102,9 @@ def construct_model(solver, test_proto_file, is_last=True, iteration=None):
     solver_param = load_solver(solver)
     train_net_param = load_net(solver_param.train_net)
     data_layer = train_net_param.layer[0]
-    mean_value = train_net_param.layer[0].transform_param.mean_value
+    # if we don't convert it to list, the type is repeated field, which is not
+    # pickable, and thus cannot be paralled by mp.Pool()
+    mean_value = list(train_net_param.layer[0].transform_param.mean_value)
     scale = train_net_param.layer[0].transform_param.scale
 
     if is_last:

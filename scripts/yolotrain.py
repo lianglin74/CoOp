@@ -666,15 +666,28 @@ class CaffeWrapper(object):
         is_unfinished = len(all_model) > len(all_ready_model) or \
                 need_predict_model
 
-        last_plot_time = time.time()
+        sub_tasks_param1 = []
+        sub_tasks_param2 = []
+        start_time = time.time()
         for m in all_ready_model:
             predict_result = self.predict(m)
             if predict_result:
-                self.evaluate(m, predict_result)
-            if time.time() - last_plot_time > 10 * 60:
-                self.plot_loss()
-                self.plot_acc()
-                last_plot_time = time.time()
+                sub_tasks_param1.append(m)
+                sub_tasks_param2.append(predict_result)
+                elapsed_time = time.time() - start_time
+                if elapsed_time > 60 * 60 * 4:
+                    logging.info('finished the {} predicts; {} left'.format(
+                        len(sub_tasks_param1), 
+                        len(all_ready_model) - len(sub_tasks_param1)))
+                    break
+
+        # the standard multiprocessing does not support the member function of
+        # a class, but pathos' supports
+        from pathos.multiprocessing import ProcessingPool as Pool
+        pool = Pool()
+        pool.map(self.evaluate, sub_tasks_param1, sub_tasks_param2)
+        self.plot_loss()
+        self.plot_acc()
 
         return is_unfinished
 
