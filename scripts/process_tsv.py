@@ -432,8 +432,8 @@ def convert_label(label_tsv, idx, label_mapper):
 
 def create_info_for_ambigous_noffset(name, noffsets):
     definitions = [str(noffset_to_synset(n).definition()) for n in noffsets]
-    de = [{'noffset': n, 'definition': d} for n, d in zip(noffsets,
-            definitions)]
+    de = [{'noffset': n, 'definition': d.replace("`", '').replace("'", '')}
+            for n, d in zip(noffsets, definitions)]
     d = {'name': name,
             'definitions': de,
             'noffset': None,
@@ -450,7 +450,10 @@ def node_should_have_images(root, th, fname):
                 'cum_images_with_bb': node.cum_images_with_bb,
                 'parent list': [p.name for p in node.get_ancestors()[:-1]]})
             enough = False
-            logging.warn('no images: {}'.format(node.name.encode('utf-8')))
+            logging.warn('less images: {} ({}, {})'.format(
+                node.name.encode('utf-8'),
+                node.cum_images_with_bb,
+                node.cum_images_no_bb))
     if enough:
         logging.info('con. every node has at least {} images'.format(th))
     else:
@@ -478,8 +481,8 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
         logging.info('there is no imagenet22k_448 dataset to help identify the noffset')
     populate_url_for_offset(tax.root)
 
-    ambigous_noffset_file = op.join('./output/', 'ambigous_noffsets',
-            dataset_name + '.yaml')
+    ambigous_noffset_file = op.join(overall_dataset._data_root,
+            'ambigous_noffsets.yaml')
     output_ambigous_noffsets(tax.root, ambigous_noffset_file)
     
     data_sources = []
@@ -514,12 +517,12 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
     logging.info('cum_images_no_bb: {}'.format(tax.root.cum_images_no_bb))
 
     # dump the tree to yaml format
-    dest = op.join(overall_dataset._data_root, tax.root.name + '.yaml')
+    dest = op.join(overall_dataset._data_root, 'root.yaml')
     d = tax.dump()
     write_to_yaml_file(d, dest)
 
     # write the simplified version of the tree
-    dest = op.join(overall_dataset._data_root, tax.root.name + '.simple.yaml')
+    dest = op.join(overall_dataset._data_root, 'root.simple.yaml')
     write_to_yaml_file(tax.dump(['images_with_bb']), dest)
 
     tree_file = overall_dataset.get_tree_file()
@@ -835,7 +838,7 @@ def process_tsv_main(**kwargs):
         standarize_crawled(tsv_input, tsv_output)
     elif kwargs['type'] == 'taxonomy_to_tsv':
         taxonomy_folder = kwargs['input']
-        build_taxonomy_impl(taxonomy_folder)
+        build_taxonomy_impl(taxonomy_folder, **kwargs)
     elif kwargs['type'] == 'yolo_model_convert':
         old_proto = kwargs['prototxt']
         old_model = kwargs['model']
@@ -860,8 +863,14 @@ def parse_args():
     parser.add_argument('-o', '--output', help='output',
             type=str, required=False)
     parser.add_argument('-d', '--datas', 
+            default=argparse.SUPPRESS,
             nargs='*',
             help='which data are used for taxonomy_to_tsv',
+            type=str, 
+            required=False)
+    parser.add_argument('-da', '--data', 
+            default=argparse.SUPPRESS,
+            help='the dataset name under data/',
             type=str, 
             required=False)
     return parser.parse_args()
