@@ -152,7 +152,7 @@ def child_parent_print_tree2(root, field):
         ps = n.get_ancestors()
         if len(ps) >= 1:
             key = get_field(n) 
-            lines.append((key, name_to_lineidx[get_field(ps[0])]))
+            lines.append((key, name_to_lineidx[get_field(ps[0])], n.__getattribute__('sub_group')))
             labels.append(n.__getattribute__(field))
         for c in n.children:
             q.put(c)
@@ -427,12 +427,17 @@ class Taxonomy(object):
         if type(one) is dict:
             list_value_keys = [k for k in one if type(one[k]) is list]
             if len(list_value_keys) == 1:
-                n = list_value_keys[0]
-                sub_root = root.add_child(name=n)
+                name = list_value_keys[0]
             else:
                 assert 'name' in one, one
-                sub_root = root.add_child(name=one['name'])
-            feats = {}
+                name = one['name']
+            child_subgroups = getattr(root, 'child_subgroups', -1)
+            if name.startswith('__'):
+                # just increase the subgroups count of the root
+                setattr(root, 'child_subgroups', child_subgroups + 1)
+                return
+            sub_root = root.add_child(name=name)
+            feats = {'sub_group': child_subgroups}
             for k in one:
                 v = one[k]
                 if type(v) is not list and k != 'name':

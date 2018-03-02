@@ -409,8 +409,8 @@ class CaffeWrapper(object):
         data, net, kwargs = self._data, self._net, self._kwargs
         path_env = self._path_env
 
-        write_to_file(pformat(self._kwargs), op.join(path_env['output'],
-            'parameters.txt'))
+        write_to_file(pformat(self._kwargs), op.join(path_env['output'], 'parameters.txt'))
+        write_to_file(json.dumps(self._kwargs), op.join(path_env['output'], 'parameters.json'))
 
         source_dataset = TSVDataset(self._data)
 

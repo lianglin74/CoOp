@@ -510,7 +510,7 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
 
     populate_cum_images(tax.root)
 
-    labels, child_parents = child_parent_print_tree2(tax.root, 'name')
+    labels, child_parent_sgs = child_parent_print_tree2(tax.root, 'name')
 
     label_map_file = overall_dataset.get_labelmap_file() 
     write_to_file('\n'.join(map(lambda l: l.encode('utf-8'), labels)), 
@@ -537,7 +537,8 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
     write_to_yaml_file(tax.dump(['images_with_bb']), dest)
 
     tree_file = overall_dataset.get_tree_file()
-    write_to_file('\n'.join(['{} {}'.format(c.encode('utf-8'), p) for c, p in child_parents]), 
+    write_to_file('\n'.join(['{} {}{}'.format(c.encode('utf-8'), p, '' if sg < 0 else ' {}'.format(sg))
+                             for c, p, sg in child_parent_sgs]),
             tree_file)
 
     node_should_have_images(tax.root, 200, 
