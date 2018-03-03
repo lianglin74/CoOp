@@ -29,6 +29,7 @@ import shutil
 import os
 from qd_common import img_from_base64
 from qd_common import yolo_old_to_new
+from itertools import izip
 
 def tsv_details(tsv_file):
     rows = tsv_reader(tsv_file)
@@ -285,12 +286,11 @@ class TSVDatasetSource(TSVDataset, DatasetSource):
             if node.name in self._targetlabel_to_sourcelabels:
                 sourcelabels = self._targetlabel_to_sourcelabels[node.name]
                 for sourcelabel in sourcelabels:
-                    c = self._datasetlabel_to_count[sourcelabel]
+                    c = self._datasetlabel_to_count.get(sourcelabel, 0)
                     if self._type == 'with_bb':
                         logging.info('with_bb: {}: {}->{}'.format(self.name,
                             node.name, c))
                         node.images_with_bb = node.images_with_bb + c
-                                
                     else:
                         assert self._type == 'no_bb'
                         logging.info('no_bb: {}: {}->{}'.format(self.name,
@@ -337,23 +337,34 @@ class TSVDatasetSource(TSVDataset, DatasetSource):
         root = self._root
         labelmap = self.load_labelmap()
         noffsets = self.load_noffsets()
-        tree_noffsets = {node.noffset: node.name 
-                for node in root.iter_search_nodes() 
-                if node.noffset and node != root}
-        tree_labels = {node.name: None
-                for node in root.iter_search_nodes() 
-                if node.noffset and node != root}
+        tree_noffsets = {}
+        for node in root.iter_search_nodes():
+            if node == root or not node.noffset:
+                continue
+            for s in node.noffset.split(','):
+                tree_noffsets[s] = node.name
+        tree_labels = {}
+        for node in root.iter_search_nodes():
+            if node == root:
+                continue
+            assert node.name.lower() not in tree_labels
+            # we will keep the lower case always for case-insensitive
+            # comparison
+            tree_labels[node.name.lower()] = node.name
 
         sourcelabel_targetlabel = [] 
 
         result = {}
-        for l, n in zip(labelmap, noffsets):
-            if l in tree_labels:
-                sourcelabel_targetlabel.append((l, l))
-                result[l] = l
-            elif n != '' and n in tree_noffsets:
-                sourcelabel_targetlabel.append((l, tree_noffsets[n]))
-                result[l] = tree_noffsets[n]
+        for l, ns in izip(labelmap, noffsets):
+            if l.lower() in tree_labels:
+                sourcelabel_targetlabel.append((l, tree_labels[l.lower()]))
+                result[l] = tree_labels[l.lower()]
+            elif ns != '':
+                for n in ns.split(','):
+                    n = n.strip()
+                    if n in tree_noffsets:
+                        sourcelabel_targetlabel.append((l, tree_noffsets[n]))
+                        result[l] = tree_noffsets[n]
 
         self._sourcelabel_targetlabel = sourcelabel_targetlabel
         self._sourcelabel_to_targetlabels = list_to_dict(sourcelabel_targetlabel,
