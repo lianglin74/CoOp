@@ -541,11 +541,11 @@ def merge_all_tax(all_tax):
             all_tax = all_tax2
     all_node_names = {}
     duplicate_names = []
-    for n in root_tax.root:
-        if n.name in all_node_names:
+    for n in root_tax.root.iter_search_nodes():
+        if n.name.lower() in all_node_names:
             duplicate_names.append(n.name)
         else:
-            all_node_names[n.name] = True
+            all_node_names[n.name.lower()] = True
     if len(duplicate_names) > 0:
         raise Exception('duplicate names detected: {}'.format(', '.join(duplicate_names)))
     else:
