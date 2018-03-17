@@ -1,17 +1,38 @@
-import logging
+from pprint import pformat
+import random
+import json
+import xml.etree.ElementTree as ET
+import cPickle as pkl
 from collections import OrderedDict
-from nltk.corpus import wordnet as wn
+import cv2
 import yaml
-from ete2 import Tree
-import glob
-import os.path as op
-from qd_common import load_list_file
+import numpy as np
+import logging
+from ete2 import Tree, TreeStyle, TextFace, add_face_to_node
+from nltk.corpus import wordnet as wn
 from qd_common import write_to_file, read_to_buffer
 from qd_common import init_logging, ensure_directory
-import re
-from qd_common import load_from_yaml_file
 import Queue
+import os
+import os.path as op
+import glob
+import tarfile
+from tsv_io import TSVDataset, tsv_reader, tsv_writer
+from qd_common import img_from_base64, load_list_file
+from qd_common import load_from_yaml_file
+from qd_common import encoded_from_img
+from tsv_io import tsv_shuffle_reader
+import base64
+from process_image import draw_bb, show_image, save_image
+import re
 from itertools import izip
+
+def labels2noffsets(labels):
+    mapper = LabelToSynset()
+    result = []
+    for label in labels:
+        result.append(synset_to_noffset(mapper.convert(label)))
+    return result
 
 def get_nick_name(s):
     n = s.name()
@@ -125,9 +146,6 @@ class LabelTree(object):
 def synset_to_noffset(synset):
     return '{}{:0>8}'.format(synset.pos(), synset.offset())
 
-def noffset_to_synset(noffset):
-    return wn.synset_from_pos_and_offset(noffset[0], int(noffset[1:]))
-
 def child_parent_print_tree2(root, field):
     def get_field(n):
         key = n.__getattribute__(field)
@@ -158,6 +176,49 @@ def child_parent_print_tree2(root, field):
             q.put(c)
     return labels, lines
 
+def child_parent_print_tree(root):
+    synset_to_lineidx = {}
+    q = Queue.Queue()
+    q.put(root)
+    idx = -1
+    while not q.empty(): 
+        n = q.get()
+        synset_to_lineidx[n.synset] = idx
+        idx = idx + 1
+        for c in n.children:
+            q.put(c)
+    q.put(root)
+    lines = []
+    while not q.empty():
+        n = q.get()
+        ps = n.get_ancestors()
+        if len(ps) >= 1:
+            lines.append('{}{:0>8} {}'.format(n.synset.pos(), 
+                n.synset.offset(),
+                synset_to_lineidx[ps[0].synset]))
+        for c in n.children:
+            q.put(c)
+    return lines
+
+def breadth_first_print_tree(root):
+    if root == None or len(root.children) == 0:
+        return []
+    parts = []
+    n = get_nick_name(root.synset)
+    parts.append('{}({}):{}'.format(n, synset_to_noffset(root.synset),
+        len(root.children)))
+    if len(root.children) > 0:
+        parts.append(':')
+        parts.append(','.join(map(lambda c:
+            '{}({})'.format(get_nick_name(c.synset),
+                synset_to_noffset(c.synset)),
+            root.children)))
+    result = []
+    result.append(''.join(parts))
+    for c in root.children:
+        result += breadth_first_print_tree(c)
+    return result
+
 def populate_cum_images(root):
     cum_images_with_bb = root.images_with_bb
     cum_images_no_bb = root.images_no_bb
@@ -168,6 +229,20 @@ def populate_cum_images(root):
 
     root.add_feature('cum_images_with_bb', cum_images_with_bb)
     root.add_feature('cum_images_no_bb', cum_images_no_bb)
+
+def load_label_parentidx_as_tree(label_parentidx, labels):
+    root = Tree()
+    root.name = 'root' 
+    label_node = {}
+    for label in labels:
+        parientid = label_parentidx[label] 
+        if parientid == -1:
+            c = root.add_child(name=label)
+        else:
+            parentnode = label_node[labels[parientid]]
+            c = parentnode.add_child(name=label)
+        label_node[label] = c
+    return root 
 
 def load_label_tree(noffset_parentidx, noffsets):
     root = Tree()
@@ -209,7 +284,6 @@ def load_label_parent(label_tree_file):
         labels.append(label)
     return label_idx, label_parentidx, labels 
 
-
 def dump_tree(root, feature_name=None):
     result = OrderedDict()
     if feature_name is None:
@@ -227,9 +301,6 @@ def dump_tree(root, feature_name=None):
     for c in root.children:
         result[root.name].append(dump_tree(c, feature_name))
     return result
-
-def synset_to_noffset(synset):
-    return '{}{:0>8}'.format(synset.pos(), synset.offset())
 
 def synonym_list():
     p = []
@@ -250,6 +321,26 @@ def synonym():
 def noffset_to_synset(noffset):
     noffset = noffset.strip()
     return wn.synset_from_pos_and_offset(noffset[0], int(noffset[1:]))
+
+def create_labelmap_map(from_labelmap, to_labelmap):
+    with open(from_labelmap, 'r') as fp:
+        from_labels = [line.strip() for line in fp.readlines()]
+    with open(to_labelmap, 'r') as fp:
+        to_labels = [line.strip() for line in fp.readlines()]
+    to_labels2 = [label.replace(' ', '') for label in to_labels]
+    result = {}
+    syn = synonym()
+    for label in from_labels:
+        label2 = label.replace(' ', '')
+        if label2 in to_labels2:
+            idx = to_labels2.index(label2) 
+            result[label] = to_labels[idx]
+        elif label2 in syn and syn[label2] in to_labels2:
+            idx = to_labels2.index(syn[label2])
+            result[label] = to_labels2[idx]
+        else:
+            result[label] = None
+    return result
 
 class LabelToSynset(object):
     def __init__(self):
@@ -384,8 +475,10 @@ def populate_url_for_offset(root):
     if not hasattr(root, 'noffset'):
         populate_noffset(root)
     if root.noffset:
-        root.add_feature('url',
-                'http://www.image-net.org/synset?wnid={}'.format(root.noffset))
+        noffsets = root.noffset.split(',')
+        urls = ['[{0}](http://www.image-net.org/synset?wnid={0})'.format(noffset) for
+                noffset in noffsets]
+        root.add_feature('url', ','.join(urls))
     if hasattr(root, 'noffsets'):
         noffsets = root.noffsets.split(',')
         urls = ['[{0}](http://www.image-net.org/synset?wnid={0})'.format(noffset) for
@@ -395,11 +488,12 @@ def populate_url_for_offset(root):
         populate_url_for_offset(c)
 
 def populate_noffset(root):
+    logging.info('deprecated here')
     mapper = LabelToSynset()
     mapper.populate_noffset(root)
 
 def disambibuity_noffsets(root, keys):
-    if hasattr(root, 'noffsets'):
+    if hasattr(root, 'noffsets') and root.noffsets:
         noffsets = root.noffsets.split(',')
         exists = [noffset in keys for noffset in noffsets]
         left = [noffset for noffset, exist in zip(noffsets, exists) if exist]
@@ -493,6 +587,60 @@ class Taxonomy(object):
         else:
             assert len(values) == 0
 
+def noffset_to_url(noffset):
+    return 'http://www.image-net.org/synset?wnid={}'.format(noffset)
+
+def load_voc_xml(filename):
+    tree = ET.parse(filename)
+    objs = tree.findall('object')
+    if not False:
+        # Exclude the samples labeled as difficult
+        non_diff_objs = [
+            obj for obj in objs if int(obj.find('difficult').text) == 0]
+        # if len(non_diff_objs) != len(objs):
+        #     print 'Removed {} difficult objects'.format(
+        #         len(objs) - len(non_diff_objs))
+        objs = non_diff_objs
+    num_objs = len(objs)
+
+    gt = []
+
+    size = tree.find('size')
+    width = float(size.find('width').text)
+    height = float(size.find('height').text)
+
+    # Load object bounding boxes into a data frame.
+    for ix, obj in enumerate(objs):
+        name = obj.find('name').text.lower().strip()
+        diff = int(obj.find('difficult').text)
+        bbox = obj.find('bndbox')
+        # Make pixel indexes 0-based
+        x1 = float(bbox.find('xmin').text) - 1
+        y1 = float(bbox.find('ymin').text) - 1
+        x2 = float(bbox.find('xmax').text) - 1
+        y2 = float(bbox.find('ymax').text) - 1
+        bbox = [x1, y1, x2, y2]
+        gt.append({'diff': diff, 'class': name, 'rect': bbox})
+    return gt, height, width
+
+def gen_image_gt_by_noffset(noffset, annotation_root, image_root):
+    if not ensure_untar(noffset):
+        return
+    curr_folder = op.join(annotation_root, noffset)
+    files = glob.glob(op.join(curr_folder, '*.xml'))
+    for curr_file in files:
+        xml_basename = op.splitext(op.basename(curr_file))[0]
+        image_file_name = op.join(image_root, noffset,
+            xml_basename + ".JPEG")
+        if not op.isfile(image_file_name):
+            logging.info('not exist: {}'.format(image_file_name))
+            continue
+        gt, height, width = load_voc_xml(curr_file)
+        if len(gt) == 0:
+            logging.info('no bb: {}'.format(image_file_name))
+            continue
+        yield xml_basename, image_file_name, gt, height, width
+
 def load_all_tax(tax_folder):
     all_yaml = glob.glob(op.join(tax_folder, '*.yaml'))
     all_tax = []
@@ -571,3 +719,18 @@ def gen_term_list(tax_folder, term_list):
 
     write_to_file('\n'.join(map(lambda x: x.encode('utf-8'), all_term)),
         term_list)
+
+def gen_cls_specific_th(tree_file, th, th_file):
+    label_idx, label_parentidx, labels = load_label_parent(tree_file)
+    root = load_label_parentidx_as_tree(label_parentidx, labels)
+    label_threshold = {}
+    for node in root.iter_search_nodes():
+        if node.name == root.name:
+            continue
+        num = len(node.get_sisters()) + 1
+        label_threshold[node.name] = 1. / num * th
+
+    write_to_file('\n'.join(['{}\t{}'.format(l, label_threshold[l]) 
+        for l in labels]), th_file)
+
+

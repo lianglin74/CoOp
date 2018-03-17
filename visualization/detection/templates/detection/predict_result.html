@@ -1,0 +1,93 @@
+{% load static %}
+<style>
+    tr.seperated td {
+        border-bottom: 1px solid black;
+    }
+    table {
+        border-collapse: collapse;
+        margin-left: auto;
+        margin-right: auto;
+    }
+</style>
+
+<table>
+    <tr>
+        <td>predict as <b>{{ label }}</b></td>
+        <td>gt label </td>
+        {% for item in confusion_pred_gt %}
+        <td>{{ item.0 }}</td>
+        {% endfor %}
+    </tr>
+    <tr>
+        <td>&nbsp;</td>
+        <td>count</td>
+        {% for item in confusion_pred_gt %}
+        <td>{{ item.1 }}</td>
+        {% endfor %}
+    </tr>
+    <tr>
+        <td>&nbsp;</td>
+        <td>percent</td>
+        {% for item in confusion_pred_gt %}
+        <td>{{ item.2 }}</td>
+        {% endfor %}
+    </tr>
+    <tr class='seperated'>
+        <td>&nbsp;</td>
+        <td>cum percent</td>
+        {% for item in confusion_pred_gt %}
+        <td>{{ item.3 }}</td>
+        {% endfor %}
+    </tr>
+    <tr>
+        <td>gt as <b>{{ label }}</b></td>
+        <td>predict label </td>
+        {% for item in confusion_gt_pred %}
+        <td>{{ item.0 }}</td>
+        {% endfor %}
+    </tr>
+    <tr>
+        <td>&nbsp;</td>
+        <td>count</td>
+        {% for item in confusion_gt_pred %}
+        <td>{{ item.1 }}</td>
+        {% endfor %}
+    </tr>
+    <tr>
+        <td>&nbsp;</td>
+        <td>percent</td>
+        {% for item in confusion_gt_pred %}
+        <td>{{ item.2 }}</td>
+        {% endfor %}
+    </tr>
+    <tr class='seperated'>
+        <td>&nbsp;</td>
+        <td>cum percent</td>
+        {% for item in confusion_gt_pred %}
+        <td>{{ item.3 }}</td>
+        {% endfor %}
+    </tr>
+</table>
+
+
+<table>
+    <tr>
+        <th>AP on {{ label }}</th>
+        <th>original image</th>
+        <th>ground truth</th>
+        <th>predicted by model</th>
+    </tr>
+    {% for im_origin, im_gt, im_pred, ap in image_pairs %}
+    <tr>
+        <td>{{ ap }}</td>
+        <td><img src="{% static im_origin %}" width=600></td>
+        <td><img src="{% static im_gt %}" width=600></td>
+        <td><img src="{% static im_pred %}" width=600></td>
+    </tr>
+    {% endfor %}
+</table>
+
+<a href="{% url 'detection:view_model' %}?{{ previous_button_param }}">Previous</a>
+<a href="{% url 'detection:view_model' %}?{{ next_button_param }}">Next</a>
+<!--<a href="{% url 'detection:view_model' %}">Next</a>-->
+

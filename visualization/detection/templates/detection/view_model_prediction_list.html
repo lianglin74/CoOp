@@ -1,0 +1,40 @@
+<head>
+	<meta charset="UTF-8">
+	<title>Document</title>
+	<script>
+      window.onload = function  () {
+    	var li_ul = document.querySelectorAll(".col_ul li  ul");
+        for (var i = 0; i < li_ul.length; i++) {
+            li_ul[i].style.display = "none"
+        };
+    
+        var exp_li = document.querySelectorAll(".col_ul li > span");
+        for (var i = 0; i < exp_li.length; i++) {
+            exp_li[i].style.cursor = "pointer";
+            exp_li[i].onclick = showul;
+        };
+        function showul () {
+            nextul = this.nextElementSibling;
+            if(nextul.style.display == "block")
+                nextul.style.display = "none";
+            else
+                nextul.style.display = "block";
+        }
+    }
+  </script>
+</head>
+
+<p>there are {{ prediction_files|length }} models</p>
+
+<ul class="col_ul">
+    {% for prediction_file in prediction_files %}
+    <li><span>{{ prediction_file }}</span>
+        <ul>
+        {% for l in labelmap %}
+        <li><a href="{% url 'detection:view_model' %}?full_expid={{ full_expid }}&predict_file={{ prediction_file }}&filter_label={{ l }}&start_id=0&threshold=0.2">{{ l }}</a></li>
+        {% endfor %}
+        </ul>
+    </li>
+    {% endfor %}
+</ul>
+

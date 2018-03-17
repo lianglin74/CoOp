@@ -1,9 +1,49 @@
 import logging
+import re
+import glob
 import json
+import random
+from qd_common import default_data_path, ensure_directory
+from qd_common import read_to_buffer, load_list_file
+from qd_common import write_to_yaml_file, load_from_yaml_file
 import os
 import os.path as op
-from qd_common import read_to_buffer, load_list_file
-from qd_common import ensure_directory
+from ete2 import Tree
+from qd_common import generate_lineidx
+from qd_common import parse_test_data
+from qd_common import img_from_base64
+import numpy as np
+import yaml
+
+class TSVFile(object):
+    def __init__(self, tsv_file):
+        self.tsv_file = tsv_file
+        self.lineidx = op.splitext(tsv_file)[0] + '.lineidx' 
+        self._fp = None
+        self._lineidx = None
+    
+    def num_rows(self):
+        self._ensure_lineidx_loaded()
+        return len(self._lineidx) 
+
+    def seek(self, idx):
+        self._ensure_tsv_opened()
+        self._ensure_lineidx_loaded()
+        pos = self._lineidx[idx]
+        self._fp.seek(pos)
+        return [s.strip() for s in self._fp.readline().split('\t')]
+    
+    def _ensure_lineidx_loaded(self):
+        if not op.isfile(self.lineidx) and not op.islink(self.lineidx):
+            generate_lineidx(self.tsv_file, self.lineidx)
+        if self._lineidx is None:
+            with open(self.lineidx, 'r') as fp:
+                self._lineidx = [int(i.strip()) for i in fp.readlines()]
+
+    def _ensure_tsv_opened(self):
+        if self._fp is None:
+            self._fp = open(self.tsv_file, 'r')
+
 
 class TSVDataset(object):
     def __init__(self, name):
@@ -31,8 +71,39 @@ class TSVDataset(object):
     def get_labelmap_of_noffset_file(self):
         return op.join(self._data_root, 'noffsets.label.txt')
 
-    def get_test_tsv_file(self):
-        return op.join(self._data_root, 'test.tsv')
+    def load_key_to_idx(self, split):
+        result = {}
+        for i, row in enumerate(tsv_reader(self.get_data(split, 'label'))):
+            key = row[0]
+            assert key not in result
+            result[key] = i
+        return result
+
+    def load_keys(self, split):
+        result = []
+        for row in tsv_reader(self.get_data(split, 'label')):
+            result.append(row[0])
+        return result
+
+    def dynamic_update(self, dataset_ops):
+        '''
+        sometimes, we update the dataset, and here, we should update the file
+        path
+        '''
+        if len(dataset_ops) >= 1 and dataset_ops[0]['op'] == 'sample':
+            self._data_root = op.join('./output/data/',
+                    '{}_{}_{}'.format(self.name,
+                        dataset_ops[0]['sample_label'],
+                        dataset_ops[0]['sample_image']))
+        elif len(dataset_ops) >= 1 and dataset_ops[0]['op'] == 'mask_background':
+            target_folder = op.join('./output/data',
+                    '{}_{}_{}'.format(self.name,
+                        '.'.join(map(str, dataset_ops[0]['old_label_idx'])),
+                        dataset_ops[0]['new_label_idx']))
+            self._data_root = target_folder 
+
+    def get_test_tsv_file(self, t=None):
+        return self.get_data('test', t)
 
     def get_test_tsv_lineidx_file(self):
         return op.join(self._data_root, 'test.lineidx') 
@@ -99,6 +170,7 @@ def tsv_writer(values, tsv_file_name):
     tsv_file_name_tmp = tsv_file_name + '.tmp'
     tsv_lineidx_file_tmp = tsv_lineidx_file + '.tmp'
     with open(tsv_file_name_tmp, 'w') as fp, open(tsv_lineidx_file_tmp, 'w') as fpidx:
+        assert values is not None
         for value in values:
             assert value
             v = '{0}\n'.format('\t'.join(value))
@@ -131,6 +203,8 @@ def extract_label(full_tsv, label_tsv):
                 logging.info('extract_label: {}-{}'.format(full_tsv, i))
             del row[2]
             assert len(row) == 2
+            assert type(row[0]) == str
+            assert type(row[1]) == str
             yield row
     tsv_writer(gen_rows(), label_tsv)
 
@@ -143,6 +217,7 @@ def create_inverted_tsv(label_tsv, inverted_label_file):
     for i, row in enumerate(rows):
         labels = json.loads(row[1])
         for l in set([l['class'] for l in labels]):
+            assert type(l) == str or type(l) == unicode
             if l not in inverted:
                 inverted[l] = [i]
             else:
@@ -151,4 +226,50 @@ def create_inverted_tsv(label_tsv, inverted_label_file):
         for label in inverted:
             yield label, ' '.join(map(str, inverted[label]))
     tsv_writer(gen_rows(), inverted_label_file)
+
+def tsv_shuffle_reader(tsv_file):
+    logging.warn('deprecated: using TSVFile to randomly seek')
+    lineidx_file = op.splitext(tsv_file)[0] + '.lineidx'
+    lineidx = load_list_file(lineidx_file)
+    random.shuffle(lineidx)
+    with open(tsv_file, 'r') as fp:
+        for l in lineidx:
+            fp.seek(int(float(l)))
+            yield [x.strip() for x in fp.readline().split('\t')]
+    
+def load_labelmap(data):
+    dataset = TSVDataset(data)
+    return dataset.load_labelmap()
+
+
+def get_all_data_info():
+    names = os.listdir('./data')
+    name_splits_labels = []
+    names.sort(key=lambda n: n.lower())
+    for name in names:
+        dataset = TSVDataset(name)
+        if not op.isfile(dataset.get_labelmap_file()):
+            continue
+        labels = dataset.load_labelmap()
+        valid_splits = []
+        if len(dataset.get_train_tsvs()) > 0:
+            valid_splits.append('train')
+        for split in ['trainval', 'test']:
+            if not op.isfile(dataset.get_data(split)):
+                continue
+            valid_splits.append(split)
+        name_splits_labels.append((name, valid_splits, labels))
+    return name_splits_labels
+
+def load_labels(file_name):
+    rows = tsv_reader(file_name)
+    labels = {}
+    label_to_idx = {}
+    for i, row in enumerate(rows):
+        key = row[0]
+        rects = json.loads(row[1])
+        #assert key not in labels, '{}-{}'.format(file_name, key)
+        labels[key] = rects
+        label_to_idx[key] = i
+    return labels, label_to_idx
 

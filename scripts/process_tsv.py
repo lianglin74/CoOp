@@ -1,35 +1,212 @@
-from qd_common import init_logging
+from itertools import izip
+from process_image import show_images
+import shutil
+import glob
+import yaml
+import magic
+import matplotlib.pyplot as plt
+from tsv_io import tsv_reader, tsv_writer
+from pprint import pformat
+import os
 import os.path as op
-import argparse
+import sys
 import json
-import logging
-from taxonomy import gen_term_list
-from taxonomy import gen_noffset
-from taxonomy import load_all_tax, merge_all_tax
+from pprint import pprint
+import multiprocessing as mp
+import random
+import numpy as np
+from qd_common import ensure_directory
+from qd_common import default_data_path, load_net
+import time
+from multiprocessing import Queue
+from shutil import copytree
+from shutil import rmtree
+from qd_common import img_from_base64
+import cv2
+import base64
+from taxonomy import load_label_parent, labels2noffsets
 from taxonomy import LabelToSynset, synset_to_noffset
-from taxonomy import populate_url_for_offset
 from taxonomy import noffset_to_synset
-from taxonomy import disambibuity_noffsets
-from taxonomy import populate_cum_images
+from taxonomy import get_nick_name
+from taxonomy import load_all_tax, merge_all_tax
 from taxonomy import child_parent_print_tree2
 from taxonomy import create_markdown_url
-from taxonomy import get_nick_name
-from qd_common import write_to_yaml_file, load_from_yaml_file
+#from taxonomy import populate_noffset
+from taxonomy import populate_cum_images
+from taxonomy import gen_term_list
+from taxonomy import gen_noffset
+from taxonomy import populate_url_for_offset
+from taxonomy import disambibuity_noffsets
+from taxonomy import Taxonomy
 from qd_common import read_to_buffer, load_list_file
-from tsv_io import TSVDataset
-from tsv_io import tsv_reader, tsv_writer
-from qd_common import write_to_file
-from qd_common import ensure_directory
-import random
-from tsv_io import get_meta_file
+from qd_common import write_to_yaml_file, load_from_yaml_file
+from qd_common import encoded_from_img
 from tsv_io import extract_label
 from tsv_io import create_inverted_tsv
-import numpy as np
-import shutil
-import os
-from qd_common import img_from_base64
+
+from process_image import draw_bb, show_image, save_image
+from qd_common import write_to_file
+from tsv_io import TSVDataset, TSVFile
+from qd_common import init_logging
+import logging
+from qd_common import is_cluster
+from tsv_io import tsv_shuffle_reader
+import argparse
+from tsv_io import get_meta_file
+import imghdr
+from qd_common import calculate_iou
 from qd_common import yolo_old_to_new
-from itertools import izip
+from qd_common import generate_lineidx
+from qd_common import list_to_dict
+from qd_common import dict_to_list
+from qd_common import parse_test_data
+from tsv_io import load_labels
+
+def update_yolo_test_proto(input_test, test_data, map_file, output_test):
+    dataset = TSVDataset(test_data)
+    if op.isfile(dataset.get_noffsets_file()):
+        test_noffsets = dataset.load_noffsets()
+    else:
+        test_noffsets = labels2noffsets(dataset.load_labelmap())
+    test_map_id = []
+    net = load_net(input_test)
+    for l in net.layer:
+        if l.type == 'RegionOutput':
+            tree_file = l.region_output_param.tree
+            r = load_label_parent(tree_file)
+            noffset_idx, noffset_parentidx, noffsets = r
+            for noffset in test_noffsets:
+                test_map_id.append(noffset_idx[noffset])
+            write_to_file('\n'.join(map(str, test_map_id)), map_file)
+            l.region_output_param.map = map_file 
+            l.region_output_param.thresh = 0.005
+    assert len(test_noffsets) == len(test_map_id)
+    write_to_file(str(net), output_test)
+
+
+def gen_html_tree_view(data):
+    dataset = TSVDataset(data)
+    file_name = op.join(dataset._data_root, 'root.yaml')
+    with open(file_name, 'r') as fp:
+        config_tax = yaml.load(fp)
+    tax = Taxonomy(config_tax)
+    def gen_html_tree_view_rec(root):
+        '''
+        include itself
+        '''
+        if len(root.children) == 0:
+            s = u"<li data-jstree='{{\"icon\":\"glyphicon glyphicon-leaf\"}}'>{}</li>".format(root.name)
+            return s
+        else:
+            result = []
+            result.append('<li><span>{}</span>'.format(root.name))
+            result.append('<ul>')
+            for c in root.children:
+                r = gen_html_tree_view_rec(c)
+                result.append(r)
+            result.append('</ul>')
+            result.append('</li>')
+            return '\n'.join(result)
+    s = gen_html_tree_view_rec(tax.root)
+    return s
+
+
+def gt_predict_images(predicts, gts, test_data, target_images, start_id, threshold,
+        label_to_idx, image_aps, test_data_split='test'): 
+    test_dataset = TSVDataset(test_data)
+    test_tsv = TSVFile(test_dataset.get_data(test_data_split))
+    for i in xrange(start_id, len(target_images)):
+        key = target_images[i]
+        logging.info('key = {}, ap = {}'.format(key, image_aps[i][1]))
+        idx = label_to_idx[key]
+        row = test_tsv.seek(idx)
+        im = img_from_base64(row[2])
+        origin = np.copy(im)
+        im_gt = np.copy(im)
+        draw_bb(im_gt, [g['rect'] for g in gts[key]],
+                [g['class'] for g in gts[key]])
+        im_pred = im
+        rects = [p for p in predicts[key] if p['conf'] > threshold]
+        draw_bb(im_pred, [r['rect'] for r in rects],
+                [r['class'] for r in rects], 
+                [r['conf'] for r in rects])
+        yield key, origin, im_gt, im_pred, image_aps[i][1]
+
+def get_confusion_matrix_by_predict_file(full_expid, 
+        predict_file, threshold, test_data_split='test'):
+
+    test_data = parse_test_data(predict_file)
+    predicts, _ = load_labels(op.join('output', full_expid, 'snapshot', predict_file))
+
+    # load the gt
+    test_dataset = TSVDataset(test_data)
+    test_label_file = test_dataset.get_data(test_data_split, 'label')
+    gts, label_to_idx = load_labels(test_label_file)
+
+    # calculate the confusion matrix
+    confusion_pred_gt = {}
+    confusion_gt_pred = {}
+    update_confusion_matrix(predicts, gts, threshold, 
+            confusion_pred_gt, 
+            confusion_gt_pred)
+
+    return {'predicts': predicts, 
+            'gts': gts, 
+            'confusion_pred_gt': confusion_pred_gt, 
+            'confusion_gt_pred': confusion_gt_pred,
+            'label_to_idx': label_to_idx}
+
+def inc_one_dic_dic(dic, c1, c2):
+    if c1 not in dic:
+        dic[c1] = {}
+    if c2 not in dic[c1]:
+        dic[c1][c2] = 0
+    dic[c1][c2] = dic[c1][c2] + 1
+
+def update_confusion_matrix(predicts, gts, threshold, 
+            confusion_pred_gt, 
+            confusion_gt_pred):
+    for key in predicts:
+        curr_pred = [p for p in predicts[key] if p['conf'] > threshold]
+        curr_gt = gts[key]
+        if len(curr_pred) == 0 and len(curr_gt) > 0:
+            for g in curr_gt:
+                inc_one_dic_dic(confusion_gt_pred, g['class'], 'None')
+            continue
+        elif len(curr_pred) > 0 and len(curr_gt) == 0:
+            for p in curr_pred:
+                inc_one_dic_dic(confusion_pred_gt, p['class'], 'None')
+            continue
+        elif len(curr_pred) == 0 and len(curr_gt) == 0:
+            continue
+        ious = np.zeros((len(curr_pred), len(curr_gt)))
+        for i, p in enumerate(curr_pred):
+            for j, g in enumerate(curr_gt):
+                iou = calculate_iou(p['rect'], g['rect'])
+                ious[i, j] = iou
+        gt_idx = np.argmax(ious, axis=1)
+        for i, p in enumerate(curr_pred):
+            j = gt_idx[i]
+            predict_class = p['class']
+            gt_class = curr_gt[j]['class']
+            if ious[i, j] > 0.3:
+                inc_one_dic_dic(confusion_pred_gt, 
+                        predict_class, gt_class)
+            else:
+                inc_one_dic_dic(confusion_pred_gt, 
+                        predict_class, 'None')
+        pred_idx = np.argmax(ious, axis=0)
+        for j, g in enumerate(curr_gt):
+            i = pred_idx[j]
+            predict_class = curr_pred[i]['class']
+            gt_class = g['class']
+            if ious[i, j] > 0.3:
+                inc_one_dic_dic(confusion_gt_pred,
+                        gt_class, predict_class)
+            else:
+                inc_one_dic_dic(confusion_gt_pred,
+                        gt_class, 'None')
+
 
 def tsv_details(tsv_file):
     rows = tsv_reader(tsv_file)
@@ -39,6 +216,8 @@ def tsv_details(tsv_file):
         if (i % 1000) == 0:
             logging.info('get tsv details: {}-{}'.format(tsv_file, i))
         rects = json.loads(row[1])
+        # convert it to str. if it is unicode, in yaml, there will be some
+        # special tags, which is annoying
         curr_labels = set(str(rect['class']) for rect in rects)
         for c in curr_labels:
             if c in label_count:
@@ -62,6 +241,7 @@ def tsv_details(tsv_file):
             'max_image_size': max_size, 
             'mean_image_size': mean_size}
 
+
 def detect_duplicate_key(tsv, duplicate_tsv):
     rows = tsv_reader(tsv)
     key_to_idx = {}
@@ -81,6 +261,14 @@ def detect_duplicate_key(tsv, duplicate_tsv):
                 yield key, ','.join(map(str, idxs))
     tsv_writer(gen_rows(), duplicate_tsv)
     return TSVFile(duplicate_tsv).num_rows()
+            
+def populate_all_dataset_details():
+    all_data = os.listdir('data/')
+    for data in all_data:
+        try:
+            populate_dataset_details(data)
+        except:
+            continue
 
 def populate_dataset_details(data):
     dataset = TSVDataset(data)
@@ -203,6 +391,56 @@ def populate_dataset_details(data):
         write_to_file('\n'.join(all_line),
                 dataset.get_labelmap_of_noffset_file())
 
+class TSVTransformer(object):
+    def __init__(self):
+        self._total_rows = 0
+        self._row_processor = None
+
+    def ReadProcess(self, source_tsv, row_processor):
+        self._row_processor = row_processor
+        self._total_rows = 0
+
+        rows = tsv_reader(source_tsv)
+        x = [self._over_row_processor(row) for row in rows]
+
+        logging.info('total rows = {}; total_processed = {}'.format(self._total_rows, 
+                len(x)))
+        
+    def Process(self, source_tsv, dst_tsv, row_processor):
+        '''
+        row_processor: a function whose input should be a list of tsv cols and
+                      whose return is also a list of tsv colums (will be saved into dst_tsv)
+        '''
+        self._row_processor = row_processor
+        self._total_rows = 0
+
+        rows = tsv_reader(source_tsv)
+        result = (self._over_row_processor(row) for row in rows)
+        tsv_writer(result, dst_tsv)
+
+        logging.info('total rows = {}'.format(self._total_rows))
+
+    def _over_row_processor(self, row):
+        out = self._row_processor(row)
+        self._total_rows = self._total_rows + 1
+        if self._total_rows % 500 == 0:
+            logging.info('processed = {}'.format(self._total_rows))
+        return out
+def randomize_tsv_file(tsv_file):
+    prefix = os.path.splitext(tsv_file)[0]
+    shuffle_file = prefix + '.shuffle'
+    if os.path.exists(shuffle_file):
+        return shuffle_file
+    idx_file = prefix + '.lineidx' 
+    with open(idx_file, 'r') as fp:
+        num = len([line for line in fp.readlines() if len(line.strip()) > 0])
+    np.random.seed(777)
+    nums = np.random.permutation(num)
+    result = '\n'.join(map(str, nums))
+    with open(shuffle_file, 'w') as fp:
+        fp.write(result)
+    return shuffle_file
+
 def gen_tsv_from_labeling(input_folder, output_folder):
     fs = glob.glob(op.join(input_folder, '*'))
     labels = set()
@@ -225,34 +463,209 @@ def gen_tsv_from_labeling(input_folder, output_folder):
     tsv_writer(gen_rows(), op.join(output_folder, 'train.tsv'))
     write_to_file('\n'.join(labels), op.join(output_folder, 'labelmap.txt'))
 
-class TSVFile(object):
-    def __init__(self, tsv_file):
-        self.tsv_file = tsv_file
-        self.lineidx = op.splitext(tsv_file)[0] + '.lineidx' 
-        self._fp = None
-        self._lineidx = None
-    
-    def num_rows(self):
-        self._ensure_lineidx_loaded()
-        return len(self._lineidx) 
+def try_json_parse(s):
+    try:
+        return json.loads(s)
+    except ValueError, e:
+        return s
 
-    def seek(self, idx):
-        self._ensure_tsv_opened()
-        self._ensure_lineidx_loaded()
-        pos = self._lineidx[idx]
-        self._fp.seek(pos)
-        return [s.strip() for s in self._fp.readline().split('\t')]
-    
-    def _ensure_lineidx_loaded(self):
-        if not op.isfile(self.lineidx) and not op.islink(self.lineidx):
-            generate_lineidx(self.tsv_file, self.lineidx)
-        if self._lineidx is None:
-            with open(self.lineidx, 'r') as fp:
-                self._lineidx = [int(i.strip()) for i in fp.readlines()]
+def visualize_box(data, split, label, start_id, color_map={}):
+    dataset = TSVDataset(data)
+    logging.info('loading inverted label')
+    inverted = dataset.load_inverted_label(split)
+    logging.info('inverted label loaded')
+    logging.info('keys: {}'.format(inverted.keys()))
+    if label != 'any':
+        if label not in inverted:
+            return
+        idx = inverted[label]
+    is_composite = False
+    if split == 'train' and not op.isfile(dataset.get_data(split)):
+        is_composite = True
+        tsvs = [TSVFile(f) for f in dataset.get_train_tsvs()]
+        tsv_labels = [TSVFile(f) for f in dataset.get_train_tsvs('label')]
+        shuffle_tsv_rows = tsv_reader(dataset.get_shuffle_file(split))
+        shuffle = []
+        for row in shuffle_tsv_rows:
+            shuffle.append([int(row[0]), int(row[1])])
+        if label == 'any':
+            idx = range(len(shuffle))
+    else:
+        tsv = TSVFile(dataset.get_data(split))
+        if label == 'any':
+            idx = range(tsv.num_rows())
+    logging.info('start to read')
+    for i in idx[start_id: ]:
+        all_image = []
+        if is_composite:
+            row_image = tsvs[shuffle[i][0]].seek(shuffle[i][1])
+            row_label = tsv_labels[shuffle[i][0]].seek(shuffle[i][1])
+        else:
+            row_image = tsv.seek(i)
+            row_label = row_image
+        im = img_from_base64(row_image[-1])
+        origin = np.copy(im)
+        labels = try_json_parse(row_label[1])
+        if type(labels) is list:
+            labels = [l for l in labels if 'conf' not in l or l['conf'] > 0.3]
+            all_class = []
+            all_rect = []
+            for label in labels:
+                label_class = label['class']
+                rect = label['rect']
+                all_class.append(label_class)
+                if not (rect[0] == 0 and rect[1] == 0 
+                        and rect[2] == 0 and rect[3] == 0):
+                    all_rect.append(rect)
+                else:
+                    all_rect.append((0, 0, im.shape[1] - 1, im.shape[0] - 1))
+            new_name = row_image[0].replace('/', '_').replace(':', '')
+            draw_bb(im, all_rect, all_class)
+            yield new_name, origin, im
 
-    def _ensure_tsv_opened(self):
-        if self._fp is None:
-            self._fp = open(self.tsv_file, 'r')
+
+def visualize_tsv2(data, split, label):
+    '''
+    by default, pass split as 'train'
+    TODO: try to refactor it with visualize_box
+    '''
+    dataset = TSVDataset(data)
+    logging.info('loading inverted label')
+    inverted = dataset.load_inverted_label(split)
+    logging.info('inverted label loaded')
+    logging.info('keys: {}'.format(inverted.keys()))
+    assert label in inverted
+    idx = inverted[label]
+    is_composite = False
+    if split == 'train' and not op.isfile(dataset.get_data(split)):
+        is_composite = True
+        tsvs = [TSVFile(f) for f in dataset.get_train_tsvs()]
+        shuffle_tsv_rows = tsv_reader(dataset.get_shuffle_file(split))
+        shuffle = []
+        for row in shuffle_tsv_rows:
+            shuffle.append([int(row[0]), int(row[1])])
+    else:
+        tsv = TSVFile(dataset.get_data(split))
+    num_image = 0
+    num_rows = 2
+    num_cols = 2
+    num_image_one_fig = num_rows * num_cols
+    idx.extend([0] * (num_image_one_fig - len(idx) % num_image_one_fig))
+    idx = np.asarray(idx)
+    idx = idx.reshape((-1, num_image_one_fig))
+    logging.info('start to read')
+    color_map = {}
+    for i in idx:
+        all_image = []
+        for j in i:
+            logging.info(j)
+            if is_composite:
+                row_image = tsvs[shuffle[j][0]].seek(shuffle[j][1])
+            else:
+                row_image = tsv.seek(j)
+            im = img_from_base64(row_image[-1])
+            labels = try_json_parse(row_image[1])
+            num_image = num_image + 1
+            if type(labels) is list:
+                labels = [l for l in labels if 'conf' not in l or l['conf'] > 0.3]
+                all_class = []
+                all_rect = []
+                for label in labels:
+                    label_class = label['class']
+                    rect = label['rect']
+                    all_class.append(label_class)
+                    if not (rect[0] == 0 and rect[1] == 0 
+                            and rect[2] == 0 and rect[3] == 0):
+                        all_rect.append(rect)
+                    else:
+                        all_rect.append((0, 0, im.shape[1] - 1, im.shape[0] - 1))
+                new_name = row_image[0].replace('/', '_').replace(':', '')
+                draw_bb(im, all_rect, all_class, color=color_map)
+            all_image.append(im)
+        logging.info('start to show')
+        show_images(all_image, num_rows, num_cols)
+
+    logging.info('#image: {}'.format(num_image))
+
+def visualize_tsv(tsv_image, tsv_label, out_folder=None, label_idx=1):
+    '''
+    deprecated, use visualize_tsv2
+    '''
+    rows_image = tsv_reader(tsv_image)
+    rows_label = tsv_reader(tsv_label)
+    assert out_folder == None or not op.exists(out_folder)
+    source_folder = op.dirname(tsv_image)
+    num_image = 0
+    for row_image, row_label in izip(rows_image, rows_label):
+        assert row_image[0] == row_label[0]
+        im = img_from_base64(row_image[-1])
+        labels = try_json_parse(row_label[label_idx])
+        num_image = num_image + 1
+        if type(labels) is list:
+            labels = [l for l in labels if 'conf' not in l or l['conf'] > 0.3]
+            all_class = []
+            all_rect = []
+            for label in labels:
+                label_class = label['class']
+                rect = label['rect']
+                all_class.append(label_class)
+                if not (rect[0] == 0 and rect[1] == 0 
+                        and rect[2] == 0 and rect[3] == 0):
+                    all_rect.append(rect)
+                else:
+                    all_rect.append((0, 0, im.shape[1] - 1, im.shape[0] - 1))
+            new_name = row_image[0].replace('/', '_').replace(':', '')
+            draw_bb(im, all_rect, all_class)
+            if out_folder:
+                fname = os.path.join(out_folder, 
+                        '_'.join(set(c.replace(' ', '_') for c in all_class)),
+                        new_name +'.png')
+        else:
+            fname = op.join(out_folder, row_image[0],
+                    '{}_{}_{}.png'.format(num_image, labels, row_image[0]))
+        if out_folder:
+            save_image(im, fname)
+        else:
+            show_image(im)
+
+    logging.info('#image: {}'.format(num_image))
+
+def iou(wh1, wh2):
+    w1, h1 = wh1
+    w2, h2 = wh2
+    return min(w1, w2) * min(h1, h2) / max(w1, w2) / max(h1, h2)
+
+class ImageTypeParser(object):
+    def __init__(self):
+        self.m = None
+        pass
+
+    def parse_type(self, im_binary):
+        return imghdr.what('', im_binary)
+        self._ensure_init()
+        mime_type = self.m.buffer(im_binary)
+        t = op.basename(mime_type)
+        return t
+
+    def _ensure_init(self):
+        if self.m is None:
+            #m = magic.open(magic.MAGIC_MIME_TYPE)
+            m = magic.from_file(magic.MAGIC_MIME_TYPE)
+            m.load()
+            self.m = m
+
+def collect_label(row, stat, **kwargs):
+    labels = json.loads(row[1])
+    labels = [label['class'] for label in labels]
+    remove_labels = kwargs['remove_image'].split(',')
+    is_remove = False
+    for label in labels:
+        if label in remove_labels or remove_labels == 'all':
+            if random.random() <= kwargs['remove_image_prob']:
+                is_remove = True
+                break
+
+    stat.append((is_remove, labels))
 
 class DatasetSource(object):
     def __init__(self):
@@ -267,6 +680,7 @@ class DatasetSource(object):
 class TSVDatasetSource(TSVDataset, DatasetSource):
     def __init__(self, name, root=None):
         super(TSVDatasetSource, self).__init__(name)
+        self._noffset_count = {}
         self._type = None
         self._root = root
         # the list of <datasetlabel, rootlabel>
@@ -352,6 +766,22 @@ class TSVDatasetSource(TSVDataset, DatasetSource):
             # comparison
             tree_labels[node.name.lower()] = node.name
 
+            #if hasattr(node, 'noffset') and node.noffset:
+                #alter_terms = [s.strip() for s in node.noffset.split(',')]
+                #for term in alter_terms:
+                    #if term.lower() in tree_labels:
+                        #assert tree_labels[term.lower()] == node.name
+                    #else:
+                        #tree_labels[term.lower()] = node.name
+
+            #if hasattr(node, 'alternateTerms'):
+                #alter_terms = [s.strip() for s in node.alternateTerms.split(',')]
+                #for term in alter_terms:
+                    #if term.lower() in tree_labels:
+                        #assert tree_labels[term.lower()] == node.name
+                    #else:
+                        #tree_labels[term.lower()] = node.name
+
         sourcelabel_targetlabel = [] 
 
         result = {}
@@ -407,6 +837,48 @@ def initialize_images_count(root):
     for node in root.iter_search_nodes():
         node.add_feature('images_with_bb', 0)
         node.add_feature('images_no_bb', 0)
+
+def trainval_split(dataset, num_test_each_label):
+    if op.isfile(dataset.get_train_tsv()):
+        logging.info('skip to run trainval split for {} because it has been done'.format(
+            dataset.name))
+        return
+    random.seed(777)
+    label_to_idx = {}
+    for i, row in enumerate(tsv_reader(dataset.get_trainval_tsv('label'))):
+        rects = json.loads(row[1])
+        if len(rects) == 0:
+            logging.info('{} has empty label for {}'.format(dataset.name, i))
+            continue
+        random.shuffle(rects)
+        label = rects[0]['class']
+        if label in label_to_idx:
+            label_to_idx[label].append(i)
+        else:
+            label_to_idx[label] = [i]
+
+    test_idx = []
+    train_idx = []
+    for label in label_to_idx:
+        if len(label_to_idx[label]) < num_test_each_label:
+            logging.fatal('dataset {} has less than {} images for label {}'.
+                    format(dataset.name, num_test_each_label, label))
+        random.shuffle(label_to_idx[label])
+        test_idx.extend(label_to_idx[label][: num_test_each_label])
+        train_idx.extend(label_to_idx[label][num_test_each_label: ])
+
+    trainval = TSVFile(dataset.get_trainval_tsv())
+
+    def gen_train():
+        for i in train_idx:
+            row = trainval.seek(i)
+            yield row
+    tsv_writer(gen_train(), dataset.get_train_tsv())
+
+    def gen_test():
+        for i in test_idx:
+            yield trainval.seek(i)
+    tsv_writer(gen_test(), dataset.get_test_tsv_file())
 
 def convert_one_label(rects, label_mapper):
     to_remove = []
@@ -662,8 +1134,8 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
                     out_dataset[label_type].get_data('trainX', 'label'))
         logging.info('duplicating or removing the train images')
         # for each label, let's duplicate the image or remove the image
-        max_image = 1000
-        min_image = 200
+        max_image = kwargs.get('max_image_per_label', 1000)
+        min_image = kwargs.get('min_image_per_label', 200)
         label_to_dtsik = list_to_dict(train_ldtsik, 0)
         for label in label_to_dtsik:
             dtsik = label_to_dtsik[label]
@@ -735,68 +1207,20 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
             tsv_writer(gen_test_rows(), 
                     out_dataset[label_type].get_test_tsv_file())
 
-def dict_to_list(d, idx):
-    result = []
-    for k in d:
-        vs = d[k]
-        for v in vs:
-            try:
-                r = []
-                # if v is a list or tuple
-                r.extend(v[:idx])
-                r.append(k)
-                r.extend(v[idx: ])
-            except TypeError:
-                r = []
-                if idx == 0:
-                    r.append(k)
-                    r.append(v)
-                else:
-                    assert idx == 1
-                    r.append(v)
-                    r.append(k)
-            result.append(r)
-    return result
-
-def list_to_dict(l, idx):
-    result = {}
-    for x in l:
-        if x[idx] not in result:
-            result[x[idx]] = []
-        y = x[:idx] + x[idx + 1:]
-        if len(y) == 1:
-            y = y[0]
-        result[x[idx]].append(y)
-    return result
-
 def output_ambigous_noffsets(root, ambigous_noffset_file):
     ambigous = []
     for node in root.iter_search_nodes():
         if hasattr(node, 'noffsets') and node.noffset is None:
             noffsets = node.noffsets.split(',')
-            definitions = [str(noffset_to_synset(n).definition()) for n in noffsets]
-            de = [{'noffset': n, 'definition': d} for n, d in zip(noffsets,
-                    definitions)]
-            d = {'name': node.name,
-                    'definitions': de,
-                    'noffset': None,
-                    'markdown_url': node.markdown_url}
+            d = create_info_for_ambigous_noffset(node.name, noffsets)
+            d['parent_name'] = ','.join([n.name for n in
+                        node.get_ancestors()[:-1]])
             ambigous.append(d)
     if len(ambigous) > 0:
         logging.info('output ambigous terms to {}'.format(ambigous_noffset_file))
         write_to_yaml_file(ambigous, ambigous_noffset_file)
     else:
         logging.info('Congratulations on no ambigous terms.')
-
-def generate_lineidx(filein, idxout):
-    assert not os.path.isfile(idxout)
-    with open(filein,'r') as tsvin, open(idxout,'w') as tsvout:
-        fsize = os.fstat(tsvin.fileno()).st_size
-        fpos = 0;
-        while fpos!=fsize:
-    	    tsvout.write(str(fpos)+"\n");
-            tsvin.readline()
-            fpos = tsvin.tell();
 
 def output_ambigous_noffsets_main(tax_input_folder, ambigous_file_out):
     all_tax = load_all_tax(tax_input_folder)
@@ -813,6 +1237,27 @@ def output_ambigous_noffsets_main(tax_input_folder, ambigous_file_out):
     populate_url_for_offset(tax.root)
 
     output_ambigous_noffsets(tax.root, ambigous_file_out)
+
+def convert_inverted_file(name):
+    d = TSVDataset(name)
+    splits = ['train', 'trainval', 'test']
+    for split in splits:
+        logging.info('loading {}-{}'.format(name, split))
+        x = d.load_inverted_label(split)
+        def gen_rows():
+            for label in x:
+                idx = x[label]
+                yield label, ' '.join(map(str, idx))
+
+        inverted_file = d.get_data(split, 'inverted.label')
+        target_file = op.splitext(inverted_file)[0] + '.tsv'
+        if not op.isfile(inverted_file):
+            if op.isfile(target_file):
+                os.remove(target_file)
+            continue
+        if op.isfile(target_file):
+            continue
+        tsv_writer(gen_rows(), target_file)
 
 def standarize_crawled(tsv_input, tsv_output):
     rows = tsv_reader(tsv_input)

@@ -1,0 +1,5 @@
+<ul>
+    {% for full_expid in full_expids %}
+    <li><a href="{% url 'detection:view_model' %}?full_expid={{ full_expid }}">{{ full_expid }}</a></li>
+    {% endfor %}
+</ul>

@@ -1,0 +1,5 @@
+<ul class="col_ul">
+    {% for data in data_names %}
+    <li><a href="{% url 'detection:view_tree' %}?data={{ data }}">{{ data }}</a></li>
+    {% endfor %}
+</ul>

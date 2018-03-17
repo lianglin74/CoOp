@@ -1,0 +1,21 @@
+{% load static %}
+
+<style>
+    table {
+        border-collapse: collapse;
+        margin-left: auto;
+        margin-right: auto;
+    }
+</style>
+
+<table>
+        {% for origin_image, bb_image in images %}
+            <tr>
+                <td><img src="{% static origin_image %}" width=600></td>
+                <td><img src="{% static bb_image %}" width=600></td>
+            </tr>
+        {% endfor %}
+</table>
+
+<a href="{% url 'detection:view_image' data split label previous_id %}">Previous</a>
+<a href="{% url 'detection:view_image' data split label next_id %}">Next</a>

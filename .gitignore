@@ -115,7 +115,17 @@ ENV/
 .ropeproject
 
 # vim
-.swp
+*.swo
+*.swp
+
+data
+models
+output
+tmp_run
 
 # vscode
 .vscode/
+
+visualization/detection/static
+.machines.yaml
+aux_data/taxonomy10k
