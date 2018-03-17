@@ -43,7 +43,7 @@ This repo is for the algorithm development for IRIS object detection. The curren
    ```
 2. install the dependency
    ```
-   sh install_dep.sh
+   ./install_dep.sh
    ```
 
 2. Compile the source code by
@@ -99,6 +99,7 @@ This repo is for the algorithm development for IRIS object detection. The curren
    3. Go the website of http://ip:8000/detection/view_image to view the image
    4. Go to the website of http://ip:8000/detection/view_model to view all the
       model under output/
+   5. Go to http://ip:8000/detection/view_tree/ to view the tree structure data
     
 ## Contribute
 TODO: Explain how other colleagues can contribute. 
