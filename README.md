@@ -41,17 +41,19 @@ This repo is for the algorithm development for IRIS object detection. The curren
    ```
    git clone --recursive https://github.com/leizhangcn/quickdetection.git 
    ```
+2. install the dependency
+   ```
+   sh install_dep.sh
+   ```
+
 2. Compile the source code by
    ```
    ./compile.sh
    ```
-3. (Optional) Download the data and imagenet models. Run the training with testing.
+3. (Optional) mkdir data/ and mkdir output. Link the source dataset to data and link your existing model folder to output. 
 
    Copy the data from //ivm-server2/IRIS/IRISObjectDetection/Data/datasets to QuickDetectionRoot/data. 
    Copy the model from //ivm-server2/IRIS/IRISObjectDetection/Data/imagenet_models to QuickDetectionRoot/models.
-
-   Note: currently, you have to copy the data from the network share to the
-   local windows desktop/laptop and then upload it to the linux server.
 
    Run the following to train the model, followed by testing
    ```
@@ -85,6 +87,18 @@ This repo is for the algorithm development for IRIS object detection. The curren
        ```
        Replace the_path_to_taxonomy by the path of the taxonomy folder
 
+2. Visualize the data under data/ and the model prediction result under output/
+   1. go to the folder of visualization
+      ```
+      cd visualize
+      ```
+   2. Launch the django server
+      ```
+      python manage.py runserver 0:8000
+      ```
+   3. Go the website of http://ip:8000/detection/view_image to view the image
+   4. Go to the website of http://ip:8000/detection/view_model to view all the
+      model under output/
     
 ## Contribute
 TODO: Explain how other colleagues can contribute. 
