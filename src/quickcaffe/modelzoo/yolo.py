@@ -331,9 +331,10 @@ def add_yolo_train_loss(n, biases, num_classes, batch_size,
             'with_objectness': True
         })
 
+    extra_index_weight = kwargs.get('yolo_index_threshold_loss_extra_weight', 0)
     n.obj_loss_nobb = L.IndexedThresholdLoss(
         n.sigmoid_obj_nobb, n.obj_index,
-        loss_weight=weight_nobb,
+        loss_weight=weight_nobb*extra_index_weight,
         propagate_down=[True, False])
 
 
