@@ -354,46 +354,38 @@ def add_yolo_test_loss(n, biases, num_classes, tree_file, class_specific_nms):
                                            softmaxtree_param={
                                                'tree': tree_file
                                            })
-        n.top_class = L.TreePrediction(n.softmaxtree_conf,
-                                       treeprediction_param={
-                                           'tree': tree_file,
-                                           'threshold': 0.5
-                                           })
+        n.top_preds = L.SoftmaxTreePrediction(n.softmaxtree_conf,
+                                              n.sigmoid_obj,
+                                              softmaxtreeprediction_param={
+                                                'tree': tree_file,
+                                                'threshold': 0.5
+                                               })
         n.bbox = L.YoloBBs(n.sigmoid_xy, n.wh, n.im_info,
                            yolobbs_param={
                                'biases': biases,
                                })
         if class_specific_nms:
-            # convert objectness to dense form, and append the max column, but do not move the axis
-            n.dense_obj = L.YoloEvalCompat(n.sigmoid_obj, n.top_class,
-                                           yoloevalcompat_param={
-                                               'classes': num_classes,
-                                               'move_axis': False
-                                           })
             # per-class NMS on the classes (leave the last column unchanged for compatibility)
-            n.nms_prob = L.NMSFilter(n.bbox, n.dense_obj,
+            n.nms_prob = L.NMSFilter(n.bbox, n.top_preds,
                                      nmsfilter_param={
                                          'classes': num_classes,
                                          'threshold': 0.45,
                                          'pre_threshold': 0.005  # 0.24
                                      })
-            # just move the axis to the end for compatibility
-            n.prob = L.YoloEvalCompat(n.nms_prob,
-                                      yoloevalcompat_param={
-                                          'append_max': False
-                                      })
         else:
-            # class-independent NMS on the classes
-            n.nms_prob = L.NMSFilter(n.bbox, n.sigmoid_obj,
+            # class-independent NMS (on the last channel that holds the max)
+            n.nms_prob = L.NMSFilter(n.bbox, n.top_preds,
                                      nmsfilter_param={
+                                         'classes': 1,
+                                         'first_class': num_classes,
                                          'threshold': 0.45,
                                          'pre_threshold': 0.005  # 0.24
                                      })
-            # convert nms_prob to dense form, append the max column, and move the axis to the end
-            n.prob = L.YoloEvalCompat(n.nms_prob, n.top_class,
-                                      yoloevalcompat_param={
-                                          'classes': num_classes
-                                      })
+        # just move the axis to the end for compatibility
+        n.prob = L.YoloEvalCompat(n.nms_prob,
+                                  yoloevalcompat_param={
+                                      'append_max': False
+                                  })
         return
     n.reshape_conf = L.Reshape(n.conf, shape={'dim': [-1, num_classes, 0, 0]})
     n.softmax_conf = L.Softmax(n.reshape_conf)

@@ -26,6 +26,7 @@ import base64
 from process_image import draw_bb, show_image, save_image
 import re
 from itertools import izip
+import numpy as np
 
 def labels2noffsets(labels):
     mapper = LabelToSynset()
@@ -276,7 +277,7 @@ def load_label_parent(label_tree_file):
     labels = []
     idx = 0
     for l_pi in label_map:
-        label, pi = l_pi
+        label, pi = l_pi[:2]
         pi = int(pi)
         label_parentidx[label] = pi
         label_idx[label] = idx
