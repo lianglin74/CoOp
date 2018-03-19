@@ -1630,7 +1630,7 @@ def get_confusion_matrix(data, net, test_data, expid, threshold=0.2, **kwargs):
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a Yolo network')
-    parser.add_argument('-g', '--gpus', help='GPU device id to use [0].',
+    parser.add_argument('-g', '--gpus', help='GPU device id to use [0], e.g. -g 0 1 2 3.',
             type=int,
             nargs='+')
     parser.add_argument('-n', '--net', required=False, type=str.lower,
@@ -1739,7 +1739,7 @@ if __name__ == '__main__':
     '''
     e.g. python scripts/yolotrain.py --data voc20 --iters 10000 --expid 789 \
             --net darknet19 \
-            --gpus 4,5,6,7
+            --gpus 4 5 6 7
     '''
     init_logging()
     args = parse_args()
