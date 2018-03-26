@@ -6,13 +6,15 @@ import argparse
 import _init_paths
 import caffe
 from shutil import copyfile
-import google.protobuf as pb
+from google.protobuf import text_format
 from numpy import linalg as LA
+
+EPS = np.finfo(float).eps
 
 def read_model_proto(proto_file_path):
     with open(proto_file_path) as f:
         model = caffe.proto.caffe_pb2.NetParameter()
-        pb.text_format.Parse(f.read(), model)
+        text_format.Parse(f.read(), model)
         return model
 
 def last_linear_layer_name(model):
@@ -36,9 +38,9 @@ def load_labelmap(label_file):
     return dict(zip(cnames, xrange(len(cnames))))
 
 def weight_normalize(W,B,avgnorm2):
-    W -= np.average(W, axis=0);
-    B -=  np.average(B)
-    W_normavg = np.average(np.add.reduce(W*W,axis=1));
+    W -= np.average(W, axis=0)
+    B -= np.average(B)
+    W_normavg = np.average(np.add.reduce(W*W, axis=1)) + EPS
     alpha = np.sqrt(avgnorm2/W_normavg)
     return alpha*W, alpha*B
     
