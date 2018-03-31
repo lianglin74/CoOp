@@ -1,0 +1,8 @@
+progressbar
+ete2
+nltk
+numpy
+psutil
+python-magic
+pathos
+django==1.11
