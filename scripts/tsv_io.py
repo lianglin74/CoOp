@@ -208,23 +208,37 @@ def extract_label(full_tsv, label_tsv):
             yield row
     tsv_writer(gen_rows(), label_tsv)
 
-def create_inverted_tsv(label_tsv, inverted_label_file):
+def create_inverted_tsv(label_tsv, inverted_label_file, label_map_file):
+    '''
+    save the results based on the label_map in label_map_file. The benefit is
+    to seek the row given a label
+    '''
     if not op.isfile(label_tsv):
         logging.info('the label file does not exist: {}'.format(label_tsv))
         return 
+    label_map = load_list_file(label_map_file)
     rows = tsv_reader(label_tsv)
     inverted = {}
     for i, row in enumerate(rows):
         labels = json.loads(row[1])
-        for l in set([l['class'] for l in labels]):
-            assert type(l) == str or type(l) == unicode
+        if type(labels) is list:
+            # detection dataset
+            curr_unique_labels = set([l['class'] for l in labels])
+        else:
+            assert type(labels) is int
+            curr_unique_labels = [label_map[labels]]
+        for l in curr_unique_labels:
+            assert type(l) == str or type(l) == unicode 
             if l not in inverted:
                 inverted[l] = [i]
             else:
                 inverted[l].append(i)
     def gen_rows():
         for label in inverted:
-            yield label, ' '.join(map(str, inverted[label]))
+            assert label in label_map
+        for label in label_map:
+            i = inverted[label] if label in inverted else []
+            yield label, ' '.join(map(str, i))
     tsv_writer(gen_rows(), inverted_label_file)
 
 def tsv_shuffle_reader(tsv_file):

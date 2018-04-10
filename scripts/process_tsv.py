@@ -216,9 +216,15 @@ def tsv_details(tsv_file):
         if (i % 1000) == 0:
             logging.info('get tsv details: {}-{}'.format(tsv_file, i))
         rects = json.loads(row[1])
-        # convert it to str. if it is unicode, in yaml, there will be some
-        # special tags, which is annoying
-        curr_labels = set(str(rect['class']) for rect in rects)
+        if type(rects) is list:
+            # this is the detection dataset
+            # convert it to str. if it is unicode, in yaml, there will be some
+            # special tags, which is annoying
+            curr_labels = set(str(rect['class']) for rect in rects)
+        else:
+            # this is classification dataset
+            assert type(rects) is int
+            curr_labels = [rects]
         for c in curr_labels:
             if c in label_count:
                 label_count[c] = label_count[c] + 1
@@ -291,7 +297,8 @@ def populate_dataset_details(data):
             extract_label(full_tsv, label_tsv)
         inverted = dataset.get_data(split, 'inverted.label')
         if not op.isfile(inverted) and op.isfile(label_tsv):
-            create_inverted_tsv(label_tsv, inverted)
+            create_inverted_tsv(label_tsv, inverted,
+                    dataset.get_labelmap_file())
 
     # generate the rows with duplicate keys
     for split in splits: 
@@ -506,6 +513,7 @@ def visualize_box(data, split, label, start_id, color_map={}):
         im = img_from_base64(row_image[-1])
         origin = np.copy(im)
         labels = try_json_parse(row_label[1])
+        new_name = row_image[0].replace('/', '_').replace(':', '')
         if type(labels) is list:
             labels = [l for l in labels if 'conf' not in l or l['conf'] > 0.3]
             all_class = []
@@ -519,8 +527,9 @@ def visualize_box(data, split, label, start_id, color_map={}):
                     all_rect.append(rect)
                 else:
                     all_rect.append((0, 0, im.shape[1] - 1, im.shape[0] - 1))
-            new_name = row_image[0].replace('/', '_').replace(':', '')
             draw_bb(im, all_rect, all_class)
+            yield new_name, origin, im
+        else:
             yield new_name, origin, im
 
 
