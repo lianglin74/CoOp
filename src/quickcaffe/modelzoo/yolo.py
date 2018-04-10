@@ -217,7 +217,8 @@ class Yolo(object):
                         **extra_test_param)
             else:
                 add_yolo_test_loss(n, biases, num_classes, kwargs.get('target_synset_tree'),
-                                   kwargs.get('class_specific_nms', True))
+                                   kwargs.get('class_specific_nms', True),
+                                   kwargs.get('output_tree_path', True))
 
 def add_yolo_train_loss_bb_only(n, bb_top, biases, num_classes, tree_file,
         weight_scale=1,
@@ -338,7 +339,8 @@ def add_yolo_train_loss(n, biases, num_classes, batch_size,
         propagate_down=[True, False])
 
 
-def add_yolo_test_loss(n, biases, num_classes, tree_file, class_specific_nms):
+def add_yolo_test_loss(n, biases, num_classes, tree_file, class_specific_nms,
+        output_tree_path):
     last_top = last_layer(n)
     num_anchor = len(biases) / 2
 
@@ -359,7 +361,8 @@ def add_yolo_test_loss(n, biases, num_classes, tree_file, class_specific_nms):
                                               n.sigmoid_obj,
                                               softmaxtreeprediction_param={
                                                 'tree': tree_file,
-                                                'threshold': 0.5
+                                                'threshold': 0.5,
+                                                'output_tree_path': output_tree_path
                                                })
         n.bbox = L.YoloBBs(n.sigmoid_xy, n.wh, n.im_info,
                            yolobbs_param={

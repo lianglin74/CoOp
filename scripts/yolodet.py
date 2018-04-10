@@ -394,10 +394,13 @@ def postfilter(im, scores, boxes, class_map, max_per_image=1000, thresh=0.005):
     return json.dumps(det_results)
 
 def detect_image(net, im, pixel_mean, names, stat=None, thresh=0):
+    '''
+    this is not used in evaluation
+    '''
     scores, boxes = im_detect(net, im, pixel_mean, stat=stat)
     if stat:
         time_start = time.time()
-    bblist = result2bblist2(im, scores, boxes, names, thresh)
+    bblist = result2bblist3(im, scores, boxes, names, thresh)
     if stat != None:
         time_curr = time.time()
         stat['result2bb'] = time_curr - time_start
@@ -408,6 +411,35 @@ def detect_image(net, im, pixel_mean, names, stat=None, thresh=0):
     all_conf = [bb['conf'] for bb in bblist]
 
     return all_bb, all_label, all_conf
+
+def result2bblist3(im, probs, boxes, class_map, thresh=0):
+    '''
+    assume each box have more than one chance to be selected. 
+    result2bblist2 is not good for tree-based taxonomy, but this is
+    '''
+    class_num = probs.shape[1] - 1;        #the last one is obj_score * max_prob
+    im_h, im_w = im.shape[0:2]
+
+    # note: when it does the nms, the last one will not be reset
+    idx_bbox, idx_prob = np.where(probs[:, :-1] > thresh)
+    unique_idx_bb = np.lib.arraysetops.unique(idx_bbox)
+    unique_selected_boxes = boxes[unique_idx_bb, :]
+    boxidx_to_uniquebox = {idx: i for i, idx in enumerate(unique_idx_bb)}
+    transformed_boxes = np.zeros(unique_selected_boxes.shape)
+    x = unique_selected_boxes[:, 0] - unique_selected_boxes[:, 2] / 2.0
+    transformed_boxes[:, 0] = np.maximum(x, 0)
+    x = unique_selected_boxes[:, 1] - unique_selected_boxes[:, 3] / 2.0
+    transformed_boxes[:, 1] = np.maximum(x, 0)
+    x = unique_selected_boxes[:, 0] + unique_selected_boxes[:, 2] / 2.0
+    transformed_boxes[:, 2] = np.minimum(x, im_w - 1)
+    x = unique_selected_boxes[:, 1] + unique_selected_boxes[:, 3] / 2.0
+    transformed_boxes[:, 3] = np.minimum(x, im_h - 1)
+
+    num = len(idx_prob)
+    return [{'rect': map(float, transformed_boxes[boxidx_to_uniquebox[idx_bbox[i]], :]), \
+            'class': class_map[idx_prob[i]], \
+            'conf': float(probs[idx_bbox[i], idx_prob[i]]) } \
+            for i in xrange(num) ]
 
 def result2bblist2(im, probs, boxes, class_map, thresh=0):
     '''

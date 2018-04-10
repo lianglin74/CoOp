@@ -64,6 +64,7 @@ from itertools import izip
 from process_tsv import update_yolo_test_proto
 from process_tsv import build_taxonomy_impl
 import copy
+import random
 
 import matplotlib.pyplot as plt
 import simplejson as json
@@ -195,7 +196,7 @@ class ProtoGenerator(object):
         proto_str = str(net)
         
         return proto_str
-
+    
     def _gen_solver(self, train_net_file):
         kwargs = self._kwargs
         train_net_dir = os.path.dirname(train_net_file)
@@ -1154,6 +1155,8 @@ class CaffeWrapper(object):
                 test_input_sizes))))
         if 'yolo_nms' in self._kwargs:
             cc.append('NMS{}'.format(self._kwargs['yolo_nms']))
+        if self._kwargs.get('output_tree_path', False):
+            cc.append('OutTreePath')
 
         cc.append('predict')
         return '.'.join(cc)
@@ -1270,6 +1273,7 @@ class CaffeWrapper(object):
         sub_tasks_param1 = []
         sub_tasks_param2 = []
         start_time = time.time()
+        random.shuffle(all_ready_model)
         for m in all_ready_model:
             predict_result = self.predict(m)
             if predict_result:
@@ -1281,7 +1285,7 @@ class CaffeWrapper(object):
                         len(sub_tasks_param1), 
                         len(all_ready_model) - len(sub_tasks_param1)))
                     break
-
+        
         # the standard multiprocessing does not support the member function of
         # a class, but pathos' supports
         from pathos.multiprocessing import ProcessingPool as Pool
@@ -1341,7 +1345,7 @@ class CaffeWrapper(object):
     def _get_log_files(self):
         return [file_name for file_name in glob.glob(os.path.join(self._path_env['output'],
             '*_*')) if not file_name.endswith('png')]
-
+    
     def plot_loss(self):
         xy = {}
         log_files = self._get_log_files() 
@@ -1365,7 +1369,7 @@ class CaffeWrapper(object):
         xs = [xy[0] for xy in xys]
         ys = [xy[1] for xy in xys]
         plot_to_file(xs, ys, png_file)
-    
+
     def _load_net(self, file_name):
         with open(file_name, 'r') as fp:
             all_line = fp.read()
@@ -1470,7 +1474,7 @@ def default_paths(net, data, expid):
     train_file_base = 'train.prototxt'
     test_file_base = 'test.prototxt'
     solver_file_base = 'solver.prototxt'
-
+    
     data_path = default_data_path(data)
     for key in data_path:
         path_env[key] = data_path[key]
@@ -1501,7 +1505,8 @@ def yolo_tree_train(**kwargs):
     
     assert 'yolo_tree' not in kwargs or kwargs['yolo_tree']
     kwargs['yolo_tree'] = True
-    kwargs['yolo_tree_eval_label_lift'] = True
+    kwargs['yolo_tree_eval_label_lift'] = False
+    kwargs['output_tree_path'] = True
 
     # train only on the data with bbox
     bb_data = '{}_with_bb'.format(kwargs['data'])
@@ -1561,6 +1566,8 @@ def yolo_tree_train(**kwargs):
     kwargs['dataset_ops'] = dataset_ops
     if 'tree_max_iters2' in kwargs:
         kwargs['max_iters'] = kwargs['tree_max_iters2']
+    else:
+        kwargs['max_iters'] = '30e'
     c = CaffeWrapper(**kwargs)
     if not monitor_train_only:
         model = c.train()
