@@ -243,6 +243,8 @@ def tsv_details(tsv_file):
         if (i % 1000) == 0:
             logging.info('get tsv details: {}-{}'.format(tsv_file, i))
         rects = json.loads(row[1])
+        im = img_from_base64(row[2])
+        height, width = im.shape[:2]
         if type(rects) is list:
             # this is the detection dataset
             # convert it to str. if it is unicode, in yaml, there will be some
@@ -250,7 +252,15 @@ def tsv_details(tsv_file):
             curr_labels = set(normalize_to_str(rect['class']) for rect in rects)
             for rect in rects:
                 r = rect['rect']
-                assert r[2] - r[0] > 1 and r[3] - r[1] > 1
+                if all(x == 0 for x in r):
+                    # it is image-level annotation
+                    continue
+                # this should be a valid bounding box
+                cx, cy = (r[0] + r[2]) / 2., (r[1] + r[3]) / 2.
+                rw, rh = r[2] - r[0], r[3] - r[1]
+                assert cx >= 0 and cx < width \
+                        and cy >= 0 and cy < height \
+                        and rw >= 1 or rh >= 1
         else:
             # this is classification dataset
             assert type(rects) is int
@@ -260,7 +270,6 @@ def tsv_details(tsv_file):
                 label_count[c] = label_count[c] + 1
             else:
                 label_count[c] = 1
-        im = img_from_base64(row[2])
         sizes.append(im.shape[:2])
     min_size_count = sizes[0][0] * sizes[0][1]
     size_counts = [s[0] * s[1] for s in sizes]
