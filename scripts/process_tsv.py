@@ -61,6 +61,8 @@ from qd_common import list_to_dict
 from qd_common import dict_to_list
 from qd_common import parse_test_data
 from tsv_io import load_labels
+import unicodedata
+
 
 def update_yolo_test_proto(input_test, test_data, map_file, output_test):
     dataset = TSVDataset(test_data)
@@ -208,6 +210,31 @@ def update_confusion_matrix(predicts, gts, threshold,
                         gt_class, 'None')
 
 
+def normalize_to_str(s):
+    return unicodedata.normalize('NFKD', s).encode('ascii','ignore')
+
+def normalize_str_in_rects(data, out_data):
+    '''
+    normalize all the unicode to string
+    '''
+    dataset = TSVDataset(data)
+    dest_dataset = TSVDataset(out_data)
+    splits = ['train', 'test', 'trainval']
+    for split in splits:
+        if not op.isfile(dataset.get_data(split)):
+            continue
+        def gen_rows():
+            for key, label_str, im_str in tsv_reader(dataset.get_data(split)):
+                rects = json.loads(label_str)
+                for rect in rects:
+                    s = rect['class']
+                    rect['class'] = normalize_to_str(s)
+                    if s != rect['class']:
+                        logging.info(u'{}->{}'.format(s, rect['class']))
+                label_str = json.dumps(rects)
+                yield key, label_str, im_str
+        tsv_writer(gen_rows(), dest_dataset.get_data(split))
+
 def tsv_details(tsv_file):
     rows = tsv_reader(tsv_file)
     label_count = {}
@@ -220,7 +247,7 @@ def tsv_details(tsv_file):
             # this is the detection dataset
             # convert it to str. if it is unicode, in yaml, there will be some
             # special tags, which is annoying
-            curr_labels = set(str(rect['class']) for rect in rects)
+            curr_labels = set(normalize_to_str(rect['class']) for rect in rects)
         else:
             # this is classification dataset
             assert type(rects) is int
@@ -295,10 +322,6 @@ def populate_dataset_details(data):
         label_tsv = dataset.get_data(split, 'label')
         if not op.isfile(label_tsv) and op.isfile(full_tsv):
             extract_label(full_tsv, label_tsv)
-        inverted = dataset.get_data(split, 'inverted.label')
-        if not op.isfile(inverted) and op.isfile(label_tsv):
-            create_inverted_tsv(label_tsv, inverted,
-                    dataset.get_labelmap_file())
 
     # generate the rows with duplicate keys
     for split in splits: 
@@ -361,6 +384,14 @@ def populate_dataset_details(data):
         labelmap = list(set(labelmap))
         logging.info('find {} labels'.format(len(labelmap)))
         write_to_file('\n'.join(labelmap), dataset.get_labelmap_file())
+
+    # for each data tsv, generate the label tsv and the inverted file
+    for split in splits:
+        label_tsv = dataset.get_data(split, 'label')
+        inverted = dataset.get_data(split, 'inverted.label')
+        if not op.isfile(inverted) and op.isfile(label_tsv):
+            create_inverted_tsv(label_tsv, inverted,
+                    dataset.get_labelmap_file())
 
     if not op.isfile(dataset.get_noffsets_file()):
         logging.info('no noffset file. generating...')
@@ -737,6 +768,7 @@ class TSVDatasetSource(TSVDataset, DatasetSource):
                 else:
                     self._type = 'no_bb'
                 break
+        assert self._type is not None
         logging.info('identify {} as {}'.format(self.name, self._type))
         
         # list of <split, label, idx>

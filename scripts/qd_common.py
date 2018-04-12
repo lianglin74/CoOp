@@ -25,7 +25,7 @@ import cv2
 from itertools import izip
 
 def calculate_ap_by_true_list(corrects, total):
-    precision = np.cumsum(corrects) / np.arange(1, 1 + len(corrects))
+    precision = (1. * np.cumsum(corrects)) / np.arange(1, 1 + len(corrects))
     if np.sum(corrects) == 0:
         return 0
     return np.sum(precision * corrects) / total 

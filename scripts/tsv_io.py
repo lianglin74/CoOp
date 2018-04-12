@@ -163,6 +163,26 @@ class TSVDataset(object):
                 result[row[0]] = map(int, row[1].split(' '))
             return result 
 
+    def iter_data(self, split):
+        if split == 'train':
+            if op.isfile(self.get_data('trainX')):
+                train_files = load_list_file(self.get_data('trainX'))
+                train_tsvs = [TSVFile(f) for f in train_files]
+                train_label_files = load_list_file(self.get_data('trainX',
+                    'label'))
+                train_label_tsvs = [TSVFile(f) for f in train_label_files]
+                shuffle_file = self.get_shuffle_file('train')
+                shuffle_tsv_rows = tsv_reader(shuffle_file)
+                for idx_source, idx_row in shuffle_tsv_rows:
+                    idx_source, idx_row = int(idx_source), int(idx_row)
+                    data_row = train_tsvs[idx_source].seek(idx_row)
+                    label_row = train_label_tsvs[idx_source].seek(idx_row)
+                    assert label_row[0] == data_row[0]
+                    yield label_row[0], label_row[1], data_row[-1]
+        else:
+            for row in tsv_reader(self.get_data(split)):
+                yield row
+
 def tsv_writer(values, tsv_file_name):
     ensure_directory(os.path.dirname(tsv_file_name))
     tsv_lineidx_file = os.path.splitext(tsv_file_name)[0] + '.lineidx'
