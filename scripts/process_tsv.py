@@ -248,6 +248,9 @@ def tsv_details(tsv_file):
             # convert it to str. if it is unicode, in yaml, there will be some
             # special tags, which is annoying
             curr_labels = set(normalize_to_str(rect['class']) for rect in rects)
+            for rect in rects:
+                r = rect['rect']
+                assert r[2] - r[0] > 1 and r[3] - r[1] > 1
         else:
             # this is classification dataset
             assert type(rects) is int
