@@ -1,0 +1,1734 @@
+- definitions:
+  - definition: buildings for carrying on industrial labor
+    noffset: n03956922
+  - definition: (botany) a living organism lacking the power of locomotion
+    noffset: n00017222
+  markdown_url:
+  - '[n03956922](http://www.image-net.org/synset?wnid=n03956922)'
+  - '[n00017222](http://www.image-net.org/synset?wnid=n00017222)'
+  name: plant
+  noffset: n00017222
+  parent_name: 
+- definitions:
+  - definition: any inanimate object (as a towel or money or clothing or dishes or
+      books or toys etc.) that can transmit infectious agents from one person to another
+    noffset: n09283193
+  - definition: a medium for the expression or achievement of something
+    noffset: n06255081
+  - definition: a conveyance that transports people or objects
+    noffset: n04524313
+  markdown_url:
+  - '[n09283193](http://www.image-net.org/synset?wnid=n09283193)'
+  - '[n06255081](http://www.image-net.org/synset?wnid=n06255081)'
+  - '[n04524313](http://www.image-net.org/synset?wnid=n04524313)'
+  name: vehicle
+  noffset: n09283193,n04524313
+  parent_name: 
+- definitions:
+  - definition: a table (in a restaurant or bar) surrounded by two high-backed benches
+    noffset: n02874214
+  - definition: small area set off by walls for special use
+    noffset: n02873839
+  - definition: a small shop at a fair; for selling goods or entertainment
+    noffset: n02874086
+  markdown_url:
+  - '[n02874214](http://www.image-net.org/synset?wnid=n02874214)'
+  - '[n02873839](http://www.image-net.org/synset?wnid=n02873839)'
+  - '[n02874086](http://www.image-net.org/synset?wnid=n02874086)'
+  name: booth
+  noffset: null
+  parent_name: artificial scene
+- definitions:
+  - definition: a plant lacking a permanent woody stem; many are flowering garden
+      plants or potherbs; some having medicinal properties; some are pests
+    noffset: n12205694
+  - definition: aromatic potherb used in cookery for its savory qualities
+    noffset: n07811416
+  markdown_url:
+  - '[n12205694](http://www.image-net.org/synset?wnid=n12205694)'
+  - '[n07811416](http://www.image-net.org/synset?wnid=n07811416)'
+  name: herb
+  noffset: n07811416
+  parent_name: food
+- definitions:
+  - definition: a person who enjoys reading
+    noffset: n10508710
+  - definition: someone who reads the lessons in a church service; someone ordained
+      in a minor order of the Roman Catholic Church
+    noffset: n10252354
+  - definition: a public lecturer at certain universities
+    noffset: n10252222
+  markdown_url:
+  - '[n10508710](http://www.image-net.org/synset?wnid=n10508710)'
+  - '[n10252354](http://www.image-net.org/synset?wnid=n10252354)'
+  - '[n10252222](http://www.image-net.org/synset?wnid=n10252222)'
+  name: reader
+  noffset: n10508710
+  parent_name: person
+- definitions:
+  - definition: a figure that branches from a single root
+    noffset: n13912260
+  - definition: a tall perennial woody plant having a main trunk and branches forming
+      a distinct elevated crown; includes both gymnosperms and angiosperms
+    noffset: n13104059
+  markdown_url:
+  - '[n13912260](http://www.image-net.org/synset?wnid=n13912260)'
+  - '[n13104059](http://www.image-net.org/synset?wnid=n13104059)'
+  name: tree
+  noffset: n13912260,n13104059
+  parent_name: plant
+- definitions:
+  - definition: a window above a door that is usually hinged to a horizontal crosspiece
+      over the door
+    noffset: n04473108
+  - definition: a window in a roof to admit daylight
+    noffset: n04232800
+  - definition: a semicircular window over a door or window; usually has sash bars
+      like the ribs of a fan
+    noffset: n03320959
+  markdown_url:
+  - '[n04473108](http://www.image-net.org/synset?wnid=n04473108)'
+  - '[n04232800](http://www.image-net.org/synset?wnid=n04232800)'
+  - '[n03320959](http://www.image-net.org/synset?wnid=n03320959)'
+  name: fanlight
+  noffset: n03320959,n04473108
+  parent_name: window
+- definitions:
+  - definition: small African parrot noted for showing affection for their mates
+    noffset: n01820052
+  - definition: small Australian parakeet usually light green with black and yellow
+      markings in the wild but bred in many colors
+    noffset: n01821869
+  markdown_url:
+  - '[n01820052](http://www.image-net.org/synset?wnid=n01820052)'
+  - '[n01821869](http://www.image-net.org/synset?wnid=n01821869)'
+  name: lovebird
+  noffset: n01820052
+  parent_name: bird,animal
+- definitions:
+  - definition: an oven consisting of a metal box for cooking in front of a fire
+    noffset: n03259280
+  - definition: iron or earthenware cooking pot; used for stews
+    noffset: n03259401
+  markdown_url:
+  - '[n03259280](http://www.image-net.org/synset?wnid=n03259280)'
+  - '[n03259401](http://www.image-net.org/synset?wnid=n03259401)'
+  name: dutch oven
+  noffset: n03259280,n03259401
+  parent_name: kitchenAppliance,appliance
+- definitions:
+  - definition: a government building that houses the offices of a county government
+    noffset: n03121431
+  - definition: a building that houses judicial courts
+    noffset: n03121298
+  markdown_url:
+  - '[n03121431](http://www.image-net.org/synset?wnid=n03121431)'
+  - '[n03121298](http://www.image-net.org/synset?wnid=n03121298)'
+  name: courthouse
+  noffset: n03121298,n03121431
+  parent_name: building,artificial scene
+- definitions:
+  - definition: a dwelling that serves as living quarters for one or more families
+    noffset: n03544360
+  - definition: a building in which something is sheltered or located
+    noffset: n03545150
+  - definition: a building where theatrical performances or motion-picture shows can
+      be presented
+    noffset: n04417809
+  markdown_url:
+  - '[n03544360](http://www.image-net.org/synset?wnid=n03544360)'
+  - '[n03545150](http://www.image-net.org/synset?wnid=n03545150)'
+  - '[n04417809](http://www.image-net.org/synset?wnid=n04417809)'
+  name: house
+  noffset: n03544360,n03545150
+  parent_name: building,artificial scene
+- definitions:
+  - definition: a plant consisting of one or more buildings with facilities for manufacturing
+    noffset: n03316406
+  - definition: machinery that processes materials by grinding or crushing
+    noffset: n03765561
+  markdown_url:
+  - '[n03316406](http://www.image-net.org/synset?wnid=n03316406)'
+  - '[n03765561](http://www.image-net.org/synset?wnid=n03765561)'
+  name: mill
+  noffset: n03316406
+  parent_name: building,artificial scene
+- definitions:
+  - definition: an outbuilding (or part of a building) for housing automobiles
+    noffset: n03416489
+  - definition: a repair shop where cars and trucks are serviced and repaired
+    noffset: n03416640
+  markdown_url:
+  - '[n03416489](http://www.image-net.org/synset?wnid=n03416489)'
+  - '[n03416640](http://www.image-net.org/synset?wnid=n03416640)'
+  name: garage
+  noffset: n03416489
+  parent_name: room,artificial scene
+- definitions:
+  - definition: the drivers seat on a coach
+    noffset: n02884450
+  - definition: private area in a theater or grandstand where a small group can watch
+      the performance
+    noffset: n02884225
+  - definition: a (usually rectangular) container; may have a lid
+    noffset: n02883344
+  markdown_url:
+  - '[n02884450](http://www.image-net.org/synset?wnid=n02884450)'
+  - '[n02884225](http://www.image-net.org/synset?wnid=n02884225)'
+  - '[n02883344](http://www.image-net.org/synset?wnid=n02883344)'
+  name: box
+  noffset: null
+  parent_name: beverage packaging,beverage
+- definitions:
+  - definition: a room or building equipped with one or more toilets
+    noffset: n04446276
+  - definition: airtight sealed metal container for food or drink or paint etc.
+    noffset: n02946921
+  markdown_url:
+  - '[n04446276](http://www.image-net.org/synset?wnid=n04446276)'
+  - '[n02946921](http://www.image-net.org/synset?wnid=n02946921)'
+  name: can
+  noffset: n02946921
+  parent_name: beverage packaging,beverage
+- definitions:
+  - definition: any of several nutritive milklike liquids
+    noffset: n07844604
+  - definition: a white nutritious liquid secreted by mammals and used as food by
+      human beings
+    noffset: n07844042
+  - definition: produced by mammary glands of female mammals for feeding their young
+    noffset: n05399034
+  markdown_url:
+  - '[n07844604](http://www.image-net.org/synset?wnid=n07844604)'
+  - '[n07844042](http://www.image-net.org/synset?wnid=n07844042)'
+  - '[n05399034](http://www.image-net.org/synset?wnid=n05399034)'
+  name: milk
+  noffset: n07844604,n07844042
+  parent_name: cold beverage,beverage
+- definitions:
+  - definition: a seed of the coffee tree; ground to make coffee
+    noffset: n07929351
+  - definition: a beverage consisting of an infusion of ground coffee beans
+    noffset: n07929519
+  - definition: a medium brown to dark-brown color
+    noffset: n04972451
+  - definition: any of several small trees and shrubs native to the tropical Old World
+      yielding coffee beans
+    noffset: n12662772
+  markdown_url:
+  - '[n07929351](http://www.image-net.org/synset?wnid=n07929351)'
+  - '[n07929519](http://www.image-net.org/synset?wnid=n07929519)'
+  - '[n04972451](http://www.image-net.org/synset?wnid=n04972451)'
+  - '[n12662772](http://www.image-net.org/synset?wnid=n12662772)'
+  name: coffee
+  noffset: n07929519
+  parent_name: hot beverage,beverage
+- definitions:
+  - definition: a thick smooth drink consisting of fresh fruit pureed with ice cream
+      or yoghurt or milk
+    noffset: n07914271
+  - definition: someone with an assured and ingratiating manner
+    noffset: n10615179
+  markdown_url:
+  - '[n07914271](http://www.image-net.org/synset?wnid=n07914271)'
+  - '[n10615179](http://www.image-net.org/synset?wnid=n10615179)'
+  name: smoothie
+  noffset: n07914271
+  parent_name: frozen beverage,beverage
+- definitions:
+  - definition: a communication system based on broadcasting electromagnetic waves
+    noffset: n04041544
+  - definition: an electronic receiver that detects and demodulates and amplifies
+      transmitted signals
+    noffset: n04043733
+  - definition: medium for communication
+    noffset: n06277135
+  markdown_url:
+  - '[n04041544](http://www.image-net.org/synset?wnid=n04041544)'
+  - '[n04043733](http://www.image-net.org/synset?wnid=n04043733)'
+  - '[n06277135](http://www.image-net.org/synset?wnid=n06277135)'
+  name: radio
+  noffset: n04041544,n04043733,n06277135
+  parent_name: audio device,electronics
+- definitions:
+  - definition: (computer science) the area of the screen in graphical user interfaces
+      against which icons and windows appear
+    noffset: n02769075
+  - definition: the top of a desk
+    noffset: n08663703
+  markdown_url:
+  - '[n02769075](http://www.image-net.org/synset?wnid=n02769075)'
+  - '[n08663703](http://www.image-net.org/synset?wnid=n08663703)'
+  name: desktop
+  noffset: null
+  parent_name: computer,electronics
+- definitions:
+  - definition: a container used for carrying money and small personal items or accessories
+      (especially by women)
+    noffset: n02774152
+  - definition: a place that the runner must touch before scoring
+    noffset: n02797881
+  - definition: a portable rectangular container for carrying clothes
+    noffset: n02773838
+  - definition: a flexible container with a single opening
+    noffset: n02773037
+  markdown_url:
+  - '[n02774152](http://www.image-net.org/synset?wnid=n02774152)'
+  - '[n02797881](http://www.image-net.org/synset?wnid=n02797881)'
+  - '[n02773838](http://www.image-net.org/synset?wnid=n02773838)'
+  - '[n02773037](http://www.image-net.org/synset?wnid=n02773037)'
+  name: bag
+  noffset: n02774152,n02773037
+  parent_name: accessory,fashion
+- definitions:
+  - definition: the common bean plant grown for the beans rather than the pods (especially
+      a variety with large red kidney-shaped beans)
+    noffset: n12557064
+  - definition: large dark red bean; usually dried
+    noffset: n07727048
+  markdown_url:
+  - '[n12557064](http://www.image-net.org/synset?wnid=n12557064)'
+  - '[n07727048](http://www.image-net.org/synset?wnid=n07727048)'
+  name: kidney bean
+  noffset: n07727048
+  parent_name: bean and legume,food
+- definitions:
+  - definition: underground pod of the peanut vine
+    noffset: n11748811
+  - definition: pod of the peanut vine containing usually 2 nuts or seeds; groundnut
+      and monkey nut are British terms
+    noffset: n07737745
+  markdown_url:
+  - '[n11748811](http://www.image-net.org/synset?wnid=n11748811)'
+  - '[n07737745](http://www.image-net.org/synset?wnid=n07737745)'
+  name: peanut
+  noffset: n11748811,n07737745
+  parent_name: bean and legume,food
+- definitions:
+  - definition: the most highly proteinaceous vegetable known; the fruit of the soybean
+      plant is used in a variety of foods and as fodder (especially as a replacement
+      for animal protein)
+    noffset: n07729485
+  - definition: a source of oil; used for forage and soil improvement and as food
+    noffset: n12532564
+  markdown_url:
+  - '[n07729485](http://www.image-net.org/synset?wnid=n07729485)'
+  - '[n12532564](http://www.image-net.org/synset?wnid=n12532564)'
+  name: soybean
+  noffset: n07729485,n12532564
+  parent_name: bean and legume,food
+- definitions:
+  - definition: any of various soft sweet desserts thickened usually with flour and
+      baked or boiled or steamed
+    noffset: n07612632
+  - definition: (British) the dessert course of a meal (pud is used informally)
+    noffset: n07612996
+  markdown_url:
+  - '[n07612632](http://www.image-net.org/synset?wnid=n07612632)'
+  - '[n07612996](http://www.image-net.org/synset?wnid=n07612996)'
+  name: pudding
+  noffset: n07612996,n07612632
+  parent_name: dessert,food
+- definitions:
+  - definition: any of numerous small and pulpy edible fruits; used as desserts or
+      in making jams and jellies and preserves
+    noffset: n07742704
+  - definition: a small fruit having any of various structures, e.g., simple (grape
+      or blueberry) or aggregate (blackberry or raspberry)
+    noffset: n13137409
+  markdown_url:
+  - '[n07742704](http://www.image-net.org/synset?wnid=n07742704)'
+  - '[n13137409](http://www.image-net.org/synset?wnid=n13137409)'
+  name: berry
+  noffset: n07742704,n13137409
+  parent_name: fruit,food
+- definitions:
+  - definition: tall palm tree bearing coconuts as fruits; widely planted throughout
+      the tropics
+    noffset: n12587803
+  - definition: large hard-shelled oval nut with a fibrous husk containing thick white
+      meat surrounding a central cavity filled (when fresh) with fluid or milk
+    noffset: n07772935
+  markdown_url:
+  - '[n12587803](http://www.image-net.org/synset?wnid=n12587803)'
+  - '[n07772935](http://www.image-net.org/synset?wnid=n07772935)'
+  name: coconut
+  noffset: n07772935
+  parent_name: fruit,food
+- definitions:
+  - definition: the fruit of any of several tropical American trees of the genus Annona
+      having soft edible pulp
+    noffset: n07760859
+  - definition: any of several tropical American trees bearing fruit with soft edible
+      pulp
+    noffset: n11693981
+  markdown_url:
+  - '[n07760859](http://www.image-net.org/synset?wnid=n07760859)'
+  - '[n11693981](http://www.image-net.org/synset?wnid=n11693981)'
+  name: custard apple
+  noffset: n07760859,n11693981
+  parent_name: fruit,food
+- definitions:
+  - definition: a participant in a date
+    noffset: n09992538
+  - definition: sweet edible fruit of the date palm with a single long woody seed
+    noffset: n07765073
+  markdown_url:
+  - '[n09992538](http://www.image-net.org/synset?wnid=n09992538)'
+  - '[n07765073](http://www.image-net.org/synset?wnid=n07765073)'
+  name: dates
+  noffset: n07765073
+  parent_name: fruit,food
+- definitions:
+  - definition: tree of southeastern Asia having edible oval fruit with a hard spiny
+      rind
+    noffset: n12190869
+  - definition: huge fruit native to southeastern Asia smelling like Hell and tasting
+      like Heaven; seeds are roasted and eaten like nuts
+    noffset: n07762913
+  markdown_url:
+  - '[n12190869](http://www.image-net.org/synset?wnid=n12190869)'
+  - '[n07762913](http://www.image-net.org/synset?wnid=n07762913)'
+  name: durian
+  noffset: n12190869,n07762913
+  parent_name: fruit,food
+- definitions:
+  - definition: small tropical American shrubby tree; widely cultivated in warm regions
+      for its sweet globular yellow fruit
+    noffset: n12333530
+  - definition: tropical fruit having yellow skin and pink pulp; eaten fresh or used
+      for e.g. jellies
+    noffset: n07765361
+  - definition: small tropical shrubby tree bearing small yellowish fruit
+    noffset: n12333771
+  markdown_url:
+  - '[n12333530](http://www.image-net.org/synset?wnid=n12333530)'
+  - '[n07765361](http://www.image-net.org/synset?wnid=n07765361)'
+  - '[n12333771](http://www.image-net.org/synset?wnid=n12333771)'
+  name: guava
+  noffset: n07765361
+  parent_name: fruit,food
+- definitions:
+  - definition: immense East Indian fruit resembling breadfruit; it contains an edible
+      pulp and nutritious seeds that are commonly roasted
+    noffset: n07754684
+  - definition: East Indian tree cultivated for its immense edible fruit and seeds
+    noffset: n12400720
+  markdown_url:
+  - '[n07754684](http://www.image-net.org/synset?wnid=n07754684)'
+  - '[n12400720](http://www.image-net.org/synset?wnid=n12400720)'
+  name: jackfruit
+  noffset: n07754684,n12400720
+  parent_name: fruit,food
+- definitions:
+  - definition: a native or inhabitant of New Zealand
+    noffset: n09724533
+  - definition: nocturnal flightless bird of New Zealand having a long neck and stout
+      legs; only surviving representative of the order Apterygiformes
+    noffset: n01520576
+  - definition: fuzzy brown egg-shaped fruit with slightly tart green flesh
+    noffset: n07763629
+  - definition: climbing vine native to China; cultivated in New Zealand for its fuzzy
+      edible fruit with green meat
+    noffset: n12371439
+  markdown_url:
+  - '[n09724533](http://www.image-net.org/synset?wnid=n09724533)'
+  - '[n01520576](http://www.image-net.org/synset?wnid=n01520576)'
+  - '[n07763629](http://www.image-net.org/synset?wnid=n07763629)'
+  - '[n12371439](http://www.image-net.org/synset?wnid=n12371439)'
+  name: kiwi
+  noffset: n07763629
+  parent_name: fruit,food
+- definitions:
+  - definition: evergreen tree cultivated in the Mediterranean region since antiquity
+      and now elsewhere; has edible shiny black fruits
+    noffset: n12301180
+  - definition: small ovoid fruit of the European olive tree; important food and source
+      of oil
+    noffset: n12301445
+  - definition: a yellow-green color of low brightness and saturation
+    noffset: n04974340
+  - definition: one-seeded fruit of the European olive tree usually pickled and used
+      as a relish
+    noffset: n07767344
+  markdown_url:
+  - '[n12301180](http://www.image-net.org/synset?wnid=n12301180)'
+  - '[n12301445](http://www.image-net.org/synset?wnid=n12301445)'
+  - '[n04974340](http://www.image-net.org/synset?wnid=n04974340)'
+  - '[n07767344](http://www.image-net.org/synset?wnid=n07767344)'
+  name: olive
+  noffset: n12301445,n07767344
+  parent_name: fruit,food
+- definitions:
+  - definition: large oval melon-like tropical fruit with yellowish flesh
+    noffset: n07762244
+  - definition: tropical American shrub or small tree having huge deeply palmately
+      cleft leaves and large oblong yellow fruit
+    noffset: n12373100
+  markdown_url:
+  - '[n07762244](http://www.image-net.org/synset?wnid=n07762244)'
+  - '[n12373100](http://www.image-net.org/synset?wnid=n12373100)'
+  name: papaya
+  noffset: n07762244
+  parent_name: fruit,food
+- definitions:
+  - definition: any of several tropical trees of the genus Diospyros
+    noffset: n12771192
+  - definition: orange fruit resembling a plum; edible when fully ripe
+    noffset: n07746186
+  markdown_url:
+  - '[n12771192](http://www.image-net.org/synset?wnid=n12771192)'
+  - '[n07746186](http://www.image-net.org/synset?wnid=n07746186)'
+  name: persimmon
+  noffset: n07746186,n12771192
+  parent_name: fruit,food
+- definitions:
+  - definition: a banana tree bearing hanging clusters of edible angular greenish
+      starchy fruits; tropics and subtropics
+    noffset: n12352990
+  - definition: starchy banana-like fruit; eaten (always cooked) as a staple vegetable
+      throughout the tropics
+    noffset: n07768423
+  markdown_url:
+  - '[n12352990](http://www.image-net.org/synset?wnid=n12352990)'
+  - '[n07768423](http://www.image-net.org/synset?wnid=n07768423)'
+  name: plantain
+  noffset: n07768423
+  parent_name: fruit,food
+- definitions:
+  - definition: shrub or small tree native to southwestern Asia having large red many-seeded
+      fruit
+    noffset: n12345280
+  - definition: large globular fruit having many seeds with juicy red pulp in a tough
+      brownish-red rind
+    noffset: n07768694
+  markdown_url:
+  - '[n12345280](http://www.image-net.org/synset?wnid=n12345280)'
+  - '[n07768694](http://www.image-net.org/synset?wnid=n07768694)'
+  name: pomegranate
+  noffset: n07768694
+  parent_name: fruit,food
+- definitions:
+  - definition: pleasantly acid bright red oval Malayan fruit covered with soft spines
+    noffset: n07769731
+  - definition: Malayan tree bearing spiny red fruit
+    noffset: n12745386
+  markdown_url:
+  - '[n07769731](http://www.image-net.org/synset?wnid=n07769731)'
+  - '[n12745386](http://www.image-net.org/synset?wnid=n12745386)'
+  name: rambutan
+  noffset: n07769731
+  parent_name: fruit,food
+- definitions:
+  - definition: leaves of the common basil; used fresh or dried
+    noffset: n07816164
+  - definition: any of several Old World tropical aromatic annual or perennial herbs
+      of the genus Ocimum
+    noffset: n12860365
+  markdown_url:
+  - '[n07816164](http://www.image-net.org/synset?wnid=n07816164)'
+  - '[n12860365](http://www.image-net.org/synset?wnid=n12860365)'
+  name: basil
+  noffset: n07816164
+  parent_name: herb,food
+- definitions:
+  - definition: aromatic Old World herb having aromatic threadlike foliage and seeds
+      used as seasoning
+    noffset: n12931542
+  - definition: aromatic threadlike foliage of the dill plant used as seasoning
+    noffset: n07827896
+  markdown_url:
+  - '[n12931542](http://www.image-net.org/synset?wnid=n12931542)'
+  - '[n07827896](http://www.image-net.org/synset?wnid=n07827896)'
+  name: dill
+  noffset: n07827896
+  parent_name: herb,food
+- definitions:
+  - definition: aromatic Eurasian perennial
+    noffset: n12853287
+  - definition: pungent leaves used as seasoning with meats and fowl and in stews
+      and soups and omelets
+    noffset: n07818995
+  markdown_url:
+  - '[n12853287](http://www.image-net.org/synset?wnid=n12853287)'
+  - '[n07818995](http://www.image-net.org/synset?wnid=n07818995)'
+  name: oregano
+  noffset: null
+  parent_name: herb,food
+- definitions:
+  - definition: annual or perennial herb with aromatic leaves
+    noffset: n12942395
+  - definition: aromatic herb with flat or crinkly leaves that are cut finely and
+      used to garnish food
+    noffset: n07819896
+  markdown_url:
+  - '[n12942395](http://www.image-net.org/synset?wnid=n12942395)'
+  - '[n07819896](http://www.image-net.org/synset?wnid=n07819896)'
+  name: parsley
+  noffset: n12942395,n07819896
+  parent_name: herb,food
+- definitions:
+  - definition: extremely pungent leaves used fresh or dried as seasoning for especially
+      meats
+    noffset: n07820145
+  - definition: widely cultivated for its fragrant grey-green leaves used in cooking
+      and in perfumery
+    noffset: n12864160
+  markdown_url:
+  - '[n07820145](http://www.image-net.org/synset?wnid=n07820145)'
+  - '[n12864160](http://www.image-net.org/synset?wnid=n12864160)'
+  name: rosemary
+  noffset: n12864160
+  parent_name: herb,food
+- definitions:
+  - definition: cresses that grow in clear ponds and streams
+    noffset: n07732904
+  - definition: any of several water-loving cresses
+    noffset: n11869689
+  markdown_url:
+  - '[n07732904](http://www.image-net.org/synset?wnid=n07732904)'
+  - '[n11869689](http://www.image-net.org/synset?wnid=n11869689)'
+  name: watercress
+  noffset: n07732904,n11869689
+  parent_name: herb,food
+- definitions:
+  - definition: a heavy cotton fabric of plain weave; used for clothing and tents
+    noffset: n03253071
+  - definition: small wild or domesticated web-footed broad-billed swimming bird usually
+      having a depressed body and short legs
+    noffset: n01846331
+  markdown_url:
+  - '[n03253071](http://www.image-net.org/synset?wnid=n03253071)'
+  - '[n01846331](http://www.image-net.org/synset?wnid=n01846331)'
+  name: duck
+  noffset: null
+  parent_name: meat,food
+- definitions:
+  - definition: a sweet innocent mild-mannered person (especially a child)
+    noffset: n10243872
+  - definition: young sheep
+    noffset: n02412440
+  markdown_url:
+  - '[n10243872](http://www.image-net.org/synset?wnid=n10243872)'
+  - '[n02412440](http://www.image-net.org/synset?wnid=n02412440)'
+  name: lamb
+  noffset: null
+  parent_name: meat,food
+- definitions:
+  - definition: support resembling the rib of an animal
+    noffset: n04087126
+  - definition: a riblike supporting or strengthening part of an animal or plant
+    noffset: n05235879
+  markdown_url:
+  - '[n04087126](http://www.image-net.org/synset?wnid=n04087126)'
+  - '[n05235879](http://www.image-net.org/synset?wnid=n05235879)'
+  name: ribs
+  noffset: n05235879
+  parent_name: meat,food
+- definitions:
+  - definition: usually large hard-shelled seed
+    noffset: n13136556
+  - definition: someone who is so ardently devoted to something that it resembles
+      an addiction
+    noffset: n09769076
+  markdown_url:
+  - '[n13136556](http://www.image-net.org/synset?wnid=n13136556)'
+  - '[n09769076](http://www.image-net.org/synset?wnid=n09769076)'
+  name: nuts
+  noffset: n13136556
+  parent_name: nutsAndSeeds,food
+- definitions:
+  - definition: a small hard fruit
+    noffset: n13135832
+  - definition: one of the outstanding players in a tournament
+    noffset: n10575463
+  markdown_url:
+  - '[n13135832](http://www.image-net.org/synset?wnid=n13135832)'
+  - '[n10575463](http://www.image-net.org/synset?wnid=n10575463)'
+  name: seeds
+  noffset: n13135832
+  parent_name: nutsAndSeeds,food
+- definitions:
+  - definition: aromatic seeds used as seasoning like cinnamon and cloves especially
+      in pickles and barbecue sauces
+    noffset: n07822323
+  - definition: rhizomatous herb of India having aromatic seeds used as seasoning
+    noffset: n12358293
+  markdown_url:
+  - '[n07822323](http://www.image-net.org/synset?wnid=n07822323)'
+  - '[n12358293](http://www.image-net.org/synset?wnid=n12358293)'
+  name: cardamom
+  noffset: n07822323
+  parent_name: spices,food
+- definitions:
+  - definition: tropical Asian tree with aromatic yellowish-brown bark; source of
+      the spice cinnamon
+    noffset: n11704791
+  - definition: spice from the dried aromatic bark of the Ceylon cinnamon tree; used
+      as rolled strips or ground
+    noffset: n07814203
+  markdown_url:
+  - '[n11704791](http://www.image-net.org/synset?wnid=n11704791)'
+  - '[n07814203](http://www.image-net.org/synset?wnid=n07814203)'
+  name: cinnamon
+  noffset: n07814203
+  parent_name: spices,food
+- definitions:
+  - definition: aromatic flower bud of a clove tree; yields a spice
+    noffset: n12339831
+  - definition: one of the small bulblets that can be split off of the axis of a larger
+      garlic bulb
+    noffset: n07818422
+  - definition: moderate sized very symmetrical red-flowered evergreen widely cultivated
+      in the tropics for its flower buds which are source of cloves
+    noffset: n12339526
+  - definition: spice from dried unopened flower bud of the clove tree; used whole
+      or ground
+    noffset: n07814487
+  markdown_url:
+  - '[n12339831](http://www.image-net.org/synset?wnid=n12339831)'
+  - '[n07818422](http://www.image-net.org/synset?wnid=n07818422)'
+  - '[n12339526](http://www.image-net.org/synset?wnid=n12339526)'
+  - '[n07814487](http://www.image-net.org/synset?wnid=n07814487)'
+  name: clove
+  noffset: n07814487
+  parent_name: spices,food
+- definitions:
+  - definition: anise-scented star-shaped fruit or seed used in Asian cooking and
+      medicine
+    noffset: n07826930
+  - definition: small tree of China and Vietnam bearing anise-scented star-shaped
+      fruit used in food and medicinally as a carminative
+    noffset: n11709205
+  - definition: small shrubby tree of Japan and Taiwan; flowers are not fragrant
+    noffset: n11709045
+  markdown_url:
+  - '[n07826930](http://www.image-net.org/synset?wnid=n07826930)'
+  - '[n11709205](http://www.image-net.org/synset?wnid=n11709205)'
+  - '[n11709045](http://www.image-net.org/synset?wnid=n11709045)'
+  name: star anise
+  noffset: n07826930
+  parent_name: spices,food
+- definitions:
+  - definition: ground dried rhizome of the turmeric plant used as seasoning
+    noffset: n07821919
+  - definition: widely cultivated tropical plant of India having yellow flowers and
+      a large aromatic deep yellow rhizome; source of a condiment and a yellow dye
+    noffset: n12356395
+  markdown_url:
+  - '[n07821919](http://www.image-net.org/synset?wnid=n07821919)'
+  - '[n12356395](http://www.image-net.org/synset?wnid=n12356395)'
+  name: turmeric
+  noffset: n07821919
+  parent_name: spices,food
+- definitions:
+  - definition: Asiatic plant grown for its cluster of edible white stalks with dark
+      green leaves
+    noffset: n11879054
+  - definition: elongated head of dark green leaves on thick white stalks
+    noffset: n07714448
+  markdown_url:
+  - '[n11879054](http://www.image-net.org/synset?wnid=n11879054)'
+  - '[n07714448](http://www.image-net.org/synset?wnid=n07714448)'
+  name: bok choy
+  noffset: n11879054,n07714448
+  parent_name: vegetable,food
+- definitions:
+  - definition: tall annual cereal grass bearing kernels on large ears widely cultivated
+      in America in many varieties; the principal cereal in Mexico and Central and
+      South America since pre-Columbian times
+    noffset: n12143676
+  - definition: ears of corn that can be prepared and served for human food
+    noffset: n07731952
+  - definition: the dried grains or kernels or corn used as animal feed or ground
+      for meal
+    noffset: n12144580
+  - definition: whiskey distilled from a mash of not less than 80 percent corn
+    noffset: n07906877
+  markdown_url:
+  - '[n12143676](http://www.image-net.org/synset?wnid=n12143676)'
+  - '[n07731952](http://www.image-net.org/synset?wnid=n07731952)'
+  - '[n12144580](http://www.image-net.org/synset?wnid=n12144580)'
+  - '[n07906877](http://www.image-net.org/synset?wnid=n07906877)'
+  name: corn
+  noffset: n12143676,n07731952
+  parent_name: vegetable,food
+- definitions:
+  - definition: fennel seeds are ground and used as a spice or as an ingredient of
+      a spice mixture
+    noffset: n07814790
+  - definition: any of several aromatic herbs having edible seeds and leaves and stems
+    noffset: n12939104
+  - definition: leaves used for seasoning
+    noffset: n07817758
+  - definition: aromatic bulbous stem base eaten cooked or raw in salads
+    noffset: n07817871
+  markdown_url:
+  - '[n07814790](http://www.image-net.org/synset?wnid=n07814790)'
+  - '[n12939104](http://www.image-net.org/synset?wnid=n12939104)'
+  - '[n07817758](http://www.image-net.org/synset?wnid=n07817758)'
+  - '[n07817871](http://www.image-net.org/synset?wnid=n07817871)'
+  name: fennel
+  noffset: n07814790
+  parent_name: vegetable,food
+- definitions:
+  - definition: aromatic bulb used as seasoning
+    noffset: n07818277
+  - definition: bulbous herb of southern Europe widely naturalized; bulb breaks up
+      into separate strong-flavored cloves
+    noffset: n12434775
+  markdown_url:
+  - '[n07818277](http://www.image-net.org/synset?wnid=n07818277)'
+  - '[n12434775](http://www.image-net.org/synset?wnid=n12434775)'
+  name: garlic
+  noffset: n07818277,n12434775
+  parent_name: vegetable,food
+- definitions:
+  - definition: perennial plants having thick branching aromatic rhizomes and leafy
+      reedlike stems
+    noffset: n12355760
+  - definition: pungent rhizome of the common ginger plant; used fresh as a seasoning
+      especially in Asian cookery
+    noffset: n07814925
+  - definition: dried ground gingerroot
+    noffset: n07815163
+  markdown_url:
+  - '[n12355760](http://www.image-net.org/synset?wnid=n12355760)'
+  - '[n07814925](http://www.image-net.org/synset?wnid=n07814925)'
+  - '[n07815163](http://www.image-net.org/synset?wnid=n07815163)'
+  name: ginger
+  noffset: n07814925
+  parent_name: vegetable,food
+- definitions:
+  - definition: any vine of the family Cucurbitaceae that bears fruits with hard rinds
+    noffset: n12157769
+  - definition: any of numerous inedible fruits with hard rinds
+    noffset: n12158031
+  - definition: bottle made from the dried shell of a bottle gourd
+    noffset: n03449451
+  markdown_url:
+  - '[n12157769](http://www.image-net.org/synset?wnid=n12157769)'
+  - '[n12158031](http://www.image-net.org/synset?wnid=n12158031)'
+  - '[n03449451](http://www.image-net.org/synset?wnid=n03449451)'
+  name: gourd
+  noffset: n12158031
+  parent_name: vegetable,food
+- definitions:
+  - definition: long mucilaginous green pods; may be simmered or sauteed but used
+      especially in soups and stews
+    noffset: n07733394
+  - definition: long green edible beaked pods of the okra plant
+    noffset: n12172364
+  - definition: tall coarse annual of Old World tropics widely cultivated in southern
+      United States and West Indies for its long mucilaginous green pods used as basis
+      for soups and stews; sometimes placed in genus Hibiscus
+    noffset: n12171966
+  markdown_url:
+  - '[n07733394](http://www.image-net.org/synset?wnid=n07733394)'
+  - '[n12172364](http://www.image-net.org/synset?wnid=n12172364)'
+  - '[n12171966](http://www.image-net.org/synset?wnid=n12171966)'
+  name: okra
+  noffset: n07733394,n12172364
+  parent_name: vegetable,food
+- definitions:
+  - definition: any of numerous annual trailing plants of the genus Cucurbita grown
+      for their fleshy edible fruits
+    noffset: n12158798
+  - definition: edible fruit of a squash plant; eaten as a vegetable
+    noffset: n07715561
+  - definition: a game played in an enclosed court by two or four players who strike
+      the ball with long-handled rackets
+    noffset: n00479887
+  markdown_url:
+  - '[n12158798](http://www.image-net.org/synset?wnid=n12158798)'
+  - '[n07715561](http://www.image-net.org/synset?wnid=n07715561)'
+  - '[n00479887](http://www.image-net.org/synset?wnid=n00479887)'
+  name: squash
+  noffset: n07715561,n00479887
+  parent_name: vegetable,food
+- definitions:
+  - definition: an artificial source of visible illumination
+    noffset: n03636248
+  - definition: a piece of furniture holding one or more electric light bulbs
+    noffset: n03636649
+  markdown_url:
+  - '[n03636248](http://www.image-net.org/synset?wnid=n03636248)'
+  - '[n03636649](http://www.image-net.org/synset?wnid=n03636649)'
+  name: lamp
+  noffset: n03636248,n03636649
+  parent_name: lighting,furnishing
+- definitions:
+  - definition: a small room (or recess) or cabinet used for storage space
+    noffset: n03148324
+  - definition: a toilet in Britain
+    noffset: n04558478
+  - definition: a tall piece of furniture that provides storage space for clothes;
+      has a door and rails or hooks for hanging clothes
+    noffset: n04550184
+  - definition: a small private room for study or prayer
+    noffset: n03049457
+  markdown_url:
+  - '[n03148324](http://www.image-net.org/synset?wnid=n03148324)'
+  - '[n04558478](http://www.image-net.org/synset?wnid=n04558478)'
+  - '[n04550184](http://www.image-net.org/synset?wnid=n04550184)'
+  - '[n03049457](http://www.image-net.org/synset?wnid=n03049457)'
+  name: closet
+  noffset: n03148324
+  parent_name: storage,furnishing
+- definitions:
+  - definition: furniture with drawers for keeping clothes
+    noffset: n03015254
+  - definition: box with a lid; used for storage; usually large and sturdy
+    noffset: n03014705
+  markdown_url:
+  - '[n03015254](http://www.image-net.org/synset?wnid=n03015254)'
+  - '[n03014705](http://www.image-net.org/synset?wnid=n03014705)'
+  name: chest
+  noffset: n03014705
+  parent_name: storage,furnishing
+- definitions:
+  - definition: a projecting ridge on a mountain or submerged under water
+    noffset: n09337253
+  - definition: a support that consists of a horizontal surface for holding objects
+    noffset: n04190052
+  markdown_url:
+  - '[n09337253](http://www.image-net.org/synset?wnid=n09337253)'
+  - '[n04190052](http://www.image-net.org/synset?wnid=n04190052)'
+  name: shelf
+  noffset: n04190052
+  parent_name: storage,furnishing
+- definitions:
+  - definition: a small rectangular free-reed instrument having a row of free reeds
+      set back in air holes and played by blowing into the desired hole
+    noffset: n03494278
+  - definition: a pair of curved vertical supports for a lampshade
+    noffset: n03495570
+  - definition: a chordophone that has a triangular frame consisting of a sounding
+      board and a pillar and a curved neck; the strings stretched between the neck
+      and the soundbox are plucked with the fingers
+    noffset: n03495258
+  markdown_url:
+  - '[n03494278](http://www.image-net.org/synset?wnid=n03494278)'
+  - '[n03495570](http://www.image-net.org/synset?wnid=n03495570)'
+  - '[n03495258](http://www.image-net.org/synset?wnid=n03495258)'
+  name: harp
+  noffset: n03495258
+  parent_name: stringInstrument,musical instrument
+- definitions:
+  - definition: equipment for making records
+    noffset: n04063373
+  - definition: a tubular wind instrument with 8 finger holes and a fipple mouthpiece
+    noffset: n03343354
+  markdown_url:
+  - '[n04063373](http://www.image-net.org/synset?wnid=n04063373)'
+  - '[n03343354](http://www.image-net.org/synset?wnid=n03343354)'
+  name: recorder
+  noffset: n03343354
+  parent_name: woodwindInstrument,musical instrument
+- definitions:
+  - definition: a mechanical device that prevents a vessel from moving
+    noffset: n02709367
+  - definition: a television reporter who coordinates a broadcast to which several
+      correspondents contribute
+    noffset: n09792969
+  markdown_url:
+  - '[n02709367](http://www.image-net.org/synset?wnid=n02709367)'
+  - '[n09792969](http://www.image-net.org/synset?wnid=n09792969)'
+  name: anchor
+  noffset: n09792969
+  parent_name: occupation,person
+- definitions:
+  - definition: (chess) the weakest but the most important piece
+    noffset: n03618101
+  - definition: a checker that has been moved to the opponents first row where it
+      is promoted to a piece that is free to move either forward or backward
+    noffset: n03618339
+  - definition: a competitor who holds a preeminent position
+    noffset: n10235024
+  - definition: a very wealthy or powerful businessman
+    noffset: n09840217
+  markdown_url:
+  - '[n03618101](http://www.image-net.org/synset?wnid=n03618101)'
+  - '[n03618339](http://www.image-net.org/synset?wnid=n03618339)'
+  - '[n10235024](http://www.image-net.org/synset?wnid=n10235024)'
+  - '[n09840217](http://www.image-net.org/synset?wnid=n09840217)'
+  name: king
+  noffset: null
+  parent_name: royalty,person
+- definitions:
+  - definition: cultivated for its shining oblong leaves and arching clusters of white
+      flowers with pink shading and crinkled yellow lips with variegated magenta stripes
+    noffset: n12357485
+  - definition: showy perennial of marshlands of eastern and central North America
+      having waxy lanceolate leaves and flower with lower part creamy white and upper
+      parts pale pink to deep purple
+    noffset: n12881105
+  markdown_url:
+  - '[n12357485](http://www.image-net.org/synset?wnid=n12357485)'
+  - '[n12881105](http://www.image-net.org/synset?wnid=n12881105)'
+  name: shellflower
+  noffset: n12357485
+  parent_name: flower,plant
+- definitions:
+  - definition: any of various plants of the genus Helipterum
+    noffset: n11981192
+  - definition: Australian plant naturalized in Spain having flowers of lemon yellow
+      to deep gold; the frequent choice of those who love dried flowers
+    noffset: n11980318
+  - definition: plant of southern and southeastern United States grown for its yellow
+      flowers that can be dried
+    noffset: n12475242
+  markdown_url:
+  - '[n11981192](http://www.image-net.org/synset?wnid=n11981192)'
+  - '[n11980318](http://www.image-net.org/synset?wnid=n11980318)'
+  - '[n12475242](http://www.image-net.org/synset?wnid=n12475242)'
+  name: strawflower
+  noffset: n12475242
+  parent_name: flower,plant
+- definitions:
+  - definition: deciduous shrub having purple capsules enclosing scarlet seeds
+    noffset: n12749679
+  - definition: large fast-moving predacious food and game fish; found worldwide
+    noffset: n02625258
+  - definition: upright deciduous plant with crimson pods and seeds; the eastern United
+      States from New York to Florida and Texas
+    noffset: n12749852
+  markdown_url:
+  - '[n12749679](http://www.image-net.org/synset?wnid=n12749679)'
+  - '[n02625258](http://www.image-net.org/synset?wnid=n02625258)'
+  - '[n12749852](http://www.image-net.org/synset?wnid=n12749852)'
+  name: wahoo
+  noffset: n12749679
+  parent_name: flower,plant
+- definitions:
+  - definition: tufted evergreen perennial herb having spikes of tiny white flowers
+      and glossy green round to heart-shaped leaves that become coppery to maroon
+      or purplish in fall
+    noffset: n12251278
+  - definition: a showy often-cultivated plant with tawny yellow often purple-spotted
+      flowers
+    noffset: n12418507
+  markdown_url:
+  - '[n12251278](http://www.image-net.org/synset?wnid=n12251278)'
+  - '[n12418507](http://www.image-net.org/synset?wnid=n12418507)'
+  name: wandflower
+  noffset: n12251278
+  parent_name: flower,plant
+- definitions:
+  - definition: European bunting the male being bright yellow
+    noffset: n01538200
+  - definition: large flicker of eastern North America with a red neck and yellow
+      undersurface to wings and tail
+    noffset: n01839750
+  markdown_url:
+  - '[n01538200](http://www.image-net.org/synset?wnid=n01538200)'
+  - '[n01839750](http://www.image-net.org/synset?wnid=n01839750)'
+  name: yellow hammer
+  noffset: n01538200
+  parent_name: flower,plant
+- definitions:
+  - definition: any cedar of the genus Cedrus
+    noffset: n11623105
+  - definition: any of numerous trees of the family Cupressaceae that resemble cedars
+    noffset: n11630017
+  markdown_url:
+  - '[n11623105](http://www.image-net.org/synset?wnid=n11623105)'
+  - '[n11630017](http://www.image-net.org/synset?wnid=n11630017)'
+  name: cedar tree
+  noffset: n11630017
+  parent_name: tree,plant
+- definitions:
+  - definition: medium to tall fir of western North America having a conic crown and
+      branches in tiers; leaves smell of orange when crushed
+    noffset: n11621281
+  - definition: tall timber tree of central and southern Europe having a regular crown
+      and grey bark
+    noffset: n11621547
+  - definition: Australian tree or shrub with red flowers; often used in Christmas
+      decoration
+    noffset: n12787364
+  markdown_url:
+  - '[n11621281](http://www.image-net.org/synset?wnid=n11621281)'
+  - '[n11621547](http://www.image-net.org/synset?wnid=n11621547)'
+  - '[n12787364](http://www.image-net.org/synset?wnid=n12787364)'
+  name: christmas tree
+  noffset: n11621281,n11621547
+  parent_name: tree,plant
+- definitions:
+  - definition: Australian tree with acid foliage
+    noffset: n12178780
+  - definition: deciduous shrubby tree of eastern North America having deeply fissured
+      bark and sprays of small fragrant white flowers and sour-tasting leaves
+    noffset: n12242409
+  markdown_url:
+  - '[n12178780](http://www.image-net.org/synset?wnid=n12178780)'
+  - '[n12242409](http://www.image-net.org/synset?wnid=n12242409)'
+  name: sorrel tree
+  noffset: n12178780
+  parent_name: tree,plant
+- definitions:
+  - definition: stingless male bee in a colony of social bees (especially honeybees)
+      whose sole function is to mate with the queen
+    noffset: n02207179
+  - definition: someone who takes more time than necessary; someone who lags behind
+    noffset: n09993252
+  - definition: an aircraft without a pilot that is operated by remote control
+    noffset: n03245889
+  - definition: a pipe of the bagpipe that is tuned to produce a single continuous
+      tone
+    noffset: n03245724
+  markdown_url:
+  - '[n02207179](http://www.image-net.org/synset?wnid=n02207179)'
+  - '[n09993252](http://www.image-net.org/synset?wnid=n09993252)'
+  - '[n03245889](http://www.image-net.org/synset?wnid=n03245889)'
+  - '[n03245724](http://www.image-net.org/synset?wnid=n03245724)'
+  name: drone
+  noffset: n03245889
+  parent_name: aircraft vehicle,vehicle
+- definitions:
+  - definition: an aircraft that has a fixed wing and is powered by propellers or
+      jets
+    noffset: n02691156
+  - definition: a carpenters hand tool with an adjustable blade for smoothing or shaping
+      wood
+    noffset: n03954731
+  - definition: a power tool for smoothing or shaping wood
+    noffset: n03955296
+  markdown_url:
+  - '[n02691156](http://www.image-net.org/synset?wnid=n02691156)'
+  - '[n03954731](http://www.image-net.org/synset?wnid=n03954731)'
+  - '[n03955296](http://www.image-net.org/synset?wnid=n03955296)'
+  name: plane
+  noffset: n02691156
+  parent_name: aircraft vehicle,vehicle
+- definitions:
+  - definition: arboreal amphibians usually having adhesive disks at the tip of each
+      toe; of southeast Asia and Australia and America
+    noffset: n01650167
+  - definition: any of various Old World arboreal frogs distinguished from true frogs
+      by adhesive suckers on the toes
+    noffset: n01644373
+  markdown_url:
+  - '[n01650167](http://www.image-net.org/synset?wnid=n01650167)'
+  - '[n01644373](http://www.image-net.org/synset?wnid=n01644373)'
+  name: tree frog
+  noffset: n01650167
+  parent_name: anuran,amphibian,animal
+- definitions:
+  - definition: large southern European spider once thought to be the cause of tarantism
+      (uncontrollable bodily movement)
+    noffset: n01775370
+  - definition: large hairy tropical spider with fangs that can inflict painful but
+      not highly venomous bites
+    noffset: n01774750
+  markdown_url:
+  - '[n01775370](http://www.image-net.org/synset?wnid=n01775370)'
+  - '[n01774750](http://www.image-net.org/synset?wnid=n01774750)'
+  name: tarantula
+  noffset: n01775370,n01774750
+  parent_name: spider,arthropod,animal
+- definitions:
+  - definition: (Judaism) the place of worship for a Jewish congregation
+    noffset: n04374735
+  - definition: place of worship consisting of an edifice for the worship of a deity
+    noffset: n04407435
+  - definition: an edifice devoted to special or exalted purposes
+    noffset: n04407686
+  markdown_url:
+  - '[n04374735](http://www.image-net.org/synset?wnid=n04374735)'
+  - '[n04407435](http://www.image-net.org/synset?wnid=n04407435)'
+  - '[n04407686](http://www.image-net.org/synset?wnid=n04407686)'
+  name: temple
+  noffset: n04374735
+  parent_name: religious building,building,artificial scene
+- definitions:
+  - definition: a sloping gallery with seats for spectators (as in an operating room
+      or theater)
+    noffset: n02705201
+  - definition: an oval large stadium with tiers of seats; an arena in which contests
+      and spectacles are held
+    noffset: n02704949
+  markdown_url:
+  - '[n02705201](http://www.image-net.org/synset?wnid=n02705201)'
+  - '[n02704949](http://www.image-net.org/synset?wnid=n02704949)'
+  name: amphitheater
+  noffset: n02705201
+  parent_name: theater,room,artificial scene
+- definitions:
+  - definition: a theater where films are shown
+    noffset: n03032252
+  - definition: a medium that disseminates moving pictures
+    noffset: n06262567
+  markdown_url:
+  - '[n03032252](http://www.image-net.org/synset?wnid=n03032252)'
+  - '[n06262567](http://www.image-net.org/synset?wnid=n06262567)'
+  name: cinema
+  noffset: n03032252
+  parent_name: theater,room,artificial scene
+- definitions:
+  - definition: the act of grasping
+    noffset: n00812526
+  - definition: a womans strapless purse that is carried in the hand
+    noffset: n03055418
+  - definition: a pedal or lever that engages or disengages a rotating shaft and a
+      driving mechanism
+    noffset: n03055159
+  - definition: a coupling that connects or disconnects driving and driven parts of
+      a driving mechanism
+    noffset: n03054901
+  markdown_url:
+  - '[n00812526](http://www.image-net.org/synset?wnid=n00812526)'
+  - '[n03055418](http://www.image-net.org/synset?wnid=n03055418)'
+  - '[n03055159](http://www.image-net.org/synset?wnid=n03055159)'
+  - '[n03054901](http://www.image-net.org/synset?wnid=n03054901)'
+  name: clutch
+  noffset: n03055418
+  parent_name: bag,accessory,fashion
+- definitions:
+  - definition: a coarse heavy woolen fabric
+    noffset: n03253796
+  - definition: a large cylindrical bag of heavy cloth; for carrying personal belongings
+    noffset: n03253886
+  markdown_url:
+  - '[n03253796](http://www.image-net.org/synset?wnid=n03253796)'
+  - '[n03253886](http://www.image-net.org/synset?wnid=n03253886)'
+  name: duffel
+  noffset: n03253886
+  parent_name: bag,accessory,fashion
+- definitions:
+  - definition: a container used for carrying money and small personal items or accessories
+      (especially by women)
+    noffset: n02774152
+  - definition: a small bag for carrying money
+    noffset: n04026417
+  markdown_url:
+  - '[n02774152](http://www.image-net.org/synset?wnid=n02774152)'
+  - '[n04026417](http://www.image-net.org/synset?wnid=n04026417)'
+  name: purse
+  noffset: n02774152,n04026417
+  parent_name: bag,accessory,fashion
+- definitions:
+  - definition: bread made with whole wheat flour
+    noffset: n07682316
+  - definition: dark steamed bread made of cornmeal wheat and flour with molasses
+      and soda and milk or water
+    noffset: n07680761
+  markdown_url:
+  - '[n07682316](http://www.image-net.org/synset?wnid=n07682316)'
+  - '[n07680761](http://www.image-net.org/synset?wnid=n07680761)'
+  name: brown bread
+  noffset: n07682316
+  parent_name: bread,bakedGood,food
+- definitions:
+  - definition: meat that has been barbecued or grilled in a highly seasoned sauce
+    noffset: n07654148
+  - definition: a cookout in which food is cooked over an open fire; especially a
+      whole animal carcass roasted on a spit
+    noffset: n07576781
+  - definition: a rack to hold meat for cooking over hot charcoal usually out of doors
+    noffset: n02790669
+  markdown_url:
+  - '[n07654148](http://www.image-net.org/synset?wnid=n07654148)'
+  - '[n07576781](http://www.image-net.org/synset?wnid=n07576781)'
+  - '[n02790669](http://www.image-net.org/synset?wnid=n02790669)'
+  name: barbeque
+  noffset: n07654148
+  parent_name: american,cuisine dish,food
+- definitions:
+  - definition: food cooked and served in a casserole
+    noffset: n07580359
+  - definition: large deep dish in which food can be cooked and served
+    noffset: n02978753
+  markdown_url:
+  - '[n07580359](http://www.image-net.org/synset?wnid=n07580359)'
+  - '[n02978753](http://www.image-net.org/synset?wnid=n02978753)'
+  name: casserole
+  noffset: n07580359
+  parent_name: american,cuisine dish,food
+- definitions:
+  - definition: a young person of either sex
+    noffset: n09917593
+  - definition: strips of potato fried in deep fat
+    noffset: n07711080
+  markdown_url:
+  - '[n09917593](http://www.image-net.org/synset?wnid=n09917593)'
+  - '[n07711080](http://www.image-net.org/synset?wnid=n07711080)'
+  name: fries
+  noffset: n07711080
+  parent_name: american,cuisine dish,food
+- definitions:
+  - definition: hot cheese or chocolate melted to the consistency of a sauce into
+      which bread or fruits are dipped
+    noffset: n07867421
+  - definition: cubes of meat or seafood cooked in hot oil and then dipped in any
+      of various sauces
+    noffset: n07867883
+  markdown_url:
+  - '[n07867421](http://www.image-net.org/synset?wnid=n07867421)'
+  - '[n07867883](http://www.image-net.org/synset?wnid=n07867883)'
+  name: fondue
+  noffset: n07867421,n07867883
+  parent_name: american,cuisine dish,food
+- definitions:
+  - definition: small rounded bread either plain or sweet
+    noffset: n07680932
+  - definition: photographic film rolled up inside a container to protect it from
+      light
+    noffset: n04101375
+  markdown_url:
+  - '[n07680932](http://www.image-net.org/synset?wnid=n07680932)'
+  - '[n04101375](http://www.image-net.org/synset?wnid=n04101375)'
+  name: roll
+  noffset: null
+  parent_name: chinese,cuisine dish,food
+- definitions:
+  - definition: a Japanese plant of the family Cruciferae with a thick green root
+    noffset: n11899921
+  - definition: the thick green root of the wasabi plant that the Japanese use in
+      cooking and that tastes like strong horseradish; in powder or paste form it
+      is often eaten with raw fish
+    noffset: n07857356
+  markdown_url:
+  - '[n11899921](http://www.image-net.org/synset?wnid=n11899921)'
+  - '[n07857356](http://www.image-net.org/synset?wnid=n07857356)'
+  name: wasabi
+  noffset: n07857356
+  parent_name: japanese,cuisine dish,food
+- definitions:
+  - definition: pickled flower buds used as a pungent relish in various dishes and
+      sauces
+    noffset: n07822053
+  - definition: any of numerous plants of the genus Capparis
+    noffset: n11865071
+  markdown_url:
+  - '[n07822053](http://www.image-net.org/synset?wnid=n07822053)'
+  - '[n11865071](http://www.image-net.org/synset?wnid=n11865071)'
+  name: caper
+  noffset: n07822053
+  parent_name: berry,fruit,food
+- definitions:
+  - definition: oval-shaped edible seed of the almond tree
+    noffset: n07750586
+  - definition: small bushy deciduous tree native to Asia and North Africa having
+      pretty pink blossoms and highly prized edible nuts enclosed in a hard green
+      hull; cultivated in southern Australia and California
+    noffset: n12645174
+  markdown_url:
+  - '[n07750586](http://www.image-net.org/synset?wnid=n07750586)'
+  - '[n12645174](http://www.image-net.org/synset?wnid=n12645174)'
+  name: almond
+  noffset: n07750586
+  parent_name: nuts,nutsAndSeeds,food
+- definitions:
+  - definition: kidney-shaped nut edible only when roasted
+    noffset: n07772147
+  - definition: tropical American evergreen tree bearing kidney-shaped nuts that are
+      edible only when roasted
+    noffset: n12759273
+  markdown_url:
+  - '[n07772147](http://www.image-net.org/synset?wnid=n07772147)'
+  - '[n12759273](http://www.image-net.org/synset?wnid=n12759273)'
+  name: cashew
+  noffset: n07772147
+  parent_name: nuts,nutsAndSeeds,food
+- definitions:
+  - definition: a dark golden-brown or reddish-brown horse
+    noffset: n02388735
+  - definition: the brown color of chestnuts
+    noffset: n04972350
+  - definition: edible nut of any of various chestnut trees of the genus Castanea
+    noffset: n07772274
+  - definition: any of several attractive deciduous trees yellow-brown in autumn;
+      yield a hard wood and edible nuts in a prickly bur
+    noffset: n12262553
+  markdown_url:
+  - '[n02388735](http://www.image-net.org/synset?wnid=n02388735)'
+  - '[n04972350](http://www.image-net.org/synset?wnid=n04972350)'
+  - '[n07772274](http://www.image-net.org/synset?wnid=n07772274)'
+  - '[n12262553](http://www.image-net.org/synset?wnid=n12262553)'
+  name: chestnut
+  noffset: n07772274
+  parent_name: nuts,nutsAndSeeds,food
+- definitions:
+  - definition: nut of any of several trees of the genus Corylus
+    noffset: n07772788
+  - definition: any of several shrubs or small trees of the genus Corylus bearing
+      edible nuts enclosed in a leafy husk
+    noffset: n12288823
+  markdown_url:
+  - '[n07772788](http://www.image-net.org/synset?wnid=n07772788)'
+  - '[n12288823](http://www.image-net.org/synset?wnid=n12288823)'
+  name: hazelnut
+  noffset: n07772788
+  parent_name: nuts,nutsAndSeeds,food
+- definitions:
+  - definition: smooth brown oval nut of south central United States
+    noffset: n07774719
+  - definition: tree of southern United States and Mexico cultivated for its nuts
+    noffset: n12321077
+  markdown_url:
+  - '[n07774719](http://www.image-net.org/synset?wnid=n07774719)'
+  - '[n12321077](http://www.image-net.org/synset?wnid=n12321077)'
+  name: pecan
+  noffset: n07774719
+  parent_name: nuts,nutsAndSeeds,food
+- definitions:
+  - definition: small tree of southern Europe and Asia Minor bearing small hard-shelled
+      nuts
+    noffset: n12761702
+  - definition: nut of Mediterranean trees having an edible green kernel
+    noffset: n07775050
+  markdown_url:
+  - '[n12761702](http://www.image-net.org/synset?wnid=n12761702)'
+  - '[n07775050](http://www.image-net.org/synset?wnid=n07775050)'
+  name: pistachio
+  noffset: n07775050
+  parent_name: nuts,nutsAndSeeds,food
+- definitions:
+  - definition: any of various trees of the genus Juglans
+    noffset: n12318378
+  - definition: nut of any of various walnut trees having a wrinkled two-lobed seed
+      with a hard shell
+    noffset: n07771212
+  markdown_url:
+  - '[n12318378](http://www.image-net.org/synset?wnid=n12318378)'
+  - '[n07771212](http://www.image-net.org/synset?wnid=n07771212)'
+  name: walnut
+  noffset: n07771212
+  parent_name: nuts,nutsAndSeeds,food
+- definitions:
+  - definition: a louse that infests the pubic region of the human body
+    noffset: n02185167
+  - definition: decapod having eyes on short stalks and a broad flattened carapace
+      with a small abdomen folded under the thorax and pincers
+    noffset: n01976957
+  markdown_url:
+  - '[n02185167](http://www.image-net.org/synset?wnid=n02185167)'
+  - '[n01976957](http://www.image-net.org/synset?wnid=n01976957)'
+  name: crab
+  noffset: n01976957
+  parent_name: seafood shellfish,seafood,food
+- definitions:
+  - definition: edible tuberous root of various yam plants of the genus Dioscorea
+      grown in the tropics world-wide for food
+    noffset: n07711907
+  - definition: sweet potato with deep orange flesh that remains moist when baked
+    noffset: n07712267
+  markdown_url:
+  - '[n07711907](http://www.image-net.org/synset?wnid=n07711907)'
+  - '[n07712267](http://www.image-net.org/synset?wnid=n07712267)'
+  name: yam
+  noffset: n07711907,n07712267
+  parent_name: root vegetable,vegetable,food
+- definitions:
+  - definition: plant bearing buff-colored squash having somewhat bottle-shaped fruit
+      with fine-textured edible flesh and a smooth thin rind
+    noffset: n12161744
+  - definition: buff-colored squash with a long usually straight neck and sweet orange
+      flesh
+    noffset: n07717556
+  markdown_url:
+  - '[n12161744](http://www.image-net.org/synset?wnid=n12161744)'
+  - '[n07717556](http://www.image-net.org/synset?wnid=n07717556)'
+  name: butternut squash
+  noffset: n07717556
+  parent_name: squash,vegetable,food
+- definitions:
+  - definition: any of various fruits of the gourd family that mature during the summer;
+      eaten while immature and before seeds and rind harden
+    noffset: n07715721
+  - definition: any of various usually bushy plants producing fruit that is eaten
+      while immature and before the rind or seeds harden
+    noffset: n12159055
+  markdown_url:
+  - '[n07715721](http://www.image-net.org/synset?wnid=n07715721)'
+  - '[n12159055](http://www.image-net.org/synset?wnid=n12159055)'
+  name: summer squash
+  noffset: n07715721
+  parent_name: squash,vegetable,food
+- definitions:
+  - definition: any of various fruits of the gourd family with thick rinds and edible
+      yellow to orange flesh that mature in the fall and can be stored for several
+      months
+    noffset: n07717070
+  - definition: any of various plants of the species Cucurbita maxima and Cucurbita
+      moschata producing squashes that have hard rinds and mature in the fall
+    noffset: n12160490
+  markdown_url:
+  - '[n07717070](http://www.image-net.org/synset?wnid=n07717070)'
+  - '[n12160490](http://www.image-net.org/synset?wnid=n12160490)'
+  name: winter squash
+  noffset: n07717070
+  parent_name: squash,vegetable,food
+- definitions:
+  - definition: a ventilated or refrigerated cupboard for securing provisions from
+      pests
+    noffset: n04125116
+  - definition: strongbox where valuables can be safely kept
+    noffset: n04125021
+  markdown_url:
+  - '[n04125116](http://www.image-net.org/synset?wnid=n04125116)'
+  - '[n04125021](http://www.image-net.org/synset?wnid=n04125021)'
+  name: safe
+  noffset: n04125021
+  parent_name: chest,storage,furnishing
+- definitions:
+  - definition: any of several European orchids of the genus Ophrys
+    noffset: n12075151
+  - definition: South American orchid with spiderlike pale-yellow to pale-green flowers
+    noffset: n12047884
+  - definition: Central American orchid having spiderlike flowers with prominent green
+      warts
+    noffset: n12048056
+  markdown_url:
+  - '[n12075151](http://www.image-net.org/synset?wnid=n12075151)'
+  - '[n12047884](http://www.image-net.org/synset?wnid=n12047884)'
+  - '[n12048056](http://www.image-net.org/synset?wnid=n12048056)'
+  name: spider orchid
+  noffset: n12047884
+  parent_name: orchid,flower,plant
+- definitions:
+  - definition: a truck with an enclosed cargo space
+    noffset: n04520170
+  - definition: a camper equipped with living quarters
+    noffset: n04520382
+  markdown_url:
+  - '[n04520170](http://www.image-net.org/synset?wnid=n04520170)'
+  - '[n04520382](http://www.image-net.org/synset?wnid=n04520382)'
+  name: vans
+  noffset: n04520170
+  parent_name: logo apparel,logo,visual design
+- definitions:
+  - definition: uncastrated adult male sheep
+    noffset: n02412080
+  - definition: the most common computer memory which can be used by programs to perform
+      necessary tasks while the computer is on; an integrated circuit memory chip
+      allows information to be stored or accessed in any order and all storage locations
+      are equally accessible
+    noffset: n04052757
+  markdown_url:
+  - '[n02412080](http://www.image-net.org/synset?wnid=n02412080)'
+  - '[n04052757](http://www.image-net.org/synset?wnid=n04052757)'
+  name: ram
+  noffset: n02412080
+  parent_name: logo car,logo,visual design
+- definitions:
+  - definition: a brass instrument without valves; used for military calls and fanfares
+    noffset: n02912894
+  - definition: any of various low-growing annual or perennial evergreen herbs native
+      to Eurasia; used for ground cover
+    noffset: n12840749
+  markdown_url:
+  - '[n02912894](http://www.image-net.org/synset?wnid=n02912894)'
+  - '[n12840749](http://www.image-net.org/synset?wnid=n12840749)'
+  name: bugles
+  noffset: n02912894
+  parent_name: logo food brand,logo,visual design
+- definitions:
+  - definition: the housing or outer covering of something
+    noffset: n04190747
+  - definition: a metal sheathing of uniform thickness (such as the shield attached
+      to an artillery piece to protect the gunners)
+    noffset: n03959701
+  - definition: ammunition consisting of a cylindrical metal casing containing an
+      explosive charge and a projectile; fired from a large gun
+    noffset: n04190464
+  - definition: a rigid covering that envelops an object
+    noffset: n09432283
+  - definition: a very light narrow racing boat
+    noffset: n04190997
+  markdown_url:
+  - '[n04190747](http://www.image-net.org/synset?wnid=n04190747)'
+  - '[n03959701](http://www.image-net.org/synset?wnid=n03959701)'
+  - '[n04190464](http://www.image-net.org/synset?wnid=n04190464)'
+  - '[n09432283](http://www.image-net.org/synset?wnid=n09432283)'
+  - '[n04190997](http://www.image-net.org/synset?wnid=n04190997)'
+  name: shell
+  noffset: null
+  parent_name: logo gas station,logo,visual design
+- definitions:
+  - definition: a device on an automobile for making a warning noise
+    noffset: n02761834
+  - definition: nocturnal bird of prey with hawk-like beak and claws and large head
+      with front-facing eyes
+    noffset: n01621127
+  markdown_url:
+  - '[n02761834](http://www.image-net.org/synset?wnid=n02761834)'
+  - '[n01621127](http://www.image-net.org/synset?wnid=n01621127)'
+  name: hooters
+  noffset: null
+  parent_name: logo restaurant,logo,visual design
+- definitions:
+  - definition: a short U-shaped wire nail for securing cables
+    noffset: n04303258
+  - definition: paper fastener consisting of a short length of U-shaped wire that
+      can fasten papers together
+    noffset: n04303095
+  markdown_url:
+  - '[n04303258](http://www.image-net.org/synset?wnid=n04303258)'
+  - '[n04303095](http://www.image-net.org/synset?wnid=n04303095)'
+  name: staples
+  noffset: null
+  parent_name: logo store,logo,visual design
+- definitions:
+  - definition: a place that the runner must touch before scoring
+    noffset: n02797881
+  - definition: a support or foundation
+    noffset: n02797692
+  markdown_url:
+  - '[n02797881](http://www.image-net.org/synset?wnid=n02797881)'
+  - '[n02797692](http://www.image-net.org/synset?wnid=n02797692)'
+  name: base
+  noffset: null
+  parent_name: logo technology company,logo,visual design
+- definitions:
+  - definition: widely distributed Old World white egret
+    noffset: n02009750
+  - definition: large white heron of Florida and the Florida Keys
+    noffset: n02008643
+  - definition: a common egret of the genus Egretta found in America; it is a variety
+      of the Old World white egret Casmerodius albus
+    noffset: n02009912
+  markdown_url:
+  - '[n02009750](http://www.image-net.org/synset?wnid=n02009750)'
+  - '[n02008643](http://www.image-net.org/synset?wnid=n02008643)'
+  - '[n02009912](http://www.image-net.org/synset?wnid=n02009912)'
+  name: great white heron
+  noffset: n02008643
+  parent_name: heron,limicoline bird,bird,animal
+- definitions:
+  - definition: an early Christian church designed like a Roman basilica; or a Roman
+      Catholic church or cathedral accorded certain privileges
+    noffset: n02801184
+  - definition: a Roman building used for public administration
+    noffset: n02801047
+  markdown_url:
+  - '[n02801184](http://www.image-net.org/synset?wnid=n02801184)'
+  - '[n02801047](http://www.image-net.org/synset?wnid=n02801047)'
+  name: basilica
+  noffset: n02801184
+  parent_name: church,religious building,building,artificial scene
+- definitions:
+  - definition: any large and important church
+    noffset: n02984061
+  - definition: the principal Christian church building of a bishops diocese
+    noffset: n02984203
+  markdown_url:
+  - '[n02984061](http://www.image-net.org/synset?wnid=n02984061)'
+  - '[n02984203](http://www.image-net.org/synset?wnid=n02984203)'
+  name: cathedral
+  noffset: n02984061,n02984203
+  parent_name: church,religious building,building,artificial scene
+- definitions:
+  - definition: a bag made of paper or plastic for holding customers purchases
+    noffset: n04122825
+  - definition: tall coarse perennial American herb having small white flowers followed
+      by blackish-red berries on long drooping racemes; young fleshy stems are edible;
+      berries and root are poisonous
+    noffset: n11855553
+  - definition: someone who takes more time than necessary; someone who lags behind
+    noffset: n09993252
+  markdown_url:
+  - '[n04122825](http://www.image-net.org/synset?wnid=n04122825)'
+  - '[n11855553](http://www.image-net.org/synset?wnid=n11855553)'
+  - '[n09993252](http://www.image-net.org/synset?wnid=n09993252)'
+  name: poke
+  noffset: null
+  parent_name: hawaiian,american,cuisine dish,food
+- definitions:
+  - definition: medium-sized oval squash with flesh in the form of strings that resemble
+      spaghetti
+    noffset: n07716906
+  - definition: squash plant bearing oval fruit with smooth yellowish skin and tender
+      stranded flesh resembling spaghetti
+    noffset: n12160303
+  markdown_url:
+  - '[n07716906](http://www.image-net.org/synset?wnid=n07716906)'
+  - '[n12160303](http://www.image-net.org/synset?wnid=n12160303)'
+  name: spaghetti squash
+  noffset: n07716906
+  parent_name: pasta,italian,cuisine dish,food
+- definitions:
+  - definition: a decorative wall bracket for holding candles or other sources of
+      light
+    noffset: n04148579
+  - definition: a candle or flaming torch secured in a sconce
+    noffset: n04148703
+  markdown_url:
+  - '[n04148579](http://www.image-net.org/synset?wnid=n04148579)'
+  - '[n04148703](http://www.image-net.org/synset?wnid=n04148703)'
+  name: sconces
+  noffset: n04148579,n04148703
+  parent_name: wall lamp,lamp,lighting,furnishing
+- definitions:
+  - definition: anything that slows or hinders a process
+    noffset: n02889646
+  - definition: a restraint used to slow or stop a vehicle
+    noffset: n02889425
+  markdown_url:
+  - '[n02889646](http://www.image-net.org/synset?wnid=n02889646)'
+  - '[n02889425](http://www.image-net.org/synset?wnid=n02889425)'
+  name: brake
+  noffset: n02889425
+  parent_name: carPart,car,land vehicle,vehicle
+- definitions:
+  - definition: grating that admits cooling air to cars radiator
+    noffset: n03459775
+  - definition: a framework of metal bars used as a partition or a grate
+    noffset: n03459591
+  markdown_url:
+  - '[n03459775](http://www.image-net.org/synset?wnid=n03459775)'
+  - '[n03459591](http://www.image-net.org/synset?wnid=n03459591)'
+  name: grille
+  noffset: n03459775
+  parent_name: carPart,car,land vehicle,vehicle
+- definitions:
+  - definition: nuts of forest trees (as beechnuts and acorns) accumulated on the
+      ground
+    noffset: n12280364
+  - definition: a vertical spar for supporting sails
+    noffset: n03726760
+  - definition: any sturdy upright pole
+    noffset: n03726993
+  markdown_url:
+  - '[n12280364](http://www.image-net.org/synset?wnid=n12280364)'
+  - '[n03726760](http://www.image-net.org/synset?wnid=n03726760)'
+  - '[n03726993](http://www.image-net.org/synset?wnid=n03726993)'
+  name: mast
+  noffset: n03726760
+  parent_name: sailPart,boat,water vehicle,vehicle
+- definitions:
+  - definition: third mast from the bow in a vessel having three or more masts; the
+      after and shorter mast of a yawl, ketch, or dandy
+    noffset: n03775847
+  - definition: fore-and-aft sail set on the mizzenmast
+    noffset: n03775747
+  markdown_url:
+  - '[n03775847](http://www.image-net.org/synset?wnid=n03775847)'
+  - '[n03775747](http://www.image-net.org/synset?wnid=n03775747)'
+  name: mizzen
+  noffset: n03775847,n03775747
+  parent_name: sailPart,boat,water vehicle,vehicle
+- definitions:
+  - definition: any structure that resembles a sail
+    noffset: n04128413
+  - definition: a large piece of fabric (usually canvas fabric) by means of which
+      wind is used to propel a sailing vessel
+    noffset: n04127904
+  markdown_url:
+  - '[n04128413](http://www.image-net.org/synset?wnid=n04128413)'
+  - '[n04127904](http://www.image-net.org/synset?wnid=n04127904)'
+  name: sail
+  noffset: n04127904,n04128413
+  parent_name: sailPart,boat,water vehicle,vehicle
+- definitions:
+  - definition: one of the flat round pieces used in playing the game of checkers
+    noffset: n03011355
+  - definition: one who checks the correctness of something
+    noffset: n09912995
+  markdown_url:
+  - '[n03011355](http://www.image-net.org/synset?wnid=n03011355)'
+  - '[n09912995](http://www.image-net.org/synset?wnid=n09912995)'
+  name: checkers
+  noffset: null
+  parent_name: fastFoodRestaurant,logo restaurant,logo,visual design
