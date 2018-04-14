@@ -25,7 +25,7 @@ SECRET_KEY = 'bcq4s0okqqkytjrz()o&3&qq0_4oejnr3-8=*(efxu&m$-_n^='
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['localhost', '157.54.144.79']
+ALLOWED_HOSTS = ['localhost', '157.54.144.79', '10.137.68.61']
 
 
 # Application definition
@@ -44,8 +44,8 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
-    'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
+    'django.middleware.common.CommonMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
@@ -120,3 +120,5 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/1.11/howto/static-files/
 
 STATIC_URL = '/static/'
+MEDIA_URL = '/detection/media/'
+#MEDIA_ROOT = os.path.join(BASE_DIR,os.pardir,'media')

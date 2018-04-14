@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+
+{% load static %}
+<html>
+<body>
+
+<h3>Taxonomy Validator</h3>
+
+<form enctype="multipart/form-data" method="POST">
+  {% csrf_token %}
+  <input type="file" value="Browse" name="file_input" required=true>
+  <br/><br/>
+  <input type="submit" value="Submit" />
+</form>
+
+</body>
+</html>

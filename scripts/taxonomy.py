@@ -647,9 +647,11 @@ def gen_image_gt_by_noffset(noffset, annotation_root, image_root):
         yield xml_basename, image_file_name, gt, height, width
 
 def load_all_tax(tax_folder):
+    print tax_folder
     all_yaml = glob.glob(op.join(tax_folder, '*.yaml'))
     all_tax = []
     for y in all_yaml:
+	print y
         with open(y, 'r') as fp:
             config_tax = yaml.safe_load(fp)
         name = op.splitext(op.basename(y))[0]
