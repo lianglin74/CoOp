@@ -529,6 +529,7 @@ class Taxonomy(object):
             else:
                 assert 'name' in one, one
                 name = one['name']
+            assert isinstance(name, basestring), "{} in {} not string".format(name, root)
             child_subgroups = getattr(root, 'child_subgroups', -1)
             if name.startswith('__'):
                 # just increase the subgroups count of the root
