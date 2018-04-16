@@ -28,6 +28,9 @@ import re
 from itertools import izip
 import numpy as np
 
+def is_noffset(label):
+    return re.match('^n[0-9]{8}$', label)
+
 def labels2noffsets(labels):
     mapper = LabelToSynset()
     result = []

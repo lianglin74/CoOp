@@ -62,6 +62,7 @@ from qd_common import dict_to_list
 from qd_common import parse_test_data
 from tsv_io import load_labels
 import unicodedata
+from taxonomy import is_noffset
 
 
 def update_yolo_test_proto(input_test, test_data, map_file, output_test):
@@ -259,8 +260,10 @@ def tsv_details(tsv_file):
                 cx, cy = (r[0] + r[2]) / 2., (r[1] + r[3]) / 2.
                 rw, rh = r[2] - r[0], r[3] - r[1]
                 assert cx >= 0 and cx < width \
-                        and cy >= 0 and cy < height \
-                        and rw >= 1 or rh >= 1
+                        and cy >= 0 and cy < height
+                if rw < 1 or rh < 1:
+                    logging.warn('rw or rh too small: {} - {}'.format(row[0], 
+                        ','.join(r)))
         else:
             # this is classification dataset
             assert type(rects) is int
@@ -440,6 +443,117 @@ def populate_dataset_details(data):
                 all_line.append(','.join([get_nick_name(s) for s in ss]))
         write_to_file('\n'.join(all_line),
                 dataset.get_labelmap_of_noffset_file())
+
+    if op.isfile(dataset.get_data('trainX')):
+        # composite dataset. 
+        create_index_composite_dataset(dataset)
+
+def create_index_composite_dataset(dataset):
+    fname_numImagesPerSource = op.join(dataset._data_root, 
+            'trainX.numImagesPerSource.tsv')
+    if op.isfile(fname_numImagesPerSource):
+        return
+    # how many images are contributed from each data source
+    trainX_file = dataset.get_data('trainX')
+    source_tsvs = load_list_file(trainX_file)
+    num_images_per_dataset = [None] * len(source_tsvs)
+
+    shuffle_file = dataset.get_shuffle_file('train')
+    rows = tsv_reader(shuffle_file)
+    all_idxSource_idxRow = []
+    for idx_source, idx_row in rows:
+        all_idxSource_idxRow.append((int(idx_source), int(idx_row)))
+    # note, the data may be duplicated. 
+    all_idxSource_idxRow = list(set(all_idxSource_idxRow))
+
+    idxSource_to_idxRows = list_to_dict(all_idxSource_idxRow, 0)
+    for idxSource in idxSource_to_idxRows:
+        assert num_images_per_dataset[idxSource] is None
+        num_images_per_dataset[idxSource] = len(idxSource_to_idxRows[idxSource])
+    tsv_writer([(name, str(num)) for name, num in zip(source_tsvs,
+        num_images_per_dataset)], fname_numImagesPerSource)
+
+    # for each data source, how many labels are contributed and how many are
+    # not
+    source_dataset_names = [op.basename(op.dirname(t)) for t in source_tsvs]
+    source_tsv_label_files = ['{}.label{}'.format(*op.splitext(t)) for t in
+            source_tsvs]
+    source_tsv_labels = [TSVFile(t) for t in source_tsv_label_files]
+    trainX_label_file = dataset.get_data('trainX', 'label')
+    all_dest_label_file = load_list_file(trainX_label_file)
+    dest_labels = [TSVFile(f) for f in all_dest_label_file]
+    all_idxSource_sourceLabel_destLabel = []
+    for i, (idx_source, idx_row) in enumerate(all_idxSource_idxRow):
+        if (i % 10000) == 0:
+            logging.info('{}/{}'.format(i, len(all_idxSource_idxRow)))
+        source_rects = json.loads(source_tsv_labels[idx_source].seek(idx_row)[-1])
+        dest_rects = json.loads(dest_labels[idx_source].seek(idx_row)[-1])
+        for r in dest_rects:
+            matched = []
+            for s in source_rects:
+                if all(x == y for (x, y) in zip(s['rect'], r['rect'])):
+                    matched.append(s)
+            # the mapped one may not be the first one, here we choose the first
+            # one for simplicity
+            sr = matched[0]
+            source_rects.remove(sr)
+            all_idxSource_sourceLabel_destLabel.append((idx_source,
+                sr['class'], r['class']))
+
+    idxSource_to_sourceLabel_destLabels = list_to_dict(
+            all_idxSource_sourceLabel_destLabel, 0)
+    source_numSourceLabels = [(s, 0) for s in source_tsvs]
+    source_includedSourceLabels = [(s, []) for s in source_tsvs]
+    for idxSource in idxSource_to_sourceLabel_destLabels:
+        sourceLabel_destLabels = idxSource_to_sourceLabel_destLabels[idxSource]
+        sourceLabel_to_destLabels = list_to_dict(sourceLabel_destLabels, 0)
+        source_numSourceLabels[idxSource] = (source_tsvs[idxSource],
+                len(sourceLabel_to_destLabels))
+        source_includedSourceLabels[idxSource][1].extend(
+                sourceLabel_to_destLabels.keys())
+    
+    tsv_writer([(n, str(i)) for (n, i) in source_numSourceLabels], 
+            op.join(dataset._data_root, 'trainX.numCategoriesPerSource.tsv'))
+
+    # save teh list of included labels
+    sourceDataset_to_includedSourceLabels = {}
+    for source, sourceLabels in source_includedSourceLabels:
+        source_dataset_name = op.basename(op.dirname(source))
+        if source_dataset_name not in sourceDataset_to_includedSourceLabels:
+            sourceDataset_to_includedSourceLabels[source_dataset_name] = []
+        sourceDataset_to_includedSourceLabels[source_dataset_name].extend(sourceLabels)
+    for source_dataset_name in sourceDataset_to_includedSourceLabels:
+        sourceDataset_to_includedSourceLabels[source_dataset_name] = \
+                set(sourceDataset_to_includedSourceLabels[source_dataset_name])
+
+    tsv_writer([(n, ','.join(v)) for (n, v) in
+        sourceDataset_to_includedSourceLabels.iteritems()], op.join(dataset._data_root, 
+            'trainX.includeCategoriesPerSourceDataset.tsv'))
+
+    tsv_writer([(n, ','.join(get_nick_name(noffset_to_synset(s)) if
+        is_noffset(s) else s for s in v)) for (n, v) in
+        sourceDataset_to_includedSourceLabels.iteritems()], op.join(dataset._data_root, 
+            'trainX.includeCategoriesPerSourceDatasetReadable.tsv'))
+    
+    sourceDataset_to_excludeSourceLabels = {}
+    # find out the excluded label list
+    for source_dataset_name in sourceDataset_to_includedSourceLabels:
+        source_dataset = TSVDataset(source_dataset_name)
+        full_label_names = set(source_dataset.load_labelmap())
+        included_labels = sourceDataset_to_includedSourceLabels[source_dataset_name]
+        for l in included_labels:
+            # if l is not in the full_label_names, it will throw exceptions
+            full_label_names.remove(l)
+        sourceDataset_to_excludeSourceLabels[source_dataset_name] = full_label_names
+
+    tsv_writer([(n, ','.join(v)) for (n, v) in
+        sourceDataset_to_excludeSourceLabels.iteritems()], op.join(dataset._data_root, 
+            'trainX.excludeCategoriesPerSourceDatasetReadable.tsv'))
+
+    tsv_writer([(n, ','.join(get_nick_name(noffset_to_synset(s)) if
+        is_noffset(s) else s for s in v)) for (n, v) in
+        sourceDataset_to_excludeSourceLabels.iteritems()], op.join(dataset._data_root, 
+            'trainX.excludeCategoriesPerSourceDatasetReadable.tsv'))
 
 class TSVTransformer(object):
     def __init__(self):
@@ -1085,7 +1199,7 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
                 continue
             tmp_tsv_file = 'tmp.' + op.basename(tsv_file)
             tmp_tsv_file = op.join(op.dirname(tsv_file), tmp_tsv_file)
-            if not op.isfile(tsv_file) or True:
+            if not op.isfile(tsv_file):
                 tsv_writer(gen_rows(label_type), tmp_tsv_file)
             logging.info('shuffling {}'.format(tmp_tsv_file))
             rows = tsv_shuffle_reader(tmp_tsv_file)
