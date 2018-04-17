@@ -263,7 +263,7 @@ def tsv_details(tsv_file):
                         and cy >= 0 and cy < height
                 if rw < 1 or rh < 1:
                     logging.warn('rw or rh too small: {} - {}'.format(row[0], 
-                        ','.join(r)))
+                        ','.join(map(str, r))))
         else:
             # this is classification dataset
             assert type(rects) is int
@@ -530,9 +530,9 @@ def create_index_composite_dataset(dataset):
         sourceDataset_to_includedSourceLabels.iteritems()], op.join(dataset._data_root, 
             'trainX.includeCategoriesPerSourceDataset.tsv'))
 
-    tsv_writer([(n, ','.join(get_nick_name(noffset_to_synset(s)) if
-        is_noffset(s) else s for s in v)) for (n, v) in
-        sourceDataset_to_includedSourceLabels.iteritems()], op.join(dataset._data_root, 
+    tsv_writer([(n, get_nick_name(noffset_to_synset(s))) if is_noffset(s) else
+        s for (n, v) in sourceDataset_to_includedSourceLabels.iteritems() 
+          for s in v], op.join(dataset._data_root, 
             'trainX.includeCategoriesPerSourceDatasetReadable.tsv'))
     
     sourceDataset_to_excludeSourceLabels = {}
@@ -548,12 +548,11 @@ def create_index_composite_dataset(dataset):
 
     tsv_writer([(n, ','.join(v)) for (n, v) in
         sourceDataset_to_excludeSourceLabels.iteritems()], op.join(dataset._data_root, 
-            'trainX.excludeCategoriesPerSourceDatasetReadable.tsv'))
+            'trainX.excludeCategoriesPerSourceDataset.tsv'))
 
-    tsv_writer([(n, ','.join(get_nick_name(noffset_to_synset(s)) if
-        is_noffset(s) else s for s in v)) for (n, v) in
-        sourceDataset_to_excludeSourceLabels.iteritems()], op.join(dataset._data_root, 
-            'trainX.excludeCategoriesPerSourceDatasetReadable.tsv'))
+    tsv_writer([(n, get_nick_name(noffset_to_synset(s))) if is_noffset(s) else s
+        for (n, v) in sourceDataset_to_excludeSourceLabels.iteritems() for s in v], 
+        op.join(dataset._data_root, 'trainX.excludeCategoriesPerSourceDatasetReadable.tsv'))
 
 class TSVTransformer(object):
     def __init__(self):
@@ -865,6 +864,11 @@ class TSVDatasetSource(TSVDataset, DatasetSource):
                 continue
             if node.name in self._targetlabel_to_sourcelabels:
                 sourcelabels = self._targetlabel_to_sourcelabels[node.name]
+                node.add_feature(self.name, ','.join(sourcelabels))
+                if any(is_noffset(l) for l in sourcelabels):
+                    node.add_feature(self.name + '_readable', 
+                            ','.join(get_nick_name(noffset_to_synset(l)) if
+                                is_noffset(l) else l for l in sourcelabels))
                 for sourcelabel in sourcelabels:
                     c = self._datasetlabel_to_count.get(sourcelabel, 0)
                     if self._type == 'with_bb':
@@ -1108,6 +1112,56 @@ def node_should_have_images(root, th, fname):
         logging.info('con. every node has at least {} images'.format(th))
     else:
         write_to_yaml_file(few_training, fname)
+
+def clean_dataset(source_dataset_name, dest_dataset_name):
+    source_dataset = TSVDataset(source_dataset_name)
+    dest_dataset = TSVDataset(dest_dataset_name)
+    splits = ['train', 'trainval', 'test']
+    for split in splits:
+        src_tsv = source_dataset.get_data(split)
+        if op.isfile(src_tsv):
+            dest_tsv = dest_dataset.get_data(split)
+            def gen_rows():
+                rows = tsv_reader(src_tsv)
+                num_removed_images = 0
+                num_removed_rects = 0
+                for i, row in enumerate(rows):
+                    if (i % 1000) == 0:
+                        logging.info('#removedImages={};#removedRects={}'.format(
+                            num_removed_images, num_removed_rects))
+                    im = img_from_base64(row[-1])
+                    height, width = im.shape[:2]
+                    rects = json.loads(row[1])
+                    invalid = False
+                    to_remove = []
+                    for rect in rects:
+                        r = rect['rect']
+                        if all(s == 0 for s in r):
+                            continue
+                        cx, cy = (r[0] + r[2]) / 2., (r[1] + r[3]) / 2.
+                        w, h = r[2] - r[0], r[3] - r[1]
+                        if cx < 0 or cy < 0 or cx >= width or \
+                                cy >= height or w <= 1 or h <= 1 or \
+                                w >= width or h >= height:
+                            to_remove.append(rect)
+                    if len(to_remove) > 0:
+                        logging.info('before removing {}'.format(len(rects)))
+                        num_removed_rects = num_removed_rects + len(to_remove)
+                    for rect in to_remove:
+                        rects.remove(rect)
+                        r = rect['rect']
+                        logging.info('removing {}'.format(','.join(map(str,
+                                r))))
+                    if len(to_remove) > 0:
+                        logging.info('after removing {}'.format(len(rects)))
+                        if len(rects) > 0:
+                            yield row[0], json.dumps(rects), row[2]
+                        else:
+                            num_removed_images = num_removed_images + 1
+                            logging.info('removing image {}'.format(row[0]))
+                    else:
+                        yield row
+            tsv_writer(gen_rows(), dest_tsv)
 
 def build_taxonomy_impl(taxonomy_folder, **kwargs):
     random.seed(777)
