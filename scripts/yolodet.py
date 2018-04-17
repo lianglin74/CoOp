@@ -28,8 +28,9 @@ def parse_args(arg_list):
     """Parse input arguments."""
     parser = argparse.ArgumentParser(description='dnn finetune')
     parser = argparse.ArgumentParser(description='Faster R-CNN demo')
-    parser.add_argument('--gpus', dest='gpus', help='GPU device id to use [0]',
-            default='0')
+    parser.add_argument('-g', '--gpus', help='GPU device id to use [0], e.g. -g 0 1 2 3.',
+            type=int,
+            nargs='+')
     parser.add_argument('--net', dest='net', help='Network to use')
     parser.add_argument('--model', required=False, default='', help='caffe model file')
     parser.add_argument('--intsv', required=True,   help='input tsv file for images, col_0:key, col_1:imgbase64')
