@@ -160,7 +160,11 @@ class TSVDataset(object):
             for row in rows:
                 assert row[0] not in result
                 assert len(row) == 2
-                result[row[0]] = map(int, row[1].split(' '))
+                ss = row[1].split(' ')
+                if len(ss) == 0:
+                    result[row[0]] = []
+                else:
+                    result[row[0]] = map(int, ss)
             return result 
 
     def iter_data(self, split, t=None):
