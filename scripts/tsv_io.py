@@ -278,6 +278,23 @@ def load_labelmap(data):
     dataset = TSVDataset(data)
     return dataset.load_labelmap()
 
+def get_all_data_info2(name=None):
+    if name is None:
+        return os.listdir('./data')
+    else:
+        dataset = TSVDataset(name)
+        if not op.isfile(dataset.get_labelmap_file()):
+            return []
+        labels = dataset.load_labelmap()
+        valid_splits = []
+        if len(dataset.get_train_tsvs()) > 0:
+            valid_splits.append('train')
+        for split in ['trainval', 'test']:
+            if not op.isfile(dataset.get_data(split)):
+                continue
+            valid_splits.append(split)
+        name_splits_labels = [(name, valid_splits, labels)]
+    return name_splits_labels
 
 def get_all_data_info():
     names = os.listdir('./data')

@@ -28,6 +28,7 @@ from qd_common import readable_confusion_entry
 from process_tsv import gt_predict_images
 from qd_common import get_target_images
 from tsv_io import get_all_data_info
+from tsv_io import get_all_data_info2
 from qd_common import get_all_model_expid
 from qd_common import get_parameters_by_full_expid
 from process_tsv import get_confusion_matrix_by_predict_file
@@ -302,7 +303,15 @@ def view_image2(request):
     if request.GET.get('data', '') == '':
         curr_dir = os.curdir
         os.chdir(get_qd_root())
-        name_splits_labels = get_all_data_info()
+        #name_splits_labels = get_all_data_info()
+        names = get_all_data_info2()
+        os.chdir(curr_dir)
+        context = {'names': names}
+        return render(request, 'detection/data_list.html', context)
+    elif request.GET.get('split', '') == '':
+        curr_dir = os.curdir
+        os.chdir(get_qd_root())
+        name_splits_labels = get_all_data_info2(request.GET['data'])
         os.chdir(curr_dir)
         context = {'name_splits_labels': name_splits_labels}
         return render(request, 'detection/image_overview.html', context)
