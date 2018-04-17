@@ -161,7 +161,7 @@ class TSVDataset(object):
                 assert row[0] not in result
                 assert len(row) == 2
                 ss = row[1].split(' ')
-                if len(ss) == 0:
+                if len(ss) == 1 and ss[0] == '':
                     result[row[0]] = []
                 else:
                     result[row[0]] = map(int, ss)
