@@ -1101,13 +1101,16 @@ def trainval_split(dataset, num_test_each_label):
 
 def convert_one_label(rects, label_mapper):
     to_remove = []
+    rects2 = []
     for rect in rects:
         if rect['class'] in label_mapper:
-            rect['class'] = label_mapper[rect['class']]
-        else:
-            to_remove.append(rect)
-    for t in to_remove:
-        rects.remove(t)
+            for t in label_mapper[rect['class']]:
+                r2 = copy.deepcopy(rect)
+                assert type(t) is str or type(t) is unicode
+                r2['class'] = t 
+                rects2.append(r2)
+    rects[:] = []
+    rects.extend(rects2)
 
 def convert_label(label_tsv, idx, label_mapper):
     '''
@@ -1120,6 +1123,7 @@ def convert_label(label_tsv, idx, label_mapper):
         if result is None:
             result = [len(row) * ['d']] * tsv.num_rows()
         rects2 = []
+        # the following code should use convert_one_label
         for rect in rects:
             if rect['class'] in label_mapper:
                 for t in label_mapper[rect['class']]:
