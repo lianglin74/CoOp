@@ -163,28 +163,42 @@ def load_baseline(baselinefolder) :
             retdict[expname] = report_metrics;
     return retdict;
 
-def _eval(truths, detresults, ovthresh):
+def _eval(truths, detresults, ovthresh, confs=None):
+    if confs is None:
+        confs = [0.3, 0.5, 0.9]
     #calculate metrics
-    y_scores = [];
-    y_trues = [];
-    npos = 0;
-    apdict = dict();
+    y_scores = []
+    y_trues = []
+    npos = 0
+    class_thresh = dict()
+    apdict = dict()
     for label in sorted(truths.keys()):
         if label not in detresults:
             continue;
-        c_detects = detresults[label];        #detection results for current class
-        c_truths = truths[label];             #truths for current class
+        c_detects = detresults[label]        #detection results for current class
+        c_truths = truths[label]             #truths for current class
         (c_y_scores, c_y_trues, c_npos) = evaluate_(c_detects, c_truths, ovthresh)
-        if len(c_detects)>0:
+        if confs and np.sum(c_y_trues):
+            precision, recall, thresholds = metrics.precision_recall_curve(c_y_trues, c_y_scores)
+            for conf in confs:
+                indices, = np.where((precision > conf) & (recall > 0.0))
+                if len(indices) == 0:
+                    continue
+                if label not in class_thresh:
+                    class_thresh[label] = {}
+                class_thresh[label].update({
+                    conf: (thresholds[indices[0]], recall[indices[0]])
+                })
+        if len(c_detects) > 0:
             c_true_sum = np.sum(c_y_trues)
             ap = metrics.average_precision_score(c_y_trues, c_y_scores) * c_true_sum/c_npos if c_true_sum > 0 else 0
-            y_scores += [c_y_scores];
-            y_trues += [c_y_trues];
-            apdict[label] = ap;
+            y_scores += [c_y_scores]
+            y_trues += [c_y_trues]
+            apdict[label] = ap
         else:
-            apdict[label]=0;
-        npos += c_npos;
-    map = sum(apdict.values())/len(truths);
+            apdict[label] = 0
+        npos += c_npos
+    map = sum(apdict.values())/len(truths)
     y_trues = np.hstack(y_trues) if len(y_trues) != 0 else np.array([0])
     y_scores = np.hstack(y_scores) if len(y_scores) != 0 else np.array([0])
     coverage_ratio = float(np.sum(y_trues))/npos if npos != 0 else 0
@@ -202,14 +216,16 @@ def _eval(truths, detresults, ovthresh):
     #plot the PR-curve, and compare with baseline results
     recall *= coverage_ratio;
     recall = list(recall);    
-    return  { 'class_ap':apdict,
-            'map': map,
-            'precision' : precision,
-            'recall' : recall,
-            'thresholds' : thresholds,
-            'npos': npos,
-            'coverage_ratio' : coverage_ratio
-            }
+    return {
+        'class_ap': apdict,
+        'class_thresh': class_thresh,
+        'map': map,
+        'precision': precision,
+        'recall': recall,
+        'thresholds': thresholds,
+        'npos': npos,
+        'coverage_ratio': coverage_ratio
+    }
 
 def eval(truthsfile, detsfile, ovthresh):
     truths = load_truths(truthsfile);
