@@ -898,7 +898,7 @@ class TSVDatasetSource(TSVDataset, DatasetSource):
                 else:
                     self._type = 'no_bb'
                 break
-        assert self._type is not None
+        assert self._type is not None, "{} is bad".format(self.name)
         logging.info('identify {} as {}'.format(self.name, self._type))
         
         # list of <split, label, idx>
