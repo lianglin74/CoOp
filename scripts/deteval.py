@@ -394,11 +394,11 @@ def deteval(truth='', dets='', vocdets='', name='',
         assert False, "argument dets/vocdets is missing!"
         
     truths = load_truths(truthsfile);
-    if kwargs.get('yolo_tree_eval_label_lift', True) and \
-            'target_synset_tree' in kwargs:
+    if 'target_synset_tree' in kwargs:
         label_tree = LabelTree(kwargs['target_synset_tree']) 
         truths = lift_truths(truths, label_tree)
-        detresults = lift_detects(detresults, label_tree)
+        if kwargs.get('yolo_tree_eval_label_lift', True):
+            detresults = lift_detects(detresults, label_tree)
 
     #brief report on different object size
     reports = get_report(truths, detresults, ovthresh, multiscale)
