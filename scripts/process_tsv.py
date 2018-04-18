@@ -63,6 +63,7 @@ from qd_common import parse_test_data
 from tsv_io import load_labels
 import unicodedata
 from taxonomy import is_noffset
+import copy
 
 
 def update_yolo_test_proto(input_test, test_data, map_file, output_test):
@@ -530,8 +531,8 @@ def create_index_composite_dataset(dataset):
         sourceDataset_to_includedSourceLabels.iteritems()], op.join(dataset._data_root, 
             'trainX.includeCategoriesPerSourceDataset.tsv'))
 
-    tsv_writer([(n, get_nick_name(noffset_to_synset(s))) if is_noffset(s) else
-        s for (n, v) in sourceDataset_to_includedSourceLabels.iteritems() 
+    tsv_writer([(n, get_nick_name(noffset_to_synset(s)) if is_noffset(s) else
+        s) for (n, v) in sourceDataset_to_includedSourceLabels.iteritems() 
           for s in v], op.join(dataset._data_root, 
             'trainX.includeCategoriesPerSourceDatasetReadable.tsv'))
     
@@ -550,8 +551,8 @@ def create_index_composite_dataset(dataset):
         sourceDataset_to_excludeSourceLabels.iteritems()], op.join(dataset._data_root, 
             'trainX.excludeCategoriesPerSourceDataset.tsv'))
 
-    tsv_writer([(n, get_nick_name(noffset_to_synset(s))) if is_noffset(s) else s
-        for (n, v) in sourceDataset_to_excludeSourceLabels.iteritems() for s in v], 
+    tsv_writer([(n, get_nick_name(noffset_to_synset(s)) if is_noffset(s) else
+        s) for (n, v) in sourceDataset_to_excludeSourceLabels.iteritems() for s in v], 
         op.join(dataset._data_root, 'trainX.excludeCategoriesPerSourceDatasetReadable.tsv'))
 
 class TSVTransformer(object):
@@ -864,7 +865,16 @@ class TSVDatasetSource(TSVDataset, DatasetSource):
                 continue
             if node.name in self._targetlabel_to_sourcelabels:
                 sourcelabels = self._targetlabel_to_sourcelabels[node.name]
-                node.add_feature(self.name, ','.join(sourcelabels))
+                if hasattr(node, self.name):
+                    original = node.__getattribute__(self.name)
+                    if original is not None:
+                        originals = original.split(',')
+                        for o in originals:
+                            assert o in sourcelabels
+                        for s in sourcelabels:
+                            assert s in originals
+                else:
+                    node.add_feature(self.name, ','.join(sourcelabels))
                 if any(is_noffset(l) for l in sourcelabels):
                     node.add_feature(self.name + '_readable', 
                             ','.join(get_nick_name(noffset_to_synset(l)) if
@@ -915,12 +925,13 @@ class TSVDatasetSource(TSVDataset, DatasetSource):
         self._datasetlabel_to_count = {l: len(self._datasetlabel_to_splitidx[l]) for l in
                 self._datasetlabel_to_splitidx}
 
-        self._datasetlabel_to_rootlabel = self.get_label_mapper()
+        self.update_label_mapper()
         self._initialized = True
 
-    def get_label_mapper(self):
+    def update_label_mapper(self):
         root = self._root
         labelmap = self.load_labelmap()
+        hash_labelmap = set(labelmap)
         noffsets = self.load_noffsets()
         tree_noffsets = {}
         for node in root.iter_search_nodes():
@@ -928,52 +939,88 @@ class TSVDatasetSource(TSVDataset, DatasetSource):
                 continue
             for s in node.noffset.split(','):
                 tree_noffsets[s] = node.name
-        tree_labels = {}
+        name_to_targetlabels = {}
+        targetlabel_has_whitelist = set()
         for node in root.iter_search_nodes():
             if node == root:
                 continue
-            assert node.name.lower() not in tree_labels
-            # we will keep the lower case always for case-insensitive
-            # comparison
-            tree_labels[node.name.lower()] = node.name
-
-            #if hasattr(node, 'noffset') and node.noffset:
-                #alter_terms = [s.strip() for s in node.noffset.split(',')]
-                #for term in alter_terms:
-                    #if term.lower() in tree_labels:
-                        #assert tree_labels[term.lower()] == node.name
-                    #else:
-                        #tree_labels[term.lower()] = node.name
-
-            #if hasattr(node, 'alternateTerms'):
-                #alter_terms = [s.strip() for s in node.alternateTerms.split(',')]
-                #for term in alter_terms:
-                    #if term.lower() in tree_labels:
-                        #assert tree_labels[term.lower()] == node.name
-                    #else:
-                        #tree_labels[term.lower()] = node.name
+            if hasattr(node, self.name):
+                # this is like a white-list
+                values = node.__getattribute__(self.name)
+                if values is not None:
+                    source_terms = values.split(',')
+                    for t in source_terms:
+                        t = t.lower()
+                        if t not in name_to_targetlabels:
+                            name_to_targetlabels[t] = set()
+                        assert t in hash_labelmap, '{} is invalid for {}'.format(
+                                t, node.name)
+                        name_to_targetlabels[t].add(node.name)
+                # even if it is None, we will also add it to white-list so that
+                # we will not automatically match the term.
+                targetlabel_has_whitelist.add(node.name)
+            else:
+                # we will keep the lower case always for case-insensitive
+                # comparison
+                t = node.name.lower()
+                if t not in name_to_targetlabels:
+                    name_to_targetlabels[t] = set()
+                name_to_targetlabels[t].add(node.name)
 
         sourcelabel_targetlabel = [] 
 
-        result = {}
+        #result = {}
         for l, ns in izip(labelmap, noffsets):
-            if l.lower() in tree_labels:
-                sourcelabel_targetlabel.append((l, tree_labels[l.lower()]))
-                result[l] = tree_labels[l.lower()]
+            if l.lower() in name_to_targetlabels:
+                for t in name_to_targetlabels[l.lower()]:
+                    sourcelabel_targetlabel.append((l, t))
             elif ns != '':
                 for n in ns.split(','):
                     n = n.strip()
                     if n in tree_noffsets:
-                        sourcelabel_targetlabel.append((l, tree_noffsets[n]))
-                        result[l] = tree_noffsets[n]
+                        t = tree_noffsets[n]
+                        if t in targetlabel_has_whitelist:
+                            # if it has white list, we will not respect the
+                            # noffset to do the autmatic matching
+                            continue
+                        sourcelabel_targetlabel.append((l, t))
+                        #result[l] = t 
 
         self._sourcelabel_targetlabel = sourcelabel_targetlabel
         self._sourcelabel_to_targetlabels = list_to_dict(sourcelabel_targetlabel,
                 0)
         self._targetlabel_to_sourcelabels = list_to_dict(sourcelabel_targetlabel,
                 1)
-    
-        return result
+        
+        name_to_node = None
+        for sourcelabel in self._sourcelabel_to_targetlabels:
+            targetlabels = self._sourcelabel_to_targetlabels[sourcelabel]
+            # for all these target labels, if A is the parent of B, remove A.
+            if len(targetlabels) > 1:
+                if name_to_node is None:
+                    name_to_node = {node.name: node for node in root.iter_search_nodes() if
+                            node != root}
+                targetnodes = [name_to_node[l] for l in targetlabels]
+                validnodes = []
+                for n in targetnodes:
+                    ancestors = node.get_ancestors()[:-1]
+                    to_remove = []
+                    for v in validnodes:
+                        if v in ancestors:
+                            to_remove.append(v)
+                    for t in to_remove:
+                        validnodes.remove(t)
+                    can_add = True
+                    for v in validnodes:
+                        if n in v.get_ancestors()[:-1]:
+                            can_add = False
+                            break
+                    if can_add:
+                        validnodes.append(n)
+                targetlabels[:] = []
+                targetlabels.extend(v.name for v in validnodes)
+
+        return self._sourcelabel_to_targetlabels
 
     def select_tsv_rows(self, label_type):
         self._ensure_initialized()
@@ -982,16 +1029,17 @@ class TSVDatasetSource(TSVDataset, DatasetSource):
             return []
         result = []
         for datasetlabel in self._datasetlabel_to_splitidx:
-            if datasetlabel in self._datasetlabel_to_rootlabel:
+            if datasetlabel in self._sourcelabel_to_targetlabels:
                 split_idxes = self._datasetlabel_to_splitidx[datasetlabel]
-                rootlabel = self._datasetlabel_to_rootlabel[datasetlabel]
-                result.extend([(rootlabel, split, idx) for split, idx in
-                    split_idxes])
+                targetlabels = self._sourcelabel_to_targetlabels[datasetlabel]
+                for rootlabel in targetlabels:
+                    result.extend([(rootlabel, split, idx) for split, idx in
+                        split_idxes])
         return result
 
     def gen_tsv_rows(self, root, label_type):
         selected_info = self.select_tsv_rows(root, label_type)
-        mapper = self._datasetlabel_to_rootlabel
+        mapper = self._sourcelabel_to_targetlabels
         for split, idx in selected_info:
             data_tsv = TSVFile(self.get_data(split))
             for i in idx:
@@ -1071,16 +1119,15 @@ def convert_label(label_tsv, idx, label_mapper):
         rects = json.loads(row[1])
         if result is None:
             result = [len(row) * ['d']] * tsv.num_rows()
-        to_remove = []
+        rects2 = []
         for rect in rects:
             if rect['class'] in label_mapper:
-                rect['class'] = label_mapper[rect['class']]
-            else:
-                to_remove.append(rect)
-        for t in to_remove:
-            rects.remove(t)
-        assert len(rects) > 0
-        row[1] = json.dumps(rects)
+                for t in label_mapper[rect['class']]:
+                    r2 = copy.deepcopy(rect)
+                    r2['class'] = t 
+                    rects2.append(r2)
+        assert len(rects2) > 0
+        row[1] = json.dumps(rects2)
         result[i] = row
     return result
 
@@ -1127,8 +1174,8 @@ def clean_dataset(source_dataset_name, dest_dataset_name):
                 num_removed_rects = 0
                 for i, row in enumerate(rows):
                     if (i % 1000) == 0:
-                        logging.info('#removedImages={};#removedRects={}'.format(
-                            num_removed_images, num_removed_rects))
+                        logging.info('{} - #removedImages={};#removedRects={}'.format(
+                            i, num_removed_images, num_removed_rects))
                     im = img_from_base64(row[-1])
                     height, width = im.shape[:2]
                     rects = json.loads(row[1])
@@ -1208,6 +1255,9 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
     label_map_file = overall_dataset.get_labelmap_file() 
     write_to_file('\n'.join(map(lambda l: l.encode('utf-8'), labels)), 
             label_map_file)
+    # save the parameter
+    write_to_yaml_file((taxonomy_folder, kwargs), op.join(overall_dataset._data_root,
+            'generate_parameters.yaml'))
 
     out_dataset = {'with_bb': TSVDataset(dataset_name + '_with_bb'),
             'no_bb': TSVDataset(dataset_name + '_no_bb')}
@@ -1280,7 +1330,7 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
                 for rootlabel, split, idx in split_idxes:
                     ldtsi.append((rootlabel, dataset, label_type, split, idx))
         # split into train val
-        num_test = 50
+        num_test = kwargs.get('num_test', 50)
         logging.info('splitting the images into train and test')
         # group by label_type
         t_to_ldsi = list_to_dict(ldtsi, 2)
@@ -1345,7 +1395,7 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
                     logging.info('converting labels: {}-{}'.format(
                         dataset.name, split))
                     converted_label = convert_label(dataset.get_data(split, 'label'),
-                            idx, dataset._datasetlabel_to_rootlabel)
+                            idx, dataset._sourcelabel_to_targetlabels)
                     label_file = out_dataset[label_type].get_data(out_split, 'label')
                     tsv_writer(converted_label, label_file)
                     sources_label.append(label_file)
@@ -1397,9 +1447,8 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
         for label_type in type_to_ldsik:
             ldsik = type_to_ldsik[label_type]
             random.shuffle(ldsik)
-            shuffle_str = '\n'.join(['{}\t{}'.format(k, i) for l, d, s, i, k in
-                ldsik])
-            write_to_file(shuffle_str,
+            shuffle_info = [(str(k), str(i)) for l, d, s, i, k in ldsik]
+            tsv_writer(shuffle_info,
                     out_dataset[label_type].get_shuffle_file('train'))
 
         logging.info('writing the test data')
@@ -1419,7 +1468,7 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
                             row = tsv.seek(i)
                             rects = json.loads(row[1])
                             convert_one_label(rects, 
-                                    dataset._datasetlabel_to_rootlabel)
+                                    dataset._sourcelabel_to_targetlabels)
                             assert len(rects) > 0
                             row[1] = json.dumps(rects)
                             row[0] = '{}_{}_{}'.format(dataset.name,
