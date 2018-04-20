@@ -10,10 +10,12 @@ import matplotlib.pyplot as plt
 import glob;
 from pytablemd import write_tablemd
 from functools import partial
+from qd_common import FileProgressingbar, worth_create
 import logging
 import copy
 
 def load_truths(filein):
+    logging.info('loading gt')
     '''
     Return: dict [class][image id] => bboxes
     '''
@@ -24,7 +26,11 @@ def load_truths(filein):
             if len(cols)<2:
                 continue;
             key = cols[0]
-            rects = json.loads(cols[1]) if cols[1]!='' else [];
+            try:
+                rects = json.loads(cols[1]) if cols[1]!='' else [];
+            except: 
+                logging.info('invalid grouth truth: {}'.format(cols[0]))
+                continue
             for rect in rects:
                 label = rect['class'].strip();
                 if label not in retdict:
@@ -62,6 +68,7 @@ def load_dets(filein):
     '''
     retdict = dict();
     with open(filein, "r") as tsvin:
+        bar = FileProgressingbar(tsvin, 'load-dets')
         for line in tsvin:
             cols = [x.strip() for x in line.split("\t")]
             if len(cols)<2:
@@ -75,6 +82,7 @@ def load_dets(filein):
                 if label not in retdict:
                     retdict[label]=[]
                 retdict[label] += [ (key,rect['conf'],bbox)]
+            bar.update()
     for label in retdict:
         retdict[label] = sorted(retdict[label], key=lambda x:-x[1])
     return retdict;
@@ -96,7 +104,6 @@ def evaluate_(c_detects, c_truths, ovthresh):
     Return: (a list of confs, a list of hit or miss, number of ground truth boxes) 
     '''
     #calculate npos
-    c_truths_not_hard = dict()
     npos = 0;
     for img_id in c_truths:
         npos += len([difficulty_gtbox for difficulty_gtbox in c_truths[img_id] if difficulty_gtbox[0] == 0])
@@ -174,6 +181,7 @@ def _eval(truths, detresults, ovthresh, confs=None):
     apdict = dict()
     for label in sorted(truths.keys()):
         if label not in detresults:
+            apdict[label] = 0
             continue;
         c_detects = detresults[label]        #detection results for current class
         c_truths = truths[label]             #truths for current class
@@ -398,8 +406,10 @@ def deteval(truth='', dets='', vocdets='', name='',
     report_name = exp_name if report_dir=='' else '/'.join([report_dir,exp_name]);
     report_file = report_name + ".report" 
 
-    if os.path.isfile(report_file):
-        print 'skip to evaluate since the report file exists, ', report_file
+    if os.path.isfile(report_file) and \
+            not kwargs.get('force_evaluate', False) and \
+            not worth_create(detsfile, report_file):
+        logging.info('skip to evaluate (exists) {}'.format(report_file))
         return report_file
 
     if dets!='' :

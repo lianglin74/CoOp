@@ -404,7 +404,7 @@ def setup_yaml():
     yaml.add_representer(OrderedDict, represent_dict_order)    
 
 def init_logging():
-    np.seterr(all='raise')
+    np.seterr(divide = "raise", over="warn", under="warn",  invalid="raise")
     logging.basicConfig(level=logging.INFO,
     format='%(asctime)s.%(msecs)03d %(filename)s:%(lineno)s %(funcName)10s(): %(message)s',
     datefmt='%m-%d %H:%M:%S',
