@@ -457,7 +457,7 @@ def create_index_composite_dataset(dataset):
     # how many images are contributed from each data source
     trainX_file = dataset.get_data('trainX')
     source_tsvs = load_list_file(trainX_file)
-    num_images_per_dataset = [None] * len(source_tsvs)
+    num_images_per_datasource = [None] * len(source_tsvs)
 
     shuffle_file = dataset.get_shuffle_file('train')
     rows = tsv_reader(shuffle_file)
@@ -469,10 +469,10 @@ def create_index_composite_dataset(dataset):
 
     idxSource_to_idxRows = list_to_dict(all_idxSource_idxRow, 0)
     for idxSource in idxSource_to_idxRows:
-        assert num_images_per_dataset[idxSource] is None
-        num_images_per_dataset[idxSource] = len(idxSource_to_idxRows[idxSource])
+        assert num_images_per_datasource[idxSource] is None
+        num_images_per_datasource[idxSource] = len(idxSource_to_idxRows[idxSource])
     tsv_writer([(name, str(num)) for name, num in zip(source_tsvs,
-        num_images_per_dataset)], fname_numImagesPerSource)
+        num_images_per_datasource)], fname_numImagesPerSource)
 
     # for each data source, how many labels are contributed and how many are
     # not
@@ -490,14 +490,14 @@ def create_index_composite_dataset(dataset):
         source_rects = json.loads(source_tsv_labels[idx_source].seek(idx_row)[-1])
         dest_rects = json.loads(dest_labels[idx_source].seek(idx_row)[-1])
         for r in dest_rects:
-            matched = []
+            sr = None
             for s in source_rects:
                 if all(x == y for (x, y) in zip(s['rect'], r['rect'])):
-                    matched.append(s)
-            # the mapped one may not be the first one, here we choose the first
-            # one for simplicity
-            sr = matched[0]
+                    sr = s
+                    break
+            # move to the end
             source_rects.remove(sr)
+            source_rects.append(sr)
             all_idxSource_sourceLabel_destLabel.append((idx_source,
                 sr['class'], r['class']))
 
@@ -868,7 +868,7 @@ class TSVDatasetSource(TSVDataset, DatasetSource):
                 if hasattr(node, self.name):
                     original = node.__getattribute__(self.name)
                     if original is not None:
-                        originals = original.split(',')
+                        originals = [o.strip() for o in original.split(',')]
                         for o in originals:
                             assert o in sourcelabels
                         for s in sourcelabels:
@@ -941,6 +941,7 @@ class TSVDatasetSource(TSVDataset, DatasetSource):
                 tree_noffsets[s] = node.name
         name_to_targetlabels = {}
         targetlabel_has_whitelist = set()
+        invalid_list = []
         for node in root.iter_search_nodes():
             if node == root:
                 continue
@@ -950,11 +951,11 @@ class TSVDatasetSource(TSVDataset, DatasetSource):
                 if values is not None:
                     source_terms = values.split(',')
                     for t in source_terms:
-                        t = t.lower()
+                        t = t.lower().strip()
                         if t not in name_to_targetlabels:
                             name_to_targetlabels[t] = set()
-                        assert t in hash_labelmap, '{} is invalid for {}'.format(
-                                t, node.name)
+                        if t not in hash_labelmap:
+                            invalid_list.append((t, self.name, node.name))
                         name_to_targetlabels[t].add(node.name)
                 # even if it is None, we will also add it to white-list so that
                 # we will not automatically match the term.
@@ -968,6 +969,7 @@ class TSVDatasetSource(TSVDataset, DatasetSource):
                 name_to_targetlabels[t].add(node.name)
 
         sourcelabel_targetlabel = [] 
+        assert len(invalid_list) == 0, pformat(invalid_list)
 
         #result = {}
         for l, ns in izip(labelmap, noffsets):
@@ -1262,6 +1264,11 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
     # save the parameter
     write_to_yaml_file((taxonomy_folder, kwargs), op.join(overall_dataset._data_root,
             'generate_parameters.yaml'))
+    dest_taxonomy_folder = op.join(overall_dataset._data_root,
+            'taxonomy_folder')
+    if op.isdir(dest_taxonomy_folder):
+        shutil.rmtree(dest_taxonomy_folder)
+    shutil.copytree(taxonomy_folder, dest_taxonomy_folder)
 
     out_dataset = {'with_bb': TSVDataset(dataset_name + '_with_bb'),
             'no_bb': TSVDataset(dataset_name + '_no_bb')}

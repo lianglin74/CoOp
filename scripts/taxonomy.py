@@ -549,7 +549,9 @@ class Taxonomy(object):
             if one is None:
                 one = 'None'
             assert type(one) is str or type(one) is unicode
-            root.add_child(name=one)
+            sub_root = root.add_child(name=one)
+            child_subgroups = getattr(root, 'child_subgroups', -1)
+            sub_root.add_features(sub_group=child_subgroups)
 
     def build_from_local(self):
         tax = self.tax
