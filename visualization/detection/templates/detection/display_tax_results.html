@@ -4,8 +4,7 @@
 
 <h3>Taxonomy Validation Results</h3>
 
-<p>{{error}}</p>
-
+<p>{{error|linebreaksbr}}</p>
 
 {% for file_ob in files %}
 <a href='{{ file_ob.file.url }}' download>{{ file_ob.name }}</a>

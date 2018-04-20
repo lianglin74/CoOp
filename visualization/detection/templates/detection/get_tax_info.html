@@ -8,6 +8,13 @@
 
 <form enctype="multipart/form-data" method="POST">
   {% csrf_token %}
+  <label>Please input a dataset name, e.g. Tax4K_V1_7: </label>
+  <input type="text" name="out_data" value="X">
+  <label>Note: if the dataset name exists, we will not create a newer one.</label>
+  <br>
+  <label>Data Sources seperated by comma: </label>
+  <input type="text" name="str_datas" value="{{ str_datas }}" /> 
+  <br>
   <input type="file" value="Browse" name="file_input" required=true>
   <br/><br/>
   <input type="submit" value="Submit" />

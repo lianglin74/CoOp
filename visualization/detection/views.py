@@ -46,6 +46,8 @@ import sys
 import traceback2 as traceback
 from .models import *
 import django.core.files
+import logging
+
 init_logging()
 
 def run_in_qd(func):
@@ -326,92 +328,126 @@ def view_image2(request):
         result = view_image(request, data, split, label, start_id)
         return result
 
+def get_data_sources_for_composite():
+    datas=['coco2017',
+        'voc0712', 
+        'brand1048Clean',
+        'imagenet3k_448Clean',
+        'imagenet22k_448',
+        'imagenet1kLocClean',
+        'mturk700_url_as_keyClean',
+        'crawl_office_v1',
+        'crawl_office_v2',
+        'Materialist',
+        'VisualGenomeClean',
+        'Naturalist',
+        '4000_Full_setClean',
+        'MSLogoClean',
+        'clothingClean',
+        'open_images_clean_1',
+        'open_images_clean_2',
+        'open_images_clean_3',
+        ]
+    return datas
+
 @csrf_exempt
 def input_taxonomy(request):
-	print 'in input taxonomy'
-	if request.method == 'POST':
-		return validate_taxonomy(request)
-	return render(request, 'detection/get_tax_info.html', None)
+    print 'in input taxonomy'
+    if request.method == 'POST':
+        return validate_taxonomy(request)
+    datas = get_data_sources_for_composite() 
+    str_datas = ','.join(datas)
+    return render(request, 
+            'detection/get_tax_info.html', 
+            {'str_datas': str_datas})
 
 @csrf_exempt
 def validate_taxonomy(request):
-	print 'In validate taxonomy'
-	print request
-	print request.POST.get('file_input')
-	handle_uploaded_file(request.FILES['file_input'])
-	kwargs_mimic = dict()
-	kwargs_mimic['type'] = 'taxonomy_to_tsv'
-	kwargs_mimic['input'] = '/home/meghna/Code/quickdetection/visualization/taxonomy/'
-	kwargs_mimic['data'] = 'Tax4kV1'
-	kwargs_mimic['datas'] = ['coco2017', 'voc0712', 'brand1048', 'imagenet3k_448', 'imagenet1kLoc', 'mturk700url_as_key', 'crawl_office_v1', 'crawl_office_v2', 'Materialist', 'Visual_Genome', 'Naturalist', '4000_Set_1', '4000_Set_2', 'clothing', 'MSLogo', 'open_images']
-	try:
-		build_taxonomy_impl(kwargs_mimic['input'], **kwargs_mimic)
-	except Exception, e:
-		print str(e)
-		context=dict()
-		context['files'] = []
-		if str(e) == "":
-			context['error'] = 'Taxonomy successfully verified'
-			files = return_download_list('/home/meghna/Code/quickdetection/data/Tax4kV1/')
-                	clean_up_taxonomy_folders('/home/meghna/Code/quickdetection/data/')
-			context['files'] = files
-		else:
-			trace = (traceback.format_exc())
-			context['error'] = trace
-		return render(request, 'detection/display_tax_results.html', context)
-	context ={'error':'Taxonomy successfully verified'}
-	files = return_download_list('/home/meghna/Code/quickdetection/data/Tax4kV1/')
-	clean_up_taxonomy_folders('/home/meghna/Code/quickdetection/data/')
-        context['files'] = files
-	return render(request, 'detection/display_tax_results.html', context)
-
+    logging.info('In validate taxonomy')
+    logging.info(request)
+    logging.info(request.POST.get('file_input'))
+    out_data = request.POST.get('out_data')
+    if out_data is None or len(out_data) == 0:
+        return render(request, 'detection/display_tax_results.html',
+                {'error': 'Please specify the out dataset name'})
+    handle_uploaded_file(request.FILES['file_input'])
+    kwargs_mimic = dict()
+    kwargs_mimic['type'] = 'taxonomy_to_tsv'
+    kwargs_mimic['input'] = op.join(get_qd_root(),
+            'visualization/taxonomy/')
+    kwargs_mimic['data'] = out_data 
+    kwargs_mimic['datas'] = [s.strip() for s in
+        request.POST.get('str_datas').split(',')]
+    if len(kwargs_mimic['datas']) <= 0 or \
+            len(kwargs_mimic['datas']) == 1 and kwargs_mimic['datas'][0] == '':
+        return render(request, 'detection/display_tax_results.html',
+                {'error': 'Please specify at least one data source'})
+    try:
+    	build_taxonomy_impl(kwargs_mimic['input'], **kwargs_mimic)
+    except Exception, e:
+    	print str(e)
+    	context=dict()
+    	context['files'] = []
+    	if str(e) == "":
+    		context['error'] = 'Taxonomy successfully verified'
+    		files = return_download_list(op.join(get_qd_root(),
+                        'data/{}/'.format(out_data)))
+    		context['files'] = files
+    	else:
+    		trace = (traceback.format_exc())
+    		context['error'] = trace
+    	return render(request, 'detection/display_tax_results.html', context)
+    context ={'error': 'Taxonomy successfully verified'}
+    files = return_download_list(op.join(get_qd_root(), 
+        'data', out_data))
+    context['files'] = files
+    return render(request, 'detection/display_tax_results.html', context)
 
 def handle_uploaded_file(f):
-    with open('/home/meghna/Code/quickdetection/visualization/taxonomy/taxonomy.yaml', 'w') as destination:
+    fname = op.join(get_qd_root(), 'visualization/taxonomy/taxonomy.yaml')
+    with open(fname, 'w') as destination:
         for chunk in f.chunks():
             destination.write(chunk)
 
 def return_download_list(folder):
-	import os, shutil
-	files = []
-        for the_file in os.listdir(folder):
-		file_path = os.path.join(folder, the_file)
-		new_folder = '/home/meghna/Code/quickdetection/visualization/mysite/media/'
-		shutil.copy(file_path, new_folder)
-		file_path = os.path.join(new_folder, the_file)
-		fp = open(file_path, 'rb')
-		f = File.objects.create(name = the_file, file = django.core.files.File(fp))
-		f.url = '/media/' + f.file.name
-		f.save()
-		files.append(f)
-	print 'printing lengths'
-	print len(files)
-	for file_dj in files:
-		print file_dj.file.url
-	return files
+    import os, shutil
+    files = []
+    for the_file in os.listdir(folder):
+    	file_path = os.path.join(folder, the_file)
+        if not op.isfile(file_path):
+            continue
+    	new_folder = op.join(get_qd_root(), 'visualization/mysite/media/')
+    	shutil.copy(file_path, new_folder)
+    	file_path = os.path.join(new_folder, the_file)
+    	fp = open(file_path, 'rb')
+    	f = File.objects.create(name = the_file, file = django.core.files.File(fp))
+    	f.url = '/media/' + f.file.name
+    	f.save()
+    	files.append(f)
+    return files
 
 def clean_up_taxonomy_folders(folder):
-	import os, shutil
-	for the_file in os.listdir(folder):
-    		file_path = os.path.join(folder, the_file)
-    		try:
-			if os.path.islink(file_path):
-				continue
-        		if os.path.isdir(file_path): 
-				shutil.rmtree(file_path)
-    		except Exception as e:
-        		print(e)			
+    import os, shutil
+    for the_file in os.listdir(folder):
+    	file_path = os.path.join(folder, the_file)
+    	try:
+    	    if os.path.islink(file_path):
+    	        continue
+    	    if os.path.isdir(file_path): 
+    	        shutil.rmtree(file_path)
+    	except Exception as e:
+    	    print(e)			
 
 def download_file(request, *callback_args, **callback_kwargs):
-	request_url =' %s' % (request.get_full_path)
-	print request_url
-	file_path = request_url.split('\'')[1].split('http://10.137.68.61:8000/detection/media/')[0].replace('/detection/media','')
-	file_type = file_path.split('/')[-1].split('.')[-1]
-	file_name = file_path.split('/')[-1]
-	print file_path
-	print file_type
-	FilePointer = open(file_path,"r")
-	response = HttpResponse(FilePointer,content_type='application/'+file_type)
-	response['Content-Disposition'] = 'attachment; filename=' + file_name
-
-	return response
+    request_url =' %s' % (request.get_full_path)
+    print request_url
+    import ipdb;ipdb.set_trace(context=15)
+    file_path = request_url.split('\'')[1].split('http://10.137.68.61:8000/detection/media/')[0].replace('/detection/media','')
+    file_type = file_path.split('/')[-1].split('.')[-1]
+    file_name = file_path.split('/')[-1]
+    print file_path
+    print file_type
+    FilePointer = open(file_path,"r")
+    response = HttpResponse(FilePointer,content_type='application/'+file_type)
+    response['Content-Disposition'] = 'attachment; filename=' + file_name
+    return response
