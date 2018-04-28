@@ -1537,6 +1537,11 @@ def yolo_tree_train(**kwargs):
         assert c._is_train_finished()
         model = c.train()
     
+    # train it with no_bb as well
+    if len(TSVDataset(no_bb_data).get_num_train_image()) == 0:
+        logging.info('there is no training image for image-level label')
+        return
+
     no_bb_data = '{}_no_bb'.format(kwargs['data'])
     curr_task = copy.deepcopy(kwargs)
     curr_task['ovthresh'] = [-1]
@@ -1546,10 +1551,6 @@ def yolo_tree_train(**kwargs):
     p = c.predict(model)
     c.evaluate(model, p)
     
-    # train it with no_bb as well
-    if len(TSVDataset(no_bb_data).get_train_tsvs()) == 0:
-        logging.info('there is no training image for image-level label')
-        return
 
     dataset_ops = [{'op':'remove'},
             {'op':'add',

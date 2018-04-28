@@ -138,7 +138,13 @@ class TSVDataset(object):
                 t))
 
     def get_num_train_image(self):
-        return len(load_list_file(op.join(self._data_root, 'train.lineidx')))
+        if op.isfile(self.get_data('trainX')):
+            if op.isfile(self.get_shuffle_file('train')):
+                return len(load_list_file(self.get_shuffle_file('train')))
+            else:
+                return 0
+        else:
+            return len(load_list_file(op.join(self._data_root, 'train.lineidx')))
 
     def get_trainval_tsv(self, t=None):
         return self.get_data('trainval', t)
