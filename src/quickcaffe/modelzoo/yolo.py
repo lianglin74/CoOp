@@ -358,12 +358,13 @@ def add_yolo_test_loss(n, biases, num_classes, tree_file, class_specific_nms,
                                                'tree': tree_file
                                            })
         n.top_preds = L.SoftmaxTreePrediction(n.softmaxtree_conf,
-                                              n.sigmoid_obj,
-                                              softmaxtreeprediction_param={
-                                                'tree': tree_file,
-                                                'threshold': 0.5,
-                                                'output_tree_path': output_tree_path
-                                               })
+                  n.sigmoid_obj,
+                  softmaxtreeprediction_param={
+                    'tree': tree_file,
+	            'threshold': kwargs.get('softmax_tree_prediction_threshold',
+                        0.5),
+                    'output_tree_path': output_tree_path
+                  })
         n.bbox = L.YoloBBs(n.sigmoid_xy, n.wh, n.im_info,
                            yolobbs_param={
                                'biases': biases,

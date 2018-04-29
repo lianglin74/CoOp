@@ -137,9 +137,9 @@ def gt_predict_images(predicts, gts, test_data, target_images, start_id, thresho
         yield key, origin, im_gt, im_pred, image_aps[i][1]
 
 def get_confusion_matrix_by_predict_file(full_expid, 
-        predict_file, threshold, test_data_split='test'):
+        predict_file, threshold):
 
-    test_data = parse_test_data(predict_file)
+    test_data, test_data_split = parse_test_data(predict_file)
     predicts, _ = load_labels(op.join('output', full_expid, 'snapshot', predict_file))
 
     # load the gt
@@ -244,7 +244,11 @@ def tsv_details(tsv_file):
     for i, row in enumerate(rows):
         if (i % 1000) == 0:
             logging.info('get tsv details: {}-{}'.format(tsv_file, i))
-        rects = json.loads(row[1])
+        if row[1] == 'd':
+            # this is the deleted label
+            rects = []
+        else:
+            rects = json.loads(row[1])
         im = img_from_base64(row[2])
         height, width = im.shape[:2]
         if type(rects) is list:
@@ -1487,6 +1491,7 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
                             yield row
             tsv_writer(gen_test_rows(), 
                     out_dataset[label_type].get_test_tsv_file())
+    logging.info('done')
 
 def output_ambigous_noffsets(root, ambigous_noffset_file):
     ambigous = []

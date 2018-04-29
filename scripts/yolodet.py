@@ -394,14 +394,15 @@ def postfilter(im, scores, boxes, class_map, max_per_image=1000, thresh=0.005):
     
     return json.dumps(det_results)
 
-def detect_image(net, im, pixel_mean, names, stat=None, thresh=0):
+def detect_image(net, im, pixel_mean, names, stat=None, thresh=0,
+        yolo_tree=False):
     '''
     this is not used in evaluation
     '''
     scores, boxes = im_detect(net, im, pixel_mean, stat=stat)
     if stat:
         time_start = time.time()
-    bblist = result2bblist3(im, scores, boxes, names, thresh)
+    bblist = result2bblist3(im, scores, boxes, names, thresh, yolo_tree)
     if stat != None:
         time_curr = time.time()
         stat['result2bb'] = time_curr - time_start
@@ -413,7 +414,7 @@ def detect_image(net, im, pixel_mean, names, stat=None, thresh=0):
 
     return all_bb, all_label, all_conf
 
-def result2bblist3(im, probs, boxes, class_map, thresh=0):
+def result2bblist3(im, probs, boxes, class_map, thresh=0, yolo_tree=False):
     '''
     assume each box have more than one chance to be selected. 
     result2bblist2 is not good for tree-based taxonomy, but this is
@@ -422,7 +423,13 @@ def result2bblist3(im, probs, boxes, class_map, thresh=0):
     im_h, im_w = im.shape[0:2]
 
     # note: when it does the nms, the last one will not be reset
-    idx_bbox, idx_prob = np.where(probs[:, :-1] > thresh)
+    if not yolo_tree:
+        idx_bbox, idx_prob = np.where(probs[:, :-1] > thresh)
+    else:
+        idx_bbox = np.where(probs[:, -1] > thresh)[0]
+        probs = probs[idx_bbox, :]
+        boxes = boxes[idx_bbox, :]
+        idx_bbox, idx_prob = np.where(probs[:, :-1] > 0.01)
     unique_idx_bb = np.lib.arraysetops.unique(idx_bbox)
     unique_selected_boxes = boxes[unique_idx_bb, :]
     boxidx_to_uniquebox = {idx: i for i, idx in enumerate(unique_idx_bb)}
@@ -565,8 +572,11 @@ def tsvdet(caffenet, caffemodel, intsv_file, key_idx,img_idx, pixel_mean,
         scale, outtsv_file, **kwargs):
     if not caffemodel:
         caffemodel = op.splitext(caffenet)[0] + '.caffemodel'
-    labelmapfile = 'labelmap.txt' if 'cmap' not in kwargs else kwargs['cmap']
-    cmapfile = os.path.join(op.split(caffenet)[0], labelmapfile)
+    if 'cmapfile' not in kwargs:
+        labelmapfile = 'labelmap.txt' if 'cmap' not in kwargs else kwargs['cmap']
+        cmapfile = os.path.join(op.split(caffenet)[0], labelmapfile)
+    else:
+        cmapfile = kwargs['cmapfile']
     if not os.path.isfile(cmapfile):
         cmapfile = os.path.join(os.path.dirname(intsv_file), 'labelmap.txt')
         assert os.path.isfile(cmapfile), cmapfile

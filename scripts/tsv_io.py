@@ -286,7 +286,7 @@ def load_labelmap(data):
 
 def get_all_data_info2(name=None):
     if name is None:
-        return os.listdir('./data')
+        return sorted(os.listdir('./data'))
     else:
         dataset = TSVDataset(name)
         if not op.isfile(dataset.get_labelmap_file()):

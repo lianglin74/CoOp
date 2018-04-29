@@ -334,6 +334,8 @@ class CaffeWrapper(object):
             logging.info('using {}'.format(yaml_file))
             param = load_from_yaml_file(yaml_file)
             self._kwargs = param
+            if 'debug_detect' in param and 'debug_detect' not in kwargs:
+                del self._kwargs['debug_detect']
         # note if load_parameter is true, the self._kwargs has been initialized
         # by some parameters. Thus, don't overwrite it simply
         for k in kwargs: 
@@ -351,17 +353,10 @@ class CaffeWrapper(object):
             self._kwargs['target_synset_tree'] = source_dataset.get_tree_file()
 
         self._test_data = self._kwargs.get('test_data', data)
+        self._test_split = self._kwargs.get('test_split', 'test')
         self._test_dataset = TSVDataset(self._test_data)
-        self._test_source = self._path_env['test_source']
-        if self._test_data != self._data:
-            test_data_path = default_data_path(self._test_data)
-            self._test_source = test_data_path['test_source']
-            source_dataset = TSVDataset(self._test_data)
-            if self._kwargs.get('test_on_train', False):
-                self._test_source = source_dataset.get_train_tsv()
-            else:
-                self._test_source = source_dataset.get_test_tsv_file()
-        else:
+        self._test_source = self._test_dataset.get_data(self._test_split)
+        if self._test_data == self._data:
             source_dataset = TSVDataset(self._data)
             source_dataset.dynamic_update(self._kwargs.get('dataset_ops', []))
             if self._kwargs.get('test_on_train', False):
@@ -391,7 +386,7 @@ class CaffeWrapper(object):
         thresh = 0.24
         from demo_detection import predict_online
         predict_online(test_proto_file, model_param, pixel_mean, labels,
-                source_image_tsv, thresh, waitkey)
+                source_image_tsv, thresh, waitkey, gpu)
     
     def _get_num_classes(self):
         if 'num_classes' not in self._kwargs:
@@ -657,6 +652,10 @@ class CaffeWrapper(object):
     def _get_test_proto_file(self, model):
         surgery = False
         test_proto_file = model.test_proto_file
+        if self._kwargs.get('yolo_tree', False):
+            # Todo: gradually move all these logic to the model construction
+            # side. This function just returns the test_proto immediately.
+            return test_proto_file
         blame = self._kwargs.get('yolo_blame', '')
         extract_target = self._kwargs.get('yolo_extract_target_prediction', False)
         need_label = len(blame) != 0 or extract_target
@@ -908,6 +907,7 @@ class CaffeWrapper(object):
                 mean_value, 
                 scale,
                 outtsv_file,
+                cmapfile=self._labelmap,
                 **self._kwargs)
 
         logging.info('finished predict')
@@ -1126,7 +1126,7 @@ class CaffeWrapper(object):
         return eval_file
 
     def _predict_file(self, model):
-        cc = [model.model_param, self._test_data]
+        cc = [model.model_param, self._test_data, self._test_split]
         if len(self._kwargs.get('yolo_blame', '')) > 0:
             cc.append('blame_' + self._kwargs['yolo_blame'])
         if len(self._kwargs.get('extract_features', '')) > 0:
@@ -1157,6 +1157,10 @@ class CaffeWrapper(object):
             cc.append('NMS{}'.format(self._kwargs['yolo_nms']))
         if self._kwargs.get('output_tree_path', False):
             cc.append('OutTreePath')
+        if self._kwargs.get('softmax_tree_prediction_threshold', 0.5) != 0.5:
+            cc.append('TreeThreshold{}'.format(self._kwargs['softmax_tree_prediction_threshold']))
+        if not self._kwargs.get('class_specific_nms', True) :
+            cc.append('ClsIndependentNMS')
 
         cc.append('predict')
         return '.'.join(cc)
@@ -1506,6 +1510,7 @@ def yolo_tree_train(**kwargs):
     assert 'yolo_tree' not in kwargs or kwargs['yolo_tree']
     kwargs['yolo_tree'] = True
     kwargs['yolo_tree_eval_label_lift'] = False
+    kwargs['class_specific_nms'] = False
     kwargs['output_tree_path'] = True
 
     # train only on the data with bbox

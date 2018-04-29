@@ -101,11 +101,21 @@ def get_all_tree_data():
         if op.isfile(op.join('data', name, 'root.yaml'))]
 
 def parse_test_data(predict_file):
+    parts = predict_file.split('.')
+    idx_caffemodel = [i for i, p in enumerate(parts) if 'caffemodel' in p]
+    if len(idx_caffemodel) == 1:
+        idx_caffemodel = idx_caffemodel[0]
+        test_data = parts[idx_caffemodel + 1]
+        test_data_split = parts[idx_caffemodel + 2]
+        if test_data_split in ['train', 'trainval', 'test']:
+            return test_data, test_data_split
     all_data = os.listdir('data/')
     candidates = [data for data in all_data if '.caffemodel.' + data in predict_file]
     assert len(candidates) > 0
     max_length = max([len(c) for c in candidates])
-    return [c for c in candidates if len(c) == max_length][0]
+    test_data = [c for c in candidates if len(c) == max_length][0]
+    test_data_split = 'test' if 'testOnTrain' not in predict_file else 'train'
+    return test_data, test_data_split
 
 def parse_data(full_expid):
     all_data = os.listdir('data/')
@@ -246,7 +256,7 @@ def yolo_old_to_new(old_proto, old_model, new_model):
     net.save(new_model)
 
 def is_cluster(ssh_info):
-    return '-p' in ssh_info
+    return '-p' in ssh_info and '-i' not in ssh_info
 
 def visualize_train(solver):
     plt.figure()

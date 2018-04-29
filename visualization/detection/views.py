@@ -47,6 +47,7 @@ import traceback2 as traceback
 from .models import *
 import django.core.files
 import logging
+import uuid
 
 init_logging()
 
@@ -170,11 +171,9 @@ def view_model_by_predict_file(request, full_expid, predict_file,
     curr_dir_backup = os.getcwd()
     os.chdir(get_qd_root())
     data = parse_data(full_expid)
-    test_data = parse_test_data(predict_file)
-    test_data_split = 'test' if 'testOnTrain' not in predict_file else 'train'
+    test_data, test_data_split = parse_test_data(predict_file)
     x = get_confusion_matrix_by_predict_file(full_expid, predict_file,
-            threshold,
-            test_data_split)
+            threshold)
     predicts, gts, label_to_idx = x['predicts'], x['gts'], x['label_to_idx']
     confusion_pred_gt = x['confusion_pred_gt']
     confusion_gt_pred = x['confusion_gt_pred']
@@ -354,12 +353,24 @@ def get_data_sources_for_composite():
 def input_taxonomy(request):
     print 'in input taxonomy'
     if request.method == 'POST':
-        return validate_taxonomy(request)
+        return validate_taxonomy2(request)
     datas = get_data_sources_for_composite() 
     str_datas = ','.join(datas)
     return render(request, 
             'detection/get_tax_info.html', 
             {'str_datas': str_datas})
+
+@csrf_exempt
+def validate_taxonomy2(request):
+    from vis_bkg import push_task
+    task = push_task(request)
+    messages = []
+    messages.append('We received your request and will process soon. ')
+    messages.append('Please check the log \\\\viggpu01.redmond.corp.microsoft.com\\glusterfs\\jianfw\\work\\qd_output\\vis_bkg\\{}\\log.txt to monitor the process'.format(
+        task['task_id']))
+
+    return render(request, 'detection/display_tax_results.html', 
+            {'error': '\n'.join(messages)})
 
 @csrf_exempt
 def validate_taxonomy(request):
