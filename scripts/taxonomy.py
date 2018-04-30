@@ -548,9 +548,14 @@ class Taxonomy(object):
         else:
             if one is None:
                 one = 'None'
-            assert type(one) is str or type(one) is unicode
-            sub_root = root.add_child(name=one)
+            name = one
+            assert type(name) is str or type(name) is unicode
             child_subgroups = getattr(root, 'child_subgroups', -1)
+            if name.startswith('__'):
+                # just increase the subgroups count of the root
+                setattr(root, 'child_subgroups', child_subgroups + 1)
+                return
+            sub_root = root.add_child(name=name)
             sub_root.add_features(sub_group=child_subgroups)
 
     def build_from_local(self):
