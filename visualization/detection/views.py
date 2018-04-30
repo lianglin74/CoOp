@@ -51,17 +51,17 @@ import uuid
 
 init_logging()
 
-def run_in_qd(func):
+def run_in_qd(func, *args, **kwargs):
     curr_dir = os.curdir
     os.chdir(get_qd_root())
-    r = func()
+    r = func(*args, **kwargs)
     os.chdir(curr_dir)
     return r
 
 def view_tree(request):
     if 'data' in request.GET:
-        data = request.GET.get('data', 'Tax700V2')
-        s = gen_html_tree_view(data)
+        data = request.GET.get('data')
+        s = run_in_qd(gen_html_tree_view, data)
         context = {'li_ul_tree_str': s}
         return render(request, 'detection/view_tree.html', context)
     else:
@@ -284,15 +284,17 @@ def view_image(request, data, split, label, start_id):
     html_image_paths = []
     max_image_shown = 10
     has_next = False
-    for i, (fname, origin, im) in enumerate(images):
+    for i, (fname, origin, origin_label, im) in enumerate(images):
         if i >= max_image_shown:
             has_next = True
             break 
         origin_html_path = save_image_in_static(origin, '{}/{}/origin_{}.jpg'.format(data, split,
             fname))
+        origin_label_html_path = save_image_in_static(origin_label, '{}/{}/origin_label_{}.jpg'.format(data, split,
+            fname))
         html_path = save_image_in_static(im, '{}/{}/bb_{}.jpg'.format(data, split,
             fname))
-        html_image_paths.append((origin_html_path, html_path))
+        html_image_paths.append((origin_html_path, origin_label_html_path , html_path))
     os.chdir(curr_dir)
 
     context = {'images': html_image_paths,
@@ -312,7 +314,7 @@ def view_image2(request):
         os.chdir(curr_dir)
         context = {'names': names}
         return render(request, 'detection/data_list.html', context)
-    elif request.GET.get('split', '') == '':
+    elif request.GET.get('split', '') == '' and request.GET.get('label', '') == '':
         curr_dir = os.curdir
         os.chdir(get_qd_root())
         name_splits_labels = get_all_data_info2(request.GET['data'])

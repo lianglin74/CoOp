@@ -156,11 +156,11 @@ class TSVDataset(object):
         logging.info('deprecated: pls generate it on the fly')
         return load_list_file(self.get_noffsets_file()) 
 
-    def load_inverted_label(self, split):
+    def load_inverted_label(self, split, label=None):
         fname = self.get_data(split, 'inverted.label')
         if not op.isfile(fname):
             return {}
-        else:
+        elif label is None:
             rows = tsv_reader(fname)
             result = {}
             for row in rows:
@@ -172,6 +172,22 @@ class TSVDataset(object):
                 else:
                     result[row[0]] = map(int, ss)
             return result 
+        else:
+            all_label = self.load_labelmap()
+            result = {}
+            idx = all_label.index(label)
+            row = TSVFile(fname).seek(idx)
+            assert row[0] == label
+            ss = row[1].split(' ')
+            if len(ss) == 1 and ss[0] == '':
+                result[row[0]] = []
+            else:
+                result[row[0]] = map(int, ss)
+            return result
+
+    def has(self, split, t=None):
+        return op.isfile(self.get_data(split, t)) or \
+                op.isfile(self.get_data('{}X'.format(split), t))
 
     def iter_data(self, split, t=None):
         if split == 'train' and op.isfile(self.get_data('trainX')):
@@ -189,7 +205,9 @@ class TSVDataset(object):
                 assert label_row[0] == data_row[0]
                 yield label_row[0], label_row[1], data_row[-1]
         else:
-            for row in tsv_reader(self.get_data(split)):
+            if not op.isfile(self.get_data(split, t)):
+                return
+            for row in tsv_reader(self.get_data(split, t)):
                 yield row
 
 def tsv_writer(values, tsv_file_name):

@@ -38,7 +38,7 @@
                 <ul>
                     {% for l in labels %}
                     <li>
-                    <a href="{% url 'detection:view_image' name split l 0 %}">{{ l }}</a>
+                    <a href="{% url 'detection:view_image2' %}?data={{ name }}&split={{ split }}&label={{ l }}&start_id=0">{{ l }}</a>
                     </li>
                     {% endfor %}
                 </ul>

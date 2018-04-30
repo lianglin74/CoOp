@@ -16,6 +16,34 @@
 </head>
 
 <body>
+    <p>
+    label_name: (num_images_with_bb_in_total, 
+                num_images_with_bb_in_train,
+                num_images_with_bb_in_test);
+                (num_images_no_bb_in_total,
+                num_images_no_bb_in_train,
+                num_images_no_bb_in_test)
+    Source dataset name[matched_label
+                (num_images_in_total, 
+                num_images_in_train, 
+                num_images_in_test)]
+    <br>
+    <ul>
+        <li>num_images does not include the number of images from the children
+        nodes</li>
+        <li>num_images=-1 means we don't use the images from that data
+        source for the specific purpose (train/test) or 
+        please ignore it if the dataset was created before 4/29/2018</li>
+        <li>matched_label = None means we will not extract any images from that
+            data source.
+        </li>
+        <li>number of training images could be larger than the number of images
+            in total because we will duplicate the training images so that the
+            number is larger than 200 (by default)
+        </li>
+    </ul>
+    
+    </p>
     <div id='container'>
     <ul class="col_ul">
         {{ li_ul_tree_str | safe }}

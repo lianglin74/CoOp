@@ -87,9 +87,85 @@ def update_yolo_test_proto(input_test, test_data, map_file, output_test):
     assert len(test_noffsets) == len(test_map_id)
     write_to_file(str(net), output_test)
 
+def get_colored_name(node, colors):
+    name = node.name
+    if hasattr(node, 'sub_group'):
+        sub_group = node.sub_group
+    else:
+        sub_group = -1
+    idx = sub_group + 1
+    while idx >= len(colors):
+        colors.append('rgb({},{},{})'.format(
+            int(random.random() * 255),
+            int(random.random() * 255),
+            int(random.random() * 255)))
+    return "<span style='color:{}'>{}</span>".format(colors[idx],
+            name)
 
-def gen_html_tree_view(data):
+def get_vis_url(data, l):
+    return '/detection/view_image?data={}&label={}&start_id=0'.format(
+            data, l)
+
+def get_readable_label(l):
+    if is_noffset(l):
+        return '{}({})'.format(l, get_nick_name(noffset_to_synset(l)))
+    else:
+        return l
+
+def get_node_key(node, k, default_value=-1):
+    r = default_value
+    if hasattr(node, k):
+        r = node.__getattribute__(k)
+    return r
+
+def get_node_info(node, colors, all_data):
+    ss = []
+    if hasattr(node, 'images_with_bb') and \
+            hasattr(node, 'images_no_bb'):
+        ss.append('with_bb({},{},{})'.format(node.images_with_bb, 
+            get_node_key(node, 'with_bb_toTrain', -1),
+            get_node_key(node, 'with_bb_toTest', -1)))
+        ss.append('no_bb({},{},{})'.format(node.images_no_bb, 
+            get_node_key(node, 'no_bb_toTrain', -1),
+            get_node_key(node, 'no_bb_toTest', -1)))
+    ignore_keys = ['support', 'dist', 'name', 'url',
+            'images_with_bb',
+            'images_no_bb',
+            'noffset', 
+            'sub_group',
+            'cum_images_with_bb', 
+            'cum_images_no_bb']
+    for key in node.features:
+        if any(x == key for x in ignore_keys):
+            continue
+        if key.endswith('_readable') or \
+                key.endswith('_toTrain') or \
+                key.endswith('_toTest') or \
+                key.endswith('_total'):
+            continue
+        value = node.__getattribute__(key)
+        if key in all_data and value != None:
+            total = get_node_key(node, '{}_total'.format(key))
+            toTrain = get_node_key(node, '{}_toTrain'.format(key))
+            toTest = get_node_key(node, '{}_toTest'.format(key))
+            extra_info = '({},{},{})'.format(total, toTrain, toTest)
+            labels = value.split(',')
+            value = ','.join(["<a href='{}'>{}</a>".format(get_vis_url(key, l),
+                get_readable_label(l)) for l in labels])
+            value = '{}{}'.format(value, extra_info)
+        ss.append('{}[{}]'.format(key, value))
+    if len(ss) > 0:
+        return "{}: {}".format(
+                get_colored_name(node, colors),
+                '; '.join(ss))
+    else:
+        return get_colored_name(node, colors)
+
+def gen_html_tree_view(data, colors=['rgb(0,0,0)', 
+            'rgb(255,0,0)', 
+            'rgb(0,0,255)']):
     dataset = TSVDataset(data)
+    all_data = os.listdir('./data')
     file_name = op.join(dataset._data_root, 'root.yaml')
     with open(file_name, 'r') as fp:
         config_tax = yaml.load(fp)
@@ -99,13 +175,17 @@ def gen_html_tree_view(data):
         include itself
         '''
         if len(root.children) == 0:
-            s = u"<li data-jstree='{{\"icon\":\"glyphicon glyphicon-leaf\"}}'>{}</li>".format(root.name)
+            s = u"<li data-jstree='{{\"icon\":\"glyphicon glyphicon-leaf\"}}'><span>{}</span></li>".format(
+                    get_node_info(root, colors, all_data))
             return s
         else:
             result = []
-            result.append('<li><span>{}</span>'.format(root.name))
+            # we cannot remove span tag here
+            result.append('<li><span>{}</span>'.format(
+                get_node_info(root, colors, all_data)))
             result.append('<ul>')
-            for c in root.children:
+            all_child = sorted(root.children, key=lambda c: c.sub_group)
+            for c in all_child:
                 r = gen_html_tree_view_rec(c)
                 result.append(r)
             result.append('</ul>')
@@ -237,13 +317,12 @@ def normalize_str_in_rects(data, out_data):
                 yield key, label_str, im_str
         tsv_writer(gen_rows(), dest_dataset.get_data(split))
 
-def tsv_details(tsv_file):
-    rows = tsv_reader(tsv_file)
+def tsv_details(rows):
     label_count = {}
     sizes = []
     for i, row in enumerate(rows):
         if (i % 1000) == 0:
-            logging.info('get tsv details: {}-{}'.format(tsv_file, i))
+            logging.info('get tsv details: {}'.format(i))
         if row[1] == 'd':
             # this is the deleted label
             rects = []
@@ -326,15 +405,15 @@ def populate_all_dataset_details():
 def populate_dataset_details(data):
     dataset = TSVDataset(data)
 
-    def details_tsv(tsv_file):
-        out_file = get_meta_file(tsv_file)
-        if not op.isfile(out_file) and op.isfile(tsv_file):
-            details = tsv_details(tsv_file)
-            write_to_yaml_file(details, out_file)
-
     splits = ['trainval', 'train', 'test']
     for split in splits:
-        details_tsv(dataset.get_data(split))
+        tsv_file = dataset.get_data(split)
+        out_file = get_meta_file(tsv_file)
+        if not op.isfile(out_file) and dataset.has(split):
+            rows = dataset.iter_data(split)
+            if rows:
+                details = tsv_details(rows)
+                write_to_yaml_file(details, out_file)
 
     # for each data tsv, generate the label tsv and the inverted file
     for split in splits:
@@ -348,7 +427,8 @@ def populate_dataset_details(data):
         label_tsv = dataset.get_data(split, 'label')
         duplicate_tsv = dataset.get_data(split, 'key_duplicate')
         if op.isfile(label_tsv) and not op.isfile(duplicate_tsv):
-            assert detect_duplicate_key(label_tsv, duplicate_tsv) == 0
+            num_duplicate = detect_duplicate_key(label_tsv, duplicate_tsv)
+            assert num_duplicate == 0
 
     if op.isfile(dataset.get_data('trainX')):
         inverted_file = dataset.get_data('train', 'inverted.label')
@@ -640,7 +720,27 @@ def try_json_parse(s):
 def visualize_box(data, split, label, start_id, color_map={}):
     dataset = TSVDataset(data)
     logging.info('loading inverted label')
-    inverted = dataset.load_inverted_label(split)
+    if split is None:
+        # guess which split should be used. only support non-composite tsv
+        candidate_split = ['train', 'trainval', 'test']
+        for c in candidate_split:
+            if not op.isfile(dataset.get_data(c)):
+                continue
+            inverted = dataset.load_inverted_label(c, label)
+            if label not in inverted:
+                continue
+            n = len(inverted[label])
+            if n <= start_id:
+                start_id = start_id - n
+            else:
+                logging.info('split = {}'.format(split))
+                split = c
+                break
+        if not split:
+            logging.info('cannot find the valid')
+            return
+    else:
+        inverted = dataset.load_inverted_label(split, label)
     logging.info('inverted label loaded')
     logging.info('keys: {}'.format(inverted.keys()))
     if label != 'any':
@@ -673,25 +773,32 @@ def visualize_box(data, split, label, start_id, color_map={}):
             row_label = row_image
         im = img_from_base64(row_image[-1])
         origin = np.copy(im)
-        labels = try_json_parse(row_label[1])
+        rects = try_json_parse(row_label[1])
         new_name = row_image[0].replace('/', '_').replace(':', '')
-        if type(labels) is list:
-            labels = [l for l in labels if 'conf' not in l or l['conf'] > 0.3]
-            all_class = []
-            all_rect = []
-            for label in labels:
-                label_class = label['class']
-                rect = label['rect']
-                all_class.append(label_class)
-                if not (rect[0] == 0 and rect[1] == 0 
-                        and rect[2] == 0 and rect[3] == 0):
-                    all_rect.append(rect)
-                else:
-                    all_rect.append((0, 0, im.shape[1] - 1, im.shape[0] - 1))
+        if type(rects) is list:
+            rects = [l for l in rects if 'conf' not in l or l['conf'] > 0.3]
+            def get_rect_class(rects):
+                all_class = []
+                all_rect = []
+                for rect in rects:
+                    label_class = rect['class']
+                    rect = rect['rect']
+                    all_class.append(label_class)
+                    if not (rect[0] == 0 and rect[1] == 0 
+                            and rect[2] == 0 and rect[3] == 0):
+                        all_rect.append(rect)
+                    else:
+                        all_rect.append((0, 0, im.shape[1] - 1, im.shape[0] - 1))
+                return all_rect, all_class
+            all_rect, all_class = get_rect_class(rects)
             draw_bb(im, all_rect, all_class)
-            yield new_name, origin, im
+            all_rect, all_class = get_rect_class([l for l in rects if l['class']
+                    == label])
+            im_label = np.copy(origin)
+            draw_bb(im_label, all_rect, all_class)
+            yield new_name, origin, im_label, im
         else:
-            yield new_name, origin, im
+            yield new_name, origin, im, im
 
 
 def visualize_tsv2(data, split, label):
@@ -883,8 +990,10 @@ class TSVDatasetSource(TSVDataset, DatasetSource):
                     node.add_feature(self.name + '_readable', 
                             ','.join(get_nick_name(noffset_to_synset(l)) if
                                 is_noffset(l) else l for l in sourcelabels))
+                total = 0
                 for sourcelabel in sourcelabels:
                     c = self._datasetlabel_to_count.get(sourcelabel, 0)
+                    total = total + c
                     if self._type == 'with_bb':
                         logging.info('with_bb: {}: {}->{}'.format(self.name,
                             node.name, c))
@@ -894,6 +1003,7 @@ class TSVDatasetSource(TSVDataset, DatasetSource):
                         logging.info('no_bb: {}: {}->{}'.format(self.name,
                             node.name, c))
                         node.images_no_bb = node.images_no_bb + c
+                node.add_feature('{}_total'.format(self.name), total)
 
     def _ensure_initialized(self):
         if self._initialized:
@@ -1285,10 +1395,6 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
     logging.info('cum_images_with_bb: {}'.format(tax.root.cum_images_with_bb))
     logging.info('cum_images_no_bb: {}'.format(tax.root.cum_images_no_bb))
 
-    # dump the tree to yaml format
-    dest = op.join(overall_dataset._data_root, 'root.yaml')
-    d = tax.dump()
-    write_to_yaml_file(d, dest)
 
     # write the simplified version of the tree
     dest = op.join(overall_dataset._data_root, 'root.simple.yaml')
@@ -1309,189 +1415,178 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
                     logging.info('gen-rows: {}-{}-{}'.format(s.name, label_type, i))
                 yield row
     
-    copy_rows = False
-    if copy_rows:
-        # write trainval.tsv
-        for label_type in out_dataset:
-            tsv_file = out_dataset[label_type].get_trainval_tsv()
-            if op.isfile(tsv_file):
-                continue
-            tmp_tsv_file = 'tmp.' + op.basename(tsv_file)
-            tmp_tsv_file = op.join(op.dirname(tsv_file), tmp_tsv_file)
-            if not op.isfile(tsv_file):
-                tsv_writer(gen_rows(label_type), tmp_tsv_file)
-            logging.info('shuffling {}'.format(tmp_tsv_file))
-            rows = tsv_shuffle_reader(tmp_tsv_file)
-            tsv_writer(rows, tsv_file)
-            logging.info('remove the unshuffled: {}'.format(tmp_tsv_file))
-            os.remove(tmp_tsv_file)
-            os.remove(op.splitext(tmp_tsv_file)[0] + '.lineidx')
+    # get the information of all train val
+    train_vals = []
+    ldtsi = []
+    logging.info('collecting all candidate images')
+    for label_type in out_dataset:
+        for dataset in data_sources:
+            split_idxes = dataset.select_tsv_rows(label_type)
+            for rootlabel, split, idx in split_idxes:
+                ldtsi.append((rootlabel, dataset, label_type, split, idx))
+    # split into train val
+    num_test = kwargs.get('num_test', 50)
+    logging.info('splitting the images into train and test')
+    # group by label_type
+    t_to_ldsi = list_to_dict(ldtsi, 2)
+    train_ldtsi = [] 
+    test_ldtsi = []
+    for label_type in t_to_ldsi:
+        ldsi= t_to_ldsi[label_type]
+        l_to_dsi = list_to_dict(ldsi, 0)
+        for rootlabel in l_to_dsi:
+            dsi = l_to_dsi[rootlabel]
+            if len(dsi) < num_test:
+                logging.info('rootlabel={}; label_type={}->less than {} images'.format(
+                    rootlabel, label_type, len(dsi)))
+            curr_num_test = min(num_test, int(len(dsi) / 2))
+            random.shuffle(dsi)
+            test_ldtsi.extend([(rootlabel, d, label_type, s, i) for d, s, i
+                in dsi[:curr_num_test]])
+            train_ldtsi.extend([(rootlabel, d, label_type, s, i) for d, s, i 
+                in dsi[curr_num_test:]])
 
-        # split into train and test
-        for label_type in out_dataset:
-            dataset = out_dataset[label_type]
-            trainval_split(dataset, 50)
-        
-        for label_type in out_dataset:
-            populate_dataset_details(out_dataset[label_type].name)
-    else:
-        # get the information of all train val
-        train_vals = []
-        ldtsi = []
-        logging.info('collecting all candidate images')
-        for label_type in out_dataset:
-            for dataset in data_sources:
-                split_idxes = dataset.select_tsv_rows(label_type)
-                for rootlabel, split, idx in split_idxes:
-                    ldtsi.append((rootlabel, dataset, label_type, split, idx))
-        # split into train val
-        num_test = kwargs.get('num_test', 50)
-        logging.info('splitting the images into train and test')
-        # group by label_type
-        t_to_ldsi = list_to_dict(ldtsi, 2)
-        train_ldtsi = [] 
-        test_ldtsi = []
-        for label_type in t_to_ldsi:
-            ldsi= t_to_ldsi[label_type]
-            l_to_dsi = list_to_dict(ldsi, 0)
-            for rootlabel in l_to_dsi:
-                dsi = l_to_dsi[rootlabel]
-                if len(dsi) < num_test:
-                    logging.info('rootlabel={}; label_type={}->less than {} images'.format(
-                        rootlabel, label_type, len(dsi)))
-                curr_num_test = min(num_test, int(len(dsi) / 2))
-                random.shuffle(dsi)
-                test_ldtsi.extend([(rootlabel, d, label_type, s, i) for d, s, i
-                    in dsi[:curr_num_test]])
-                train_ldtsi.extend([(rootlabel, d, label_type, s, i) for d, s, i 
-                    in dsi[curr_num_test:]])
+    logging.info('creating the train data')
+    t_to_ldsi = list_to_dict(train_ldtsi, 2)
+    train_ldtsik = []
+    shuffle_idx = []
+    for label_type in t_to_ldsi:
+        ldsi = t_to_ldsi[label_type]
+        d_to_lsi = list_to_dict(ldsi, 1)
+        k = 0
+        sources = []
+        sources_label = []
+        for dataset in d_to_lsi:
+            lsi = d_to_lsi[dataset]
+            s_li = list_to_dict(lsi, 1)
+            for split in s_li:
+                li = s_li[split]
+                idx_to_l = list_to_dict(li, 1)
+                idx = idx_to_l.keys()
+                # link the data tsv
+                source = dataset.get_data(split)
+                out_split = 'train{}'.format(k)
+                train_ldtsik.extend([(l, dataset, label_type, split, i,
+                    k) for l, i in li])
+                k = k + 1
+                dest = out_dataset[label_type].get_data(
+                        out_split)
+                sources.append(source)
+                logging.info('converting labels: {}-{}'.format(
+                    dataset.name, split))
+                converted_label = convert_label(dataset.get_data(split, 'label'),
+                        idx, dataset._sourcelabel_to_targetlabels)
+                label_file = out_dataset[label_type].get_data(out_split, 'label')
+                tsv_writer(converted_label, label_file)
+                sources_label.append(label_file)
+        write_to_file('\n'.join(sources),
+                out_dataset[label_type].get_data('trainX'))
+        write_to_file('\n'.join(sources_label), 
+                out_dataset[label_type].get_data('trainX', 'label'))
+    logging.info('duplicating or removing the train images')
+    # for each label, let's duplicate the image or remove the image
+    max_image = kwargs.get('max_image_per_label', 1000)
+    min_image = kwargs.get('min_image_per_label', 200)
+    label_to_dtsik = list_to_dict(train_ldtsik, 0)
+    for label in label_to_dtsik:
+        dtsik = label_to_dtsik[label]
+        if len(dtsik) > max_image:
+            # first remove the images with no bounding box
+            num_remove = len(dtsik) - max_image
+            type_to_dsik = list_to_dict(dtsik, 1)
+            if 'no_bb' in type_to_dsik:
+                dsik = type_to_dsik['no_bb']
+                if num_remove >= len(dsik):
+                    # remove all this images
+                    del type_to_dsik['no_bb']
+                    num_remove = num_remove - len(dsik)
+                else:
+                    random.shuffle(dsik)
+                    type_to_dsik['no_bb'] = dsik[: len(dsik) - num_remove]
+                    num_remove = 0
+            if num_remove > 0:
+                assert 'with_bb' in type_to_dsik
+                dsik = type_to_dsik['with_bb']
+                random.shuffle(dsik)
+                assert len(dsik) > num_remove
+                type_to_dsik['with_bb'] = dsik[: len(dsik) - num_remove]
+                num_remove = 0
+            dtsik = dict_to_list(type_to_dsik, 1)
+        elif len(dtsik) < min_image:
+            num_duplicate = int(np.ceil(float(min_image) / len(dtsik)))
+            logging.info('duplicate images for label of {}: {}->{}, {}'.format(
+                label, len(dtsik), min_image, num_duplicate))
+            dtsik = num_duplicate * dtsik
+        label_to_dtsik[label] = dtsik
+    logging.info('# train instances before duplication: {}'.format(len(train_ldtsik)))
+    train_ldtsik = dict_to_list(label_to_dtsik, 0)
+    logging.info('# train instances after duplication: {}'.format(len(train_ldtsik)))
 
-        logging.info('creating the train data')
-        t_to_ldsi = list_to_dict(train_ldtsi, 2)
-        train_ldtsik = []
-        shuffle_idx = []
-        for label_type in t_to_ldsi:
+    logging.info('saving the shuffle file')
+    type_to_ldsik = list_to_dict(train_ldtsik, 2)
+    for label_type in type_to_ldsik:
+        ldsik = type_to_ldsik[label_type]
+        random.shuffle(ldsik)
+        shuffle_info = [(str(k), str(i)) for l, d, s, i, k in ldsik]
+        tsv_writer(shuffle_info,
+                out_dataset[label_type].get_shuffle_file('train'))
+
+    populate_output_num_images(train_ldtsik, 'toTrain', tax.root)
+    populate_output_num_images(test_ldtsi, 'toTest', tax.root)
+
+    # dump the tree to yaml format
+    dest = op.join(overall_dataset._data_root, 'root.yaml')
+    d = tax.dump()
+    write_to_yaml_file(d, dest)
+
+    logging.info('writing the test data')
+    t_to_ldsi = list_to_dict(test_ldtsi, 2)
+    for label_type in t_to_ldsi:
+        def gen_test_rows():
             ldsi = t_to_ldsi[label_type]
             d_to_lsi = list_to_dict(ldsi, 1)
-            k = 0
-            sources = []
-            sources_label = []
             for dataset in d_to_lsi:
                 lsi = d_to_lsi[dataset]
-                s_li = list_to_dict(lsi, 1)
-                for split in s_li:
-                    li = s_li[split]
-                    idx_to_l = list_to_dict(li, 1)
-                    idx = idx_to_l.keys()
-                    # link the data tsv
-                    source = dataset.get_data(split)
-                    out_split = 'train{}'.format(k)
-                    train_ldtsik.extend([(l, dataset, label_type, split, i,
-                        k) for l, i in li])
-                    k = k + 1
-                    dest = out_dataset[label_type].get_data(
-                            out_split)
-                    remove_depend_symlink = True
-                    if remove_depend_symlink:
-                        sources.append(source)
-                    else:
-                        logging.warn('not supported any longer since philly does not support softlink')
-                        sources.append(dest)
-                        if op.islink(dest):
-                            os.remove(dest)
-                        os.symlink(op.relpath(source, op.dirname(dest)), dest)
-                        # link the lineidx
-                        source = dataset.get_lineidx(split)
-                        dest = out_dataset[label_type].get_lineidx(out_split)
-                        if op.islink(dest):
-                            os.remove(dest)
-                        os.symlink(op.relpath(source, op.dirname(dest)), dest)
-                        # create the label tsv
-                    logging.info('converting labels: {}-{}'.format(
-                        dataset.name, split))
-                    converted_label = convert_label(dataset.get_data(split, 'label'),
-                            idx, dataset._sourcelabel_to_targetlabels)
-                    label_file = out_dataset[label_type].get_data(out_split, 'label')
-                    tsv_writer(converted_label, label_file)
-                    sources_label.append(label_file)
-            write_to_file('\n'.join(sources),
-                    out_dataset[label_type].get_data('trainX'))
-            write_to_file('\n'.join(sources_label), 
-                    out_dataset[label_type].get_data('trainX', 'label'))
-        logging.info('duplicating or removing the train images')
-        # for each label, let's duplicate the image or remove the image
-        max_image = kwargs.get('max_image_per_label', 1000)
-        min_image = kwargs.get('min_image_per_label', 200)
-        label_to_dtsik = list_to_dict(train_ldtsik, 0)
-        for label in label_to_dtsik:
-            dtsik = label_to_dtsik[label]
-            if len(dtsik) > max_image:
-                # first remove the images with no bounding box
-                num_remove = len(dtsik) - max_image
-                type_to_dsik = list_to_dict(dtsik, 1)
-                if 'no_bb' in type_to_dsik:
-                    dsik = type_to_dsik['no_bb']
-                    if num_remove >= len(dsik):
-                        # remove all this images
-                        del type_to_dsik['no_bb']
-                        num_remove = num_remove - len(dsik)
-                    else:
-                        random.shuffle(dsik)
-                        type_to_dsik['no_bb'] = dsik[: len(dsik) - num_remove]
-                        num_remove = 0
-                if num_remove > 0:
-                    assert 'with_bb' in type_to_dsik
-                    dsik = type_to_dsik['with_bb']
-                    random.shuffle(dsik)
-                    assert len(dsik) > num_remove
-                    type_to_dsik['with_bb'] = dsik[: len(dsik) - num_remove]
-                    num_remove = 0
-                dtsik = dict_to_list(type_to_dsik, 1)
-            elif len(dtsik) < min_image:
-                num_duplicate = int(np.ceil(float(min_image) / len(dtsik)))
-                logging.info('duplicate images for label of {}: {}->{}, {}'.format(
-                    label, len(dtsik), min_image, num_duplicate))
-                dtsik = num_duplicate * dtsik
-            label_to_dtsik[label] = dtsik
-        logging.info('# train instances before duplication: {}'.format(len(train_ldtsik)))
-        train_ldtsik = dict_to_list(label_to_dtsik, 0)
-        logging.info('# train instances after duplication: {}'.format(len(train_ldtsik)))
-
-        logging.info('saving the shuffle file')
-        type_to_ldsik = list_to_dict(train_ldtsik, 2)
-        for label_type in type_to_ldsik:
-            ldsik = type_to_ldsik[label_type]
-            random.shuffle(ldsik)
-            shuffle_info = [(str(k), str(i)) for l, d, s, i, k in ldsik]
-            tsv_writer(shuffle_info,
-                    out_dataset[label_type].get_shuffle_file('train'))
-
-        logging.info('writing the test data')
-        t_to_ldsi = list_to_dict(test_ldtsi, 2)
-        for label_type in t_to_ldsi:
-            def gen_test_rows():
-                ldsi = t_to_ldsi[label_type]
-                d_to_lsi = list_to_dict(ldsi, 1)
-                for dataset in d_to_lsi:
-                    lsi = d_to_lsi[dataset]
-                    s_to_li = list_to_dict(lsi, 1)
-                    for split in s_to_li:
-                        li = s_to_li[split]
-                        idx = list_to_dict(li, 1).keys()
-                        tsv = TSVFile(dataset.get_data(split))
-                        for i in idx:
-                            row = tsv.seek(i)
-                            rects = json.loads(row[1])
-                            convert_one_label(rects, 
-                                    dataset._sourcelabel_to_targetlabels)
-                            assert len(rects) > 0
-                            row[1] = json.dumps(rects)
-                            row[0] = '{}_{}_{}'.format(dataset.name,
-                                    split, row[0])
-                            yield row
-            tsv_writer(gen_test_rows(), 
-                    out_dataset[label_type].get_test_tsv_file())
+                s_to_li = list_to_dict(lsi, 1)
+                for split in s_to_li:
+                    li = s_to_li[split]
+                    idx = list_to_dict(li, 1).keys()
+                    tsv = TSVFile(dataset.get_data(split))
+                    for i in idx:
+                        row = tsv.seek(i)
+                        rects = json.loads(row[1])
+                        convert_one_label(rects, 
+                                dataset._sourcelabel_to_targetlabels)
+                        assert len(rects) > 0
+                        row[1] = json.dumps(rects)
+                        row[0] = '{}_{}_{}'.format(dataset.name,
+                                split, row[0])
+                        yield row
+        tsv_writer(gen_test_rows(), 
+                out_dataset[label_type].get_test_tsv_file())
     logging.info('done')
+
+def populate_output_num_images(ldtX, suffix, root):
+    label_to_node = {n.name: n for n in root.iter_search_nodes() if n != root}
+    targetlabel_to_dX = list_to_dict(ldtX, 0)
+    for targetlabel in targetlabel_to_dX:
+        dtX = targetlabel_to_dX[targetlabel]
+        dataset_to_X = list_to_dict(dtX, 0)
+        total = 0
+        for dataset in dataset_to_X:
+            X = dataset_to_X[dataset]
+            if len(X) == 0:
+                continue
+            key = '{}_{}'.format(dataset.name, suffix)
+            value = len(X)
+            total = total + value
+            label_to_node[targetlabel].add_feature(key, value)
+        labeltype_to_dX = list_to_dict(dtX, 1)
+        for labeltype in labeltype_to_dX:
+            dX = labeltype_to_dX[labeltype]
+            key = '{}_{}'.format(labeltype, suffix)
+            value = len(dX)
+            label_to_node[targetlabel].add_feature(key, value)
 
 def output_ambigous_noffsets(root, ambigous_noffset_file):
     ambigous = []
