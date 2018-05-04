@@ -73,14 +73,18 @@
 <table>
     <tr>
         <th>AP on {{ label }}</th>
-        <th>original image</th>
-        <th>ground truth</th>
-        <th>predicted by model</th>
+        <th>Original image</th>
+        <th>Ground truth with target label</th>
+        <th>Prediction with target label</th>
+        <th>Ground truth</th>
+        <th>Prediction</th>
     </tr>
-    {% for im_origin, im_gt, im_pred, ap in image_pairs %}
+    {% for im_origin, im_gt_target, im_pred_target, im_gt, im_pred, ap in image_pairs %}
     <tr>
         <td>{{ ap }}</td>
         <td><img src="{% static im_origin %}" width=600></td>
+        <td><img src="{% static im_gt_target %}" width=600></td>
+        <td><img src="{% static im_pred_target %}" width=600></td>
         <td><img src="{% static im_gt %}" width=600></td>
         <td><img src="{% static im_pred %}" width=600></td>
     </tr>

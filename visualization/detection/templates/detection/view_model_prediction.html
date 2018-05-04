@@ -28,13 +28,9 @@
 
 <ul class="col_ul">
     {% for prediction_file in prediction_files %}
-    <li><span>{{ prediction_file }}</span>
-        <ul>
-        {% for l in labelmap %}
-        <li><a href="{% url 'detection:view_model' %}?full_expid={{ full_expid }}&predict_file={{ prediction_file }}&filter_label={{ l }}&start_id=0&threshold=0.2">{{ l }}</a></li>
-        {% endfor %}
-        </ul>
+    <li><a href="{% url 'detection:view_model' %}?full_expid={{ full_expid }}&predict_file={{ prediction_file }}">{{ prediction_file }}
     </li>
     {% endfor %}
 </ul>
+
 

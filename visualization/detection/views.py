@@ -48,6 +48,7 @@ from .models import *
 import django.core.files
 import logging
 import uuid
+from qd_common import load_class_ap
 
 init_logging()
 
@@ -182,17 +183,22 @@ def view_model_by_predict_file(request, full_expid, predict_file,
     image_pairs = []
     target_images, image_aps = get_target_images(predicts, gts, label, threshold)
     pairs = gt_predict_images(predicts, gts, test_data, target_images,
+            label,
             start_id,
             threshold, label_to_idx, image_aps, test_data_split)
     max_pairs = 10
-    for i, (key, im_origin, im_gt, im_pred, ap) in enumerate(pairs):
+    for i, (key, im_origin, im_gt_target, im_pred_target, im_gt, im_pred, ap) in enumerate(pairs):
         path_origin = save_image_in_static(im_origin, '{}/{}_origin.png'.format(
+            data, key))
+        path_gt_target = save_image_in_static(im_gt_target, '{}/{}_gt_target.png'.format(
             data, key))
         path_gt = save_image_in_static(im_gt, '{}/{}_gt.png'.format(
             data, key))
         path_pred = save_image_in_static(im_pred, '{}/{}/{}_pred.png'.format(
             full_expid, predict_file, key))
-        image_pairs.append((path_origin, path_gt, path_pred, ap))
+        path_pred_target = save_image_in_static(im_pred_target,
+                '{}/{}/{}_pred_target.png'.format(full_expid, predict_file, key))
+        image_pairs.append((path_origin, path_gt_target, path_pred_target, path_gt, path_pred, ap))
         if i >= max_pairs - 1:
             break
     
@@ -235,17 +241,23 @@ def view_model_by_predict_file(request, full_expid, predict_file,
 
     return render(request, 'detection/predict_result.html', context)
 
-def view_model_prediction_list(request, full_expid):
+def view_model_prediction_labelmap(request, full_expid, predict_file):
     curr_dir = os.curdir
     os.chdir(get_qd_root())
-    predict_files = get_all_predict_files(full_expid)
     data = parse_data(full_expid)
     labelmap = load_labelmap(data)
+    class_ap = run_in_qd(load_class_ap, full_expid, predict_file)
+    labelmap_ap = None
+    if class_ap:
+        class_ap = class_ap['overall']['0.3']['class_ap']
+        labelmap_ap = [(l, '{:.2f}'.format(class_ap.get(l, -1))) for l in labelmap]
+    else:
+        labelmap_ap = [(l, None) for l in labelmap]
     os.chdir(curr_dir)
-    context = {'prediction_files': predict_files,
-            'labelmap': labelmap,
+    context = {'prediction_file': predict_file,
+            'labelmap_ap': labelmap_ap,
             'full_expid': full_expid}
-    return render(request, 'detection/view_model_prediction_list.html',
+    return render(request, 'detection/view_model_prediction_labelmap.html',
             context)
 
 def view_model(request):
@@ -260,9 +272,16 @@ def view_model(request):
                 request.GET['filter_label'],
                 request.GET['start_id'],
                 request.GET['threshold'])
+    elif 'full_expid' in request.GET and 'predict_file' in request.GET:
+        return view_model_prediction_labelmap(request, 
+                request.GET['full_expid'], request.GET['predict_file'])
     elif 'full_expid' in request.GET:
-        return view_model_prediction_list(request, 
-                request.GET['full_expid'])
+        full_expid = request.GET['full_expid']
+        predict_files = run_in_qd(get_all_predict_files, full_expid)
+        context = {'prediction_files': predict_files,
+                'full_expid': full_expid}
+        return render(request, 'detection/view_model_prediction.html',
+                context)
     else:
         return view_exp_list(request)
         #return view_single_model(request)
@@ -276,11 +295,11 @@ def save_image_in_static(im, rel_path):
     save_image(im, disk_path)
     return html_path
 
-def view_image(request, data, split, label, start_id):
+def view_image(request, data, split, version, label, start_id):
     curr_dir = os.curdir
     os.chdir(get_qd_root())
     start_id = int(float(start_id))
-    images = visualize_box(data, split, label, start_id)
+    images = visualize_box(data, split, version, label, start_id)
     html_image_paths = []
     max_image_shown = 10
     has_next = False
@@ -288,11 +307,14 @@ def view_image(request, data, split, label, start_id):
         if i >= max_image_shown:
             has_next = True
             break 
-        origin_html_path = save_image_in_static(origin, '{}/{}/origin_{}.jpg'.format(data, split,
+        origin_html_path = save_image_in_static(origin, '{}/{}/{}/origin_{}.jpg'.format(data, split,
+            version,
             fname))
-        origin_label_html_path = save_image_in_static(origin_label, '{}/{}/origin_label_{}.jpg'.format(data, split,
+        origin_label_html_path = save_image_in_static(origin_label, '{}/{}/{}/origin_label_{}.jpg'.format(data, split,
+            version,
             fname))
-        html_path = save_image_in_static(im, '{}/{}/bb_{}.jpg'.format(data, split,
+        html_path = save_image_in_static(im, '{}/{}/{}/bb_{}.jpg'.format(data, split,
+            version,
             fname))
         html_image_paths.append((origin_html_path, origin_label_html_path , html_path))
     os.chdir(curr_dir)
@@ -300,6 +322,7 @@ def view_image(request, data, split, label, start_id):
     context = {'images': html_image_paths,
             'data': data,
             'split': split,
+            'version': version,
             'label': label,
             'next_id': str(start_id + len(html_image_paths)),
             'previous_id': str(max(0, start_id - max_image_shown))}
@@ -324,9 +347,12 @@ def view_image2(request):
     else:
         data = request.GET.get('data')
         split = request.GET.get('split')
+        version = request.GET.get('version')
+        version = int(version) if type(version) is str or type(version) is \
+                unicode else version
         label = request.GET.get('label')
         start_id = request.GET.get('start_id')
-        result = view_image(request, data, split, label, start_id)
+        result = view_image(request, data, split, version, label, start_id)
         return result
 
 def get_data_sources_for_composite():

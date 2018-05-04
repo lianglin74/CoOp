@@ -1,5 +1,3 @@
-<!DOCTYPE html>
-<html lang="en">
 <head>
 	<meta charset="UTF-8">
 	<title>Document</title>
@@ -24,29 +22,18 @@
         }
     }
   </script>
-	<style type="text/css">
-	</style>
 </head>
 
-<body>
-    <ul class="col_ul">
-    {% for name, split_versions, labels in name_splits_labels %}
-    <li><span>{{ name }}</span>
-        <ul>
-            {% for split, version in split_versions %}
-            <li><span>{{ split }} - {{ version }}</span>
-                <ul>
-                    {% for l in labelmap_ap %}
-                    <li>
-                        <a href="{% url 'detection:view_image2' %}?data={{ name }}&split={{ split }}&version={{ version }}&label={{ l }}&start_id=0">{{ l }}</a>
-                    </li>
-                    {% endfor %}
-                </ul>
-            </li>
-            {% endfor %}
-        </ul>
+<p>{{ prediction_file }}</p>
+
+<ul class="col_ul">
+    {% for l, ap in labelmap_ap %}
+    <li><a href="{% url 'detection:view_model' %}?full_expid={{ full_expid }}&predict_file={{ prediction_file }}&filter_label={{ l }}&start_id=0&threshold=0.2">{{ l }}</a>
+        {% if ap %}
+        [{{ ap }}]
+        {% endif %}
     </li>
     {% endfor %}
     </ul>
-</body>
-</html>
+</ul>
+

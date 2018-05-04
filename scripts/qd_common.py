@@ -24,6 +24,15 @@ import base64
 import cv2
 from itertools import izip
 
+def load_class_ap(full_expid, predict_file):
+    report_file = '{}.report'.format(op.splitext(predict_file)[0])
+    fname = op.join('output', full_expid, 'snapshot', report_file +
+            '.class_ap.json')
+    if op.isfile(fname):
+        return json.loads(read_to_buffer(fname))
+    else:
+        return None
+
 def calculate_ap_by_true_list(corrects, total):
     precision = (1. * np.cumsum(corrects)) / np.arange(1, 1 + len(corrects))
     if np.sum(corrects) == 0:
@@ -96,7 +105,7 @@ def readable_confusion_entry(entry):
     return items
 
 def get_all_tree_data():
-    names = os.listdir('./data')
+    names = sorted(os.listdir('./data'))
     return [name for name in names 
         if op.isfile(op.join('data', name, 'root.yaml'))]
 
@@ -395,7 +404,7 @@ def calculate_iou(rect0, rect1):
     i = w * h
     a1 = (rect1[2] - rect1[0]) * (rect1[3] - rect1[1])
     a0 = (rect0[2] - rect0[0]) * (rect0[3] - rect0[1])
-    return i / (a0 + a1 - i) 
+    return 1. * i / (a0 + a1 - i) 
 
 def process_run(func, *args):
     def internal_func(queue):

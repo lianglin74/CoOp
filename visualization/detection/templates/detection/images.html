@@ -25,10 +25,10 @@
 
 <center>
     {% if label %}
+    <a href="{% url 'detection:view_image2' %}?data={{ data }}&split={{ split }}&version={{ version }}&label={{ label }}&start_id={{ previous_id }}">Previous</a>
+    <a href="{% url 'detection:view_image2' %}?data={{ data }}&split={{ split }}&version={{ version }}&label={{ label }}&start_id={{ next_id }}">Next</a>
+    {% else %}
         <a href="{% url 'detection:view_image2' %}?data={{ data }}&label={{ label }}&start_id={{ previous_id }}">Previous</a>
         <a href="{% url 'detection:view_image2' %}?data={{ data }}&label={{ label }}&start_id={{ next_id }}">Next</a>
-    {% else %}
-        <a href="{% url 'detection:view_image2' %}?data={{ data }}&split={{ split }}&label={{ label }}&start_id={{ previous_id }}">Previous</a>
-        <a href="{% url 'detection:view_image2' %}?data={{ data }}&split={{ split }}&label={{ label }}&start_id={{ next_id }}">Next</a>
     {% endif %}
 </center>

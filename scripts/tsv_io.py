@@ -130,12 +130,45 @@ class TSVDataset(object):
     def get_lineidx(self, split_name):
         return op.join(self._data_root, '{}.lineidx'.format(split_name))
 
-    def get_data(self, split_name, t=None):
+    def get_latest_version(self, split, t=None):
+        if not op.isfile(self.get_data(split, t)):
+            return -1
+        v = 0
         if t is None:
-            return op.join(self._data_root, '{}.tsv'.format(split_name)) 
+            pattern = op.join(self._data_root, '{}.v*.tsv'.format(split))
         else:
-            return op.join(self._data_root, '{}.{}.tsv'.format(split_name,
-                t))
+            pattern = op.join(self._data_root, '{}.{}.v*.tsv'.format(
+                split, t))
+        all_file = glob.glob(pattern)
+        if len(all_file):
+            v = max(int(op.basename(f).split('.')[-2][1:]) for f in all_file)
+        return v
+
+    def get_data(self, split_name, t=None, version=None):
+        '''
+        e.g. split_name = train, t = label
+        if version = None or 0,  return train.label.tsv
+        we don't have train.label.v0.tsv
+        if version = 3 > 0, return train.label.v3.tsv
+        if version = -1, return the highest version
+        '''
+        if version is None or version == 0:
+            if t is None:
+                return op.join(self._data_root, '{}.tsv'.format(split_name)) 
+            else:
+                return op.join(self._data_root, '{}.{}.tsv'.format(split_name,
+                    t))
+        elif version > 0:
+            if t is None:
+                return op.join(self._data_root, '{}.v{}.tsv'.format(split_name,
+                    version)) 
+            else:
+                return op.join(self._data_root, '{}.{}.v{}.tsv'.format(split_name,
+                    t, version))
+        elif version == -1:
+            v = self.get_latest_version(split_name, t)
+            return self.get_data(split_name, t, v)
+            
 
     def get_num_train_image(self):
         if op.isfile(self.get_data('trainX')):
@@ -156,8 +189,8 @@ class TSVDataset(object):
         logging.info('deprecated: pls generate it on the fly')
         return load_list_file(self.get_noffsets_file()) 
 
-    def load_inverted_label(self, split, label=None):
-        fname = self.get_data(split, 'inverted.label')
+    def load_inverted_label(self, split, version=None, label=None):
+        fname = self.get_data(split, 'inverted.label', version)
         if not op.isfile(fname):
             return {}
         elif label is None:
@@ -185,12 +218,41 @@ class TSVDataset(object):
                 result[row[0]] = map(int, ss)
             return result
 
+    def load_inverted_label_as_list(self, split, label=None):
+        fname = self.get_data(split, 'inverted.label')
+        if not op.isfile(fname):
+            return []
+        elif label is None:
+            rows = tsv_reader(fname)
+            result = []
+            for row in rows:
+                assert len(row) == 2
+                ss = row[1].split(' ')
+                if len(ss) == 1 and ss[0] == '':
+                    result.append((row[0], []))
+                else:
+                    result.append((row[0], map(int, ss)))
+            return result 
+        else:
+            all_label = self.load_labelmap()
+            result = []
+            idx = all_label.index(label)
+            row = TSVFile(fname).seek(idx)
+            assert row[0] == label
+            ss = row[1].split(' ')
+            if len(ss) == 1 and ss[0] == '':
+                result.append((row[0], []))
+            else:
+                result.append((row[0], map(int, ss)))
+            return result
+
     def has(self, split, t=None):
         return op.isfile(self.get_data(split, t)) or \
                 op.isfile(self.get_data('{}X'.format(split), t))
 
-    def iter_data(self, split, t=None):
+    def iter_data(self, split, t=None, version=None):
         if split == 'train' and op.isfile(self.get_data('trainX')):
+            assert version is None
             train_files = load_list_file(self.get_data('trainX', t))
             train_tsvs = [TSVFile(f) for f in train_files]
             train_label_files = load_list_file(self.get_data('trainX',
@@ -205,10 +267,12 @@ class TSVDataset(object):
                 assert label_row[0] == data_row[0]
                 yield label_row[0], label_row[1], data_row[-1]
         else:
-            if not op.isfile(self.get_data(split, t)):
+            if not op.isfile(self.get_data(split, t, version)):
                 return
-            for row in tsv_reader(self.get_data(split, t)):
+            for row in tsv_reader(self.get_data(split, t, version)):
                 yield row
+    def write_data(self, rows, split, t=None, version=None):
+        tsv_writer(rows, self.get_data(split, t, version))
 
 def tsv_writer(values, tsv_file_name):
     ensure_directory(os.path.dirname(tsv_file_name))
@@ -310,14 +374,17 @@ def get_all_data_info2(name=None):
         if not op.isfile(dataset.get_labelmap_file()):
             return []
         labels = dataset.load_labelmap()
-        valid_splits = []
+        valid_split_versions = []
         if len(dataset.get_train_tsvs()) > 0:
-            valid_splits.append('train')
+            valid_split_versions.append(('train', 0))
         for split in ['trainval', 'test']:
-            if not op.isfile(dataset.get_data(split)):
-                continue
-            valid_splits.append(split)
-        name_splits_labels = [(name, valid_splits, labels)]
+            v = 0
+            while True:
+                if not op.isfile(dataset.get_data(split, 'label', v)):
+                    break
+                valid_split_versions.append((split, v))
+                v = v + 1
+        name_splits_labels = [(name, valid_split_versions, labels)]
     return name_splits_labels
 
 def get_all_data_info():

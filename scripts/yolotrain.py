@@ -273,14 +273,6 @@ class ProtoGenerator(object):
 
         return str(solver)
 
-    def _list_models(self):
-        return ['zf', 'zfb', 'vgg16', 'vgg19', 'resnet10', 'resnet18',
-                'resnet34', 'resnet50', 'resnet101', 'resnet152', 'squeezenet',
-                'darknet19', 'vggstyle']
-
-    def _list_detmodel(self):
-        return ['fasterrcnn', 'yolo', 'classification']
-
     def _create_model(self, model_name):
         if model_name == 'zf':
             return mzoo.ZFNet(add_last_pooling_layer=False)
@@ -302,6 +294,8 @@ class ProtoGenerator(object):
             return mzoo.VGGStyle()
         elif model_name == 'classification':
             return mzoo.Classification()
+        elif model_name == 'sebninception':
+            return mzoo.SEBNInception()
         else:
             assert False
 
@@ -336,6 +330,8 @@ class CaffeWrapper(object):
             self._kwargs = param
             if 'debug_detect' in param and 'debug_detect' not in kwargs:
                 del self._kwargs['debug_detect']
+            if 'force_predict' in param and 'force_predict' not in kwargs:
+                del self._kwargs['force_predict']
         # note if load_parameter is true, the self._kwargs has been initialized
         # by some parameters. Thus, don't overwrite it simply
         for k in kwargs: 
@@ -1073,7 +1069,7 @@ class CaffeWrapper(object):
                             s[size_type][thresh] = {}
                         s[size_type][thresh]['map'] = \
                                 result[size_type][thresh]['map']
-                write_to_file(json.dumps(s), simple_file)
+                write_to_file(json.dumps(s, indent=4, sort_keys=True), simple_file)
             simple_file = eval_file + '.class_ap.json'
             if worth_create(eval_file, simple_file):
                 if result is None:
@@ -1088,7 +1084,7 @@ class CaffeWrapper(object):
                             s[size_type][thresh] = {}
                         s[size_type][thresh]['class_ap'] = \
                                 result[size_type][thresh]['class_ap']
-                write_to_file(json.dumps(s), simple_file)
+                write_to_file(json.dumps(s, indent=4, sort_keys=True), simple_file)
 
         else:
             eval_file = self._perf_file(model)
