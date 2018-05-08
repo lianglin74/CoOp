@@ -1555,9 +1555,11 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
                     'label', version=-1),
                         idx, dataset._sourcelabel_to_targetlabels)
                 # convert the file name
-                for l in converted_label:
+                for i in idx:
+                    l = converted_label[i]
                     l[0] = '{}_{}_{}'.format(dataset.name, split, l[0])
                 label_file = out_dataset[label_type].get_data(out_split, 'label')
+                logging.info('writing the label file {}'.format(label_file))
                 tsv_writer(converted_label, label_file)
                 sources_label.append(label_file)
         write_to_file('\n'.join(sources),
