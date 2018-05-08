@@ -131,8 +131,6 @@ class TSVDataset(object):
         return op.join(self._data_root, '{}.lineidx'.format(split_name))
 
     def get_latest_version(self, split, t=None):
-        if not op.isfile(self.get_data(split, t)):
-            return -1
         v = 0
         if t is None:
             pattern = op.join(self._data_root, '{}.v*.tsv'.format(split))
@@ -142,6 +140,7 @@ class TSVDataset(object):
         all_file = glob.glob(pattern)
         if len(all_file):
             v = max(int(op.basename(f).split('.')[-2][1:]) for f in all_file)
+        assert v >= 0
         return v
 
     def get_data(self, split_name, t=None, version=None):
@@ -166,6 +165,8 @@ class TSVDataset(object):
                 return op.join(self._data_root, '{}.{}.v{}.tsv'.format(split_name,
                     t, version))
         elif version == -1:
+            if not op.isfile(self.get_data(split_name, t)):
+                return self.get_data(split_name, t)
             v = self.get_latest_version(split_name, t)
             return self.get_data(split_name, t, v)
             
@@ -206,7 +207,7 @@ class TSVDataset(object):
                     result[row[0]] = map(int, ss)
             return result 
         else:
-            all_label = self.load_labelmap()
+            all_label = load_list_file(self.get_data(split, 'labelmap', version))
             result = {}
             idx = all_label.index(label)
             row = TSVFile(fname).seek(idx)
@@ -319,7 +320,7 @@ def extract_label(full_tsv, label_tsv):
             yield row
     tsv_writer(gen_rows(), label_tsv)
 
-def create_inverted_tsv(label_tsv, inverted_label_file, label_map_file):
+def create_inverted_tsv(label_tsv, inverted_label_file, label_map):
     '''
     save the results based on the label_map in label_map_file. The benefit is
     to seek the row given a label
@@ -327,7 +328,6 @@ def create_inverted_tsv(label_tsv, inverted_label_file, label_map_file):
     if not op.isfile(label_tsv):
         logging.info('the label file does not exist: {}'.format(label_tsv))
         return 
-    label_map = load_list_file(label_map_file)
     rows = tsv_reader(label_tsv)
     inverted = {}
     for i, row in enumerate(rows):
@@ -373,18 +373,26 @@ def get_all_data_info2(name=None):
         dataset = TSVDataset(name)
         if not op.isfile(dataset.get_labelmap_file()):
             return []
+        global_labelmap = None
         labels = dataset.load_labelmap()
+        # here we assume the composite dataset has only one version
         valid_split_versions = []
-        if len(dataset.get_train_tsvs()) > 0:
-            valid_split_versions.append(('train', 0))
-        for split in ['trainval', 'test']:
+        if len(dataset.get_train_tsvs()) > 1:
+            global_labelmap = dataset.load_labelmap() if global_labelmap is \
+                None else global_labelmap
+            valid_split_versions.append(('train', 0, global_labelmap))
+            splits = ['trainval', 'test']
+        else:
+            splits = ['train', 'trainval', 'test']
+        for split in splits:
             v = 0
             while True:
                 if not op.isfile(dataset.get_data(split, 'label', v)):
                     break
-                valid_split_versions.append((split, v))
+                valid_split_versions.append((split, v, load_list_file(dataset.get_data(split, 
+                    'labelmap', v))))
                 v = v + 1
-        name_splits_labels = [(name, valid_split_versions, labels)]
+        name_splits_labels = [(name, valid_split_versions)]
     return name_splits_labels
 
 def get_all_data_info():

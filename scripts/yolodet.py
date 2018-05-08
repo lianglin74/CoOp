@@ -122,7 +122,7 @@ def xywh_to_xyxy(bbox):
     result[:, 3] = bbox[:, 1] + bbox[:, 3] / 2.
     return result
 
-def im_classify(net, im, pixel_mean, **kwarg):
+def im_classify(caffe_net, im, pixel_mean, **kwarg):
     im_orig = im.astype(np.float32, copy=True)
     im_orig -= pixel_mean
     
@@ -145,12 +145,12 @@ def im_classify(net, im, pixel_mean, **kwarg):
     channel_swap = (2, 0, 1)
     blob = im_orig.transpose(channel_swap)
 
-    net.blobs['data'].reshape(1, *blob.shape)
-    net.blobs['data'].data[...] = blob.reshape(1, *blob.shape)
+    caffe_net.blobs['data'].reshape(1, *blob.shape)
+    caffe_net.blobs['data'].data[...] = blob.reshape(1, *blob.shape)
 
-    net.forward()
+    caffe_net.forward()
 
-    prob = net.blobs['prob'].data[0]
+    prob = caffe_net.blobs['prob'].data[0]
 
     return prob
 
@@ -521,7 +521,7 @@ def detprocess(caffenet, caffemodel, pixel_mean, scale, cmap, gpu, key_idx, img_
     else:
         caffe.set_mode_cpu()
 
-    net = caffe.Net(str(caffenet), str(caffemodel), caffe.TEST)
+    caffe_net = caffe.Net(str(caffenet), str(caffemodel), caffe.TEST)
     last_print_time = 0
     count = 0
     while True:
@@ -539,16 +539,16 @@ def detprocess(caffenet, caffemodel, pixel_mean, scale, cmap, gpu, key_idx, img_
             if im is None:
                 continue
             if kwargs.get('detmodel', 'yolo') == 'yolo':
-                if 'label' in net.blobs:
+                if 'label' in caffe_net.blobs:
                     kwargs['gt_labels'] = json.loads(cols[1])
                     kwargs['label_map'] = cmap
-                x = im_multi_scale_detect(net, im, pixel_mean, gpu, **kwargs)
+                x = im_multi_scale_detect(caffe_net, im, pixel_mean, gpu, **kwargs)
                 if len(x) == 2:
                     scores, boxes = x[0], x[1]
                     # vis_detections(im, scores, boxes, cmap, thresh=0.5)
                     results = result2json(im, scores, boxes, cmap)
             else:
-                scores = im_classify(net, im, pixel_mean, scale=scale, **kwargs)
+                scores = im_classify(caffe_net, im, pixel_mean, scale=scale, **kwargs)
                 results = ','.join(map(str, scores))
             if out_queue.full():
                 if time.time() - last_print_time > 10:
@@ -558,10 +558,10 @@ def detprocess(caffenet, caffemodel, pixel_mean, scale, cmap, gpu, key_idx, img_
             if len(kwargs.get('extract_features', '')) > 0:
                 results = [cols[key_idx]]
                 for k in kwargs['extract_features'].split('.'):
-                    if len(net.blobs[k].data.shape) == 0:
-                        results.append(base64.b64encode(pkl.dumps(net.blobs[k].data)))
+                    if len(caffe_net.blobs[k].data.shape) == 0:
+                        results.append(base64.b64encode(pkl.dumps(caffe_net.blobs[k].data)))
                     else:
-                        results.append(base64.b64encode(pkl.dumps(net.blobs[k].data[0])))
+                        results.append(base64.b64encode(pkl.dumps(caffe_net.blobs[k].data[0])))
                 out_queue.put(results)
             else:
                 out_queue.put((cols[key_idx], results))

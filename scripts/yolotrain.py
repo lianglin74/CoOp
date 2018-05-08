@@ -300,17 +300,11 @@ class ProtoGenerator(object):
             assert False
 
 class CaffeWrapper(object):
-    def __init__(self, data, net, load_parameter=False, **kwargs):
-        self._data = data
-        self._net = net
+    def __init__(self, load_parameter=False, **kwargs):
         self._kwargs = {} 
-
-        self._expid = kwargs['expid']
-        self._path_env = default_paths(self._net, self._data, self._expid)
-        self._output_root = self._path_env['output_root']
-        self._output = self._path_env['output']
-
         if load_parameter:
+            full_expid = kwargs['full_expid']
+            self._output = op.join('output', full_expid)
             yaml_pattern = op.join(self._output,
                     'parameters_*.yaml')
             yaml_files = glob.glob(yaml_pattern)
@@ -337,6 +331,14 @@ class CaffeWrapper(object):
         for k in kwargs: 
             self._kwargs[k] = copy.deepcopy(kwargs[k])
 
+        self._data = self._kwargs['data']
+        self._net = self._kwargs['net']
+        self._expid = self._kwargs['expid']
+        self._path_env = default_paths(self._net, self._data, self._expid)
+        self._output_root = self._path_env['output_root']
+        self._output = self._path_env['output']
+
+
         if 'detmodel' not in self._kwargs:
             self._kwargs['detmodel'] = 'yolo'
         self._detmodel = self._kwargs['detmodel']
@@ -348,12 +350,12 @@ class CaffeWrapper(object):
             source_dataset = TSVDataset(data)
             self._kwargs['target_synset_tree'] = source_dataset.get_tree_file()
 
-        self._test_data = self._kwargs.get('test_data', data)
+        self._test_data = self._kwargs.get('test_data', self._data)
         self._test_split = self._kwargs.get('test_split', 'test')
         self._test_dataset = TSVDataset(self._test_data)
         self._test_source = self._test_dataset.get_data(self._test_split)
+        source_dataset = TSVDataset(self._data)
         if self._test_data == self._data:
-            source_dataset = TSVDataset(self._data)
             source_dataset.dynamic_update(self._kwargs.get('dataset_ops', []))
             if self._kwargs.get('test_on_train', False):
                 self._test_source = source_dataset.get_train_tsv()
@@ -1592,7 +1594,7 @@ def yolo_tree_train(**kwargs):
 
 def yolotrain(data, net, **kwargs):
     init_logging()
-    c = CaffeWrapper(data, net, **kwargs)
+    c = CaffeWrapper(data=data, net=net, **kwargs)
 
     monitor_train_only = kwargs.get('monitor_train_only', False)
 

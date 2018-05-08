@@ -225,7 +225,7 @@ def gt_predict_images(predicts, gts, test_data, target_images, label, start_id, 
         yield key, origin, im_gt_target, im_pred_target, im_gt, im_pred, image_aps[i][1]
 
 def get_confusion_matrix_by_predict_file(full_expid, 
-        predict_file, threshold):
+        predict_file, label, threshold):
 
     test_data, test_data_split = parse_test_data(predict_file)
     predicts, _ = load_labels(op.join('output', full_expid, 'snapshot', predict_file))
@@ -410,6 +410,19 @@ def populate_all_dataset_details():
         except:
             continue
 
+def update_labelmap(label_tsv, labelmap):
+    '''
+    labelmap is a hashset and can be added
+    '''
+    rows = tsv_reader(label_tsv)
+    for row in rows:
+        assert len(row) == 2
+        try:
+            labelmap.update(set([rect['class'] for rect in
+                json.loads(row[1])]))
+        except:
+            labelmap.update(row[1])
+
 def populate_dataset_details(data):
     dataset = TSVDataset(data)
 
@@ -437,7 +450,7 @@ def populate_dataset_details(data):
         logging.info('no labelmap, generating...')
         labelmap = []
         for split in splits:
-            label_tsv = dataset.get_data(split, 'label')
+            label_tsv = dataset.get_data(split, 'label', version=-1)
             if not op.isfile(label_tsv):
                 continue
             for row in tsv_reader(label_tsv):
@@ -450,7 +463,21 @@ def populate_dataset_details(data):
             logging.warning('there are no labels!')
         labelmap = list(set(labelmap))
         logging.info('find {} labels'.format(len(labelmap)))
-        write_to_file('\n'.join(labelmap), dataset.get_labelmap_file())
+        need_update = False
+        if op.isfile(dataset.get_labelmap_file()):
+            origin_labelmap = dataset.load_labelmap()
+            if len(origin_labelmap) == len(labelmap):
+                for o in origin_labelmap:
+                    if o not in labelmap:
+                        need_update = True
+                        break
+            else:
+                need_update = True
+        else:
+            need_update = True
+        if need_update:
+            logging.info('updating {}'.format(dataset.get_labelmap_file()))
+            write_to_file('\n'.join(labelmap), dataset.get_labelmap_file())
 
 
     # generate the rows with duplicate keys
@@ -460,7 +487,8 @@ def populate_dataset_details(data):
         if op.isfile(label_tsv) and not op.isfile(duplicate_tsv):
             num_duplicate = detect_duplicate_key(label_tsv, duplicate_tsv)
             assert num_duplicate == 0
-
+    
+    # create inverted file for the trainX
     if op.isfile(dataset.get_data('trainX')):
         inverted_file = dataset.get_data('train', 'inverted.label')
         if not op.isfile(inverted_file):
@@ -488,6 +516,8 @@ def populate_dataset_details(data):
                         yield c, ''
                     else:
                         yield c, ' '.join(map(str, inverted[c]))
+                for c in inverted:
+                    assert c in labelmap
             if len(labelmap) == 0:
                 labelmap = dataset.load_labelmap()
             tsv_writer(gen_inverted_trainX(labelmap), inverted_file)
@@ -507,10 +537,22 @@ def populate_dataset_details(data):
             label_tsv = dataset.get_data(split, 'label', v)
             if not op.isfile(label_tsv):
                 break
+            curr_labelmap_file = dataset.get_data(split, 'labelmap', v)
+            if not op.isfile(curr_labelmap_file):
+                curr_labelmap = set()
+                update_labelmap(label_tsv, curr_labelmap)
+                curr_labelmap = sorted(list(curr_labelmap))
+                dataset.write_data([[l] for l in curr_labelmap], split, 'labelmap', v)
+            else:
+                curr_labelmap = None
             inverted = dataset.get_data(split, 'inverted.label', v)
             if not op.isfile(inverted):
-                create_inverted_tsv(label_tsv, inverted,
-                        dataset.get_labelmap_file())
+                if curr_labelmap is None:
+                    curr_labelmap = []
+                    for row in dataset.iter_data(split, 'labelmap', v):
+                        assert len(row) == 1
+                        curr_labelmap.append(row[0])
+                create_inverted_tsv(label_tsv, inverted, curr_labelmap)
             v = v + 1
 
     if not op.isfile(dataset.get_noffsets_file()):
@@ -1041,7 +1083,7 @@ class TSVDatasetSource(TSVDataset, DatasetSource):
         splits = ['trainval', 'train', 'test']
         # check the type of the dataset
         for split in splits:
-            label_tsv = self.get_data(split, 'label')
+            label_tsv = self.get_data(split, 'label', version=-1)
             if not op.isfile(label_tsv):
                 continue
             for row in tsv_reader(label_tsv):
@@ -1059,7 +1101,9 @@ class TSVDatasetSource(TSVDataset, DatasetSource):
         for split in splits:
             logging.info('loading the inverted file: {}-{}'.format(self.name,
                 split))
-            inverted = self.load_inverted_label(split)
+            if not op.isfile(self.get_data(split, 'label', version=-1)):
+                continue
+            inverted = self.load_inverted_label(split, version=-1)
             label_idx = dict_to_list(inverted, 0)
             for label, idx in label_idx:
                 self._split_label_idx.append((split, label, idx))
@@ -1094,7 +1138,7 @@ class TSVDatasetSource(TSVDataset, DatasetSource):
                 if values is not None:
                     source_terms = values.split(',')
                     for t in source_terms:
-                        t = t.lower().strip()
+                        t = t.strip()
                         if t not in name_to_targetlabels:
                             name_to_targetlabels[t] = set()
                         if t not in hash_labelmap:
@@ -1507,7 +1551,8 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
                 sources.append(source)
                 logging.info('converting labels: {}-{}'.format(
                     dataset.name, split))
-                converted_label = convert_label(dataset.get_data(split, 'label'),
+                converted_label = convert_label(dataset.get_data(split,
+                    'label', version=-1),
                         idx, dataset._sourcelabel_to_targetlabels)
                 # convert the file name
                 for l in converted_label:
@@ -1524,6 +1569,7 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
     max_image = kwargs.get('max_image_per_label', 1000)
     min_image = kwargs.get('min_image_per_label', 200)
     label_to_dtsik = list_to_dict(train_ldtsik, 0)
+    extra_dtsik = []
     for label in label_to_dtsik:
         dtsik = label_to_dtsik[label]
         if len(dtsik) > max_image:
@@ -1552,7 +1598,7 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
             num_duplicate = int(np.ceil(float(min_image) / len(dtsik)))
             logging.info('duplicate images for label of {}: {}->{}, {}'.format(
                 label, len(dtsik), min_image, num_duplicate))
-            dtsik = num_duplicate * dtsik
+            extra_dtsik = (num_duplicate - 1) * dtsik
         label_to_dtsik[label] = dtsik
     logging.info('# train instances before duplication: {}'.format(len(train_ldtsik)))
     train_ldtsik = dict_to_list(label_to_dtsik, 0)
@@ -1560,10 +1606,18 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
 
     logging.info('saving the shuffle file')
     type_to_ldsik = list_to_dict(train_ldtsik, 2)
+    extra_type_to_dtsik = list_to_dict(extra_dtsik, 1)
     for label_type in type_to_ldsik:
         ldsik = type_to_ldsik[label_type]
-        random.shuffle(ldsik)
         shuffle_info = [(str(k), str(i)) for l, d, s, i, k in ldsik]
+        shuffle_info = list(set(shuffle_info))
+        if label_type in extra_type_to_dtsik:
+            dtsik = extra_type_to_dtsik[label_type]
+            # we should not de-duplicate it because it comes from the duplicate
+            # policy
+            extra_shuffle_info = [(str(k), str(i) ) for d, t, s, i, k in dtsik]
+            shuffle_info.extend(extra_shuffle_info)
+        random.shuffle(shuffle_info)
         tsv_writer(shuffle_info,
                 out_dataset[label_type].get_shuffle_file('train'))
 
