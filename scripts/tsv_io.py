@@ -247,26 +247,26 @@ class TSVDataset(object):
                 result.append((row[0], map(int, ss)))
             return result
 
-    def has(self, split, t=None):
-        return op.isfile(self.get_data(split, t)) or \
-                op.isfile(self.get_data('{}X'.format(split), t))
+    def has(self, split, t=None, version=None):
+        return op.isfile(self.get_data(split, t, version)) or (
+                op.isfile(self.get_data('{}X'.format(split), t, version)) and 
+                op.isfile(self.get_shuffle_file(split)))
 
     def iter_data(self, split, t=None, version=None):
-        if split == 'train' and op.isfile(self.get_data('trainX')):
-            assert version is None
-            train_files = load_list_file(self.get_data('trainX', t))
-            train_tsvs = [TSVFile(f) for f in train_files]
-            train_label_files = load_list_file(self.get_data('trainX',
-                'label'))
-            train_label_tsvs = [TSVFile(f) for f in train_label_files]
-            shuffle_file = self.get_shuffle_file('train')
+        splitX = split + 'X'
+        if not op.isfile(self.get_data(split, t, version)) and \
+                op.isfile(self.get_data(splitX, t, version)):
+            assert t is not None, 'if t is none, we need two iter_data. double check'
+            file_list = load_list_file(self.get_data(splitX, t, version))
+            tsvs = [TSVFile(f) for f in file_list]
+            shuffle_file = self.get_shuffle_file(split)
             shuffle_tsv_rows = tsv_reader(shuffle_file)
             for idx_source, idx_row in shuffle_tsv_rows:
                 idx_source, idx_row = int(idx_source), int(idx_row)
-                data_row = train_tsvs[idx_source].seek(idx_row)
-                label_row = train_label_tsvs[idx_source].seek(idx_row)
-                assert label_row[0] == data_row[0]
-                yield label_row[0], label_row[1], data_row[-1]
+                row = tsvs[idx_source].seek(idx_row)
+                if len(row) == 3:
+                    row[1] == 'dont use'
+                yield row
         else:
             if not op.isfile(self.get_data(split, t, version)):
                 return
@@ -320,15 +320,12 @@ def extract_label(full_tsv, label_tsv):
             yield row
     tsv_writer(gen_rows(), label_tsv)
 
-def create_inverted_tsv(label_tsv, inverted_label_file, label_map):
+def create_inverted_tsv(rows, inverted_label_file, label_map):
     '''
+    deprecated, use create_inverted_list
     save the results based on the label_map in label_map_file. The benefit is
     to seek the row given a label
     '''
-    if not op.isfile(label_tsv):
-        logging.info('the label file does not exist: {}'.format(label_tsv))
-        return 
-    rows = tsv_reader(label_tsv)
     inverted = {}
     for i, row in enumerate(rows):
         labels = json.loads(row[1])
@@ -351,6 +348,24 @@ def create_inverted_tsv(label_tsv, inverted_label_file, label_map):
             i = inverted[label] if label in inverted else []
             yield label, ' '.join(map(str, i))
     tsv_writer(gen_rows(), inverted_label_file)
+
+def create_inverted_list(rows):
+    inverted = {}
+    for i, row in enumerate(rows):
+        labels = json.loads(row[1])
+        if type(labels) is list:
+            # detection dataset
+            curr_unique_labels = set([l['class'] for l in labels])
+        else:
+            assert type(labels) is int
+            curr_unique_labels = [str(labels)]
+        for l in curr_unique_labels:
+            assert type(l) == str or type(l) == unicode 
+            if l not in inverted:
+                inverted[l] = [i]
+            else:
+                inverted[l].append(i)
+    return inverted
 
 def tsv_shuffle_reader(tsv_file):
     logging.warn('deprecated: using TSVFile to randomly seek')

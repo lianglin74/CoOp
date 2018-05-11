@@ -43,6 +43,7 @@ from qd_common import write_to_yaml_file, load_from_yaml_file
 from qd_common import encoded_from_img
 from tsv_io import extract_label
 from tsv_io import create_inverted_tsv
+from tsv_io import create_inverted_list
 
 from process_image import draw_bb, show_image, save_image
 from qd_common import write_to_file
@@ -410,11 +411,10 @@ def populate_all_dataset_details():
         except:
             continue
 
-def update_labelmap(label_tsv, labelmap):
+def update_labelmap(rows, labelmap):
     '''
     labelmap is a hashset and can be added
     '''
-    rows = tsv_reader(label_tsv)
     for row in rows:
         assert len(row) == 2
         try:
@@ -486,41 +486,6 @@ def populate_dataset_details(data):
         duplicate_tsv = dataset.get_data(split, 'key_duplicate')
         if op.isfile(label_tsv) and not op.isfile(duplicate_tsv):
             num_duplicate = detect_duplicate_key(label_tsv, duplicate_tsv)
-            assert num_duplicate == 0
-    
-    # create inverted file for the trainX
-    if op.isfile(dataset.get_data('trainX')):
-        inverted_file = dataset.get_data('train', 'inverted.label')
-        if not op.isfile(inverted_file):
-            train_label_files = load_list_file(dataset.get_data('trainX',
-                'label'))
-            train_label_tsvs = [TSVFile(f) for f in train_label_files]
-            shuffle_file = dataset.get_shuffle_file('train')
-            shuffle_tsv_rows = tsv_reader(shuffle_file)
-            inverted = {}
-            for i, row in enumerate(shuffle_tsv_rows):
-                if (i % 1000) == 0:
-                    logging.info(i)
-                label_row = train_label_tsvs[int(row[0])].seek(int(row[1]))
-                all_class = []
-                for l in json.loads(label_row[1]):
-                    all_class.append(l['class'])
-                for c in set(all_class):
-                    if c in inverted:
-                        inverted[c].append(i)
-                    else:
-                        inverted[c] = [i]
-            def gen_inverted_trainX(labelmap):
-                for c in labelmap:
-                    if c not in inverted:
-                        yield c, ''
-                    else:
-                        yield c, ' '.join(map(str, inverted[c]))
-                for c in inverted:
-                    assert c in labelmap
-            if len(labelmap) == 0:
-                labelmap = dataset.load_labelmap()
-            tsv_writer(gen_inverted_trainX(labelmap), inverted_file)
     
     # generate lineidx if it is not generated
     for split in splits:
@@ -530,29 +495,34 @@ def populate_dataset_details(data):
             logging.info('no lineidx for {}. generating...'.format(split))
             generate_lineidx(full_tsv, lineidx)
 
-    # for each data tsv, generate the inverted file
+    # for each data tsv, generate the inverted file, and the labelmap
     for split in splits:
         v = 0
         while True:
-            label_tsv = dataset.get_data(split, 'label', v)
-            if not op.isfile(label_tsv):
+            if not dataset.has(split, 'label', v):
                 break
-            curr_labelmap_file = dataset.get_data(split, 'labelmap', v)
-            if not op.isfile(curr_labelmap_file):
+            if not dataset.has(split, 'labelmap', v):
                 curr_labelmap = set()
-                update_labelmap(label_tsv, curr_labelmap)
+                update_labelmap(dataset.iter_data(split, 'label', v), curr_labelmap)
                 curr_labelmap = sorted(list(curr_labelmap))
                 dataset.write_data([[l] for l in curr_labelmap], split, 'labelmap', v)
             else:
                 curr_labelmap = None
-            inverted = dataset.get_data(split, 'inverted.label', v)
-            if not op.isfile(inverted):
+            if not dataset.has(split, 'inverted.label', v):
                 if curr_labelmap is None:
                     curr_labelmap = []
                     for row in dataset.iter_data(split, 'labelmap', v):
                         assert len(row) == 1
                         curr_labelmap.append(row[0])
-                create_inverted_tsv(label_tsv, inverted, curr_labelmap)
+                def gen_inverted_rows():
+                    for label in inverted:
+                        assert label in curr_labelmap 
+                    for label in curr_labelmap:
+                        i = inverted[label] if label in inverted else []
+                        yield label, ' '.join(map(str, i))
+                inverted = create_inverted_list(dataset.iter_data(split, 'label', v))
+                dataset.write_data(gen_inverted_rows(), 
+                        split, 'inverted.label', v)
             v = v + 1
 
     if not op.isfile(dataset.get_noffsets_file()):
@@ -614,6 +584,8 @@ def create_index_composite_dataset(dataset):
     num_images_per_datasource = [None] * len(source_tsvs)
 
     shuffle_file = dataset.get_shuffle_file('train')
+    if not op.isfile(shuffle_file):
+        return
     rows = tsv_reader(shuffle_file)
     all_idxSource_idxRow = []
     for idx_source, idx_row in rows:
@@ -631,8 +603,8 @@ def create_index_composite_dataset(dataset):
     # for each data source, how many labels are contributed and how many are
     # not
     source_dataset_names = [op.basename(op.dirname(t)) for t in source_tsvs]
-    source_tsv_label_files = ['{}.label{}'.format(*op.splitext(t)) for t in
-            source_tsvs]
+    source_tsv_label_files = load_list_file(dataset.get_data('trainX',
+        'origin.label'))
     source_tsv_labels = [TSVFile(t) for t in source_tsv_label_files]
     trainX_label_file = dataset.get_data('trainX', 'label')
     all_dest_label_file = load_list_file(trainX_label_file)
@@ -845,7 +817,7 @@ def visualize_box(data, split, version, label, start_id, color_map={}):
         im = img_from_base64(row_image[-1])
         origin = np.copy(im)
         rects = try_json_parse(row_label[1])
-        new_name = row_image[0].replace('/', '_').replace(':', '')
+        new_name = row_label[0].replace('/', '_').replace(':', '')
         if type(rects) is list:
             rects = [l for l in rects if 'conf' not in l or l['conf'] > 0.3]
             def get_rect_class(rects):
@@ -1532,6 +1504,7 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
         d_to_lsi = list_to_dict(ldsi, 1)
         k = 0
         sources = []
+        sources_origin_label = []
         sources_label = []
         for dataset in d_to_lsi:
             lsi = d_to_lsi[dataset]
@@ -1551,9 +1524,11 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
                 sources.append(source)
                 logging.info('converting labels: {}-{}'.format(
                     dataset.name, split))
-                converted_label = convert_label(dataset.get_data(split,
-                    'label', version=-1),
+                source_origin_label = dataset.get_data(split,
+                    'label', version=-1)
+                converted_label = convert_label(source_origin_label,
                         idx, dataset._sourcelabel_to_targetlabels)
+                sources_origin_label.append(source_origin_label)
                 # convert the file name
                 for i in idx:
                     l = converted_label[i]
@@ -1566,6 +1541,8 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
                 out_dataset[label_type].get_data('trainX'))
         write_to_file('\n'.join(sources_label), 
                 out_dataset[label_type].get_data('trainX', 'label'))
+        write_to_file('\n'.join(sources_origin_label),
+                out_dataset[label_type].get_data('trainX', 'origin.label'))
     logging.info('duplicating or removing the train images')
     # for each label, let's duplicate the image or remove the image
     max_image = kwargs.get('max_image_per_label', 1000)
@@ -1647,10 +1624,13 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
                 for split in s_to_li:
                     li = s_to_li[split]
                     idx = list_to_dict(li, 1).keys()
-                    tsv = TSVFile(dataset.get_data(split))
+                    src_img_tsv = TSVFile(dataset.get_data(split))
+                    src_label_tsv = TSVFile(dataset.get_data(split, 'label',
+                        version=-1))
                     for i in idx:
-                        row = tsv.seek(i)
-                        rects = json.loads(row[1])
+                        row = src_img_tsv.seek(i)
+                        label_row = src_label_tsv.seek(i)
+                        rects = json.loads(label_row[1])
                         convert_one_label(rects, 
                                 dataset._sourcelabel_to_targetlabels)
                         assert len(rects) > 0

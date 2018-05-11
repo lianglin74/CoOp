@@ -205,9 +205,9 @@ class ProtoGenerator(object):
 
         max_iters = kwargs.get('max_iters', None)
 
+        num_train_images = kwargs.get('num_train_images', 5011)
         def to_iter(e):
             if type(e) is str and e.endswith('e'):
-                num_train_images = kwargs.get('num_train_images', 5011)
                 effective_batch_size = kwargs.get('effective_batch_size', 64)
                 iter_each_epoch = 1. * num_train_images / effective_batch_size
                 return int(float(e[:-1]) * iter_each_epoch)
@@ -234,7 +234,11 @@ class ProtoGenerator(object):
             extra_param['burn_in_power'] = kwargs['burn_in_power']
 
         lr_policy = kwargs.get('lr_policy', 'multifixed')
-
+        
+        if 'snapshot' in kwargs:
+            snapshot = kwargs['snapshot']
+        else:
+            snapshot = max(int(num_train_images / 100), 500)
         solver_param = {
                 'train_net': op.relpath(train_net_file), 
                 'lr_policy': lr_policy,
@@ -242,7 +246,7 @@ class ProtoGenerator(object):
                 'display': kwargs.get('display', 100),
                 'momentum': 0.9,
                 'weight_decay': kwargs.get('weight_decay', 0.0005),
-                'snapshot': kwargs.get('snapshot', 500),
+                'snapshot': snapshot,
                 'snapshot_prefix': op.relpath(snapshot_prefix),
                 'max_iter': max_iters,
                 }
@@ -296,6 +300,8 @@ class ProtoGenerator(object):
             return mzoo.Classification()
         elif model_name == 'sebninception':
             return mzoo.SEBNInception()
+        elif model_name == 'seresnet':
+            return mzoo.SEResnet()
         else:
             assert False
 
@@ -347,7 +353,7 @@ class CaffeWrapper(object):
 
         self._tree = None
         if self._kwargs.get('yolo_tree', False):
-            source_dataset = TSVDataset(data)
+            source_dataset = TSVDataset(self._data)
             self._kwargs['target_synset_tree'] = source_dataset.get_tree_file()
 
         self._test_data = self._kwargs.get('test_data', self._data)
@@ -1540,12 +1546,12 @@ def yolo_tree_train(**kwargs):
         assert c._is_train_finished()
         model = c.train()
     
+    no_bb_data = '{}_no_bb'.format(kwargs['data'])
     # train it with no_bb as well
-    if len(TSVDataset(no_bb_data).get_num_train_image()) == 0:
+    if TSVDataset(no_bb_data).get_num_train_image() == 0:
         logging.info('there is no training image for image-level label')
         return
 
-    no_bb_data = '{}_no_bb'.format(kwargs['data'])
     curr_task = copy.deepcopy(kwargs)
     curr_task['ovthresh'] = [-1]
     curr_task['test_data'] = no_bb_data

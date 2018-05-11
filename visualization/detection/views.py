@@ -174,6 +174,7 @@ def view_model_by_predict_file(request, full_expid, predict_file,
     data = parse_data(full_expid)
     test_data, test_data_split = parse_test_data(predict_file)
     x = get_confusion_matrix_by_predict_file(full_expid, predict_file,
+            label,
             threshold)
     predicts, gts, label_to_idx = x['predicts'], x['gts'], x['label_to_idx']
     confusion_pred_gt = x['confusion_pred_gt']
