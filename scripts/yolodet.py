@@ -524,6 +524,8 @@ def detprocess(caffenet, caffemodel, pixel_mean, scale, cmap, gpu, key_idx, img_
     
     if kwargs.get('detmodel', 'yolo') == 'yolo':
         buffer_size = max(kwargs.get('test_input_sizes', [416])) + 100
+        # buffer size should be 32x
+        buffer_size = int(buffer_size) / 32 * 32
         blob = np.zeros((3, buffer_size, buffer_size), dtype=np.float32)
         caffe_net.blobs['data'].reshape(1, *blob.shape)
         caffe_net.blobs['data'].data[...]=blob.reshape(1, *blob.shape)
