@@ -14,6 +14,32 @@ from qd_common import FileProgressingbar, worth_create
 import logging
 import copy
 
+def load_truths_iter(rows):
+    logging.info('loading gt')
+    '''
+    Return: dict [class][image id] => bboxes
+    '''
+    retdict = dict();
+    for cols in rows:
+        if len(cols)<2:
+            continue;
+        key = cols[0]
+        try:
+            rects = json.loads(cols[1]) if cols[1]!='' else [];
+        except: 
+            logging.info('invalid grouth truth: {}'.format(cols[0]))
+            continue
+        for rect in rects:
+            label = rect['class'].strip();
+            if label not in retdict:
+                retdict[label]=dict();
+            if key not in retdict[label]:
+                retdict[label][key]=[];
+            # groundtruth coords are 0-based. +1
+            bbox = [ x+1 for x in rect['rect'] ];
+            retdict[label][key]+=[(rect['diff'] if 'diff' in rect else 0,bbox)];
+    return retdict;
+
 def load_truths(filein):
     logging.info('loading gt')
     '''
@@ -383,10 +409,70 @@ def lift_truths(truths, label_tree):
                         r[imid] = rects
     return result
 
+def deteval_iter(truth_iter, dets='', vocdets='', name='', 
+        precth=[0.8,0.9,0.95], multiscale=False, ovthresh=[0.3,0.4,0.5],
+        classap=None, baselinefolder=None, **kwargs):
+    '''
+    truth_iter is an iterator
+    '''
+
+    #Load data
+    if dets!='' :
+        detsfile = dets
+        (report_dir, fbase, ext) = splitpath(detsfile);
+    elif vocdets!='':
+        report_dir = vocdets
+        fbase = 'voc2007'
+    else:
+        assert False, "argument dets/vocdets is missing!"
+
+    #save the evaluation result to the report file, which can be used as baseline
+    exp_name = name if name !="" else fbase;
+    report_name = exp_name if report_dir=='' else '/'.join([report_dir,exp_name]);
+    report_file = report_name + ".report" 
+
+    if os.path.isfile(report_file) and \
+            not kwargs.get('force_evaluate', False) and \
+            not worth_create(detsfile, report_file):
+        logging.info('skip to evaluate (exists) {}'.format(report_file))
+        return report_file
+
+    if dets!='' :
+        detresults = load_dets(detsfile);
+    elif vocdets!='':
+        detresults = load_voc_dets(vocdets);
+    else:
+        assert False, "argument dets/vocdets is missing!"
+        
+    truths = load_truths_iter(truth_iter);
+    if 'target_synset_tree' in kwargs:
+        label_tree = LabelTree(kwargs['target_synset_tree']) 
+        if kwargs.get('yolo_tree_eval_gt_lift', True):
+            truths = lift_truths(truths, label_tree)
+        if kwargs.get('yolo_tree_eval_label_lift', True):
+            detresults = lift_detects(detresults, label_tree)
+
+    #brief report on different object size
+    reports = get_report(truths, detresults, ovthresh, multiscale)
+    # detail report with p-r curve
+    
+    with open(report_file,"w") as fout:
+        fout.write(json.dumps(reports,indent=4, sort_keys=True));
+    
+    print_reports(reports, precth, report_file + '.table')
+    if classap is not None and classap in ovthresh:
+        caplist = sorted(reports['overall'][classap]['class_ap'].items(), key=lambda x:-x[1])
+        for pair in caplist:
+            print('%s\t%.4g'%pair)
+
+    return report_file
     
 def deteval(truth='', dets='', vocdets='', name='', 
         precth=[0.8,0.9,0.95], multiscale=True, ovthresh=[0.3,0.4,0.5],
         classap=None, baselinefolder=None, **kwargs):
+    '''
+    use deteval_iter if possible, which is more general
+    '''
     truthsfile = truth
     # parse arguments
     assert  os.path.isfile(truthsfile), truthsfile + " is not found"

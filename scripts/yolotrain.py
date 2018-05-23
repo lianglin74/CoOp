@@ -16,7 +16,8 @@ import quickcaffe.modelzoo as mzoo
 from caffe.proto import caffe_pb2
 import numpy as np
 from google.protobuf import text_format
-from deteval import deteval
+from deteval import deteval_iter
+from yolodet import tsvdet_iter
 from yolodet import tsvdet
 import time
 from pprint import pprint
@@ -253,6 +254,8 @@ class ProtoGenerator(object):
 
         if kwargs.get('solver_debug_info', False):
             solver_param['debug_info'] = kwargs['solver_debug_info']
+        if kwargs.get('iter_size', 1) != 1:
+            solver_param['iter_size'] = kwargs['iter_size']
 
         if lr_policy == 'multifixed':
             if kwargs.get('stagelr', None):
@@ -388,6 +391,7 @@ class CaffeWrapper(object):
         test_proto_file = self._get_test_proto_file(best_avail_model)
         waitkey = 0 if source_image_tsv else 1
         thresh = 0.24
+        gpu = 0
         from demo_detection import predict_online
         predict_online(test_proto_file, model_param, pixel_mean, labels,
                 source_image_tsv, thresh, waitkey, gpu)
@@ -432,15 +436,17 @@ class CaffeWrapper(object):
     def monitor_train(self):
         while True:
             logging.info('monitoring')
+            finished_time = False
             if self._is_train_finished():
                 self.cpu_test_time()
                 self.gpu_test_time()
+                finished_time = True
             is_unfinished = self.tracking()
             self.plot_loss()
             self.param_distribution()
             s = self.get_iter_acc()
             self._display(s)
-            if not is_unfinished:
+            if not is_unfinished and finished_time:
                 break 
             logging.info('sleeping')
             time.sleep(5)
@@ -492,7 +498,7 @@ class CaffeWrapper(object):
 
         logging.info('gpu:{}->result_file:{}'.format(gpu, result_file))
 
-        cols = tsv_reader(self._test_source)
+        cols = self._test_dataset.iter_data(self._test_split) 
 
         ims = []
         for i, col in enumerate(cols):
@@ -901,11 +907,10 @@ class CaffeWrapper(object):
             logging.info('skip to predict (exist): {}'.format(outtsv_file))
             return outtsv_file 
 
-        logging.info('test: {}'.format(self._test_source))
-
-        tsvdet(test_proto_file, 
+        tsvdet_iter(test_proto_file, 
                 model_param, 
-                self._test_source, 
+                self._test_dataset.iter_data(self._test_split, unique=True,
+                    progress=True),
                 colkey, 
                 colimg, 
                 mean_value, 
@@ -1050,14 +1055,8 @@ class CaffeWrapper(object):
             return None
 
         if self._detmodel != 'classification':
-            test_source = self._test_source
-            gt = '{}.label{}'.format(*op.splitext(self._test_source))
-            if op.isfile(gt):
-                test_source = gt
-            else:
-                logging.info('please create index file')
-            eval_file = deteval(truth=test_source,
-                    dets=predict_result, **kwargs)
+            eval_file = deteval_iter(truth_iter=self._test_dataset.iter_data(
+                self._test_split, 'label'), dets=predict_result, **kwargs)
             # create the index of the eval file so that others can load the
             # information fast
             result = None
@@ -1165,6 +1164,9 @@ class CaffeWrapper(object):
             cc.append('TreeThreshold{}'.format(self._kwargs['softmax_tree_prediction_threshold']))
         if not self._kwargs.get('class_specific_nms', True) :
             cc.append('ClsIndependentNMS')
+        if self._kwargs.get('detmodel', 'yolo') == 'classification' and \
+                self._kwargs.get('network_input_size', 224) != 224:
+            cc.append('testInput{}'.format(self._kwargs['network_input_size']))
 
         cc.append('predict')
         return '.'.join(cc)
@@ -1233,28 +1235,31 @@ class CaffeWrapper(object):
         xs, ys = [], []
         for v in valid:
             model, eval_result = v
-            eval_result_simple = eval_result + '.map.json'
-            if not op.isfile(eval_result_simple):
-                continue
-            model_iter = model.model_iter
-            xs.append(model_iter)
-            logging.info('loading eval result: {}'.format(eval_result_simple))
-            with open(eval_result_simple, 'r') as fp:
-                perf = json.loads(fp.read())
-            if 'overall' in perf:
-                if ious == None:
-                    ious = perf['overall'].keys()
-                    ys = {}
-                    for key in ious:
-                        ys[key] = []
-                for key in ious:
-                    if key not in perf['overall']:
-                        ys[key].append(0)
-                    else:
-                        ys[key].append(perf['overall'][key]['map'])
+            if self._detmodel == 'classification':
+                xs.append(model.model_iter)
+                ys.append(load_from_yaml_file(eval_result)['acc'])
             else:
-                ys.append(perf['acc'])
-
+                eval_result_simple = eval_result + '.map.json'
+                if not op.isfile(eval_result_simple):
+                    continue
+                model_iter = model.model_iter
+                xs.append(model_iter)
+                logging.info('loading eval result: {}'.format(eval_result_simple))
+                with open(eval_result_simple, 'r') as fp:
+                    perf = json.loads(fp.read())
+                if 'overall' in perf:
+                    if ious == None:
+                        ious = perf['overall'].keys()
+                        ys = {}
+                        for key in ious:
+                            ys[key] = []
+                    for key in ious:
+                        if key not in perf['overall']:
+                            ys[key].append(0)
+                        else:
+                            ys[key].append(perf['overall'][key]['map'])
+                else:
+                    ys.append(perf['acc'])
         return xs, ys
 
     def plot_acc(self):
@@ -1349,6 +1354,8 @@ class CaffeWrapper(object):
             if op.isfile(out_file):
                 os.remove(out_file)
             plot_to_file(xs, ys, out_file)
+        else:
+            logging.info('nothing plotted')
 
     def _get_log_files(self):
         return [file_name for file_name in glob.glob(os.path.join(self._path_env['output'],
@@ -1506,16 +1513,19 @@ def yolotrain_main(**kwargs):
     else:
         yolo_tree_train(**kwargs)
 
-def yolo_tree_train(**kwargs):
-    assert 'data' in kwargs
-    assert 'taxonomy_folder' in kwargs
+def yolo_tree_train(**ikwargs):
+    assert 'data' in ikwargs
+    assert 'taxonomy_folder' in ikwargs
+    kwargs = copy.deepcopy(ikwargs)
     build_taxonomy_impl(**kwargs)
     
     assert 'yolo_tree' not in kwargs or kwargs['yolo_tree']
     kwargs['yolo_tree'] = True
-    kwargs['yolo_tree_eval_label_lift'] = False
-    kwargs['class_specific_nms'] = False
+    # true is normally better
+    kwargs['class_specific_nms'] = True
     kwargs['output_tree_path'] = True
+    kwargs['yolo_tree_eval_label_lift'] = not kwargs['output_tree_path']
+    kwargs['yolo_tree_eval_gt_lift'] = False
 
     # train only on the data with bbox
     bb_data = '{}_with_bb'.format(kwargs['data'])
@@ -1533,7 +1543,8 @@ def yolo_tree_train(**kwargs):
     kwargs['dataset_ops'] = dataset_ops
     expid = kwargs['expid']
     kwargs['expid'] = expid + '_bb_only'
-    kwargs['test_data'] = bb_data
+    if 'test_data' not in kwargs:
+        kwargs['test_data'] = bb_data
     c = CaffeWrapper(**kwargs)
 
     monitor_train_only = kwargs.get('monitor_train_only', False)
@@ -1551,15 +1562,15 @@ def yolo_tree_train(**kwargs):
     if TSVDataset(no_bb_data).get_num_train_image() == 0:
         logging.info('there is no training image for image-level label')
         return
-
-    curr_task = copy.deepcopy(kwargs)
-    curr_task['ovthresh'] = [-1]
-    curr_task['test_data'] = no_bb_data
-    c = CaffeWrapper(**curr_task)
-    model = c.train()
-    p = c.predict(model)
-    c.evaluate(model, p)
     
+    if 'test_data' not in ikwargs:
+        curr_task = copy.deepcopy(kwargs)
+        curr_task['ovthresh'] = [-1]
+        curr_task['test_data'] = no_bb_data
+        c = CaffeWrapper(**curr_task)
+        model = c.train()
+        p = c.predict(model)
+        c.evaluate(model, p)
 
     dataset_ops = [{'op':'remove'},
             {'op':'add',
@@ -1586,9 +1597,10 @@ def yolo_tree_train(**kwargs):
     else:
         assert c._is_train_finished()
         c.monitor_train()
-
+    
     kwargs['ovthresh'] = [-1]
-    kwargs['test_data'] = no_bb_data
+    if 'test_data' not in ikwargs:
+        kwargs['test_data'] = no_bb_data
     c = CaffeWrapper(**kwargs)
     if not monitor_train_only:
         model = c.train()

@@ -65,6 +65,8 @@ from tsv_io import load_labels
 import unicodedata
 from taxonomy import is_noffset
 import copy
+from tsv_io import create_inverted_list2
+from qd_common import calculate_image_ap
 
 
 def update_yolo_test_proto(input_test, test_data, map_file, output_test):
@@ -124,12 +126,16 @@ def get_node_info(node, colors, all_data):
     if hasattr(node, 'images_with_bb') and \
             hasattr(node, 'images_no_bb'):
         ss.append('with_bb({},{},{})'.format(node.images_with_bb, 
-            get_node_key(node, 'with_bb_toTrain', -1),
-            get_node_key(node, 'with_bb_toTest', -1)))
+            get_node_key(node, 'with_bb_train', -1),
+            get_node_key(node, 'with_bb_test', -1)))
         ss.append('no_bb({},{},{})'.format(node.images_no_bb, 
-            get_node_key(node, 'no_bb_toTrain', -1),
-            get_node_key(node, 'no_bb_toTest', -1)))
+            get_node_key(node, 'no_bb_train', -1),
+            get_node_key(node, 'no_bb_test', -1)))
     ignore_keys = ['support', 'dist', 'name', 'url',
+            'with_bb_train',
+            'with_bb_test',
+            'no_bb_train',
+            'no_bb_test',
             'images_with_bb',
             'images_no_bb',
             'noffset', 
@@ -167,7 +173,8 @@ def gen_html_tree_view(data, colors=['rgb(0,0,0)',
             'rgb(0,0,255)']):
     dataset = TSVDataset(data)
     all_data = os.listdir('./data')
-    file_name = op.join(dataset._data_root, 'root.yaml')
+    file_name = op.join(dataset._data_root, 'root_enriched.yaml')
+    logging.info('loading {}'.format(file_name))
     with open(file_name, 'r') as fp:
         config_tax = yaml.load(fp)
     tax = Taxonomy(config_tax)
@@ -225,16 +232,99 @@ def gt_predict_images(predicts, gts, test_data, target_images, label, start_id, 
                 [r['conf'] for r in rects])
         yield key, origin, im_gt_target, im_pred_target, im_gt, im_pred, image_aps[i][1]
 
-def get_confusion_matrix_by_predict_file(full_expid, 
+def get_confusion_matrix_by_predict_file_label(full_expid, 
         predict_file, label, threshold):
-
+    '''
+    get confusion matrix for specific label
+    '''
     test_data, test_data_split = parse_test_data(predict_file)
-    predicts, _ = load_labels(op.join('output', full_expid, 'snapshot', predict_file))
 
     # load the gt
+    logging.info('loading {} - {}'.format(test_data, test_data_split))
     test_dataset = TSVDataset(test_data)
-    test_label_file = test_dataset.get_data(test_data_split, 'label')
-    gts, label_to_idx = load_labels(test_label_file)
+    rows = test_dataset.iter_data(test_data_split, 'label', -1)
+    gts = {}
+    label_to_idx = {}
+    keys_with_label = []
+    for i, row in enumerate(rows):
+        rects = json.loads(row[1])
+        gts[row[0]] = rects
+        label_to_idx[row[0]] = i
+        if any(r['class'] == label for r in rects):
+            keys_with_label.append(row[0])
+
+    predict_full_path = op.join('output', full_expid, 'snapshot', predict_file)
+    if not full_expid.startswith('Tax'):
+        logging.info('loading {}'.format(predict_file))
+        predicts, _ = load_labels(predict_full_path)
+    else:
+        # create the inverted index
+        pred_label_file = '{}.labelmap.tsv'.format(predict_full_path)
+        pred_inverted_file = '{}.inverted.tsv'.format(predict_full_path)
+        pred_key_file = '{}.key.tsv'.format(predict_full_path)
+        if not op.isfile(pred_label_file) or \
+                not op.isfile(pred_inverted_file) or \
+                not op.isfile(pred_key_file):
+            pred_inverted = {}
+            pred_keys = []
+            rows = tsv_reader(predict_full_path)
+            logging.info('loading data and creating index')
+            inverted, pred_keys = create_inverted_list2(
+                    tsv_reader(predict_full_path))
+            logging.info('done loading data and creating index')
+            pred_labels = inverted.keys()
+            tsv_writer(([l] for l in pred_labels), pred_label_file)
+            tsv_writer(((l, ' '.join(map(str, inverted[l]))) for l in
+                    pred_labels), pred_inverted_file)
+            tsv_writer([[k] for k in pred_keys], pred_key_file)
+        # find out data whose prediction has the target label
+        all_labels = load_list_file(pred_label_file)
+        if label in all_labels:
+            row = TSVFile(pred_inverted_file).seek(all_labels.index(label))
+            assert row[0] == label
+            idx = map(int, row[1].split(' '))
+        else:
+            idx = []
+        # find out the index from the ground truth
+        key_to_predidx = {k: i for i, k in enumerate(load_list_file(pred_key_file))}
+        idx.extend([key_to_predidx[k] for k in keys_with_label])
+        idx = set(idx)
+        tsv = TSVFile(predict_full_path)
+        predicts = {}
+        logging.info('loading')
+        for i in idx:
+            row = tsv.seek(i)
+            assert len(row) == 2
+            predicts[row[0]] = json.loads(row[1])
+        logging.info('done')
+        # load data from the inverted index
+    logging.info('done loading {}'.format(predict_file))
+
+    return {'predicts': predicts, 
+            'gts': gts, 
+            'label_to_idx': label_to_idx}
+
+def get_confusion_matrix_by_predict_file(full_expid, 
+        predict_file, threshold):
+    '''
+    get confusion matrix for all classes
+    '''
+
+    test_data, test_data_split = parse_test_data(predict_file)
+
+    # load the gt
+    logging.info('loading {} - {}'.format(test_data, test_data_split))
+    test_dataset = TSVDataset(test_data)
+    rows = test_dataset.iter_data(test_data_split, 'label', -1)
+    gts = {}
+    label_to_idx = {}
+    for i, row in enumerate(rows):
+        gts[row[0]] = json.loads(row[1])
+        label_to_idx[row[0]] = i
+
+    logging.info('loading {}'.format(predict_file))
+    predicts, _ = load_labels(op.join('output', full_expid, 'snapshot', predict_file))
+    logging.info('done loading {}'.format(predict_file))
 
     # calculate the confusion matrix
     confusion_pred_gt = {}
@@ -261,6 +351,8 @@ def update_confusion_matrix(predicts, gts, threshold,
             confusion_gt_pred):
     for key in predicts:
         curr_pred = [p for p in predicts[key] if p['conf'] > threshold]
+        if key not in gts:
+            continue
         curr_gt = gts[key]
         if len(curr_pred) == 0 and len(curr_gt) > 0:
             for g in curr_gt:
@@ -415,13 +507,16 @@ def update_labelmap(rows, labelmap):
     '''
     labelmap is a hashset and can be added
     '''
-    for row in rows:
+    for i, row in enumerate(rows):
+        if (i % 10000) == 0:
+            logging.info('loading data - {}'.format(i))
         assert len(row) == 2
         try:
             labelmap.update(set([rect['class'] for rect in
                 json.loads(row[1])]))
         except:
-            labelmap.update(row[1])
+            labelmap.add(row[1])
+    logging.info('done')
 
 def populate_dataset_details(data):
     dataset = TSVDataset(data)
@@ -561,10 +656,6 @@ def populate_dataset_details(data):
         write_to_file('\n'.join(all_line),
                 dataset.get_labelmap_of_noffset_file())
 
-    if op.isfile(dataset.get_data('trainX')):
-        # composite dataset. 
-        create_index_composite_dataset(dataset)
-
     # generate the label -> count tsv
     for split in splits:
         label_idx_file = dataset.get_data(split, 'inverted.label')
@@ -572,6 +663,39 @@ def populate_dataset_details(data):
         if op.isfile(label_idx_file) and not op.isfile(label_count_file):
             label_idx = dataset.load_inverted_label_as_list(split)
             tsv_writer(((l, str(len(i))) for l, i in label_idx), label_count_file)
+    
+    if op.isfile(dataset.get_data('trainX')):
+        # composite dataset. 
+        create_index_composite_dataset(dataset)
+    
+    populate_num_images_composite(dataset)
+
+def populate_num_images_composite(dataset):
+    data = dataset.name
+    data_with_bb = dataset.name + '_with_bb'
+    data_no_bb = dataset.name + '_no_bb'
+    datas = [data_with_bb, data_no_bb]
+    datasets = [TSVDataset(d) for d in datas]
+    suffixes = ['with_bb', 'no_bb']
+    splits = ['train', 'test']
+    dest_tree_file = op.join(dataset._data_root, 'root_enriched.yaml')
+    src_tree_file = op.join(dataset._data_root, 'root.yaml')
+    if op.isfile(dest_tree_file) or not op.isfile(src_tree_file):
+        return
+    tax = Taxonomy(load_from_yaml_file(src_tree_file))
+    for split in splits:
+        for suffix, d in izip(suffixes, datasets):
+            if not d.has(split, 'inverted.label.count'):
+                return
+            label_to_count_with_bb = {label: int(count) for label, count in d.iter_data(split,
+                    'inverted.label.count')}
+            for label in label_to_count_with_bb:
+                count = label_to_count_with_bb[label]
+                nodes = tax.root.search_nodes(name=label)
+                assert len(nodes) == 1, label
+                node = nodes[0]
+                node.add_feature('{}_{}'.format(suffix, split), count)
+    write_to_yaml_file(tax.dump(), dest_tree_file)
 
 def create_index_composite_dataset(dataset):
     fname_numImagesPerSource = op.join(dataset._data_root, 
@@ -759,6 +883,114 @@ def try_json_parse(s):
     except ValueError, e:
         return s
 
+def visualize_predict(full_expid, predict_file, label, start_id, threshold):
+    test_data, test_data_split = parse_test_data(predict_file)
+    pred_full_path = op.join('output', full_expid, 'snapshot', predict_file)
+    pred_key_path = '{}.key.tsv'.format(pred_full_path)
+    pred_label_path = '{}.labelmap.tsv'.format(pred_full_path)
+    pred_inverted_path = '{}.inverted.tsv'.format(pred_full_path)
+    pred_sorted_cache_path = '{}.key_idxGT_idxPred_ap.{}.tsv'.format(
+            pred_full_path, label)
+    
+    test_dataset = TSVDataset(test_data)
+    if not op.isfile(pred_sorted_cache_path):
+        if not op.isfile(pred_key_path) or \
+                not op.isfile(pred_label_path) or \
+                not op.isfile(pred_inverted_path):
+            inverted, pred_keys = create_inverted_list2(tsv_reader(pred_full_path))
+            pred_labels = inverted.keys()
+            tsv_writer([[k] for k in pred_keys], pred_key_path)
+            tsv_writer(([l] for l in pred_labels), pred_label_path)
+            tsv_writer(((l, ' '.join(map(str, inverted[l]))) for l in
+                    pred_labels), pred_inverted_path)
+        keys_from_pred = []
+        labelmap = load_list_file(pred_label_path)
+        pred_keys = load_list_file(pred_key_path)
+        if label in labelmap:
+            inverted_row = TSVFile(pred_inverted_path).seek(labelmap.index(label))
+            assert inverted_row[0] == label
+            assert len(inverted_row) == 2
+            idx_from_pred = map(int, inverted_row[1].split(' '))
+            keys_from_pred = [pred_keys[i] for i in idx_from_pred]
+        else:
+            keys_from_pred = []
+            pred_keys = None
+        inverted_test_split = test_dataset.load_inverted_label(test_data_split, version=-1,
+                label=label)
+        if label in inverted_test_split:
+            idx_from_gt = inverted_test_split[label]
+        else:
+            idx_from_gt = []
+        rows = test_dataset.iter_data(test_data_split, t='label', version=-1,
+                filter_idx=idx_from_gt, unique=True)
+        keys_from_gt = [row[0] for row in rows]
+        target_keys = list(set(keys_from_pred + keys_from_gt))
+        target_keys = [k for k in target_keys if k in pred_keys]
+        target_idx_in_pred = [pred_keys.index(k) for k in target_keys]
+        gt_keys = test_dataset.load_keys(test_data_split)
+        target_idx_in_gt = [gt_keys.index(k) for k in target_keys]
+        rows_in_gt = test_dataset.iter_data(test_data_split, t='label', version=-1,
+                filter_idx=target_idx_in_gt)
+        pred_tsv = TSVFile(pred_full_path)
+        rows_in_pred = (pred_tsv.seek(i) for i in target_idx_in_pred)
+        target_aps = []
+        for row_in_gt, row_in_pred in izip(rows_in_gt, rows_in_pred):
+            assert row_in_gt[0] == row_in_pred[0]
+            assert len(row_in_gt) == 2
+            assert len(row_in_pred) == 2
+            rects_gt = json.loads(row_in_gt[1])
+            rects_pred = json.loads(row_in_pred[1])
+            rects_gt = [r for r in rects_gt if r['class'] == label]
+            rects_pred = [r for r in rects_pred if r['class'] == label]
+            ap = calculate_image_ap([r['rect'] for r in rects_gt], 
+                    [r['rect'] for r in rects_pred])
+            target_aps.append(ap)
+        key_idxGT_idxPred_aps = zip(target_keys, target_idx_in_gt,
+                target_idx_in_pred, target_aps)
+        key_idxGT_idxPred_aps = sorted(key_idxGT_idxPred_aps)
+        tsv_writer(key_idxGT_idxPred_aps, pred_sorted_cache_path)
+    
+    tsv = TSVFile(pred_sorted_cache_path)
+    total_num = tsv.num_rows()
+    if total_num == 0:
+        return
+    while start_id < 0:
+        start_id = start_id + total_num
+    while start_id >= total_num:
+        start_id = start_id - total_num
+    i = start_id
+    tsv_pred = TSVFile(pred_full_path)
+    for i in range(start_id, total_num):
+        key, idx_gt, idx_pred, ap = tsv.seek(i)
+        idx_gt, idx_pred, ap = int(idx_gt), int(idx_pred), float(ap)
+        row_gt = next(test_dataset.iter_data(test_data_split,
+            filter_idx=[idx_gt]))
+        row_pred = tsv_pred.seek(idx_pred)
+        assert row_gt[0] == row_pred[0], (row_gt[0], row_pred[0])
+
+        rects_gt = json.loads(row_gt[1])
+        rects_pred = json.loads(row_pred[1])
+        rects_pred = [r for r in rects_pred if r['conf'] > threshold]
+        rects_gt_target = [r for r in rects_gt if r['class'] == label]
+        rects_pred_target = [r for r in rects_pred if r['class'] == label]
+        if len(rects_gt_target) == 0 and len(rects_pred_target) == 0:
+            logging.info('skipping to next')
+            continue
+        im_origin = img_from_base64(row_gt[-1])
+        im_gt_target = np.copy(im_origin)
+        draw_bb(im_gt_target, [r['rect'] for r in rects_gt_target],
+                [r['class'] for r in rects_gt_target])
+        im_pred_target = np.copy(im_origin)
+        draw_bb(im_pred_target, [r['rect'] for r in rects_pred_target],
+                [r['class'] for r in rects_pred_target])
+        im_gt = np.copy(im_origin)
+        draw_bb(im_gt, [r['rect'] for r in rects_gt],
+                [r['class'] for r in rects_gt])
+        im_pred = np.copy(im_origin)
+        draw_bb(im_pred, [r['rect'] for r in rects_pred],
+                [r['class'] for r in rects_pred])
+        yield key, im_origin, im_gt_target, im_pred_target, im_gt, im_pred, ap
+
 def visualize_box(data, split, version, label, start_id, color_map={}):
     dataset = TSVDataset(data)
     logging.info('loading inverted label')
@@ -785,39 +1017,22 @@ def visualize_box(data, split, version, label, start_id, color_map={}):
         inverted = dataset.load_inverted_label(split, version, label)
     logging.info('inverted label loaded')
     logging.info('keys: {}'.format(inverted.keys()))
-    if label != 'any':
-        if label not in inverted:
-            return
-        idx = inverted[label]
-    is_composite = False
-    if split == 'train' and not op.isfile(dataset.get_data(split)):
-        is_composite = True
-        tsvs = [TSVFile(f) for f in dataset.get_train_tsvs()]
-        tsv_labels = [TSVFile(f) for f in dataset.get_train_tsvs('label')]
-        shuffle_tsv_rows = tsv_reader(dataset.get_shuffle_file(split))
-        shuffle = []
-        for row in shuffle_tsv_rows:
-            shuffle.append([int(row[0]), int(row[1])])
-        if label == 'any':
-            idx = range(len(shuffle))
-    else:
-        tsv = TSVFile(dataset.get_data(split))
-        tsv_label = TSVFile(dataset.get_data(split, 'label', version))
-        if label == 'any':
-            idx = range(tsv.num_rows())
+    if label not in inverted:
+        return
+    idx = inverted[label]
+    if len(idx) == 0:
+        return
+    while start_id > len(idx):
+        start_id = start_id - len(idx)
+    while start_id < 0:
+        start_id = start_id + len(idx)
     logging.info('start to read')
-    for i in idx[start_id: ]:
-        all_image = []
-        if is_composite:
-            row_image = tsvs[shuffle[i][0]].seek(shuffle[i][1])
-            row_label = tsv_labels[shuffle[i][0]].seek(shuffle[i][1])
-        else:
-            row_image = tsv.seek(i)
-            row_label = tsv_label.seek(i)
-        im = img_from_base64(row_image[-1])
+    for key, label_str, img_str in dataset.iter_data(split, version=version,
+            filter_idx=idx[start_id:]):
+        im = img_from_base64(img_str)
         origin = np.copy(im)
-        rects = try_json_parse(row_label[1])
-        new_name = row_label[0].replace('/', '_').replace(':', '')
+        rects = try_json_parse(label_str)
+        new_name = key.replace('/', '_').replace(':', '')
         if type(rects) is list:
             rects = [l for l in rects if 'conf' not in l or l['conf'] > 0.3]
             def get_rect_class(rects):
@@ -1585,16 +1800,16 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
 
     logging.info('saving the shuffle file')
     type_to_ldsik = list_to_dict(train_ldtsik, 2)
-    extra_type_to_dtsik = list_to_dict(extra_dtsik, 1)
+    extra_type_to_dsik = list_to_dict(extra_dtsik, 1)
     for label_type in type_to_ldsik:
         ldsik = type_to_ldsik[label_type]
         shuffle_info = [(str(k), str(i)) for l, d, s, i, k in ldsik]
         shuffle_info = list(set(shuffle_info))
-        if label_type in extra_type_to_dtsik:
-            dtsik = extra_type_to_dtsik[label_type]
+        if label_type in extra_type_to_dsik:
+            dsik = extra_type_to_dsik[label_type]
             # we should not de-duplicate it because it comes from the duplicate
             # policy
-            extra_shuffle_info = [(str(k), str(i) ) for d, t, s, i, k in dtsik]
+            extra_shuffle_info = [(str(k), str(i) ) for d, s, i, k in dsik]
             shuffle_info.extend(extra_shuffle_info)
         random.shuffle(shuffle_info)
         tsv_writer(shuffle_info,
@@ -1611,36 +1826,108 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
         target_file = op.join(out_dataset[label_type]._data_root, 'root.yaml')
         ensure_directory(op.dirname(target_file))
         shutil.copy(dest, target_file)
-
-    logging.info('writing the test data')
-    t_to_ldsi = list_to_dict(test_ldtsi, 2)
-    for label_type in t_to_ldsi:
-        def gen_test_rows():
+    
+    single_test_file = False
+    if single_test_file:
+        logging.info('writing the test data')
+        t_to_ldsi = list_to_dict(test_ldtsi, 2)
+        for label_type in t_to_ldsi:
+            def gen_test_rows():
+                ldsi = t_to_ldsi[label_type]
+                d_to_lsi = list_to_dict(ldsi, 1)
+                for dataset in d_to_lsi:
+                    lsi = d_to_lsi[dataset]
+                    s_to_li = list_to_dict(lsi, 1)
+                    for split in s_to_li:
+                        li = s_to_li[split]
+                        idx = list_to_dict(li, 1).keys()
+                        src_img_tsv = TSVFile(dataset.get_data(split))
+                        src_label_tsv = TSVFile(dataset.get_data(split, 'label',
+                            version=-1))
+                        assert len(idx) == len(set(idx))
+                        for i in idx:
+                            row = src_img_tsv.seek(i)
+                            label_row = src_label_tsv.seek(i)
+                            rects = json.loads(label_row[1])
+                            convert_one_label(rects, 
+                                    dataset._sourcelabel_to_targetlabels)
+                            assert len(rects) > 0
+                            row[1] = json.dumps(rects)
+                            row[0] = '{}_{}_{}'.format(dataset.name,
+                                    split, row[0])
+                            yield row
+            tsv_writer(gen_test_rows(), 
+                    out_dataset[label_type].get_test_tsv_file())
+    else:
+        t_to_ldsi = list_to_dict(test_ldtsi, 2)
+        for label_type in t_to_ldsi:
+            sources = []
+            sources_origin_label = []
+            sources_label = []
             ldsi = t_to_ldsi[label_type]
             d_to_lsi = list_to_dict(ldsi, 1)
+            k = 0
+            all_ki = []
             for dataset in d_to_lsi:
                 lsi = d_to_lsi[dataset]
                 s_to_li = list_to_dict(lsi, 1)
                 for split in s_to_li:
                     li = s_to_li[split]
                     idx = list_to_dict(li, 1).keys()
-                    src_img_tsv = TSVFile(dataset.get_data(split))
-                    src_label_tsv = TSVFile(dataset.get_data(split, 'label',
-                        version=-1))
+                    out_split = 'test{}'.format(k)
+                    s_file = dataset.get_data(split)
+                    sources.append(s_file)
+                    src_img_tsv = TSVFile(s_file)
+                    source_origin_label = dataset.get_data(split, 'label',
+                        version=-1)
+                    sources_origin_label.append(source_origin_label)
+                    src_label_tsv = TSVFile(source_origin_label)
+                    converted_label = convert_label(source_origin_label,
+                            idx, dataset._sourcelabel_to_targetlabels)
                     for i in idx:
-                        row = src_img_tsv.seek(i)
-                        label_row = src_label_tsv.seek(i)
-                        rects = json.loads(label_row[1])
-                        convert_one_label(rects, 
-                                dataset._sourcelabel_to_targetlabels)
-                        assert len(rects) > 0
-                        row[1] = json.dumps(rects)
-                        row[0] = '{}_{}_{}'.format(dataset.name,
-                                split, row[0])
-                        yield row
-        tsv_writer(gen_test_rows(), 
-                out_dataset[label_type].get_test_tsv_file())
+                        l = converted_label[i]
+                        tmp = json.loads(l[1])
+                        for t in tmp:
+                            if 'tree growing' in t['class']:
+                                import ipdb;ipdb.set_trace(context=15)
+                        l[1] = json.dumps(lift_one_image(json.loads(l[1]),
+                            tax.root))
+                        l[0] = '{}_{}_{}'.format(dataset.name, split, l[0])
+                    all_ki.extend([(str(k), str(i)) for i in idx])
+                    label_file = out_dataset[label_type].get_data(out_split, 'label')
+                    tsv_writer(converted_label, label_file)
+                    sources_label.append(label_file)
+                    k = k + 1
+            write_to_file('\n'.join(sources),
+                    out_dataset[label_type].get_data('testX'))
+            write_to_file('\n'.join(sources_label), 
+                    out_dataset[label_type].get_data('testX', 'label'))
+            write_to_file('\n'.join(sources_origin_label),
+                    out_dataset[label_type].get_data('testX', 'origin.label'))
+            tsv_writer(all_ki, out_dataset[label_type].get_shuffle_file('test'))
+
     logging.info('done')
+
+def lift_one_image(rects, root):
+    rects2 = []
+    for curr_r in rects:
+        label = curr_r['class']
+        nodes = root.search_nodes(name=label)
+        assert len(nodes) == 1
+        node = nodes[0]
+        all_label = [n.name for n in node.get_ancestors()[: -1]]
+        all_label.append(label)
+        for l in all_label:
+            same_label_rects = [r for r in rects2 if r['class'] == l]
+            ious = [calculate_iou(r['rect'], curr_r['rect']) for r in
+                same_label_rects]
+            if len(ious) > 0 and max(ious) > 0.9:
+                continue
+            else:
+                r = copy.deepcopy(curr_r)
+                r['class'] = l
+                rects2.append(r)
+    return rects2
 
 def populate_output_num_images(ldtX, suffix, root):
     label_to_node = {n.name: n for n in root.iter_search_nodes() if n != root}
@@ -1761,6 +2048,8 @@ def process_tsv_main(**kwargs):
     elif kwargs['type'] == 'build_data_index':
         data = kwargs['input']
         populate_dataset_details(data)
+    elif kwargs['type'] == 'build_all_data_index':
+        populate_all_dataset_details()
     else:
         logging.info('unknown task {}'.format(kwargs['type']))
 

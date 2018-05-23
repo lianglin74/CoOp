@@ -49,6 +49,7 @@ import django.core.files
 import logging
 import uuid
 from qd_common import load_class_ap
+from process_tsv import visualize_predict
 
 init_logging()
 
@@ -70,64 +71,52 @@ def view_tree(request):
         context = { 'data_names': data_list }
         return render(request, 'detection/view_list_has_tree.html', context)
 
-def view_single_model(request):
+def view_exp_list(request):
+    curr_dir = os.curdir
+    os.chdir(get_qd_root())
+    full_expids = get_all_model_expid()
+    os.chdir(curr_dir)
+    full_expids.sort()
+    context = {'full_expids': full_expids}
+    return render(request, 'detection/exp_list.html', context)
+
+def view_model_by_predict_file2(request, full_expid, predict_file, 
+        label, start_id, threshold):
     '''
-    deprecated
+    removed the confusion matrix, which will be a seperate page
     '''
-    data = request.GET.get('data', 'office_v2.12')
-    net = request.GET.get('net', 
-            'darknet19_448')
-    test_data = request.GET.get('test_data', 
-            data)
-    expid = request.GET.get('expid', 
-            'A_noreorg_burnIn5e.1_tree_initFrom.imagenet.A_bb_nobb')
-    label = request.GET.get('filter_label', 'any')
-    start_id = int(float(request.GET.get('start_id', '0')))
-    threshold = 0.1
+    start_id = int(float(start_id))
+    threshold = float(threshold)
     
-    extra_param = {}
-    if 'test_input_sizes' in request.GET:
-        extra_param['test_input_sizes'] = [int(float(s)) for s in
-            request.GET.getlist('test_input_sizes')]
     # qd code
     curr_dir_backup = os.getcwd()
     os.chdir(get_qd_root())
-    x = get_confusion_matrix(data, 
-            net, test_data, expid, threshold, **extra_param)
-    predicts, gts, label_to_idx = x['predicts'], x['gts'], x['label_to_idx']
-    confusion_pred_gt = x['confusion_pred_gt']
-    confusion_gt_pred = x['confusion_gt_pred']
-    os.chdir(curr_dir_backup)
-    image_pairs = []
-    target_images, image_aps = get_target_images(predicts, gts, label, threshold)
-    pairs = gt_predict_images(predicts, gts, test_data, target_images,
-            start_id,
-            threshold, label_to_idx, image_aps)
+
+    pairs = visualize_predict(full_expid, predict_file, label, start_id, threshold)
     max_pairs = 10
-    for i, (key, im_gt, im_pred, ap) in enumerate(pairs):
-        path_gt = save_image_in_static(im_gt, '{}/{}/{}/{}/{}_gt.png'.format(
-            data, net, expid, test_data, key))
-        path_pred = save_image_in_static(im_pred, '{}/{}/{}/{}/{}_pred.png'.format(
-            data, net, expid, test_data, key))
-        image_pairs.append((path_gt, path_pred, ap))
+    image_pairs = []
+    for i, (key, im_origin, im_gt_target, im_pred_target, im_gt, im_pred, ap) in enumerate(pairs):
+        path_origin = save_image_in_static(im_origin, '{}/{}_origin.png'.format(
+            predict_file, key))
+        path_gt_target = save_image_in_static(im_gt_target, '{}/{}_gt_target.png'.format(
+            predict_file, key))
+        path_gt = save_image_in_static(im_gt, '{}/{}_gt.png'.format(
+            predict_file, key))
+        path_pred = save_image_in_static(im_pred, '{}/{}/{}_pred.png'.format(
+            full_expid, predict_file, key))
+        path_pred_target = save_image_in_static(im_pred_target,
+                '{}/{}/{}_pred_target.png'.format(full_expid, predict_file, key))
+        image_pairs.append((path_origin, path_gt_target, path_pred_target, path_gt, path_pred, ap))
         if i >= max_pairs - 1:
             break
     
-    common_param = [('data', data), ('net', net), ('expid', expid),
-            ('filter_label', label), ('test_data', test_data)]
-    for key in extra_param:
-        value = extra_param[key]
-        if type(value) is list:
-            for v in value:
-                common_param.append((key, str(v)))
-        else:
-            assert False
+    common_param = [('full_expid', full_expid), 
+            ('predict_file', predict_file), 
+            ('filter_label', label),
+            ('threshold', threshold)]
     previous_param = []
     previous_param.extend(common_param)
     previous_start_id = start_id - max_pairs
-    if previous_start_id < 0:
-        total_images = len(target_images)
-        previous_start_id = previous_start_id + total_images
     previous_param.append(('start_id', str(max(0, previous_start_id))))
     next_param = []
     next_param.extend(common_param)
@@ -137,31 +126,12 @@ def view_single_model(request):
     next_button_param = '&'.join(['{}={}'.format(key, value) for key, value in 
         next_param])
     
-    if label not in confusion_pred_gt:
-        html_confusion_pred_gt = []
-    else:
-        html_confusion_pred_gt = readable_confusion_entry(
-                confusion_pred_gt[label])
     context = {
             'previous_button_param': previous_button_param,
             'next_button_param': next_button_param,
             'label': label,
-            'confusion_pred_gt': html_confusion_pred_gt,
-            'confusion_gt_pred': readable_confusion_entry(
-                confusion_gt_pred[label]),
             'image_pairs': image_pairs}
-
     return render(request, 'detection/predict_result.html', context)
-
-
-def view_exp_list(request):
-    curr_dir = os.curdir
-    os.chdir(get_qd_root())
-    full_expids = get_all_model_expid()
-    os.chdir(curr_dir)
-    full_expids.sort()
-    context = {'full_expids': full_expids}
-    return render(request, 'detection/exp_list.html', context)
 
 def view_model_by_predict_file(request, full_expid, predict_file, 
         label, start_id, threshold):
@@ -174,7 +144,6 @@ def view_model_by_predict_file(request, full_expid, predict_file,
     data = parse_data(full_expid)
     test_data, test_data_split = parse_test_data(predict_file)
     x = get_confusion_matrix_by_predict_file(full_expid, predict_file,
-            label,
             threshold)
     predicts, gts, label_to_idx = x['predicts'], x['gts'], x['label_to_idx']
     confusion_pred_gt = x['confusion_pred_gt']
@@ -250,11 +219,19 @@ def view_model_prediction_labelmap(request, full_expid, predict_file):
     class_ap = run_in_qd(load_class_ap, full_expid, predict_file)
     labelmap_ap = None
     if class_ap:
-        class_ap = class_ap['overall']['0.3']['class_ap']
+        if '0.3' in class_ap['overall']:
+            class_ap = class_ap['overall']['0.3']['class_ap']
+        elif '0' in class_ap['overall']:
+            class_ap = class_ap['overall']['0']['class_ap']
+        elif '-1' in class_ap['overall']:
+            class_ap = class_ap['overall']['-1']['class_ap']
+        else:
+            assert False
         labelmap_ap = [(l, '{:.2f}'.format(class_ap.get(l, -1))) for l in labelmap]
     else:
         labelmap_ap = [(l, None) for l in labelmap]
     os.chdir(curr_dir)
+    labelmap_ap = sorted(labelmap_ap, key=lambda x: x[1])
     context = {'prediction_file': predict_file,
             'labelmap_ap': labelmap_ap,
             'full_expid': full_expid}
@@ -267,12 +244,18 @@ def view_model(request):
             'filter_label' in request.GET and \
             'start_id' in request.GET and \
             'threshold' in request.GET:
-        return view_model_by_predict_file(request, 
+        return view_model_by_predict_file2(request, 
                 request.GET['full_expid'],
                 request.GET['predict_file'],
                 request.GET['filter_label'],
                 request.GET['start_id'],
                 request.GET['threshold'])
+        #return view_model_by_predict_file(request, 
+                #request.GET['full_expid'],
+                #request.GET['predict_file'],
+                #request.GET['filter_label'],
+                #request.GET['start_id'],
+                #request.GET['threshold'])
     elif 'full_expid' in request.GET and 'predict_file' in request.GET:
         return view_model_prediction_labelmap(request, 
                 request.GET['full_expid'], request.GET['predict_file'])
@@ -285,7 +268,6 @@ def view_model(request):
                 context)
     else:
         return view_exp_list(request)
-        #return view_single_model(request)
 
 def save_image_in_static(im, rel_path):
     html_path = 'detection/{}'.format(rel_path)
@@ -348,9 +330,13 @@ def view_image2(request):
     else:
         data = request.GET.get('data')
         split = request.GET.get('split')
+        if split == 'None':
+            split = None
         version = request.GET.get('version')
-        version = int(version) if type(version) is str or type(version) is \
-                unicode else version
+        if version == 'None':
+            version = None
+        version = int(version) if type(version) is str or \
+                type(version) is unicode else version
         label = request.GET.get('label')
         start_id = request.GET.get('start_id')
         result = view_image(request, data, split, version, label, start_id)

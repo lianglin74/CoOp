@@ -404,6 +404,8 @@ def calculate_iou(rect0, rect1):
     i = w * h
     a1 = (rect1[2] - rect1[0]) * (rect1[3] - rect1[1])
     a0 = (rect0[2] - rect0[0]) * (rect0[3] - rect0[1])
+    if a0 == 0 and a1 == 0 and i == 0:
+        return 1.
     return 1. * i / (a0 + a1 - i) 
 
 def process_run(func, *args):

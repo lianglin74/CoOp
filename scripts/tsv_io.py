@@ -14,6 +14,8 @@ from qd_common import parse_test_data
 from qd_common import img_from_base64
 import numpy as np
 import yaml
+from itertools import izip
+import progressbar 
 
 class TSVFile(object):
     def __init__(self, tsv_file):
@@ -52,6 +54,7 @@ class TSVDataset(object):
         result = {}
         data_root = os.path.join(proj_root, 'data', name)
         self._data_root = op.relpath(data_root)
+        self._fname_to_tsv = {}
     
     def load_labelmap(self):
         return load_list_file(self.get_labelmap_file())
@@ -81,7 +84,7 @@ class TSVDataset(object):
 
     def load_keys(self, split):
         result = []
-        for row in tsv_reader(self.get_data(split, 'label')):
+        for row in self.iter_data(split, 'label'):
             result.append(row[0])
         return result
 
@@ -208,9 +211,12 @@ class TSVDataset(object):
             return result 
         else:
             all_label = load_list_file(self.get_data(split, 'labelmap', version))
+            if label not in all_label:
+                return {}
             result = {}
             idx = all_label.index(label)
-            row = TSVFile(fname).seek(idx)
+            tsv = self._retrieve_tsv(fname)
+            row = tsv.seek(idx)
             assert row[0] == label
             ss = row[1].split(' ')
             if len(ss) == 1 and ss[0] == '':
@@ -238,7 +244,8 @@ class TSVDataset(object):
             all_label = self.load_labelmap()
             result = []
             idx = all_label.index(label)
-            row = TSVFile(fname).seek(idx)
+            tsv = self._retrieve_tsv(fname)
+            row = tsv.seek(idx)
             assert row[0] == label
             ss = row[1].split(' ')
             if len(ss) == 1 and ss[0] == '':
@@ -252,14 +259,12 @@ class TSVDataset(object):
                 op.isfile(self.get_data('{}X'.format(split), t, version)) and 
                 op.isfile(self.get_shuffle_file(split)))
 
-    def iter_data(self, split, t=None, version=None):
+    def iter_composite(self, split, t, version, filter_idx=None):
         splitX = split + 'X'
-        if not op.isfile(self.get_data(split, t, version)) and \
-                op.isfile(self.get_data(splitX, t, version)):
-            assert t is not None, 'if t is none, we need two iter_data. double check'
-            file_list = load_list_file(self.get_data(splitX, t, version))
-            tsvs = [TSVFile(f) for f in file_list]
-            shuffle_file = self.get_shuffle_file(split)
+        file_list = load_list_file(self.get_data(splitX, t, version))
+        tsvs = [self._retrieve_tsv(f) for f in file_list]
+        shuffle_file = self.get_shuffle_file(split)
+        if filter_idx is None:
             shuffle_tsv_rows = tsv_reader(shuffle_file)
             for idx_source, idx_row in shuffle_tsv_rows:
                 idx_source, idx_row = int(idx_source), int(idx_row)
@@ -268,10 +273,91 @@ class TSVDataset(object):
                     row[1] == 'dont use'
                 yield row
         else:
+            shuffle_tsv = self._retrieve_tsv(shuffle_file)
+            for i in filter_idx:
+                idx_source, idx_row = shuffle_tsv.seek(i)
+                idx_source, idx_row = int(idx_source), int(idx_row)
+                row = tsvs[idx_source].seek(idx_row)
+                if len(row) == 3:
+                    row[1] == 'dont use'
+                yield row
+
+    def num_rows(self, split, version):
+        f = self.get_data(split, version)
+        if op.isfile(f):
+            return TSVFile(f).num_rows()
+        else:
+            f = self.get_data(split + 'X', version)
+            assert op.isfile(f)
+            return len(load_list_file(self.get_shuffle_file(split)))
+
+    def iter_data(self, split, t=None, version=None, 
+            unique=False, filter_idx=None, progress=False):
+        if progress:
+            if filter_idx is None:
+                num_rows = self.num_rows(split, version)
+            else:
+                num_rows = len(filter_idx)
+            pbar = progressbar.ProgressBar(maxval=num_rows).start()
+        splitX = split + 'X'
+        if not op.isfile(self.get_data(split, t, version)) and \
+                op.isfile(self.get_data(splitX, t, version)):
+            if t is not None:
+                if unique:
+                    returned = set()
+                for i, row in enumerate(self.iter_composite(split, t, version, 
+                        filter_idx=filter_idx)):
+                    if unique and row[0] in returned:
+                        continue
+                    else:
+                        yield row
+                        if unique:
+                            returned.add(row[0])
+                    if progress:
+                        pbar.update(i)
+            else:
+                rows_data = self.iter_composite(split, None, version,
+                        filter_idx)
+                rows_label = self.iter_composite(split, 'label', version,
+                        filter_idx)
+                if unique:
+                    returned = set()
+                for i, (r_data, r_label) in enumerate(izip(rows_data, rows_label)):
+                    r_data[0] = r_label[0]
+                    r_data[1] = r_label[1]
+                    if unique and r_data[0] in returned:
+                        continue
+                    else:
+                        yield r_data
+                        if unique:
+                            returned.add(r_data[0])
+                    if progress:
+                        pbar.update(i)
+        else:
             if not op.isfile(self.get_data(split, t, version)):
                 return
-            for row in tsv_reader(self.get_data(split, t, version)):
-                yield row
+            if filter_idx is None:
+                for i, row in enumerate(tsv_reader(self.get_data(
+                    split, t, version))):
+                    yield row
+                    if progress:
+                        pbar.update(i)
+            else:
+                fname = self.get_data(split, t, version)
+                tsv = self._retrieve_tsv(fname)
+                for _i, i in enumerate(filter_idx):
+                    yield tsv.seek(i)
+                    if progress:
+                        pbar.update(_i)
+
+    def _retrieve_tsv(self, fname):
+        if fname in self._fname_to_tsv:
+            tsv = self._fname_to_tsv[fname]
+        else:
+            tsv = TSVFile(fname)
+            self._fname_to_tsv[fname] = tsv
+        return tsv
+
     def write_data(self, rows, split, t=None, version=None):
         tsv_writer(rows, self.get_data(split, t, version))
 
@@ -285,7 +371,7 @@ def tsv_writer(values, tsv_file_name):
         assert values is not None
         for value in values:
             assert value
-            v = '{0}\n'.format('\t'.join(value))
+            v = '{0}\n'.format('\t'.join(map(str, value)))
             fp.write(v)
             fpidx.write(str(idx) + '\n')
             idx = idx + len(v)
@@ -349,6 +435,26 @@ def create_inverted_tsv(rows, inverted_label_file, label_map):
             yield label, ' '.join(map(str, i))
     tsv_writer(gen_rows(), inverted_label_file)
 
+def create_inverted_list2(rows):
+    inverted = {}
+    keys = []
+    for i, row in enumerate(rows):
+        keys.append(row[0])
+        labels = json.loads(row[1])
+        if type(labels) is list:
+            # detection dataset
+            curr_unique_labels = set([l['class'] for l in labels])
+        else:
+            assert type(labels) is int
+            curr_unique_labels = [str(labels)]
+        for l in curr_unique_labels:
+            assert type(l) == str or type(l) == unicode 
+            if l not in inverted:
+                inverted[l] = [i]
+            else:
+                inverted[l].append(i)
+    return inverted, keys
+
 def create_inverted_list(rows):
     inverted = {}
     for i, row in enumerate(rows):
@@ -392,20 +498,23 @@ def get_all_data_info2(name=None):
         labels = dataset.load_labelmap()
         # here we assume the composite dataset has only one version
         valid_split_versions = []
-        if len(dataset.get_train_tsvs()) > 1:
-            global_labelmap = dataset.load_labelmap() if global_labelmap is \
-                None else global_labelmap
-            valid_split_versions.append(('train', 0, global_labelmap))
-            splits = ['trainval', 'test']
-        else:
-            splits = ['train', 'trainval', 'test']
+        #if len(dataset.get_train_tsvs()) > 1:
+            #global_labelmap = dataset.load_labelmap() if global_labelmap is \
+                #None else global_labelmap
+            #valid_split_versions.append(('train', 0, global_labelmap))
+            #splits = ['trainval', 'test']
+        #else:
+            #splits = ['train', 'trainval', 'test']
+        splits = ['train', 'trainval', 'test']
         for split in splits:
             v = 0
             while True:
-                if not op.isfile(dataset.get_data(split, 'label', v)):
+                if not dataset.has(split, 'label', v):
                     break
-                valid_split_versions.append((split, v, load_list_file(dataset.get_data(split, 
-                    'labelmap', v))))
+                labelmap = []
+                labelmap_rows = dataset.iter_data(split, 'labelmap', v)
+                labelmap.extend(r[0] for r in labelmap_rows)
+                valid_split_versions.append((split, v, labelmap))
                 v = v + 1
         name_splits_labels = [(name, valid_split_versions)]
     return name_splits_labels

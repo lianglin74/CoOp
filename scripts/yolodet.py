@@ -224,7 +224,6 @@ def im_multi_scale_detect(caffe_net, im, pixel_mean, gpu,
         test_input_sizes=[416], **kwargs):
     all_prob = []
     all_bbox = []
-    stat = None
     for test_input_size in test_input_sizes:
         prob, bbox = im_detect(caffe_net, im, pixel_mean, test_input_size, **kwargs)
         #if len(test_input_sizes) == 1:
@@ -394,12 +393,12 @@ def postfilter(im, scores, boxes, class_map, max_per_image=1000, thresh=0.005):
     
     return json.dumps(det_results)
 
-def detect_image(net, im, pixel_mean, names, stat=None, thresh=0,
+def detect_image(caffe_net, im, pixel_mean, names, stat=None, thresh=0,
         yolo_tree=False):
     '''
     this is not used in evaluation
     '''
-    scores, boxes = im_detect(net, im, pixel_mean, stat=stat)
+    scores, boxes = im_detect(caffe_net, im, pixel_mean, stat=stat)
     if stat:
         time_start = time.time()
     bblist = result2bblist3(im, scores, boxes, names, thresh, yolo_tree)
@@ -522,6 +521,17 @@ def detprocess(caffenet, caffemodel, pixel_mean, scale, cmap, gpu, key_idx, img_
         caffe.set_mode_cpu()
 
     caffe_net = caffe.Net(str(caffenet), str(caffemodel), caffe.TEST)
+    
+    if kwargs.get('detmodel', 'yolo') == 'yolo':
+        buffer_size = max(kwargs.get('test_input_sizes', [416])) + 100
+        blob = np.zeros((3, buffer_size, buffer_size), dtype=np.float32)
+        caffe_net.blobs['data'].reshape(1, *blob.shape)
+        caffe_net.blobs['data'].data[...]=blob.reshape(1, *blob.shape)
+        caffe_net.blobs['im_info'].reshape(1,2)
+        caffe_net.blobs['im_info'].data[...] = (buffer_size, buffer_size)
+        # pre-allocate all memory
+        caffe_net.forward()
+    
     last_print_time = 0
     count = 0
     while True:
@@ -567,6 +577,114 @@ def detprocess(caffenet, caffemodel, pixel_mean, scale, cmap, gpu, key_idx, img_
                 out_queue.put((cols[key_idx], results))
 
     logging.info('detprocess finished')
+
+def tsvdet_iter(caffenet, caffemodel, in_rows, key_idx,img_idx, pixel_mean,
+        scale, outtsv_file, **kwargs):
+    '''
+    the input is a generator. This should be more general than tsvdet()
+    '''
+    if not caffemodel:
+        caffemodel = op.splitext(caffenet)[0] + '.caffemodel'
+    cmapfile = kwargs['cmapfile']
+    if not os.path.isfile(caffemodel) :
+        raise IOError(('{:s} not found.').format(caffemodel))
+    if not os.path.isfile(caffenet) :
+        raise IOError(('{:s} not found.').format(caffenet))
+    cmap = load_labelmap_list(cmapfile)
+    count = 0
+    debug = kwargs.get('debug_detect', False)
+
+    if debug:
+        #gpus = [-1]
+        gpus = [0]
+    else:
+        gpus = kwargs.get('gpus', [0]) * 8
+
+    in_queue = mp.Queue(10 * len(gpus));  # thread/process safe
+    if debug:
+        out_queue = mp.Queue()
+    else:
+        out_queue = mp.Queue(10 * len(gpus));
+    num_worker = len(gpus)
+
+    def reader_process(in_rows, in_queue, num_worker, img_idx):
+        last_print_time = 0
+        count = 0
+        for cols in in_rows:
+            if len(cols) > img_idx:
+                if in_queue.full():
+                    if time.time() - last_print_time > 10:
+                        logging.info('reader is waiting. {}'.format(count))
+                        last_print_time = time.time()
+                count = count + 1
+                in_queue.put(cols)
+        for _ in xrange(num_worker):
+            in_queue.put(None)  # kill all workers
+        logging.info('finished reader')
+    reader = mp.Process(target=reader_process, args=(in_rows, in_queue,
+        num_worker, img_idx))
+    reader.daemon = True
+    reader.start()
+
+    worker_pool = [];
+    if debug:
+        detprocess(caffenet, caffemodel,
+            pixel_mean, scale, cmap, gpus[0], key_idx, 
+            img_idx, in_queue, out_queue, **kwargs)
+    else:
+        for gpu in gpus:
+            worker = mp.Process(target=detprocess, args=(caffenet, caffemodel,
+                pixel_mean, scale, cmap, gpu, key_idx, 
+                img_idx, in_queue, out_queue), kwargs=kwargs);
+            worker.daemon = True
+            worker_pool.append(worker)
+            worker.start()
+
+    assert not kwargs.get('debug_detect', False)
+
+    outtsv_file_tmp = outtsv_file + '.tmp'
+    def writer_process(out_queue, num_worker, outtsv_file_tmp):
+        def yield_output():
+            num_finished = 0
+            last_print_time = 0
+            count = 0
+            while True:
+                if num_finished == num_worker:
+                    break
+                else:
+                    if out_queue.qsize() == 0:
+                        if time.time() - last_print_time > 10:
+                            logging.info('writer is waiting. {}'.format(count))
+                            last_print_time = time.time()
+                    if out_queue.empty():
+                        if time.time() - last_print_time > 10:
+                            logging.info('writer waiting to get the data. {}'.format(count))
+                            last_print_time = time.time()
+                    x = out_queue.get()
+                    if x is None:
+                        num_finished = num_finished + 1
+                    else:
+                        count = count + 1
+                        yield x
+        tsv_writer(yield_output(), outtsv_file_tmp)
+
+    writer = mp.Process(target=writer_process, args=(out_queue, num_worker,
+        outtsv_file_tmp))
+    writer.daemon = True
+    writer.start()
+    
+    reader.join()
+    logging.info('reader finished')
+    for proc in worker_pool: #wait all process finished.
+        proc.join()
+    logging.info('worker finished')
+    writer.join()
+    logging.info('writer finished')
+
+    os.rename(outtsv_file_tmp, outtsv_file)
+    #caffe.print_perf(count)
+
+    return count
 
 def tsvdet(caffenet, caffemodel, intsv_file, key_idx,img_idx, pixel_mean,
         scale, outtsv_file, **kwargs):
