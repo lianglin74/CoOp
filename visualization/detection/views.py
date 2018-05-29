@@ -50,6 +50,7 @@ import logging
 import uuid
 from qd_common import load_class_ap
 from process_tsv import visualize_predict
+from process_tsv import get_class_count
 
 init_logging()
 
@@ -227,13 +228,22 @@ def view_model_prediction_labelmap(request, full_expid, predict_file):
             class_ap = class_ap['overall']['-1']['class_ap']
         else:
             assert False
-        labelmap_ap = [(l, '{:.2f}'.format(class_ap.get(l, -1))) for l in labelmap]
+        labelmap_ap = [[l, '{:.2f}'.format(class_ap.get(l, -1))] for l in labelmap]
     else:
-        labelmap_ap = [(l, None) for l in labelmap]
+        labelmap_ap = [[l, None] for l in labelmap]
+    if 'data' in request.GET:
+        class_count = get_class_count(request.GET['data'], ['train', 'test'])
+    else:
+        class_count = {'train': {}, 'test': {}}
+    for l in labelmap_ap:
+        l.append(class_count['train'].get(l[0]))
+        l.append(class_count['test'].get(l[0]))
     os.chdir(curr_dir)
     labelmap_ap = sorted(labelmap_ap, key=lambda x: x[1])
     context = {'prediction_file': predict_file,
             'labelmap_ap': labelmap_ap,
+            'data': request.GET.get('data', None),
+            'class_count': class_count,
             'full_expid': full_expid}
     return render(request, 'detection/view_model_prediction_labelmap.html',
             context)
@@ -286,7 +296,7 @@ def view_image(request, data, split, version, label, start_id):
     html_image_paths = []
     max_image_shown = 10
     has_next = False
-    for i, (fname, origin, origin_label, im) in enumerate(images):
+    for i, (fname, origin, origin_label, im, target_rects) in enumerate(images):
         if i >= max_image_shown:
             has_next = True
             break 
@@ -299,7 +309,8 @@ def view_image(request, data, split, version, label, start_id):
         html_path = save_image_in_static(im, '{}/{}/{}/bb_{}.jpg'.format(data, split,
             version,
             fname))
-        html_image_paths.append((origin_html_path, origin_label_html_path , html_path))
+        html_image_paths.append((fname, origin_html_path, origin_label_html_path , html_path, 
+            target_rects))
     os.chdir(curr_dir)
 
     context = {'images': html_image_paths,

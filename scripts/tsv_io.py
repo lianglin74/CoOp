@@ -282,7 +282,7 @@ class TSVDataset(object):
                     row[1] == 'dont use'
                 yield row
 
-    def num_rows(self, split, version):
+    def num_rows(self, split, version=None):
         f = self.get_data(split, version)
         if op.isfile(f):
             return TSVFile(f).num_rows()
@@ -383,6 +383,11 @@ def tsv_reader(tsv_file_name):
         for i, line in enumerate(fp):
             yield [x.strip() for x in line.split('\t')]
 
+def csv_reader(tsv_file_name):
+    with open(tsv_file_name, 'r') as fp:
+        for i, line in enumerate(fp):
+            yield [x.strip() for x in line.split(',')]
+
 def get_meta_file(tsv_file):
     return op.splitext(tsv_file)[0] + '.meta.yaml'
 
@@ -457,21 +462,33 @@ def create_inverted_list2(rows):
 
 def create_inverted_list(rows):
     inverted = {}
+    inverted_with_bb = {}
+    inverted_no_bb = {}
     for i, row in enumerate(rows):
         labels = json.loads(row[1])
         if type(labels) is list:
             # detection dataset
             curr_unique_labels = set([l['class'] for l in labels])
+            curr_unique_with_bb_labels = set([l['class'] for l in labels 
+                if any(x != 0 for x in l['rect'])])
+            curr_unique_no_bb_labels = set([l['class'] for l in labels 
+                if all(x == 0 for x in l['rect'])])
         else:
             assert type(labels) is int
             curr_unique_labels = [str(labels)]
-        for l in curr_unique_labels:
-            assert type(l) == str or type(l) == unicode 
-            if l not in inverted:
-                inverted[l] = [i]
-            else:
-                inverted[l].append(i)
-    return inverted
+            curr_unique_with_bb_labels = []
+            curr_unique_no_bb_labels = curr_unique_labels
+        def update(unique_labels, inv):
+            for l in unique_labels:
+                assert type(l) == str or type(l) == unicode 
+                if l not in inv:
+                    inv[l] = [i]
+                else:
+                    inv[l].append(i)
+        update(curr_unique_labels, inverted)
+        update(curr_unique_with_bb_labels, inverted_with_bb)
+        update(curr_unique_no_bb_labels, inverted_no_bb)
+    return inverted, inverted_with_bb, inverted_no_bb
 
 def tsv_shuffle_reader(tsv_file):
     logging.warn('deprecated: using TSVFile to randomly seek')

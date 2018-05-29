@@ -77,6 +77,9 @@ import math
 import logging
 import yoloinit
 from multiprocessing import Process, Queue
+from qd_common import get_mpi_rank, get_mpi_size
+from qd_common import get_mpi_local_rank, get_mpi_local_size
+from qd_common import concat_files
 
 def num_non_empty_lines(file_name):
     with open(file_name) as fp:
@@ -225,8 +228,15 @@ class ProtoGenerator(object):
         if 'stageiter' in kwargs and kwargs['stageiter']:
             stageiter = [to_iter(si) for si in kwargs['stageiter']]
         else:
-            stageiter = map(lambda x:int(x*max_iters/10000), 
-                    [100,5000,9000,10000])
+            stageiter_dist = kwargs.get('stageiter_dist', 'origin')
+            if stageiter_dist == 'origin':
+                stageiter = map(lambda x:int(x*max_iters/10000), 
+                        [100,5000,9000,10000])
+            else:
+                assert stageiter_dist == 'compact'
+                stageiter = map(lambda x:int(x*max_iters/7000), 
+                        [100,5000,6000,7000])
+
 
         extra_param = {}
         if 'burn_in' in kwargs:
@@ -434,6 +444,7 @@ class CaffeWrapper(object):
         return new_base_net_filepath
 
     def monitor_train(self):
+        init_logging()
         while True:
             logging.info('monitoring')
             finished_time = False
@@ -906,18 +917,70 @@ class CaffeWrapper(object):
                 False) and os.path.getmtime(outtsv_file) > os.path.getmtime(model_param):
             logging.info('skip to predict (exist): {}'.format(outtsv_file))
             return outtsv_file 
-
-        tsvdet_iter(test_proto_file, 
-                model_param, 
-                self._test_dataset.iter_data(self._test_split, unique=True,
-                    progress=True),
-                colkey, 
-                colimg, 
-                mean_value, 
-                scale,
-                outtsv_file,
-                cmapfile=self._labelmap,
-                **self._kwargs)
+        
+        mpi_rank = get_mpi_rank()
+        mpi_size = get_mpi_size()
+        if mpi_rank == 0 and mpi_size == 1:
+            tsvdet_iter(test_proto_file, 
+                    model_param, 
+                    self._test_dataset.iter_data(self._test_split, unique=True,
+                        progress=True),
+                    colkey, 
+                    colimg, 
+                    mean_value, 
+                    scale,
+                    outtsv_file,
+                    cmapfile=self._labelmap,
+                    **self._kwargs)
+        else:
+            assert get_mpi_local_rank() == 0
+            assert get_mpi_local_size() == 1
+            logging.info('mpi_rank = {}; mpi_size = {}'.format(mpi_rank,
+                mpi_size))
+            num_test_images = self._test_dataset.num_rows(self._test_split)
+            logging.info('num_test_images = {}'.format(num_test_images))
+            assert num_test_images > 0
+            # ceil of num_test_images/mpi_size
+            num_image_per_process = (num_test_images + mpi_size - 1) / mpi_size
+            logging.info('num_image_per_process = {}'.format(
+                num_image_per_process))
+            start_idx = num_image_per_process * mpi_rank
+            end_idx = start_idx + num_image_per_process
+            end_idx = min(num_test_images, end_idx)
+            if end_idx <= start_idx:
+                return
+            logging.info('start_idx = {}; end_idx = {}'.format(start_idx, 
+                end_idx))
+            filter_idx = range(start_idx, end_idx)
+            curr_outtsv_file = outtsv_file + '_{}_{}.tsv'.format(mpi_rank,
+                    mpi_size)
+            if not os.path.isfile(curr_outtsv_file) or self._kwargs.get('force_predict',
+                    False) or os.path.getmtime(curr_outtsv_file) < os.path.getmtime(model_param):
+                tsvdet_iter(test_proto_file, 
+                        model_param, 
+                        self._test_dataset.iter_data(self._test_split, unique=True,
+                            progress=True,
+                            filter_idx=filter_idx),
+                        colkey, 
+                        colimg, 
+                        mean_value, 
+                        scale,
+                        curr_outtsv_file,
+                        cmapfile=self._labelmap,
+                        **self._kwargs)
+            if mpi_rank == 0:
+                # need to wait and merge all the results
+                all_output =[outtsv_file + '_{}_{}.tsv'.format(mpi_rank,
+                        mpi_size) for i in range(mpi_size)]
+                ready = False
+                while not ready:
+                    ready = all(op.isfile(f) for f in all_output)
+                    # even ready is true, let's sleep a while
+                    time.sleep(10)
+                    logging.info('ready = {}'.format(ready))
+                logging.info('begin to merge the files')
+                concat_files(all_output, outtsv_file)
+                logging.info('finished to merge the files')
 
         logging.info('finished predict')
 
@@ -1167,6 +1230,8 @@ class CaffeWrapper(object):
         if self._kwargs.get('detmodel', 'yolo') == 'classification' and \
                 self._kwargs.get('network_input_size', 224) != 224:
             cc.append('testInput{}'.format(self._kwargs['network_input_size']))
+        if self._kwargs.get('predict_thresh', 0) != 0:
+            cc.append('th{}'.format(self._kwargs['predict_thresh']))
 
         cc.append('predict')
         return '.'.join(cc)
@@ -1521,11 +1586,11 @@ def yolo_tree_train(**ikwargs):
     
     assert 'yolo_tree' not in kwargs or kwargs['yolo_tree']
     kwargs['yolo_tree'] = True
-    # true is normally better
-    kwargs['class_specific_nms'] = True
+    kwargs['class_specific_nms'] = False
     kwargs['output_tree_path'] = True
     kwargs['yolo_tree_eval_label_lift'] = not kwargs['output_tree_path']
     kwargs['yolo_tree_eval_gt_lift'] = False
+    kwargs['stageiter_dist'] = 'compact'
 
     # train only on the data with bbox
     bb_data = '{}_with_bb'.format(kwargs['data'])
@@ -1595,8 +1660,8 @@ def yolo_tree_train(**ikwargs):
         p = c.predict(model)
         c.evaluate(model, p)
     else:
-        assert c._is_train_finished()
         c.monitor_train()
+        assert c._is_train_finished()
     
     kwargs['ovthresh'] = [-1]
     if 'test_data' not in ikwargs:
@@ -1620,7 +1685,7 @@ def yolotrain(data, net, **kwargs):
         model = c.train()
         if not kwargs.get('debug_train', False) and model:
             predict_result = c.predict(model)
-            if predict_result:
+            if predict_result and not kwargs.get('skip_evaluate', False):
                 c.evaluate(model, predict_result)
     else:
         c.monitor_train()

@@ -508,8 +508,8 @@ def result2bblist(im, probs, boxes, class_map, thresh=0):
 
     return det_results
 
-def result2json(im, probs, boxes, class_map):
-    det_results = result2bblist(im, probs, boxes, class_map)
+def result2json(im, probs, boxes, class_map, thresh=0):
+    det_results = result2bblist(im, probs, boxes, class_map, thresh)
     return json.dumps(det_results)
 
 def detprocess(caffenet, caffemodel, pixel_mean, scale, cmap, gpu, key_idx, img_idx,
@@ -558,7 +558,8 @@ def detprocess(caffenet, caffemodel, pixel_mean, scale, cmap, gpu, key_idx, img_
                 if len(x) == 2:
                     scores, boxes = x[0], x[1]
                     # vis_detections(im, scores, boxes, cmap, thresh=0.5)
-                    results = result2json(im, scores, boxes, cmap)
+                    results = result2json(im, scores, boxes, cmap,
+                        kwargs.get('predict_thresh', 0))
             else:
                 scores = im_classify(caffe_net, im, pixel_mean, scale=scale, **kwargs)
                 results = ','.join(map(str, scores))
@@ -616,7 +617,7 @@ def tsvdet_iter(caffenet, caffemodel, in_rows, key_idx,img_idx, pixel_mean,
             if len(cols) > img_idx:
                 if in_queue.full():
                     if time.time() - last_print_time > 10:
-                        logging.info('reader is waiting. {}'.format(count))
+                        logging.info('reader is waiting for the process. {}'.format(count))
                         last_print_time = time.time()
                 count = count + 1
                 in_queue.put(cols)
@@ -654,10 +655,6 @@ def tsvdet_iter(caffenet, caffemodel, in_rows, key_idx,img_idx, pixel_mean,
                 if num_finished == num_worker:
                     break
                 else:
-                    if out_queue.qsize() == 0:
-                        if time.time() - last_print_time > 10:
-                            logging.info('writer is waiting. {}'.format(count))
-                            last_print_time = time.time()
                     if out_queue.empty():
                         if time.time() - last_print_time > 10:
                             logging.info('writer waiting to get the data. {}'.format(count))

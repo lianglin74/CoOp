@@ -23,6 +23,43 @@ from google.protobuf import text_format
 import base64
 import cv2
 from itertools import izip
+import shutil
+
+class ProgressBar(object):
+    def __init__(self, maxval):
+        assert maxval > 0
+        self.maxval = maxval
+    
+    def __enter__(self):
+        self.pbar = progressbar.ProgressBar(maxval=self.maxval).start()
+        return self
+
+    def __exit__(self, t, v, traceback):
+        self.update(self.maxval)
+        sys.stdout.write('\n')
+
+    def update(self, i):
+        self.pbar.update(i)
+
+def concat_files(ins, out):
+    out_tmp = out + '.tmp'
+    with open(out_tmp, 'wb') as fp_out:
+        for f in ins:
+            with open(f, 'rb') as fp_in:
+                shutil.copyfileobj(fp_in, fp_out, 1024*1024*10)
+    os.rename(out_tmp, out)
+
+def get_mpi_rank():
+    return int(os.environ.get('OMPI_COMM_WORLD_RANK', '0'))
+
+def get_mpi_size():
+    return int(os.environ.get('OMPI_COMM_WORLD_SIZE', '1'))
+
+def get_mpi_local_rank():
+    return int(os.environ.get('OMPI_COMM_WORLD_LOCAL_RANK', '0'))
+
+def get_mpi_local_size():
+    return int(os.environ.get('OMPI_COMM_WORLD_LOCAL_SIZE', '1'))
 
 def load_class_ap(full_expid, predict_file):
     report_file = '{}.report'.format(op.splitext(predict_file)[0])
@@ -890,7 +927,11 @@ def plot_to_file(xs, ys, file_name, **kwargs):
     plt.tight_layout()
     # explicitly remove the file because philly does not support overwrite
     if op.isfile(file_name):
-        os.remove(file_name)
+        try:
+            os.remove(file_name)
+        except:
+            logging.info('{} exists but could not be deleted'.format(
+                file_name))
     fig.savefig(file_name)
     plt.close(fig)
 
@@ -1241,9 +1282,9 @@ def encoded_from_img(im):
     return base64.b64encode(x)
 
 def img_from_base64(imagestring):
-    jpgbytestring = base64.b64decode(imagestring)
-    nparr = np.frombuffer(jpgbytestring, np.uint8)
     try:
+        jpgbytestring = base64.b64decode(imagestring)
+        nparr = np.frombuffer(jpgbytestring, np.uint8)
         r = cv2.imdecode(nparr, cv2.IMREAD_COLOR);
         return r
     except:

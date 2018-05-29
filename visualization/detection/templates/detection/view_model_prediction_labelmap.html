@@ -27,10 +27,24 @@
 <p>{{ prediction_file }}</p>
 
 <ul class="col_ul">
-    {% for l, ap in labelmap_ap %}
+    {% for l, ap, train_count, test_count in labelmap_ap %}
     <li><a href="{% url 'detection:view_model' %}?full_expid={{ full_expid }}&predict_file={{ prediction_file }}&filter_label={{ l }}&start_id=0&threshold=0.2">{{ l }}</a>
         {% if ap %}
         [{{ ap }}]
+        {% endif %}
+
+        {% if data %}
+        [<a href="{% url 'detection:view_image2' %}?data={{ data }}&split=train&version=-1&label={{ l }}&start_id=0">train</a>]
+
+        {% if train_count %}
+        ({{ train_count }})
+        {% endif %}
+
+        [<a href="{% url 'detection:view_image2' %}?data={{ data }}&split=test&version=-1&label={{ l }}&start_id=0">test</a>]
+        {% if test_count %}
+        ({{ test_count }})
+        {% endif %}
+
         {% endif %}
     </li>
     {% endfor %}

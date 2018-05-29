@@ -430,7 +430,7 @@ class LabelToSynset(object):
 
     def convert(self, label, parent_synsets=None):
         '''
-        return: correct, list
+        return: correct, list of synset
         '''
         if re.match('^n[0-9]{8}$', label):
             return True, [noffset_to_synset(label)]
@@ -443,7 +443,7 @@ class LabelToSynset(object):
         
         result  = []
         for label in labels:
-            sss = [ss for ss in wn.synsets(label, pos='n')]
+            sss = wn.synsets(label, pos='n')
             result.extend(sss)
         result = list(set(result))
 
@@ -517,6 +517,18 @@ class Taxonomy(object):
         self.tax = tax
         self.name = name
         self.build_from_local()
+
+        # cache information
+        self.name_to_ancestors = None
+
+    def update(self):
+        self.name_to_ancestors = {}
+        for node in self.root.iter_search_nodes():
+            if node == self.root:
+                continue
+            name = node.name
+            ancestors = node.get_ancestors()[:-1]
+            self.name_to_ancestors[name] = set(a.name for a in ancestors)
 
     def _add_current_as_child(self, one, root):
         '''

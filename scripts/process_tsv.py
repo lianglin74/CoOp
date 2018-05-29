@@ -67,7 +67,16 @@ from taxonomy import is_noffset
 import copy
 from tsv_io import create_inverted_list2
 from qd_common import calculate_image_ap
+from tqdm import tqdm
 
+def get_class_count(data, splits):
+    dataset = TSVDataset(data)
+    result = {}
+    for split in splits:
+        result[split] = {row[0]: int(row[1])
+                for row in dataset.iter_data(
+                    split, 'inverted.label.count', -1)}
+    return result
 
 def update_yolo_test_proto(input_test, test_data, map_file, output_test):
     dataset = TSVDataset(test_data)
@@ -105,9 +114,14 @@ def get_colored_name(node, colors):
     return "<span style='color:{}'>{}</span>".format(colors[idx],
             name)
 
-def get_vis_url(data, l):
-    return '/detection/view_image?data={}&label={}&start_id=0'.format(
-            data, l)
+def get_vis_url(data, l, split=None):
+    if split is None:
+        return '/detection/view_image?data={}&label={}&start_id=0'.format(
+                data, l)
+    else:
+        return '/detection/view_image?data={}&split={}&label={}&start_id=0'.format(
+                data, split, l)
+
 
 def get_readable_label(l):
     if is_noffset(l):
@@ -121,16 +135,21 @@ def get_node_key(node, k, default_value=-1):
         r = node.__getattribute__(k)
     return r
 
-def get_node_info(node, colors, all_data):
+def get_node_info(data, node, colors, all_data):
     ss = []
+    if hasattr(node, 'ap'):
+        ss.append('ap({0:.2f})'.format(node.ap))
     if hasattr(node, 'images_with_bb') and \
             hasattr(node, 'images_no_bb'):
-        ss.append('with_bb({},{},{})'.format(node.images_with_bb, 
-            get_node_key(node, 'with_bb_train', -1),
-            get_node_key(node, 'with_bb_test', -1)))
-        ss.append('no_bb({},{},{})'.format(node.images_no_bb, 
-            get_node_key(node, 'no_bb_train', -1),
-            get_node_key(node, 'no_bb_test', -1)))
+        keys = ['with_bb', 'no_bb']
+        for k in keys:
+            ss.append("{}({},<span><a href='{}'>{}</a></span>,<span><a href='{}'>{}</a></span>)".format(
+                k,
+                get_node_key(node, 'images_' + k, -1),
+                get_vis_url(data + '_' + k, node.name, split='train'),
+                get_node_key(node, k + '_train', -1),
+                get_vis_url(data + '_' + k, node.name, split='test'),
+                get_node_key(node, k + '_test', -1)))
     ignore_keys = ['support', 'dist', 'name', 'url',
             'with_bb_train',
             'with_bb_test',
@@ -184,13 +203,13 @@ def gen_html_tree_view(data, colors=['rgb(0,0,0)',
         '''
         if len(root.children) == 0:
             s = u"<li data-jstree='{{\"icon\":\"glyphicon glyphicon-leaf\"}}'><span>{}</span></li>".format(
-                    get_node_info(root, colors, all_data))
+                    get_node_info(data, root, colors, all_data))
             return s
         else:
             result = []
             # we cannot remove span tag here
             result.append('<li><span>{}</span>'.format(
-                get_node_info(root, colors, all_data)))
+                get_node_info(data, root, colors, all_data)))
             result.append('<ul>')
             all_child = sorted(root.children, key=lambda c: c.sub_group)
             for c in all_child:
@@ -418,19 +437,17 @@ def normalize_str_in_rects(data, out_data):
                 yield key, label_str, im_str
         tsv_writer(gen_rows(), dest_dataset.get_data(split))
 
-def tsv_details(rows):
+def tsv_details(row_hw, row_label, num_rows):
     label_count = {}
     sizes = []
-    for i, row in enumerate(rows):
-        if (i % 1000) == 0:
-            logging.info('get tsv details: {}'.format(i))
+    logging.info('tsv details...')
+    for r_hw, r_label in tqdm(izip(row_hw, row_label), total=num_rows):
         if row[1] == 'd':
             # this is the deleted label
             rects = []
         else:
-            rects = json.loads(row[1])
-        im = img_from_base64(row[2])
-        height, width = im.shape[:2]
+            rects = json.loads(r_label[1])
+        height, width = map(int, r_hw.split(' '))
         if type(rects) is list:
             # this is the detection dataset
             # convert it to str. if it is unicode, in yaml, there will be some
@@ -458,8 +475,7 @@ def tsv_details(rows):
                 label_count[c] = label_count[c] + 1
             else:
                 label_count[c] = 1
-        sizes.append(im.shape[:2])
-    min_size_count = sizes[0][0] * sizes[0][1]
+        sizes.append((height, size))
     size_counts = [s[0] * s[1] for s in sizes]
     min_size = sizes[np.argmin(size_counts)]
     max_size = sizes[np.argmax(size_counts)]
@@ -503,13 +519,12 @@ def populate_all_dataset_details():
         except:
             continue
 
-def update_labelmap(rows, labelmap):
+def update_labelmap(rows, num_rows, labelmap):
     '''
     labelmap is a hashset and can be added
     '''
-    for i, row in enumerate(rows):
-        if (i % 10000) == 0:
-            logging.info('loading data - {}'.format(i))
+    logging.info('updating labelmap')
+    for row in tqdm(rows, total=num_rows):
         assert len(row) == 2
         try:
             labelmap.update(set([rect['class'] for rect in
@@ -518,18 +533,64 @@ def update_labelmap(rows, labelmap):
             labelmap.add(row[1])
     logging.info('done')
 
-def populate_dataset_details(data):
+def populate_dataset_details(data, check_image_details=True):
+    logging.info(data)
     dataset = TSVDataset(data)
 
     splits = ['trainval', 'train', 'test']
+
+    # populate the height and with
+    for split in splits:
+        if dataset.has(split) and not dataset.has(split, 'hw') \
+                and check_image_details:
+            multi_thread = True
+            if not multi_thread:
+                logging.info('generating hw')
+                rows = dataset.iter_data(split, progress=True)
+                dataset.write_data(((row[0], ' '.join(map(str,
+                    img_from_base64(row[-1]).shape[:2]))) for 
+                    row in rows), split, 'hw')
+            else:
+                from pathos.multiprocessing import ProcessingPool as Pool
+                num_worker = 128
+                num_tasks = num_worker * 3
+                num_images = dataset.num_rows(split)
+                num_image_per_worker = (num_images + num_worker - 1) /num_tasks 
+                all_idx = []
+                for i in range(num_tasks):
+                    curr_idx_start = i * num_image_per_worker
+                    curr_idx_end = curr_idx_start + num_image_per_worker
+                    curr_idx_end = min(curr_idx_end, num_images)
+                    if curr_idx_end > curr_idx_start:
+                        all_idx.append(range(curr_idx_start, curr_idx_end))
+                logging.info('creating pool')
+                m = Pool(num_worker)
+                def get_hw(filter_idx):
+                    dataset = TSVDataset(data)
+                    rows = dataset.iter_data(split, progress=True,
+                            filter_idx=filter_idx)
+                    return [(row[0], ' '.join(map(str,
+                        img_from_base64(row[-1]).shape[:2]))) 
+                        for row in rows]
+                all_result = m.map(get_hw, all_idx)
+                x = []
+                for r in all_result:
+                    x.extend(r)
+                dataset.write_data(x, split, 'hw')
+
     for split in splits:
         tsv_file = dataset.get_data(split)
         out_file = get_meta_file(tsv_file)
-        if not op.isfile(out_file) and dataset.has(split):
-            rows = dataset.iter_data(split)
-            if rows:
-                details = tsv_details(rows)
+        if not op.isfile(out_file) and \
+                dataset.has(split, 'hw') and \
+                dataset.has(split):
+            row_hw = dataset.iter_data(split, 'hw')
+            row_label = dataset.iter_data(split, 'label')
+            num_rows = dataset.num_rows(split)
+            if check_image_details:
+                details = tsv_details(row_hw, row_label, num_rows)
                 write_to_yaml_file(details, out_file)
+                
 
     # for each data tsv, generate the label tsv and the inverted file
     for split in splits:
@@ -598,26 +659,35 @@ def populate_dataset_details(data):
                 break
             if not dataset.has(split, 'labelmap', v):
                 curr_labelmap = set()
-                update_labelmap(dataset.iter_data(split, 'label', v), curr_labelmap)
+                update_labelmap(dataset.iter_data(split, 'label', v), 
+                        dataset.num_rows(split),
+                        curr_labelmap)
                 curr_labelmap = sorted(list(curr_labelmap))
                 dataset.write_data([[l] for l in curr_labelmap], split, 'labelmap', v)
             else:
                 curr_labelmap = None
-            if not dataset.has(split, 'inverted.label', v):
+            if not dataset.has(split, 'inverted.label', v) or \
+                    not dataset.has(split, 'inverted.label.with_bb', v) or \
+                    not dataset.has(split, 'inverted.label.no_bb', v):
                 if curr_labelmap is None:
                     curr_labelmap = []
                     for row in dataset.iter_data(split, 'labelmap', v):
                         assert len(row) == 1
                         curr_labelmap.append(row[0])
-                def gen_inverted_rows():
-                    for label in inverted:
+                def gen_inverted_rows(inv):
+                    for label in inv:
                         assert label in curr_labelmap 
                     for label in curr_labelmap:
-                        i = inverted[label] if label in inverted else []
+                        i = inv[label] if label in inv else []
                         yield label, ' '.join(map(str, i))
-                inverted = create_inverted_list(dataset.iter_data(split, 'label', v))
-                dataset.write_data(gen_inverted_rows(), 
+                inverted, inverted_with_bb, inverted_no_bb = create_inverted_list(
+                        dataset.iter_data(split, 'label', v))
+                dataset.write_data(gen_inverted_rows(inverted), 
                         split, 'inverted.label', v)
+                dataset.write_data(gen_inverted_rows(inverted_with_bb), 
+                        split, 'inverted.label.with_bb', v)
+                dataset.write_data(gen_inverted_rows(inverted_no_bb), 
+                        split, 'inverted.label.no_bb', v)
             v = v + 1
 
     if not op.isfile(dataset.get_noffsets_file()):
@@ -734,9 +804,7 @@ def create_index_composite_dataset(dataset):
     all_dest_label_file = load_list_file(trainX_label_file)
     dest_labels = [TSVFile(f) for f in all_dest_label_file]
     all_idxSource_sourceLabel_destLabel = []
-    for i, (idx_source, idx_row) in enumerate(all_idxSource_idxRow):
-        if (i % 10000) == 0:
-            logging.info('{}/{}'.format(i, len(all_idxSource_idxRow)))
+    for idx_source, idx_row in tqdm(all_idxSource_idxRow):
         source_rects = json.loads(source_tsv_labels[idx_source].seek(idx_row)[-1])
         dest_rects = json.loads(dest_labels[idx_source].seek(idx_row)[-1])
         for r in dest_rects:
@@ -786,24 +854,24 @@ def create_index_composite_dataset(dataset):
           for s in v], op.join(dataset._data_root, 
             'trainX.includeCategoriesPerSourceDatasetReadable.tsv'))
     
-    sourceDataset_to_excludeSourceLabels = {}
-    # find out the excluded label list
-    for source_dataset_name in sourceDataset_to_includedSourceLabels:
-        source_dataset = TSVDataset(source_dataset_name)
-        full_label_names = set(source_dataset.load_labelmap())
-        included_labels = sourceDataset_to_includedSourceLabels[source_dataset_name]
-        for l in included_labels:
-            # if l is not in the full_label_names, it will throw exceptions
-            full_label_names.remove(l)
-        sourceDataset_to_excludeSourceLabels[source_dataset_name] = full_label_names
+    #sourceDataset_to_excludeSourceLabels = {}
+    ## find out the excluded label list
+    #for source_dataset_name in sourceDataset_to_includedSourceLabels:
+        #source_dataset = TSVDataset(source_dataset_name)
+        #full_label_names = set(source_dataset.load_labelmap())
+        #included_labels = sourceDataset_to_includedSourceLabels[source_dataset_name]
+        #for l in included_labels:
+            ## if l is not in the full_label_names, it will throw exceptions
+            #full_label_names.remove(l)
+        #sourceDataset_to_excludeSourceLabels[source_dataset_name] = full_label_names
 
-    tsv_writer([(n, ','.join(v)) for (n, v) in
-        sourceDataset_to_excludeSourceLabels.iteritems()], op.join(dataset._data_root, 
-            'trainX.excludeCategoriesPerSourceDataset.tsv'))
+    #tsv_writer([(n, ','.join(v)) for (n, v) in
+        #sourceDataset_to_excludeSourceLabels.iteritems()], op.join(dataset._data_root, 
+            #'trainX.excludeCategoriesPerSourceDataset.tsv'))
 
-    tsv_writer([(n, get_nick_name(noffset_to_synset(s)) if is_noffset(s) else
-        s) for (n, v) in sourceDataset_to_excludeSourceLabels.iteritems() for s in v], 
-        op.join(dataset._data_root, 'trainX.excludeCategoriesPerSourceDatasetReadable.tsv'))
+    #tsv_writer([(n, get_nick_name(noffset_to_synset(s)) if is_noffset(s) else
+        #s) for (n, v) in sourceDataset_to_excludeSourceLabels.iteritems() for s in v], 
+        #op.join(dataset._data_root, 'trainX.excludeCategoriesPerSourceDatasetReadable.tsv'))
 
 class TSVTransformer(object):
     def __init__(self):
@@ -914,7 +982,7 @@ def visualize_predict(full_expid, predict_file, label, start_id, threshold):
             keys_from_pred = [pred_keys[i] for i in idx_from_pred]
         else:
             keys_from_pred = []
-            pred_keys = None
+            pred_keys = []
         inverted_test_split = test_dataset.load_inverted_label(test_data_split, version=-1,
                 label=label)
         if label in inverted_test_split:
@@ -1050,13 +1118,14 @@ def visualize_box(data, split, version, label, start_id, color_map={}):
                 return all_rect, all_class
             all_rect, all_class = get_rect_class(rects)
             draw_bb(im, all_rect, all_class)
-            all_rect, all_class = get_rect_class([l for l in rects if l['class']
-                    == label])
+            target_rects = [l for l in rects if l['class']
+                    == label]
+            all_rect, all_class = get_rect_class(target_rects)
             im_label = np.copy(origin)
             draw_bb(im_label, all_rect, all_class)
-            yield new_name, origin, im_label, im
+            yield new_name, origin, im_label, im, pformat(target_rects) 
         else:
-            yield new_name, origin, im, im
+            yield new_name, origin, im, im, ''
 
 
 def visualize_tsv2(data, split, label):
@@ -1219,16 +1288,16 @@ class TSVDatasetSource(TSVDataset, DatasetSource):
         self._type = None
         self._root = root
         # the list of <datasetlabel, rootlabel>
-        self._sourcelabel_targetlabel = None
         self._sourcelabel_to_targetlabels = None
         self._targetlabel_to_sourcelabels = None
-        self._sourcelabel_to_imagecount = None
-        self._split_label_idx = None # list of <split, label, idx>
-        self._datasetlabel_to_splitidx = None
         self._initialized = False
+        self._type_to_datasetlabel_to_split_idx = None
+        self._type_to_datasetlabel_to_count = None
+        self._type_to_split_label_idx = None
 
     def populate_info(self, root):
         self._ensure_initialized()
+        types = ['with_bb', 'no_bb']
         for node in root.iter_search_nodes():
             if root == node:
                 continue
@@ -1250,17 +1319,13 @@ class TSVDatasetSource(TSVDataset, DatasetSource):
                                 is_noffset(l) else l for l in sourcelabels))
                 total = 0
                 for sourcelabel in sourcelabels:
-                    c = self._datasetlabel_to_count.get(sourcelabel, 0)
-                    total = total + c
-                    if self._type == 'with_bb':
-                        logging.info('with_bb: {}: {}->{}'.format(self.name,
-                            node.name, c))
-                        node.images_with_bb = node.images_with_bb + c
-                    else:
-                        assert self._type == 'no_bb'
-                        logging.info('no_bb: {}: {}->{}'.format(self.name,
-                            node.name, c))
-                        node.images_no_bb = node.images_no_bb + c
+                    for t in self._type_to_datasetlabel_to_count:
+                        datasetlabel_to_count = self._type_to_datasetlabel_to_count[t]
+                        c = datasetlabel_to_count.get(sourcelabel, 0)
+                        total = total + c
+                        key = 'images_{}'.format(t)
+                        node.add_feature(key,
+                                node.__getattribute__(key) + c)
                 node.add_feature('{}_total'.format(self.name), total)
 
     def _ensure_initialized(self):
@@ -1268,45 +1333,65 @@ class TSVDatasetSource(TSVDataset, DatasetSource):
             return
         populate_dataset_details(self.name)
         splits = ['trainval', 'train', 'test']
+        types = ['with_bb', 'no_bb']
         # check the type of the dataset
-        for split in splits:
-            label_tsv = self.get_data(split, 'label', version=-1)
-            if not op.isfile(label_tsv):
-                continue
-            for row in tsv_reader(label_tsv):
-                rects = json.loads(row[1])
-                if any(np.sum(r['rect']) > 1 for r in rects):
-                    self._type = 'with_bb'
-                else:
-                    self._type = 'no_bb'
-                break
-        assert self._type is not None, "{} is bad".format(self.name)
-        logging.info('identify {} as {}'.format(self.name, self._type))
+        #for split in splits:
+            #label_tsv = self.get_data(split, 'label', version=-1)
+            #if not op.isfile(label_tsv):
+                #continue
+            #for row in tsv_reader(label_tsv):
+                #rects = json.loads(row[1])
+                #if any(np.sum(r['rect']) > 1 for r in rects):
+                    #self._type = 'with_bb'
+                #else:
+                    #self._type = 'no_bb'
+                #break
+        #assert self._type is not None, "{} is bad".format(self.name)
+        #logging.info('identify {} as {}'.format(self.name, self._type))
         
         # list of <split, label, idx>
-        self._split_label_idx = []
+        self._type_split_label_idx = []
         for split in splits:
             logging.info('loading the inverted file: {}-{}'.format(self.name,
                 split))
             if not op.isfile(self.get_data(split, 'label', version=-1)):
                 continue
-            inverted = self.load_inverted_label(split, version=-1)
-            label_idx = dict_to_list(inverted, 0)
-            for label, idx in label_idx:
-                self._split_label_idx.append((split, label, idx))
-
-        self._datasetlabel_to_splitidx = list_to_dict(self._split_label_idx, 1)
-        self._datasetlabel_to_count = {l: len(self._datasetlabel_to_splitidx[l]) for l in
-                self._datasetlabel_to_splitidx}
+            for t in types:
+                rows = self.iter_data(split, 'inverted.label.{}'.format(t), -1)
+                inverted = {r[0]: (map(int, r[1].split(' ')) if len(r[1]) > 0
+                    else []) for r in rows}
+                label_idx = dict_to_list(inverted, 0)
+                for label, idx in label_idx:
+                    self._type_split_label_idx.append((t, split, label, idx))
+        self._type_to_split_label_idx = list_to_dict(
+                self._type_split_label_idx, 0)
+        self._type_to_datasetlabel_to_split_idx = {}
+        for t in self._type_to_split_label_idx:
+            split_label_idx = self._type_to_split_label_idx[t]
+            label_to_split_idx = list_to_dict(split_label_idx, 1)
+            self._type_to_datasetlabel_to_split_idx[t] = label_to_split_idx
+        self._type_to_datasetlabel_to_count = {}
+        for t in self._type_to_datasetlabel_to_split_idx:
+            datasetlabel_to_split_idx = self._type_to_datasetlabel_to_split_idx[t]
+            datasetlabel_to_count = {l: len(datasetlabel_to_split_idx[l]) for l in
+                    datasetlabel_to_split_idx}
+            self._type_to_datasetlabel_to_count[t] = datasetlabel_to_count
 
         self.update_label_mapper()
         self._initialized = True
 
     def update_label_mapper(self):
         root = self._root
-        labelmap = self.load_labelmap()
+        # load the labelmap for all splits, self.load_labelmap is not correct,
+        # since we will update the label and will not update the labelmap
+        labelmap = []
+        for split in ['train', 'test', 'trainval']:
+            if self.has(split, 'labelmap', -1):
+                for row in self.iter_data(split, 'labelmap', -1):
+                    labelmap.append(row[0])
         hash_labelmap = set(labelmap)
-        noffsets = self.load_noffsets()
+        labelmap = list(labelmap)
+
         tree_noffsets = {}
         for node in root.iter_search_nodes():
             if node == root or not node.noffset:
@@ -1346,13 +1431,17 @@ class TSVDatasetSource(TSVDataset, DatasetSource):
         assert len(invalid_list) == 0, pformat(invalid_list)
 
         #result = {}
-        for l, ns in izip(labelmap, noffsets):
+        label_to_synset = LabelToSynset()
+        for l in labelmap:
             if l.lower() in name_to_targetlabels:
                 for t in name_to_targetlabels[l.lower()]:
                     sourcelabel_targetlabel.append((l, t))
-            elif ns != '':
-                for n in ns.split(','):
-                    n = n.strip()
+            else:
+                succeed, ns = label_to_synset.convert(l)
+                if not succeed:
+                    continue
+                for n in ns:
+                    n = synset_to_noffset(n)
                     if n in tree_noffsets:
                         t = tree_noffsets[n]
                         if t in targetlabel_has_whitelist:
@@ -1362,7 +1451,6 @@ class TSVDatasetSource(TSVDataset, DatasetSource):
                         sourcelabel_targetlabel.append((l, t))
                         #result[l] = t 
 
-        self._sourcelabel_targetlabel = sourcelabel_targetlabel
         self._sourcelabel_to_targetlabels = list_to_dict(sourcelabel_targetlabel,
                 0)
         self._targetlabel_to_sourcelabels = list_to_dict(sourcelabel_targetlabel,
@@ -1400,13 +1488,14 @@ class TSVDatasetSource(TSVDataset, DatasetSource):
 
     def select_tsv_rows(self, label_type):
         self._ensure_initialized()
-        assert self._type is not None
-        if label_type != self._type:
+        if label_type not in self._type_to_split_label_idx:
             return []
+        split_label_idx = self._type_to_split_label_idx[label_type]
+        datasetlabel_to_splitidx = list_to_dict(split_label_idx, 1) 
         result = []
-        for datasetlabel in self._datasetlabel_to_splitidx:
+        for datasetlabel in datasetlabel_to_splitidx:
             if datasetlabel in self._sourcelabel_to_targetlabels:
-                split_idxes = self._datasetlabel_to_splitidx[datasetlabel]
+                split_idxes = datasetlabel_to_splitidx[datasetlabel]
                 targetlabels = self._sourcelabel_to_targetlabels[datasetlabel]
                 for rootlabel in targetlabels:
                     result.extend([(rootlabel, split, idx) for split, idx in
@@ -1488,14 +1577,18 @@ def convert_one_label(rects, label_mapper):
     rects[:] = []
     rects.extend(rects2)
 
-def convert_label(label_tsv, idx, label_mapper):
+def convert_label(label_tsv, idx, label_mapper, with_bb):
     '''
     '''
     tsv = TSVFile(label_tsv)
     result = None
-    for i in idx:
+    for i in tqdm(idx):
         row = tsv.seek(i)
         rects = json.loads(row[1])
+        if with_bb:
+            rects = [r for r in rects if any(x != 0 for x in r['rect'])]
+        else:
+            rects = [r for r in rects if all(x == 0 for x in r['rect'])]
         if result is None:
             result = [len(row) * ['d']] * tsv.num_rows()
         rects2 = []
@@ -1507,7 +1600,7 @@ def convert_label(label_tsv, idx, label_mapper):
                     r2['class'] = t 
                     rects2.append(r2)
         assert len(rects2) > 0
-        row[1] = json.dumps(rects2)
+        row[1] = rects2
         result[i] = row
     return result
 
@@ -1602,6 +1695,7 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
     init_logging()
     all_tax = load_all_tax(taxonomy_folder)
     tax = merge_all_tax(all_tax)
+    tax.update()
     initialize_images_count(tax.root)
     mapper = LabelToSynset()
     mapper.populate_noffset(tax.root)
@@ -1617,13 +1711,17 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
     output_ambigous_noffsets(tax.root, ambigous_noffset_file)
     
     data_sources = []
+
+    datas = kwargs['datas']
+    cleaness = [d[1] if type(d) is tuple else 10 for d in datas]
+    datas = [d[0] if type(d) is tuple else d for d in datas]
     
-    datas = kwargs.get('datas', ['voc20', 'coco2017', 'imagenet3k_448',
-        'crawl_office_v2', 'crawl_office_v1'])
     logging.info('extract the images from: {}'.format(','.join(datas)))
 
-    for d in datas:
-        data_sources.append(TSVDatasetSource(d, tax.root))
+    for d, c in izip(datas, cleaness):
+        dataset = TSVDatasetSource(d, tax.root)
+        dataset.cleaness = c
+        data_sources.append(dataset)
     
     for s in data_sources:
         s.populate_info(tax.root)
@@ -1672,13 +1770,6 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
     node_should_have_images(tax.root, 200, 
             op.join(overall_dataset._data_root, 'labels_with_few_images.yaml'))
 
-    def gen_rows(label_type):
-        for s in data_sources:
-            for i, row in enumerate(s.gen_tsv_rows(tax.root, label_type)):
-                if (i % 1000) == 0:
-                    logging.info('gen-rows: {}-{}-{}'.format(s.name, label_type, i))
-                yield row
-    
     # get the information of all train val
     train_vals = []
     ldtsi = []
@@ -1721,6 +1812,7 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
         sources = []
         sources_origin_label = []
         sources_label = []
+        with_bb = label_type == 'with_bb'
         for dataset in d_to_lsi:
             lsi = d_to_lsi[dataset]
             s_li = list_to_dict(lsi, 1)
@@ -1742,11 +1834,14 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
                 source_origin_label = dataset.get_data(split,
                     'label', version=-1)
                 converted_label = convert_label(source_origin_label,
-                        idx, dataset._sourcelabel_to_targetlabels)
+                        idx, dataset._sourcelabel_to_targetlabels,
+                        with_bb=with_bb)
                 sources_origin_label.append(source_origin_label)
                 # convert the file name
-                for i in idx:
+                logging.info('delifting the labels')
+                for i in tqdm(idx):
                     l = converted_label[i]
+                    l[1] = json.dumps(delift_one_image(l[1], tax))
                     l[0] = '{}_{}_{}'.format(dataset.name, split, l[0])
                 label_file = out_dataset[label_type].get_data(out_split, 'label')
                 logging.info('writing the label file {}'.format(label_file))
@@ -1784,6 +1879,7 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
                 assert 'with_bb' in type_to_dsik
                 dsik = type_to_dsik['with_bb']
                 random.shuffle(dsik)
+                dsik = sorted(dsik, key=lambda x: -x[0].cleaness)
                 assert len(dsik) > num_remove
                 type_to_dsik['with_bb'] = dsik[: len(dsik) - num_remove]
                 num_remove = 0
@@ -1868,6 +1964,7 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
             d_to_lsi = list_to_dict(ldsi, 1)
             k = 0
             all_ki = []
+            with_bb = label_type == 'with_bb'
             for dataset in d_to_lsi:
                 lsi = d_to_lsi[dataset]
                 s_to_li = list_to_dict(lsi, 1)
@@ -1883,15 +1980,11 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
                     sources_origin_label.append(source_origin_label)
                     src_label_tsv = TSVFile(source_origin_label)
                     converted_label = convert_label(source_origin_label,
-                            idx, dataset._sourcelabel_to_targetlabels)
-                    for i in idx:
+                            idx, dataset._sourcelabel_to_targetlabels,
+                            with_bb=with_bb)
+                    for i in tqdm(idx):
                         l = converted_label[i]
-                        tmp = json.loads(l[1])
-                        for t in tmp:
-                            if 'tree growing' in t['class']:
-                                import ipdb;ipdb.set_trace(context=15)
-                        l[1] = json.dumps(lift_one_image(json.loads(l[1]),
-                            tax.root))
+                        l[1] = json.dumps(lift_one_image(l[1], tax))
                         l[0] = '{}_{}_{}'.format(dataset.name, split, l[0])
                     all_ki.extend([(str(k), str(i)) for i in idx])
                     label_file = out_dataset[label_type].get_data(out_split, 'label')
@@ -1908,15 +2001,39 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
 
     logging.info('done')
 
-def lift_one_image(rects, root):
+def delift_one_image(rects, tax):
+    # currently, for the training, we need to delift the label. That is, if it
+    # is man, we should remove the person label
+    rects2 = []
+    for curr_r in rects:
+        curr_label = curr_r['class']
+        ious = [calculate_iou(r['rect'], curr_r['rect']) for r in rects2]
+        same_place_rects = [r for i, r in izip(ious, rects2) if i > 0.9]
+        # if current label is one of parent of the same_place rects, ignore it
+        ignore = False
+        for same_place_r in same_place_rects:
+            ancestors = tax.name_to_ancestors[same_place_r['class']]
+            if curr_label in ancestors:
+                ignore = True
+                break
+        if ignore:
+            continue
+        ancestors = tax.name_to_ancestors[curr_label]
+        to_removed = []
+        for same_place_r in same_place_rects:
+            if same_place_r['class'] in ancestors:
+                to_removed.append(same_place_r)
+        for t in to_removed:
+            rects2.remove(t)
+        rects2.append(curr_r)
+    return rects2
+
+def lift_one_image(rects, tax):
     rects2 = []
     for curr_r in rects:
         label = curr_r['class']
-        nodes = root.search_nodes(name=label)
-        assert len(nodes) == 1
-        node = nodes[0]
-        all_label = [n.name for n in node.get_ancestors()[: -1]]
-        all_label.append(label)
+        all_label = tax.name_to_ancestors[label]
+        all_label.add(label)
         for l in all_label:
             same_label_rects = [r for r in rects2 if r['class'] == l]
             ious = [calculate_iou(r['rect'], curr_r['rect']) for r in
