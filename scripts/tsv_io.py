@@ -334,7 +334,9 @@ class TSVDataset(object):
                     if progress:
                         pbar.update(i)
         else:
-            if not op.isfile(self.get_data(split, t, version)):
+            fname = self.get_data(split, t, version)
+            if not op.isfile(fname):
+                logging.info('no {}'.format(fname))
                 return
             if filter_idx is None:
                 for i, row in enumerate(tsv_reader(self.get_data(

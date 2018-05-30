@@ -442,12 +442,13 @@ def tsv_details(row_hw, row_label, num_rows):
     sizes = []
     logging.info('tsv details...')
     for r_hw, r_label in tqdm(izip(row_hw, row_label), total=num_rows):
-        if row[1] == 'd':
+        if r_label[1] == 'd':
             # this is the deleted label
             rects = []
         else:
             rects = json.loads(r_label[1])
-        height, width = map(int, r_hw.split(' '))
+        assert r_hw[0] == r_label[0]
+        height, width = map(int, r_hw[1].split(' '))
         if type(rects) is list:
             # this is the detection dataset
             # convert it to str. if it is unicode, in yaml, there will be some
@@ -461,10 +462,10 @@ def tsv_details(row_hw, row_label, num_rows):
                 # this should be a valid bounding box
                 cx, cy = (r[0] + r[2]) / 2., (r[1] + r[3]) / 2.
                 rw, rh = r[2] - r[0], r[3] - r[1]
-                assert cx >= 0 and cx < width \
-                        and cy >= 0 and cy < height
+                #assert cx >= 0 and cx < width \
+                        #and cy >= 0 and cy < height
                 if rw < 1 or rh < 1:
-                    logging.warn('rw or rh too small: {} - {}'.format(row[0], 
+                    logging.warn('rw or rh too small: {} - {}'.format(r_label[0], 
                         ','.join(map(str, r))))
         else:
             # this is classification dataset
@@ -475,7 +476,7 @@ def tsv_details(row_hw, row_label, num_rows):
                 label_count[c] = label_count[c] + 1
             else:
                 label_count[c] = 1
-        sizes.append((height, size))
+        sizes.append((height, width))
     size_counts = [s[0] * s[1] for s in sizes]
     min_size = sizes[np.argmin(size_counts)]
     max_size = sizes[np.argmax(size_counts)]
@@ -578,6 +579,13 @@ def populate_dataset_details(data, check_image_details=True):
                     x.extend(r)
                 dataset.write_data(x, split, 'hw')
 
+    # for each data tsv, generate the label tsv and the inverted file
+    for split in splits:
+        full_tsv = dataset.get_data(split)
+        label_tsv = dataset.get_data(split, 'label')
+        if not op.isfile(label_tsv) and op.isfile(full_tsv):
+            extract_label(full_tsv, label_tsv)
+
     for split in splits:
         tsv_file = dataset.get_data(split)
         out_file = get_meta_file(tsv_file)
@@ -590,15 +598,7 @@ def populate_dataset_details(data, check_image_details=True):
             if check_image_details:
                 details = tsv_details(row_hw, row_label, num_rows)
                 write_to_yaml_file(details, out_file)
-                
 
-    # for each data tsv, generate the label tsv and the inverted file
-    for split in splits:
-        full_tsv = dataset.get_data(split)
-        label_tsv = dataset.get_data(split, 'label')
-        if not op.isfile(label_tsv) and op.isfile(full_tsv):
-            extract_label(full_tsv, label_tsv)
-    
     labelmap = []
     # generate the label map if there is no
     if not op.isfile(dataset.get_labelmap_file()) and \
@@ -804,6 +804,7 @@ def create_index_composite_dataset(dataset):
     all_dest_label_file = load_list_file(trainX_label_file)
     dest_labels = [TSVFile(f) for f in all_dest_label_file]
     all_idxSource_sourceLabel_destLabel = []
+    logging.info('each datasource and each idx row')
     for idx_source, idx_row in tqdm(all_idxSource_idxRow):
         source_rects = json.loads(source_tsv_labels[idx_source].seek(idx_row)[-1])
         dest_rects = json.loads(dest_labels[idx_source].seek(idx_row)[-1])
@@ -1095,8 +1096,16 @@ def visualize_box(data, split, version, label, start_id, color_map={}):
     while start_id < 0:
         start_id = start_id + len(idx)
     logging.info('start to read')
-    for key, label_str, img_str in dataset.iter_data(split, version=version,
-            filter_idx=idx[start_id:]):
+    rows_image = dataset.iter_data(split, filter_idx=idx[start_id:])
+    rows_label = dataset.iter_data(split, 'label', version=version,
+            filter_idx=idx[start_id:])
+    for row_image, row_label in izip(rows_image, rows_label):
+        key = row_image[0]
+        assert key == row_label[0]
+        assert len(row_image) == 3
+        assert len(row_label) == 2
+        label_str = row_label[-1]
+        img_str = row_image[-1]
         im = img_from_base64(img_str)
         origin = np.copy(im)
         rects = try_json_parse(label_str)
@@ -1294,6 +1303,7 @@ class TSVDatasetSource(TSVDataset, DatasetSource):
         self._type_to_datasetlabel_to_split_idx = None
         self._type_to_datasetlabel_to_count = None
         self._type_to_split_label_idx = None
+        self._ensure_initialized()
 
     def populate_info(self, root):
         self._ensure_initialized()
@@ -1598,6 +1608,9 @@ def convert_label(label_tsv, idx, label_mapper, with_bb):
                 for t in label_mapper[rect['class']]:
                     r2 = copy.deepcopy(rect)
                     r2['class'] = t 
+                    if rect['class'] != t:
+                        # keep this for logging
+                        r2['class_from'] = t
                     rects2.append(r2)
         assert len(rects2) > 0
         row[1] = rects2
