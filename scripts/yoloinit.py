@@ -8,6 +8,7 @@ import caffe
 from shutil import copyfile
 from google.protobuf import text_format
 from numpy import linalg as LA
+import logging
 
 EPS = np.finfo(float).eps
 
@@ -30,7 +31,7 @@ def parse_labelfile_path(model):
 def number_of_anchor_boxex(model):
     last_layer = model.layer[len(model.layer)-1]
     return max(len(last_layer.region_loss_param.biases), len(last_layer.region_output_param.biases))/2
-    
+
 def load_labelmap(label_file):
     with open(label_file) as f:
         cnames = [line.split('\t')[0].strip() for line in f]
@@ -48,15 +49,17 @@ def calc_epsilon(dnratio):
     if dnratio>10: return 0.1
     elif dnratio<2:  return 10
     else: return 1;
-        
-def ncc2_train(X,Y, avgnorm2):
-    cmax = np.max(Y)+1;
+
+def ncc2_train(X,Y, avgnorm2, cmax=None):
+    if cmax is None:
+        cmax = np.max(Y)+1;
     epsilon = calc_epsilon(X.shape[0]/X.shape[1]);
     means = np.zeros((cmax, X.shape[1]), dtype=np.float32)
     for i in range(cmax):
         idxs = np.where(Y==i)
-        means[i,:] = np.average(X[idxs,:], axis=1)
-        X[idxs,:] -= means[i,:]
+        if len(idxs) > 0:
+            means[i,:] = np.average(X[idxs,:], axis=1)
+            X[idxs,:] -= means[i,:]
     cov = np.dot(X.T,X)/(X.shape[0]-1) + epsilon*np.identity(X.shape[1])
     W = LA.solve(cov,means.T).T
     B = -0.5*np.add.reduce(W*means,axis=1)
@@ -90,7 +93,7 @@ def extract_training_data( new_net,anchor_num, lname, tr_cnt=200):
                 wcnt[cid]+=1;
         if  np.min(wcnt) > tr_cnt:    break;
     return np.vstack(xlist).astype(float), np.array(ylist).astype(int);
-    
+
     
 def data_dependent_init(pretrained_weights_filename, pretrained_prototxt_filename, new_prototxt_filename):
     pretrained_net = caffe.Net(pretrained_prototxt_filename, pretrained_weights_filename, caffe.TEST)

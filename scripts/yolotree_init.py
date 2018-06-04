@@ -156,6 +156,8 @@ def compute_covariance_by_group(new_net, anchor_num, lname, cid_groups, cid_hier
         logging.error("Could not find enough data for the some classes after {} iterations".format(
             iters
         ))
+    else:
+        logging.info('using {}'.format(iters))
 
     return cov_by_group, cnt_g
 
@@ -250,6 +252,8 @@ def compute_class_wise_feature_mean_by_group(new_net, anchor_num, lname, cid_gro
         logging.error("Could not find enough data for the some classes after {} iterations".format(
             iters
         ))
+    else:
+        logging.info('using {}'.format(iters))
 
     return class_wise_feature_means_by_group
 
@@ -316,6 +320,18 @@ def read_softmax_tree(tree_file):
     assert len(group_offsets) == len(group_sizes) == max(cid_groups) + 1
     return group_offsets, group_sizes, cid_groups, parents
 
+def data_dependent_init2(pretrained_weights_filename,
+        pretrained_prototxt_filename, new_prototxt_filename, new_weight,
+        tr_cnt=100, max_iters=1000):
+
+    caffe.set_device(0)
+    caffe.set_mode_gpu()
+
+    net = data_dependent_init(pretrained_weights_filename, 
+            pretrained_prototxt_filename, 
+            new_prototxt_filename,
+            tr_cnt=tr_cnt, max_iters=max_iters)
+    net.save(new_weight)
 
 def data_dependent_init(pretrained_weights_filename, pretrained_prototxt_filename, new_prototxt_filename,
                         tr_cnt=100, max_iters=10000):
@@ -383,14 +399,14 @@ def data_dependent_init(pretrained_weights_filename, pretrained_prototxt_filenam
     feature_blob_name = new_net.bottom_names[new_last_layer_name][0]
     feature_size = new_net.blobs[feature_blob_name].data.shape[1]
 
+    # calculate the empirical norm of the yolo classification weights
+    base_cw = conv_w[5:, :, :].reshape(-1, featuredim)
+    base_avgnorm2 = np.average(np.add.reduce(base_cw * base_cw, axis=1))
     for g, offset, size in zip(range(n_group), group_offsets, group_sizes):
         if size == 1:
             w = 0
             b = 0
         else:
-            # calculate the empirical norm of the yolo classification weights
-            base_cw = conv_w[5 + offset:5 + offset + size, :, :].reshape(-1, featuredim)
-            base_avgnorm2 = np.average(np.add.reduce(base_cw * base_cw, axis=1))
             feature_means = np.zeros((size, feature_size))
             c0 = offset
             for c in class_wise_feature_mean_by_group[g]:
