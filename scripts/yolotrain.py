@@ -34,7 +34,7 @@ from qd_common import write_to_yaml_file
 #from qd_common import add_layer_for_extract
 from qd_common import parse_training_time
 from qd_common import caffemodel_num_param
-from qd_common import remove_nms
+from qd_common import remove_nms, adjust_tree_prediction_threshold
 from qd_common import process_run
 from qd_common import load_solver, load_net, load_net_from_str
 from qd_common import Model
@@ -49,7 +49,7 @@ from qd_common import visualize_train
 from qd_common import add_yolo_angular_loss_regularizer
 from process_image import show_net_input
 from taxonomy import load_label_parent
-from tsv_io import TSVDataset, tsv_reader
+from tsv_io import TSVDataset, tsv_reader, tsv_writer
 from process_tsv import TSVFile
 from process_image import draw_bb, show_image
 from process_dataset import dynamic_process_tsv
@@ -64,6 +64,7 @@ from itertools import izip
 
 from process_tsv import update_yolo_test_proto
 from process_tsv import build_taxonomy_impl
+from process_tsv import populate_dataset_details
 import copy
 import random
 
@@ -80,12 +81,100 @@ from multiprocessing import Process, Queue
 from qd_common import get_mpi_rank, get_mpi_size
 from qd_common import get_mpi_local_rank, get_mpi_local_size
 from qd_common import concat_files
+from yoloinit import data_dependent_init2
 
 def num_non_empty_lines(file_name):
     with open(file_name) as fp:
         context = fp.read()
     lines = context.split('\n')
     return sum([1 if len(line.strip()) > 0 else 0 for line in lines])
+
+def create_shuffle_for_init(data):
+    dataset = TSVDataset(data)
+    out_file = op.join(dataset._data_root, 'train.init.shuffle.txt')
+    if op.isfile(out_file):
+        return
+    label_to_idxes = {}
+    shuffles = [row for row in tsv_reader(dataset.get_shuffle_file('train'))]
+    for row in dataset.iter_data('train', 'inverted.label'):
+        label = row[0]
+        str_idxes = row[1].split(' ')
+        if len(str_idxes) == 0:
+            idxes = []
+        else:
+            idxes = map(int, str_idxes)
+        assert len(idxes) > 0
+        random.shuffle(idxes)
+        label_to_idxes[label] = idxes
+    logging.info(len(label_to_idxes))
+    result = []
+    all_idx = []
+    for i in range(200):
+        for label in label_to_idxes:
+            idxes = label_to_idxes[label]
+            all_idx.append(idxes[i % len(idxes)])
+            result.append(shuffles[idxes[i % len(idxes)]])
+    tsv_writer(result, out_file)
+    
+    label_to_num = {}
+    for i, row in enumerate(dataset.iter_composite('train', 'label', 
+            version=-1,
+            filter_idx=all_idx)):
+        if (i % 1000) == 0:
+            logging.info('checking {}'.format(i))
+        rects = json.loads(row[1])
+        for r in rects:
+            if r['class'] not in label_to_num:
+                label_to_num[r['class']] = 0
+            label_to_num[r['class']] = label_to_num[r['class']] + 1
+    label_num = [(l, label_to_num[l]) for l in label_to_num]
+    label_num = sorted(label_num, key=lambda x: x[1])
+    logging.info(pformat(label_num))
+            
+
+def data_dependent_init_tree2(pre_trained_full_expid, 
+        target_full_expid):
+    target_exp = CaffeWrapper(full_expid=target_full_expid,
+            load_parameter=True)
+    pre_exp = CaffeWrapper(full_expid=pre_trained_full_expid, 
+            load_parameter=True)
+
+    pretrained_proto = pre_exp._path_env['train_proto_file']
+    pretrained_weight = pre_exp.best_model().model_param
+    target_proto = target_exp._path_env['train_proto_file']
+    init_target_proto = target_proto + '_init.prototxt'
+
+    net = load_net(target_proto)
+    num_class = 1000
+    found = False
+    for l in net.layer:
+        if l.type == 'TsvBoxData':
+            assert not found
+            found = True
+            p = l.tsv_data_param
+            p.batch_size = 8
+            origin_shuffle = p.source_shuffle
+            data = op.basename(op.dirname(origin_shuffle))
+            populate_dataset_details(data, check_image_details=False)
+            #create_shuffle_for_init2(data)
+            create_shuffle_for_init(data)
+            p.source_shuffle = op.join(op.dirname(origin_shuffle),
+                'train.init.shuffle.txt')
+            assert op.isfile(p.source_shuffle)
+        elif l.type == 'SoftmaxTreeWithLoss':
+            tree_file = l.softmaxtree_param.tree
+            num_class = len(load_list_file(tree_file))
+    assert found
+    write_to_file(str(net), init_target_proto)
+    
+    out_fname = op.join(op.dirname(target_proto), 'snapshot',
+        'model_iter_-1.caffemodel')
+    if not op.isfile(out_fname) or True:
+        process_run(data_dependent_init2, pretrained_weight,
+            pretrained_proto, init_target_proto, out_fname,
+            tr_cnt=20,
+            max_iters=4 * num_class)
+    return out_fname
 
 class ProtoGenerator(object):
     def __init__(self, base_model_with_depth, num_classes, **kwargs):
@@ -356,6 +445,7 @@ class CaffeWrapper(object):
         self._path_env = default_paths(self._net, self._data, self._expid)
         self._output_root = self._path_env['output_root']
         self._output = self._path_env['output']
+        self._full_expid = op.basename(self._output)
 
 
         if 'detmodel' not in self._kwargs:
@@ -386,15 +476,18 @@ class CaffeWrapper(object):
             assert 'extract_features' not in self._kwargs
             self._kwargs['extract_features'] = 'target_prediction'
 
-    def demo(self, source_image_tsv=None):
+    def demo(self, source_image_tsv=None, m=None):
         labels = load_list_file(self._labelmap)
-        all_model = [construct_model(self._path_env['solver'],
-                self._path_env['test_proto_file'],
-                is_last=True)]
-        all_model.extend(construct_model(self._path_env['solver'],
-                self._path_env['test_proto_file'],
-                is_last=False))
-        best_avail_model = [m for m in all_model if op.isfile(m.model_param)][0]
+        if m is None:
+            all_model = [construct_model(self._path_env['solver'],
+                    self._path_env['test_proto_file'],
+                    is_last=True)]
+            all_model.extend(construct_model(self._path_env['solver'],
+                    self._path_env['test_proto_file'],
+                    is_last=False))
+            best_avail_model = [m for m in all_model if op.isfile(m.model_param)][0]
+        else:
+            best_avail_model = m
         pixel_mean = best_avail_model.mean_value
         model_param = best_avail_model.model_param
         logging.info('param: {}'.format(model_param))
@@ -616,6 +709,19 @@ class CaffeWrapper(object):
         return model
 
     def _create_init_model(self, init_from):
+        if init_from['type'] == 'ncc2':
+            old_full_expid = init_from['full_expid']
+            new_full_expid = self._full_expid
+            assert self._kwargs.get('yolo_tree'), 'only tree-based is implemented'
+            base_model = data_dependent_init_tree2(old_full_expid, 
+                new_full_expid)
+            # evaluate the accuracy
+            m = self.best_model()
+            m.model_param = base_model
+            p = self.predict(m)
+            self.evaluate(m, p)
+            return base_model
+        raise ValueError()
         if init_from['type'] == 'min_l2':
             init_model_path = op.join(self._output, 'init.caffemodel')
             base_c = CaffeWrapper(net=init_from['net'], 
@@ -645,7 +751,6 @@ class CaffeWrapper(object):
             model.model_param = dest 
             predict_result = self.predict(model)
             self.evaluate(model, predict_result)
-        raise ValueError()
         return init_model_path
 
     def _ensure_macc_calculated(self):
@@ -673,10 +778,12 @@ class CaffeWrapper(object):
     def _get_test_proto_file(self, model):
         surgery = False
         test_proto_file = model.test_proto_file
-        if self._kwargs.get('yolo_tree', False):
-            # Todo: gradually move all these logic to the model construction
-            # side. This function just returns the test_proto immediately.
-            return test_proto_file
+        yolo_tree = self._kwargs.get('yolo_tree', False)
+        if yolo_tree:
+            if self._kwargs.get('softmax_tree_prediction_threshold', 0.5) != 0.5:
+                surgery=True
+            else:
+                return test_proto_file
         blame = self._kwargs.get('yolo_blame', '')
         extract_target = self._kwargs.get('yolo_extract_target_prediction', False)
         need_label = len(blame) != 0 or extract_target
@@ -696,7 +803,7 @@ class CaffeWrapper(object):
         
         #nms_type = self._kwargs.get('nms_type',
                 #caffe.proto.caffe_pb2.RegionPredictionParameter.Standard)
-        if 'class_specific_nms' in self._kwargs:
+        if 'class_specific_nms' in self._kwargs and not yolo_tree:
             surgery = True
         if 'yolo_test_thresh' in self._kwargs:
             surgery = True
@@ -721,7 +828,7 @@ class CaffeWrapper(object):
                         #self._kwargs['gaussian_nms_sigma']
                     #out_file = '{}.gnms{}'.format(out_file,
                             #self._kwargs['gaussian_nms_sigma'])
-            if 'class_specific_nms' in self._kwargs:
+            if 'class_specific_nms' in self._kwargs and not yolo_tree:
                 l.region_output_param.class_specific_nms = self._kwargs['class_specific_nms']
                 out_file = '{}_clasSpecificNMS{}'.format(out_file, 
                         self._kwargs['class_specific_nms'])
@@ -784,6 +891,11 @@ class CaffeWrapper(object):
             if len(test_input_sizes) > 1:
                 out_file = '{}.noNms'.format(out_file)
                 remove_nms(n)
+            if self._kwargs.get('yolo_tree', False) and \
+                    self._kwargs.get('softmax_tree_prediction_threshold', 0.5) != 0.5:
+                tree_th = self._kwargs['softmax_tree_prediction_threshold']
+                out_file = '{}.TreePredTh{}'.format(out_file, tree_th)
+                adjust_tree_prediction_threshold(n, tree_th)
                 
             write_to_file(str(n), out_file)
             test_proto_file = out_file
@@ -1256,11 +1368,11 @@ class CaffeWrapper(object):
 
         return perf 
 
-    def best_model(self):
+    def best_model(self, is_last=True):
         solver = self._path_env['solver']
         test_proto_file = self._path_env['test_proto_file']
         best_model = construct_model(solver, test_proto_file,
-                is_last=True)
+                is_last=is_last)
         return best_model
 
     def training_time(self):

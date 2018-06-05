@@ -232,7 +232,7 @@ def _eval(truths, detresults, ovthresh, confs=None):
         else:
             apdict[label] = 0
         npos += c_npos
-    map = sum(apdict.values())/len(truths)
+    map = sum(apdict.values())/ (1 if len(truths) == 0 else len(truths))
     y_trues = np.hstack(y_trues) if len(y_trues) != 0 else np.array([0])
     y_scores = np.hstack(y_scores) if len(y_scores) != 0 else np.array([0])
     coverage_ratio = float(np.sum(y_trues))/npos if npos != 0 else 0

@@ -445,9 +445,9 @@ def calculate_iou(rect0, rect1):
         return 1.
     return 1. * i / (a0 + a1 - i) 
 
-def process_run(func, *args):
+def process_run(func, *args, **kwargs):
     def internal_func(queue):
-        result = func(*args)
+        result = func(*args, **kwargs)
         queue.put(result)
     queue = mp.Queue()
     p = Process(target=internal_func, args=(queue,))
@@ -617,6 +617,15 @@ def load_net(file_name):
     with open(file_name, 'r') as fp:
         all_line = fp.read()
     return load_net_from_str(all_line)
+
+def adjust_tree_prediction_threshold(n, tree_th):
+    found = False
+    for l in n.layer:
+        if l.type == 'SoftmaxTreePrediction':
+            assert not found
+            found = True
+            l.softmaxtreeprediction_param.threshold = tree_th
+    assert found
 
 def remove_nms(n):
     for l in n.layer:
