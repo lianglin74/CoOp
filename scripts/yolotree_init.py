@@ -54,10 +54,12 @@ def number_of_anchor_boxes(model):
 
 
 def online_cov_calculate(previous_cov, mean, previous_n, x):
-    delta_n = np.array(x - mean)
+    #delta_n = np.array(x - mean)
+    delta_n = np.array(x)
     delta_n = delta_n.reshape((delta_n.size, 1))
     n = previous_n + 1
-    cov = (n - 2.0) / (n - 1.0) * previous_cov + np.dot(delta_n, np.transpose(delta_n)) / n
+    cov = (n - 2.0) / (n - 1.0) * previous_cov + np.dot(delta_n,
+            np.transpose(delta_n)) / (n - 1)
 
     return cov
 
@@ -86,11 +88,11 @@ def compute_covariance_by_group(new_net, anchor_num, lname, cid_groups, cid_hier
         class_num, len(cid_groups))
 
     max_count = tr_cnt * class_num
-    pbar = None
-    if progressbar:
-        widgets = ['Cov Extraction: ', progressbar.AnimatedMarker(),
-                   ' ', progressbar.Percentage(), ' ', progressbar.Bar(), ' ', progressbar.ETA()]
-        pbar = progressbar.ProgressBar(widgets=widgets, maxval=max_count).start()
+    #pbar = None
+    #if progressbar:
+        #widgets = ['Cov Extraction: ', progressbar.AnimatedMarker(),
+                   #' ', progressbar.Percentage(), ' ', progressbar.Bar(), ' ', progressbar.ETA()]
+        #pbar = progressbar.ProgressBar(widgets=widgets, maxval=max_count).start()
 
     wcnt = np.zeros(class_num, dtype=np.uint32)
     x_g = {}
@@ -103,14 +105,16 @@ def compute_covariance_by_group(new_net, anchor_num, lname, cid_groups, cid_hier
             logging.info("Iterations: {} nodes: {}/{} total: {}/{}={}*{}".format(
                 iters, np.sum(wcnt > 0), class_num, count, max_count, tr_cnt, class_num)
             )
-        if pbar:
-            pbar.update(count)
+        #if pbar:
+            #pbar.update(count)
 
         iters += 1
         new_net.forward(end=lname)
         feature_map = new_net.blobs[feature_blob_name].data.copy()
-        fh = feature_map.shape[2] - 1
-        fw = feature_map.shape[3] - 1
+        #fh = feature_map.shape[2] - 1
+        #fw = feature_map.shape[3] - 1
+        fh = feature_map.shape[2]
+        fw = feature_map.shape[3]
         labels = new_net.blobs['label'].data
         batch_size = labels.shape[0]
         max_num_bboxes = labels.shape[1] / 5
@@ -124,15 +128,21 @@ def compute_covariance_by_group(new_net, anchor_num, lname, cid_groups, cid_hier
                     continue
                 assert cid < class_num, "Invalid label: {} >= class_num: {}".format(cid, class_num)
 
-                bbox_x = int(labels[i, j * 5] * fw + 0.5)
-                bbox_y = int(labels[i, j * 5 + 1] * fh + 0.5)
+                #bbox_x = int(labels[i, j * 5] * fw + 0.5)
+                #bbox_y = int(labels[i, j * 5 + 1] * fh + 0.5)
+                bbox_x = int(labels[i, j * 5] * fw)
+                bbox_y = int(labels[i, j * 5 + 1] * fh)
                 features = feature_map[i, :, bbox_y, bbox_x]
                 for c in cid_hier_func(cid):
-                    # balanced data between classes
-                    if wcnt[c] >= tr_cnt:
-                        continue
+                    ## balanced data between classes
+                    #if wcnt[c] >= tr_cnt:
+                        #continue
 
                     g = cid_groups[c]
+                    if g not in class_wise_mean_by_group:
+                        continue
+                    if c not in class_wise_mean_by_group[g]:
+                        continue
                     x = features - class_wise_mean_by_group[g][c]
 
                     if g not in cnt_g:
@@ -184,11 +194,11 @@ def compute_class_wise_feature_mean_by_group(new_net, anchor_num, lname, cid_gro
         class_num, len(cid_groups))
 
     max_count = tr_cnt * class_num
-    pbar = None
-    if progressbar:
-        widgets = ['Mean Extraction: ', progressbar.AnimatedMarker(),
-                   ' ', progressbar.Percentage(), ' ', progressbar.Bar(), ' ', progressbar.ETA()]
-        pbar = progressbar.ProgressBar(widgets=widgets, maxval=max_count).start()
+    #pbar = None
+    #if progressbar:
+        #widgets = ['Mean Extraction: ', progressbar.AnimatedMarker(),
+                   #' ', progressbar.Percentage(), ' ', progressbar.Bar(), ' ', progressbar.ETA()]
+        #pbar = progressbar.ProgressBar(widgets=widgets, maxval=max_count).start()
 
     wcnt = np.zeros(class_num, dtype=np.uint32)
     class_wise_feature_means_by_group = {}
@@ -200,14 +210,17 @@ def compute_class_wise_feature_mean_by_group(new_net, anchor_num, lname, cid_gro
             logging.info("Iterations: {} nodes: {}/{} total: {}/{}={}*{}".format(
                 iters, np.sum(wcnt > 0), class_num, count, max_count, tr_cnt, class_num)
             )
-        if pbar:
-            pbar.update(count)
+        #if pbar:
+            #pbar.update(count)
 
         iters += 1
         new_net.forward(end=lname)
+
         feature_map = new_net.blobs[feature_blob_name].data.copy()
-        fh = feature_map.shape[2] - 1
-        fw = feature_map.shape[3] - 1
+        #fh = feature_map.shape[2] - 1
+        #fw = feature_map.shape[3] - 1
+        fh = feature_map.shape[2]
+        fw = feature_map.shape[3]
         labels = new_net.blobs['label'].data
         batch_size = labels.shape[0]
         max_num_bboxes = labels.shape[1] / 5
@@ -224,13 +237,15 @@ def compute_class_wise_feature_mean_by_group(new_net, anchor_num, lname, cid_gro
                     continue
                 assert cid < class_num, "Invalid label: {} >= class_num: {}".format(cid, class_num)
 
-                bbox_x = int(labels[i, j * 5] * fw + 0.5)
-                bbox_y = int(labels[i, j * 5 + 1] * fh + 0.5)
+                #bbox_x = int(labels[i, j * 5] * fw + 0.5)
+                #bbox_y = int(labels[i, j * 5 + 1] * fh + 0.5)
+                bbox_x = int(labels[i, j * 5] * fw)
+                bbox_y = int(labels[i, j * 5 + 1] * fh)
                 x = feature_map[i, :, bbox_y, bbox_x]
                 for c in cid_hier_func(cid):
-                    # balanced data between classes
-                    if wcnt[c] >= tr_cnt:
-                        continue
+                    ## balanced data between classes
+                    #if wcnt[c] >= tr_cnt:
+                        #continue
                     g = cid_groups[c]
 
                     if g not in class_wise_feature_means_by_group:
@@ -320,19 +335,6 @@ def read_softmax_tree(tree_file):
     assert len(group_offsets) == len(group_sizes) == max(cid_groups) + 1
     return group_offsets, group_sizes, cid_groups, parents
 
-def data_dependent_init2(pretrained_weights_filename,
-        pretrained_prototxt_filename, new_prototxt_filename, new_weight,
-        tr_cnt=100, max_iters=1000):
-
-    caffe.set_device(0)
-    caffe.set_mode_gpu()
-
-    net = data_dependent_init(pretrained_weights_filename, 
-            pretrained_prototxt_filename, 
-            new_prototxt_filename,
-            tr_cnt=tr_cnt, max_iters=max_iters)
-    net.save(new_weight)
-
 def data_dependent_init(pretrained_weights_filename, pretrained_prototxt_filename, new_prototxt_filename,
                         tr_cnt=100, max_iters=10000):
     """Rong's data-dependent init for Yolov2
@@ -343,7 +345,7 @@ def data_dependent_init(pretrained_weights_filename, pretrained_prototxt_filenam
     :param max_iters: maximum number of iterations to look for the required number of trainign data
     """
     pretrained_net = caffe.Net(pretrained_prototxt_filename, pretrained_weights_filename, caffe.TEST)
-    new_net = caffe.Net(new_prototxt_filename, caffe.TRAIN)
+    new_net = caffe.Net(new_prototxt_filename, caffe.TEST)
     new_net.copy_from(pretrained_weights_filename, ignore_shape_mismatch=True)
 
     model_from_pretrain_proto = read_model_proto(pretrained_prototxt_filename)
@@ -409,10 +411,13 @@ def data_dependent_init(pretrained_weights_filename, pretrained_prototxt_filenam
         else:
             feature_means = np.zeros((size, feature_size))
             c0 = offset
-            for c in class_wise_feature_mean_by_group[g]:
-                feature_means[c - c0, ] = class_wise_feature_mean_by_group[g][c]
-
-            w, b = ncc2_train_with_covariance_and_mean(covariance_by_group[g], feature_means, cnt_g[g], base_avgnorm2)
+            if g in class_wise_feature_mean_by_group:
+                for c in class_wise_feature_mean_by_group[g]:
+                    feature_means[c - c0, ] = class_wise_feature_mean_by_group[g][c]
+                w, b = ncc2_train_with_covariance_and_mean(covariance_by_group[g], feature_means, cnt_g[g], base_avgnorm2)
+            else:
+                w = 0
+                b = 0
 
         for i in range(anchor_num):
             new_w[5 + offset:5 + offset + size, i] = w

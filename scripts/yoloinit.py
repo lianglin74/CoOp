@@ -9,8 +9,236 @@ from shutil import copyfile
 from google.protobuf import text_format
 from numpy import linalg as LA
 import logging
+from tqdm import tqdm
+from itertools import izip
 
 EPS = np.finfo(float).eps
+
+def data_dependent_init2(pretrained_weights_filename,
+        pretrained_prototxt_filename, new_prototxt_filename, new_weight,
+        tr_cnt=100, max_iters=1000):
+
+    caffe.set_device(0)
+    caffe.set_mode_gpu()
+
+    net = data_dependent_init_tree_online(pretrained_weights_filename, 
+            pretrained_prototxt_filename, 
+            new_prototxt_filename,
+            tr_cnt=tr_cnt, 
+            max_iters=max_iters)
+
+    net.save(new_weight)
+
+def extract_training_data_convmean(new_net,anchor_num, lname, 
+        cid_groups, group_offsets, parents, group_sizes,
+        tr_cnt, max_iter):
+    feature_blob_name = new_net.bottom_names[lname][0]
+    feature_dim = new_net.params[lname][0].data.shape[1]
+    feature_outdim = new_net.params[lname][1].data.shape[0]
+    class_num = feature_outdim//anchor_num -5
+    wcnt = np.zeros(class_num, dtype=np.float32)
+    logging.info('begin to collect the features')
+    num_group = len(group_offsets)
+    conv_sum_count_n = []
+    for g in range(num_group):
+        # the first one is sum x_i * x_i^T
+        # the second one is for sum x_i for each category
+        # the third one is the count for each category on each group
+        # the last one is the number of images within that group
+        conv_sum_count_n.append([np.zeros((feature_dim, feature_dim)), 
+            np.zeros((group_sizes[g], feature_dim)), 
+            np.zeros((group_sizes[g], 1)), 
+            np.zeros(1)])
+    for _ in tqdm(range(max_iter)):
+        new_net.forward(end=lname)
+        feature_map = new_net.blobs[feature_blob_name].data.copy()
+        fh = feature_map.shape[2]
+        fw = feature_map.shape[3]
+        labels = new_net.blobs['label'].data;
+        batch_size = labels.shape[0];
+        max_num_bboxes = labels.shape[1]/5;
+        for i in range(batch_size):
+            for j in range(max_num_bboxes):
+                cid =int(labels[i, j*5+4]);
+                if np.sum(labels[i,(j*5):(j*5+5)])==0:          #no more foreground objects
+                    break;
+                bbox_x = int(labels[i,j*5]*fw)
+                bbox_y = int(labels[i,j*5+1]*fh)
+                x = feature_map[i,:,bbox_y,bbox_x]
+                x = x.reshape((-1, 1))
+                y = cid
+                while y >= 0:
+                    wcnt[y]+=1;
+                    curr_group_idx = cid_groups[y]
+                    y_in_group = y - group_offsets[curr_group_idx]
+                    conv_sum_count_n[curr_group_idx][0] += np.dot(x, x.T)
+                    conv_sum_count_n[curr_group_idx][1][y_in_group] += \
+                        x.reshape(len(x))
+                    conv_sum_count_n[curr_group_idx][2][y_in_group] += 1
+                    conv_sum_count_n[curr_group_idx][3] += 1
+                    y = parents[y]
+        if  np.min(wcnt) > tr_cnt:    break;
+    logging.info('using {}'.format(_))
+    conv_means = []
+    for sum_xxt, sum_x_each, count_each, n in conv_sum_count_n:
+        nmeanmeant = np.zeros((feature_dim, feature_dim))
+        mean_x_each = sum_x_each / count_each
+        for mean_x, c in izip(mean_x_each, count_each):
+            mean_x = mean_x.reshape((-1, 1))
+            nmeanmeant += c * np.dot(mean_x, mean_x.T)
+        conv_x = (sum_xxt - nmeanmeant) / (n - 1)
+        conv_means.append((conv_x, mean_x_each, n))
+    return conv_means
+
+def read_softmax_tree(tree_file):
+    """Simple parsing of softmax tree with subgroups
+    :param tree_file: path to the tree file
+    :type tree_file: str
+    """
+    group_offsets = []
+    group_sizes = []
+    cid_groups = []
+    parents = []
+    last_p = -1
+    last_sg = -1
+    groups = 0
+    size = 0
+    n = 0
+    with open(tree_file, 'r') as f:
+        for line in f.readlines():
+            tokens = [t for t in line.split(' ') if t]
+            assert len(tokens) == 2 or len(tokens) == 3, "invalid tree: {} node: {} line: {}".format(
+                tree_file, n, line)
+            p = int(tokens[1])
+            parents.append(p)
+            sg = -1
+            if len(tokens) == 3:
+                sg = int(tokens[2])
+            new_group = new_sub_group = False
+            if p != last_p:
+                last_p = p
+                last_sg = sg
+                new_group = True
+            elif sg != last_sg:
+                last_sg = sg
+                new_sub_group = True
+            if new_group or new_sub_group:
+                group_sizes.append(size)
+                group_offsets.append(n - size)
+                groups += 1
+                size = 0
+            n += 1
+            size += 1
+            cid_groups.append(groups)
+    group_sizes.append(size)
+    group_offsets.append(n - size)
+
+    assert len(cid_groups) == len(parents)
+    assert len(group_offsets) == len(group_sizes) == max(cid_groups) + 1
+    return group_offsets, group_sizes, cid_groups, parents
+
+def get_softmax_tree_path(model):
+    """Find the tree path in a Yolov2 model
+    :param model: caffe prototxt model
+    :rtype: str
+    """
+    n_layer = len(model.layer)
+    result = None
+    for i in reversed(range(n_layer)):
+        layer = model.layer[i]
+        tree_file = layer.softmaxtree_param.tree
+        if tree_file:
+            assert result is None
+            result = tree_file
+    assert result is not None
+    return result
+
+
+def number_of_anchor_boxex2(model):
+    num_anchor = None
+    for l in model.layer:
+        if l.type == 'RegionTarget':
+            assert num_anchor is None
+            num_anchor = len(l.region_target_param.biases) / 2 
+        elif l.type == 'RegionLoss':
+            assert num_anchor is None
+            num_anchor = len(l.region_loss_param.biases) / 2
+        elif l.type == 'RegionOutput':
+            assert num_anchor is None
+            num_anchor = len(l.region_output_param.biases) / 2
+    return num_anchor
+    
+def ncc2_train_with_covariance_and_mean(cov, means, nsample, avgnorm2):
+    n_features = cov.shape[0]
+    epsilon = calc_epsilon(nsample * 1.0 / n_features)
+    cov = cov + epsilon * np.identity(n_features)
+    w = LA.solve(cov, means.T).T
+    b = -0.5 * np.add.reduce(w * means, axis=1)
+    return weight_normalize(w, b, avgnorm2)
+
+def data_dependent_init_tree_online(pretrained_weights_filename,
+        pretrained_prototxt_filename, new_prototxt_filename, tr_cnt=20,
+        max_iters=1000):
+    caffe.set_device(0)
+    caffe.set_mode_gpu()
+    pretrained_net = caffe.Net(pretrained_prototxt_filename, pretrained_weights_filename, caffe.TEST)
+    new_net = caffe.Net(new_prototxt_filename, caffe.TEST)
+    new_net.copy_from(pretrained_weights_filename, ignore_shape_mismatch=True)
+
+    model_from_pretrain_proto = read_model_proto(pretrained_prototxt_filename)
+    model_from_new_proto = read_model_proto(new_prototxt_filename)
+    pretrain_last_layer_name = last_linear_layer_name(model_from_pretrain_proto)        #last layer name
+    new_last_layer_name = last_linear_layer_name(model_from_new_proto)    #last layername
+
+    anchor_num = number_of_anchor_boxex2(model_from_new_proto)
+    pretrain_anchor_num = number_of_anchor_boxex2(model_from_pretrain_proto)
+    if anchor_num != pretrain_anchor_num:
+        raise ValueError('The anchor numbers mismatch between the new model and the pretrained model (%s vs %s).' % (anchor_num, pretrain_anchor_num))
+    print("# of anchors: %s" % anchor_num)
+    #model surgery 1, copy bbox regression
+    conv_w, conv_b = [p.data for p in pretrained_net.params[pretrain_last_layer_name]]
+    featuredim = conv_w.shape[1]    
+    assert conv_w.shape[2] == 1 and conv_w.shape[3] == 1
+    conv_w = conv_w.reshape(-1, anchor_num, featuredim)
+    conv_b = conv_b.reshape(-1, anchor_num)
+
+    new_w, new_b = [p.data for p in new_net.params[new_last_layer_name]];    
+    assert new_w.shape[2] == 1 and new_w.shape[3] == 1
+    
+    # save the param for the bounding box regression and objectiveness
+    new_w = new_w.reshape(-1, anchor_num, featuredim)
+    new_b = new_b.reshape(-1, anchor_num)
+    new_w[:5, :, :] = conv_w[:5, :, :]
+    new_b[:5, :] = conv_b[:5, :]
+    
+    tree_file = get_softmax_tree_path(model_from_new_proto)
+    group_offsets, group_sizes, cid_groups, parents = read_softmax_tree(tree_file)
+    assert len(cid_groups) == len(parents)
+    conv_means = extract_training_data_convmean(new_net, anchor_num, new_last_layer_name, 
+            cid_groups, group_offsets, parents, group_sizes,
+            tr_cnt=tr_cnt, max_iter=max_iters)
+    #calculate the empirical norm of the yolo classification weights
+    base_cw= conv_w[5:, :, :]
+    base_avgnorm2 = np.average(np.add.reduce(base_cw*base_cw,axis=1))    
+
+    for i, (conv_x, mean_x_each, c) in enumerate(conv_means):
+        if c == 0:
+            logging.info('no training data')
+            W = 0
+            B = 0
+        else:
+            W, B = ncc2_train_with_covariance_and_mean(conv_x, mean_x_each, c,
+                    base_avgnorm2)
+        offset = group_offsets[i]
+        size = group_sizes[i]
+        for a in range(anchor_num):
+            new_w[5 + offset:5 + offset + size, a] = W
+            new_b[5 + offset:5 + offset + size, a] = B
+    
+    new_net.params[new_last_layer_name][0].data[...] = new_w.reshape(-1, featuredim, 1, 1)
+    new_net.params[new_last_layer_name][1].data[...] = new_b.reshape(-1)
+
+    return new_net
 
 def read_model_proto(proto_file_path):
     with open(proto_file_path) as f:
