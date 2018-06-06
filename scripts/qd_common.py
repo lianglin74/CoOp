@@ -304,49 +304,51 @@ def yolo_old_to_new(old_proto, old_model, new_model):
 def is_cluster(ssh_info):
     return '-p' in ssh_info and '-i' not in ssh_info
 
+def visualize_net(net):
+    delta = 0.000001
+    data_values = []
+    for key in net.blobs:
+        data_value = np.mean(np.abs(net.blobs[key].data))
+        data_values.append(data_value + delta)
+    diff_values = []
+    for key in net.blobs:
+        diff_values.append(np.mean(np.abs(net.blobs[key].diff))
+            + delta)
+    param_keys = []
+    param_data = []
+    for key in net.params:
+        for i, b in enumerate(net.params[key]):
+            param_keys.append('{}_{}'.format(key, i))
+            param_data.append(np.mean(np.abs(b.data)) + delta)
+    param_diff = []
+    for key in net.params:
+        for i, b in enumerate(net.params[key]):
+            param_diff.append(np.mean(np.abs(b.diff)) + delta)
+    
+    xs = range(len(net.blobs))
+    plt.gcf().clear()
+    plt.subplot(2, 1, 1)
+    
+    plt.semilogy(xs, data_values, 'r-o')
+    plt.semilogy(xs, diff_values, 'b-*')
+    plt.xticks(xs, net.blobs.keys(), rotation='vertical')
+    plt.grid()
+    
+    plt.subplot(2, 1, 2)
+    xs = range(len(param_keys))
+    plt.semilogy(xs, param_data, 'r-o')
+    plt.semilogy(xs, param_diff, 'b-*')
+    plt.xticks(xs, param_keys, rotation='vertical')
+    plt.grid()
+    plt.draw()
+    plt.pause(0.001)
+
 def visualize_train(solver):
     plt.figure()
     features = []
     for i in range(100):
+        visualize_net(solver.net)
         solver.step(10)
-        #logging.info(np.sum(solver.net.blobs['label'].data))
-        delta = 0.000001
-        data_values = []
-        for key in solver.net.blobs:
-            data_value = np.mean(np.abs(solver.net.blobs[key].data))
-            data_values.append(data_value + delta)
-        diff_values = []
-        for key in solver.net.blobs:
-            diff_values.append(np.mean(np.abs(solver.net.blobs[key].diff))
-                + delta)
-        param_keys = []
-        param_data = []
-        for key in solver.net.params:
-            for i, b in enumerate(solver.net.params[key]):
-                param_keys.append('{}_{}'.format(key, i))
-                param_data.append(np.mean(np.abs(b.data)) + delta)
-        param_diff = []
-        for key in solver.net.params:
-            for i, b in enumerate(solver.net.params[key]):
-                param_diff.append(np.mean(np.abs(b.diff)) + delta)
-    
-        xs = range(len(solver.net.blobs))
-        plt.gcf().clear()
-        plt.subplot(2, 1, 1)
-    
-        plt.semilogy(xs, data_values, 'r-o')
-        plt.semilogy(xs, diff_values, 'b-*')
-        plt.xticks(xs, solver.net.blobs.keys(), rotation='vertical')
-        plt.grid()
-    
-        plt.subplot(2, 1, 2)
-        xs = range(len(param_keys))
-        plt.semilogy(xs, param_data, 'r-o')
-        plt.semilogy(xs, param_diff, 'b-*')
-        plt.xticks(xs, param_keys, rotation='vertical')
-        plt.grid()
-        plt.draw()
-        plt.pause(0.001)
 
 def network_input_to_image(data, mean_value):
     all_im = []

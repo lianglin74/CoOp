@@ -82,11 +82,17 @@ def extract_training_data_convmean(new_net,anchor_num, lname,
     conv_means = []
     for sum_xxt, sum_x_each, count_each, n in conv_sum_count_n:
         nmeanmeant = np.zeros((feature_dim, feature_dim))
+        # we need to add 1 to avoid 0
+        for i in range(len(count_each)):
+            count_each[i] = 1 if count_each[i] == 0 else count_each[i]
         mean_x_each = sum_x_each / count_each
         for mean_x, c in izip(mean_x_each, count_each):
             mean_x = mean_x.reshape((-1, 1))
             nmeanmeant += c * np.dot(mean_x, mean_x.T)
-        conv_x = (sum_xxt - nmeanmeant) / (n - 1)
+        if n > 1:
+            conv_x = (sum_xxt - nmeanmeant) / (n - 1)
+        else:
+            conv_x = np.zeros((feature_dim, feature_dim))
         conv_means.append((conv_x, mean_x_each, n))
     return conv_means
 
@@ -222,13 +228,16 @@ def data_dependent_init_tree_online(pretrained_weights_filename,
     base_avgnorm2 = np.average(np.add.reduce(base_cw*base_cw,axis=1))    
 
     for i, (conv_x, mean_x_each, c) in enumerate(conv_means):
-        if c == 0:
+        if c <= 1:
+            # single data have no conv
             logging.info('no training data')
-            W = 0
-            B = 0
+            # no need to set the parameters
+            continue
         else:
             W, B = ncc2_train_with_covariance_and_mean(conv_x, mean_x_each, c,
                     base_avgnorm2)
+            assert not np.isnan(np.mean(np.abs(W[:])))
+            assert not np.isnan(np.mean(np.abs(B[:])))
         offset = group_offsets[i]
         size = group_sizes[i]
         for a in range(anchor_num):

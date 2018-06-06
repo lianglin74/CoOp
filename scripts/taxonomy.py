@@ -288,7 +288,7 @@ def load_label_parent(label_tree_file):
         labels.append(label)
     return label_idx, label_parentidx, labels 
 
-def dump_tree(root, feature_name=None):
+def dump_tree(root, feature_name=None, for_train=False):
     result = OrderedDict()
     if feature_name is None:
         for f in root.features:
@@ -301,10 +301,28 @@ def dump_tree(root, feature_name=None):
     elif type(feature_name) == str:
         if feature_name != 'name':
             result[feature_name] = root.__getattribute__(feature_name)
-    result[root.name] = []
-    for c in root.children:
-        result[root.name].append(dump_tree(c, feature_name))
-    return result
+    if for_train:
+        if 'sub_group' in result:
+            # we remove the sub group here since it is auto-generated. we will add
+            # the __ node if the sub group changes
+            del result['sub_group']
+    if len(result) == 0 and len(root.children) == 0:
+        # in this case, we just use a string to represent the node
+        return root.name
+    else:
+        result[root.name] = []
+        if for_train:
+            pre_sub_group = None
+        for c in root.children:
+            if for_train:
+                if pre_sub_group is None:
+                    pre_sub_group = c.sub_group
+                if c.sub_group != pre_sub_group:
+                    # we add the seperator to denote a new sub group
+                    result[root.name].append('__')
+                    pre_sub_group = c.sub_group
+            result[root.name].append(dump_tree(c, feature_name, for_train))
+        return result
 
 def synonym_list():
     p = []
@@ -578,10 +596,10 @@ class Taxonomy(object):
         for one in tax:
             self._add_current_as_child(one, self.root)
 
-    def dump(self, feature_name=None):
+    def dump(self, feature_name=None, for_train=False):
         result = []
         for c in self.root.children:
-            result.append(dump_tree(c, feature_name))
+            result.append(dump_tree(c, feature_name, for_train))
         return result
 
     def _add_children(self, one, root):

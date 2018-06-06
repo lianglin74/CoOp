@@ -31,7 +31,7 @@
 <body>
     <ul>
     {% for name in names %}
-    <li><a href="{% url 'detection:view_image2' %}?data={{ name }}">{{ name }}</a>
+    <li><a href="{% url 'detection:view_image2' %}?data={{ name }}" target='_blank'>{{ name }}</a>
     </li>
     {% endfor %}
     </ul>

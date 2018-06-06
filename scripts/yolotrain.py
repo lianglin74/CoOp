@@ -721,6 +721,11 @@ class CaffeWrapper(object):
             p = self.predict(m)
             self.evaluate(m, p)
             return base_model
+        elif init_from['type'] == 'best_model':
+            c = CaffeWrapper(full_expid=init_from['full_expid'],
+                    load_parameter=True)
+            m = c.best_model()
+            return m.model_param
         raise ValueError()
         if init_from['type'] == 'min_l2':
             init_model_path = op.join(self._output, 'init.caffemodel')

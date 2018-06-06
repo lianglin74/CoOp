@@ -240,6 +240,8 @@ def view_model_prediction_labelmap(request, full_expid, predict_file):
         l.append(class_count['test'].get(l[0]))
     os.chdir(curr_dir)
     labelmap_ap = sorted(labelmap_ap, key=lambda x: x[1])
+    for i, l in enumerate(labelmap_ap):
+        l.insert(0, i)
     context = {'prediction_file': predict_file,
             'labelmap_ap': labelmap_ap,
             'data': request.GET.get('data', None),
@@ -278,6 +280,16 @@ def view_model(request):
                 context)
     else:
         return view_exp_list(request)
+
+def edit_model_label(request):
+    if request.method == 'POST':
+        all_valid_label = request.POST.getlist('valid')
+        write_to_file('\n'.join(all_valid_label), 
+                '/tmp/valid2.csv')
+        return HttpResponseRedirect('/detection/confirm/')
+
+def confirm(request):
+    return HttpResponse('confirm')
 
 def save_image_in_static(im, rel_path):
     html_path = 'detection/{}'.format(rel_path)
@@ -336,7 +348,7 @@ def view_image2(request):
         os.chdir(get_qd_root())
         name_splits_labels = get_all_data_info2(request.GET['data'])
         os.chdir(curr_dir)
-        context = {'name_splits_labels': name_splits_labels}
+        context = {'name_splits_label_counts': name_splits_labels}
         return render(request, 'detection/image_overview.html', context)
     else:
         data = request.GET.get('data')

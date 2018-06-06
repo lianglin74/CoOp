@@ -156,10 +156,10 @@ class TSVDataset(object):
         '''
         if version is None or version == 0:
             if t is None:
-                return op.join(self._data_root, '{}.tsv'.format(split_name)) 
+                return op.join(self._data_root, '{}.tsv'.format(split_name))
             else:
                 return op.join(self._data_root, '{}.{}.tsv'.format(split_name,
-                    t))
+                    t)) 
         elif version > 0:
             if t is None:
                 return op.join(self._data_root, '{}.v{}.tsv'.format(split_name,
@@ -282,12 +282,12 @@ class TSVDataset(object):
                     row[1] == 'dont use'
                 yield row
 
-    def num_rows(self, split, version=None):
-        f = self.get_data(split, version)
+    def num_rows(self, split, t=None, version=None):
+        f = self.get_data(split, t, version)
         if op.isfile(f):
             return TSVFile(f).num_rows()
         else:
-            f = self.get_data(split + 'X', version)
+            f = self.get_data(split + 'X', version=version)
             assert op.isfile(f)
             return len(load_list_file(self.get_shuffle_file(split)))
 
@@ -442,12 +442,15 @@ def create_inverted_tsv(rows, inverted_label_file, label_map):
             yield label, ' '.join(map(str, i))
     tsv_writer(gen_rows(), inverted_label_file)
 
-def create_inverted_list2(rows):
+def create_inverted_list2(rows, th=None):
     inverted = {}
     keys = []
     for i, row in enumerate(rows):
         keys.append(row[0])
         labels = json.loads(row[1])
+        if th is not None:
+            labels = [r for r in labels if 'conf' in r and r['conf'] > th or
+                            'conf' not in r]
         if type(labels) is list:
             # detection dataset
             curr_unique_labels = set([l['class'] for l in labels])
@@ -515,15 +518,7 @@ def get_all_data_info2(name=None):
             return []
         global_labelmap = None
         labels = dataset.load_labelmap()
-        # here we assume the composite dataset has only one version
         valid_split_versions = []
-        #if len(dataset.get_train_tsvs()) > 1:
-            #global_labelmap = dataset.load_labelmap() if global_labelmap is \
-                #None else global_labelmap
-            #valid_split_versions.append(('train', 0, global_labelmap))
-            #splits = ['trainval', 'test']
-        #else:
-            #splits = ['train', 'trainval', 'test']
         splits = ['train', 'trainval', 'test']
         for split in splits:
             v = 0
@@ -531,12 +526,14 @@ def get_all_data_info2(name=None):
                 if not dataset.has(split, 'label', v):
                     break
                 labelmap = []
-                labelmap_rows = dataset.iter_data(split, 'labelmap', v)
-                labelmap.extend(r[0] for r in labelmap_rows)
-                valid_split_versions.append((split, v, labelmap))
+                label_count_rows = dataset.iter_data(split, 'inverted.label.count', v)
+                label_count = [(r[0], int(r[1])) for r in label_count_rows]
+                label_count = sorted(label_count, key=lambda x: x[1])
+                valid_split_versions.append((split, v, [(i, l, c) for i, (l, c) in
+                    enumerate(label_count)]))
                 v = v + 1
         name_splits_labels = [(name, valid_split_versions)]
-    return name_splits_labels
+        return name_splits_labels
 
 def get_all_data_info():
     names = os.listdir('./data')

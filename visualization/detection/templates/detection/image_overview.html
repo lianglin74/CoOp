@@ -30,15 +30,17 @@
 
 <body>
     <ul class="col_ul">
-    {% for name, split_version_labels in name_splits_labels %}
+    {% for name, split_version_label_counts in name_splits_label_counts %}
     <li><span>{{ name }}</span>
         <ul>
-            {% for split, version, labels in split_version_labels %}
-            <li><span>{{ split }} - {{ version }}</span>
+            {% for split, version, label_counts in split_version_label_counts %}
+            <li><span>{{ split }} - {{ version }} - [{{ label_counts | length }}]</span>
                 <ul>
-                    {% for l in labels %}
+                    {% for i, l, c in label_counts %}
                     <li>
-                        <a href="{% url 'detection:view_image2' %}?data={{ name }}&split={{ split }}&version={{ version }}&label={{ l }}&start_id=0">{{ l }}</a>
+                        [{{ i }}]
+                        <a href="{% url 'detection:view_image2' %}?data={{ name }}&split={{ split }}&version={{ version }}&label={{ l }}&start_id=0" target='_blank'>{{ l }}</a>
+                        [{{ c }}]
                     </li>
                     {% endfor %}
                 </ul>
