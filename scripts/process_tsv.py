@@ -58,9 +58,10 @@ import imghdr
 from qd_common import calculate_iou
 from qd_common import yolo_old_to_new
 from qd_common import generate_lineidx
-from qd_common import list_to_dict
+from qd_common import list_to_dict, list_to_dict_unique
 from qd_common import dict_to_list
 from qd_common import parse_test_data
+from qd_common import worth_create
 from tsv_io import load_labels
 import unicodedata
 from taxonomy import is_noffset
@@ -155,6 +156,7 @@ def get_node_info(data, node, colors, all_data):
             'with_bb_test',
             'no_bb_train',
             'no_bb_test',
+            'ap',
             'images_with_bb',
             'images_no_bb',
             'noffset', 
@@ -187,9 +189,11 @@ def get_node_info(data, node, colors, all_data):
     else:
         return get_colored_name(node, colors)
 
-def gen_html_tree_view(data, colors=['rgb(0,0,0)', 
-            'rgb(255,0,0)', 
-            'rgb(0,0,255)']):
+def gen_html_tree_view(data, full_expid=None,
+        predict_file=None):
+    colors=['rgb(0,0,0)', 
+                'rgb(255,0,0)', 
+                'rgb(0,0,255)']
     dataset = TSVDataset(data)
     all_data = os.listdir('./data')
     file_name = op.join(dataset._data_root, 'root_enriched.yaml')
@@ -197,6 +201,17 @@ def gen_html_tree_view(data, colors=['rgb(0,0,0)',
     with open(file_name, 'r') as fp:
         config_tax = yaml.load(fp)
     tax = Taxonomy(config_tax)
+    if full_expid is not None and \
+            predict_file is not None:
+        map_file = op.join('output',full_expid, 'snapshot', 
+                op.splitext(predict_file)[0] + '.report.class_ap.json')
+        if op.isfile(map_file):
+            class_ap = json.loads(read_to_buffer(map_file))
+            class_ap = class_ap['overall']['0.3']['class_ap']
+            for node in tax.root.iter_search_nodes():
+                node.add_feature('ap', 
+                        class_ap.get(node.name, -1))
+
     def gen_html_tree_view_rec(root):
         '''
         include itself
@@ -208,7 +223,7 @@ def gen_html_tree_view(data, colors=['rgb(0,0,0)',
         else:
             result = []
             # we cannot remove span tag here
-            result.append('<li><span>{}</span>'.format(
+            result.append("<li data-jstree='{{\"opened\":true}}' ><span>{}</span>".format(
                 get_node_info(data, root, colors, all_data)))
             result.append('<ul>')
             all_child = sorted(root.children, key=lambda c: c.sub_group)
@@ -534,7 +549,7 @@ def update_labelmap(rows, num_rows, labelmap):
             labelmap.add(row[1])
     logging.info('done')
 
-def populate_dataset_details(data, check_image_details=True):
+def populate_dataset_details(data, check_image_details=False):
     logging.info(data)
     dataset = TSVDataset(data)
 
@@ -757,8 +772,8 @@ def populate_dataset_details(data, check_image_details=True):
             label_idx_file = dataset.get_data(split, 'inverted.label', v)
             label_count_file = dataset.get_data(split, 'inverted.label.count', v)
             if op.isfile(label_idx_file):
-                if not op.isfile(label_count_file):
-                    label_idx = dataset.load_inverted_label_as_list(split)
+                if not op.isfile(label_count_file) or True:
+                    label_idx = dataset.load_inverted_label_as_list(split, v)
                     tsv_writer(((l, str(len(i))) for l, i in label_idx), label_count_file)
             else:
                 break
@@ -769,6 +784,17 @@ def populate_dataset_details(data, check_image_details=True):
         create_index_composite_dataset(dataset)
     
     populate_num_images_composite(dataset)
+
+    add_node_to_ancestors(dataset)
+
+def add_node_to_ancestors(dataset):
+    tree_file = op.join(dataset._data_root, 'root.yaml')
+    out_file = op.join(dataset._data_root, 'treenode_to_ancestors.tsv') 
+    if op.isfile(tree_file) and worth_create(tree_file, out_file):
+        tax = Taxonomy(load_from_yaml_file(tree_file))
+        tax.update()
+        tsv_writer([[name, ','.join(tax.name_to_ancestors[name])] for name in
+            tax.name_to_ancestors], out_file)
 
 def populate_num_images_composite(dataset):
     data = dataset.name
@@ -998,9 +1024,11 @@ def visualize_predict(full_expid, predict_file, label, start_id, threshold):
         if not op.isfile(pred_key_path) or \
                 not op.isfile(pred_label_path) or \
                 not op.isfile(pred_inverted_path):
+            logging.info('loading {}'.format(pred_full_path))
             inverted, pred_keys = create_inverted_list2(
                     tsv_reader(pred_full_path), threshold)
             pred_labels = inverted.keys()
+            logging.info('writing {}'.format(pred_key_path))
             tsv_writer([[k] for k in pred_keys], pred_key_path)
             tsv_writer(([l] for l in pred_labels), pred_label_path)
             tsv_writer(((l, ' '.join(map(str, inverted[l]))) for l in
@@ -1016,7 +1044,6 @@ def visualize_predict(full_expid, predict_file, label, start_id, threshold):
             keys_from_pred = [pred_keys[i] for i in idx_from_pred]
         else:
             keys_from_pred = []
-            pred_keys = []
         inverted_test_split = test_dataset.load_inverted_label(test_data_split, version=-1,
                 label=label)
         if label in inverted_test_split:
@@ -1145,7 +1172,7 @@ def visualize_box(data, split, version, label, start_id, color_map={}):
         rects = try_json_parse(label_str)
         new_name = key.replace('/', '_').replace(':', '')
         if type(rects) is list:
-            rects = [l for l in rects if 'conf' not in l or l['conf'] > 0.3]
+            #rects = [l for l in rects if 'conf' not in l or l['conf'] > 0.3]
             def get_rect_class(rects):
                 all_class = []
                 all_rect = []
@@ -1491,9 +1518,9 @@ class TSVDatasetSource(TSVDataset, DatasetSource):
                         sourcelabel_targetlabel.append((l, t))
                         #result[l] = t 
 
-        self._sourcelabel_to_targetlabels = list_to_dict(sourcelabel_targetlabel,
+        self._sourcelabel_to_targetlabels = list_to_dict_unique(sourcelabel_targetlabel,
                 0)
-        self._targetlabel_to_sourcelabels = list_to_dict(sourcelabel_targetlabel,
+        self._targetlabel_to_sourcelabels = list_to_dict_unique(sourcelabel_targetlabel,
                 1)
         
         name_to_node = None
@@ -1779,165 +1806,7 @@ def parallel_map_to_array(func, all_task, num_worker=128):
         result.extend(s)
     return result
 
-def build_taxonomy_impl2(taxonomy_folder, **kwargs):
-    random.seed(777)
-    dataset_name = kwargs.get('data', 
-            op.basename(taxonomy_folder))
-    overall_dataset = TSVDataset(dataset_name)
-    if op.isfile(overall_dataset.get_labelmap_file()):
-        logging.info('ignore to build taxonomy since {} exists'.format(
-            overall_dataset.get_labelmap_file()))
-        return
-    init_logging()
-    all_tax = load_all_tax(taxonomy_folder)
-    tax = merge_all_tax(all_tax)
-    tax.update()
-    initialize_images_count(tax.root)
-    mapper = LabelToSynset()
-    mapper.populate_noffset(tax.root)
-    imagenet22k = TSVDatasetSource('imagenet22k_448', tax.root)
-    if op.isfile(imagenet22k.get_labelmap_file()):
-        disambibuity_noffsets(tax.root, imagenet22k.load_noffsets())
-    else:
-        logging.info('there is no imagenet22k_448 dataset to help identify the noffset')
-    populate_url_for_offset(tax.root)
-
-    ambigous_noffset_file = op.join(overall_dataset._data_root,
-            'ambigous_noffsets.yaml')
-    output_ambigous_noffsets(tax.root, ambigous_noffset_file)
-    
-    data_sources = []
-
-    datas = kwargs['datas']
-    cleaness = [d[1] if type(d) is tuple else 10 for d in datas]
-    datas = [d[0] if type(d) is tuple else d for d in datas]
-    
-    logging.info('extract the images from: {}'.format(','.join(datas)))
-
-    for d, c in izip(datas, cleaness):
-        dataset = TSVDatasetSource(d, tax.root)
-        dataset.cleaness = c
-        data_sources.append(dataset)
-    
-    for s in data_sources:
-        s.populate_info(tax.root)
-
-    populate_cum_images(tax.root)
-
-    labels, child_parent_sgs = child_parent_print_tree2(tax.root, 'name')
-
-    label_map_file = overall_dataset.get_labelmap_file() 
-    write_to_file('\n'.join(map(lambda l: l.encode('utf-8'), labels)), 
-            label_map_file)
-    # save the parameter
-    write_to_yaml_file((taxonomy_folder, kwargs), op.join(overall_dataset._data_root,
-            'generate_parameters.yaml'))
-    dest_taxonomy_folder = op.join(overall_dataset._data_root,
-            'taxonomy_folder')
-    if op.isdir(dest_taxonomy_folder):
-        shutil.rmtree(dest_taxonomy_folder)
-    shutil.copytree(taxonomy_folder, dest_taxonomy_folder)
-
-    out_dataset = {'with_bb': TSVDataset(dataset_name + '_with_bb'),
-            'no_bb': TSVDataset(dataset_name + '_no_bb')}
-
-    for label_type in out_dataset:
-        target_file = out_dataset[label_type].get_labelmap_file()
-        ensure_directory(op.dirname(target_file))
-        shutil.copy(label_map_file, target_file)
-
-    logging.info('cum_images_with_bb: {}'.format(tax.root.cum_images_with_bb))
-    logging.info('cum_images_no_bb: {}'.format(tax.root.cum_images_no_bb))
-
-
-    # write the simplified version of the tree
-    dest = op.join(overall_dataset._data_root, 'root.simple.yaml')
-    write_to_yaml_file(tax.dump(['images_with_bb']), dest)
-
-    tree_file = overall_dataset.get_tree_file()
-    write_to_file('\n'.join(['{} {}{}'.format(c.encode('utf-8'), p, '' if sg < 0 else ' {}'.format(sg))
-                             for c, p, sg in child_parent_sgs]),
-            tree_file)
-    for label_type in out_dataset:
-        target_file = out_dataset[label_type].get_tree_file()
-        ensure_directory(op.dirname(target_file))
-        shutil.copy(tree_file, target_file)
-
-    node_should_have_images(tax.root, 200, 
-            op.join(overall_dataset._data_root, 'labels_with_few_images.yaml'))
-
-    # get the information of all train val
-    train_vals = []
-    ldtsi = []
-    logging.info('collecting all candidate images')
-    for label_type in out_dataset:
-        for dataset in data_sources:
-            split_idxes = dataset.select_tsv_rows(label_type)
-            for rootlabel, split, idx in split_idxes:
-                ldtsi.append((rootlabel, dataset, label_type, split, idx))
-    # split into train val
-    num_test = kwargs.get('num_test', 50)
-    logging.info('splitting the images into train and test')
-    # group by label_type
-    t_to_ldsi = list_to_dict(ldtsi, 2)
-    train_ldtsi = [] 
-    test_ldtsi = []
-    for label_type in sorted(t_to_ldsi.keys()):
-        ldsi= t_to_ldsi[label_type]
-        l_to_dsi = list_to_dict(ldsi, 0)
-        for rootlabel in sorted(l_to_dsi.keys()):
-            dsi = l_to_dsi[rootlabel]
-            if len(dsi) < num_test:
-                logging.info('rootlabel={}; label_type={}->less than {} images'.format(
-                    rootlabel, label_type, len(dsi)))
-            curr_num_test = min(num_test, int(len(dsi) / 2))
-            random.shuffle(dsi)
-            test_ldtsi.extend([(rootlabel, d, label_type, s, i) for d, s, i
-                in dsi[:curr_num_test]])
-            train_ldtsi.extend([(rootlabel, d, label_type, s, i) for d, s, i 
-                in dsi[curr_num_test:]])
-    logging.info('duplicating or removing the train images')
-    # for each label, let's duplicate the image or remove the image
-    max_image = kwargs.get('max_image_per_label', 1000)
-    min_image = kwargs.get('min_image_per_label', 200)
-    label_to_dtsi = list_to_dict(train_ldtsi, 0)
-    extra_dtsi = []
-    for label in label_to_dtsi:
-        dtsi = label_to_dtsi[label]
-        if len(dtsi) > max_image:
-            # first remove the images with no bounding box
-            num_remove = len(dtsi) - max_image
-            type_to_dsi = list_to_dict(dtsi, 1)
-            if 'no_bb' in type_to_dsi:
-                dsi = type_to_dsi['no_bb']
-                if num_remove >= len(dsi):
-                    # remove all this images
-                    del type_to_dsi['no_bb']
-                    num_remove = num_remove - len(dsi)
-                else:
-                    random.shuffle(dsi)
-                    type_to_dsi['no_bb'] = dsi[: len(dsi) - num_remove]
-                    num_remove = 0
-            if num_remove > 0:
-                assert 'with_bb' in type_to_dsi
-                dsi = type_to_dsi['with_bb']
-                random.shuffle(dsi)
-                dsi = sorted(dsi, key=lambda x: -x[0].cleaness)
-                assert len(dsi) > num_remove
-                type_to_dsi['with_bb'] = dsi[: len(dsi) - num_remove]
-                num_remove = 0
-            dtsi = dict_to_list(type_to_dsi, 1)
-        elif len(dtsi) < min_image:
-            num_duplicate = int(np.ceil(float(min_image) / len(dtsi)))
-            logging.info('duplicate images for label of {}: {}->{}, {}'.format(
-                label, len(dtsi), min_image, num_duplicate))
-            extra_dtsi = (num_duplicate - 1) * dtsi
-        label_to_dtsi[label] = dtsi
-    logging.info('# train instances before duplication: {}'.format(len(train_ldtsi)))
-    train_ldtsi = dict_to_list(label_to_dtsi, 0)
-    logging.info('# train instances after duplication: {}'.format(len(train_ldtsi)))
-
-    logging.info('creating the train data')
+def create_trainX(train_ldtsi, extra_dtsi, tax, out_dataset):
     t_to_ldsi = list_to_dict(train_ldtsi, 2)
     extra_t_to_ldsi = list_to_dict(extra_dtsi, 1)
     train_ldtsik = []
@@ -2018,97 +1887,122 @@ def build_taxonomy_impl2(taxonomy_folder, **kwargs):
                 out_dataset[label_type].get_shuffle_file('train'))
 
     populate_output_num_images(train_ldtsik, 'toTrain', tax.root)
-    populate_output_num_images(test_ldtsi, 'toTest', tax.root)
 
-    # dump the tree to yaml format
-    dest = op.join(overall_dataset._data_root, 'root.yaml')
-    d = tax.dump()
-    write_to_yaml_file(d, dest)
-    for label_type in out_dataset:
-        target_file = op.join(out_dataset[label_type]._data_root, 'root.yaml')
-        ensure_directory(op.dirname(target_file))
-        shutil.copy(dest, target_file)
-    
-    single_test_file = False
-    if single_test_file:
-        logging.info('writing the test data')
-        t_to_ldsi = list_to_dict(test_ldtsi, 2)
-        for label_type in t_to_ldsi:
-            def gen_test_rows():
-                ldsi = t_to_ldsi[label_type]
-                d_to_lsi = list_to_dict(ldsi, 1)
-                for dataset in d_to_lsi:
-                    lsi = d_to_lsi[dataset]
-                    s_to_li = list_to_dict(lsi, 1)
-                    for split in s_to_li:
-                        li = s_to_li[split]
-                        idx = list_to_dict(li, 1).keys()
-                        src_img_tsv = TSVFile(dataset.get_data(split))
-                        src_label_tsv = TSVFile(dataset.get_data(split, 'label',
-                            version=-1))
-                        assert len(idx) == len(set(idx))
-                        for i in idx:
-                            row = src_img_tsv.seek(i)
-                            label_row = src_label_tsv.seek(i)
-                            rects = json.loads(label_row[1])
-                            convert_one_label(rects, 
-                                    dataset._sourcelabel_to_targetlabels)
-                            assert len(rects) > 0
-                            row[1] = json.dumps(rects)
-                            row[0] = '{}_{}_{}'.format(dataset.name,
-                                    split, row[0])
-                            yield row
-            tsv_writer(gen_test_rows(), 
-                    out_dataset[label_type].get_test_tsv_file())
-    else:
-        t_to_ldsi = list_to_dict(test_ldtsi, 2)
-        for label_type in t_to_ldsi:
-            sources = []
-            sources_origin_label = []
-            sources_label = []
-            ldsi = t_to_ldsi[label_type]
-            d_to_lsi = list_to_dict(ldsi, 1)
-            k = 0
-            all_ki = []
-            with_bb = label_type == 'with_bb'
-            for dataset in d_to_lsi:
-                lsi = d_to_lsi[dataset]
-                s_to_li = list_to_dict(lsi, 1)
-                for split in s_to_li:
-                    li = s_to_li[split]
-                    idx = list_to_dict(li, 1).keys()
-                    out_split = 'test{}'.format(k)
-                    s_file = dataset.get_data(split)
-                    sources.append(s_file)
-                    src_img_tsv = TSVFile(s_file)
-                    source_origin_label = dataset.get_data(split, 'label',
+def create_testX(test_ldtsi, tax, out_dataset):
+    t_to_ldsi = list_to_dict(test_ldtsi, 2)
+    for label_type in t_to_ldsi:
+        sources = []
+        sources_origin_label = []
+        sources_label = []
+        ldsi = t_to_ldsi[label_type]
+        d_to_lsi = list_to_dict(ldsi, 1)
+        k = 0
+        all_ki = []
+        with_bb = label_type == 'with_bb'
+        for dataset in d_to_lsi:
+            lsi = d_to_lsi[dataset]
+            s_to_li = list_to_dict(lsi, 1)
+            for split in s_to_li:
+                li = s_to_li[split]
+                idx = list_to_dict(li, 1).keys()
+                out_split = 'test{}'.format(k)
+                s_file = dataset.get_data(split)
+                sources.append(s_file)
+                src_img_tsv = TSVFile(s_file)
+                source_origin_label = dataset.get_data(split, 'label',
                         version=-1)
-                    sources_origin_label.append(source_origin_label)
-                    src_label_tsv = TSVFile(source_origin_label)
-                    converted_label = convert_label(source_origin_label,
-                            idx, dataset._sourcelabel_to_targetlabels,
-                            with_bb=with_bb)
-                    for i in tqdm(idx):
-                        l = converted_label[i]
-                        l[1] = json.dumps(lift_one_image(l[1], tax))
-                        l[0] = '{}_{}_{}'.format(dataset.name, split, l[0])
-                    all_ki.extend([(str(k), str(i)) for i in idx])
-                    label_file = out_dataset[label_type].get_data(out_split, 'label')
-                    tsv_writer(converted_label, label_file)
-                    sources_label.append(label_file)
-                    k = k + 1
-            write_to_file('\n'.join(sources),
-                    out_dataset[label_type].get_data('testX'))
-            write_to_file('\n'.join(sources_label), 
-                    out_dataset[label_type].get_data('testX', 'label'))
-            write_to_file('\n'.join(sources_origin_label),
-                    out_dataset[label_type].get_data('testX', 'origin.label'))
-            tsv_writer(all_ki, out_dataset[label_type].get_shuffle_file('test'))
+                sources_origin_label.append(source_origin_label)
+                src_label_tsv = TSVFile(source_origin_label)
+                converted_label = convert_label(source_origin_label,
+                        idx, dataset._sourcelabel_to_targetlabels,
+                        with_bb=with_bb)
+                for i in tqdm(idx):
+                    l = converted_label[i]
+                    l[1] = json.dumps(lift_one_image(l[1], tax))
+                    l[0] = '{}_{}_{}'.format(dataset.name, split, l[0])
+                all_ki.extend([(str(k), str(i)) for i in idx])
+                label_file = out_dataset[label_type].get_data(out_split, 'label')
+                tsv_writer(converted_label, label_file)
+                sources_label.append(label_file)
+                k = k + 1
+        write_to_file('\n'.join(sources),
+                out_dataset[label_type].get_data('testX'))
+        write_to_file('\n'.join(sources_label), 
+                out_dataset[label_type].get_data('testX', 'label'))
+        write_to_file('\n'.join(sources_origin_label),
+                out_dataset[label_type].get_data('testX', 'origin.label'))
+        tsv_writer(all_ki, out_dataset[label_type].get_shuffle_file('test'))
 
-    populate_dataset_details('{}_with_bb'.format(dataset_name), False)
-    populate_dataset_details('{}_no_bb'.format(dataset_name), False)
-    populate_dataset_details('{}'.format(dataset_name), False)
-    logging.info('done')
+def remove_or_duplicate(train_ldtsi, min_image, max_image):
+    label_to_dtsi = list_to_dict(train_ldtsi, 0)
+    extra_dtsi = []
+    for label in label_to_dtsi:
+        dtsi = label_to_dtsi[label]
+        if len(dtsi) > max_image:
+            # first remove the images with no bounding box
+            num_remove = len(dtsi) - max_image
+            type_to_dsi = list_to_dict(dtsi, 1)
+            if 'no_bb' in type_to_dsi:
+                dsi = type_to_dsi['no_bb']
+                if num_remove >= len(dsi):
+                    # remove all this images
+                    del type_to_dsi['no_bb']
+                    num_remove = num_remove - len(dsi)
+                else:
+                    random.shuffle(dsi)
+                    type_to_dsi['no_bb'] = dsi[: len(dsi) - num_remove]
+                    num_remove = 0
+            if num_remove > 0:
+                assert 'with_bb' in type_to_dsi
+                dsi = type_to_dsi['with_bb']
+                random.shuffle(dsi)
+                dsi = sorted(dsi, key=lambda x: -x[0].cleaness)
+                assert len(dsi) > num_remove
+                type_to_dsi['with_bb'] = dsi[: len(dsi) - num_remove]
+                num_remove = 0
+            dtsi = dict_to_list(type_to_dsi, 1)
+        elif len(dtsi) < min_image:
+            num_duplicate = int(np.ceil(float(min_image) / len(dtsi)))
+            logging.info('duplicate images for label of {}: {}->{}, {}'.format(
+                label, len(dtsi), min_image, num_duplicate))
+            extra_dtsi = (num_duplicate - 1) * dtsi
+        label_to_dtsi[label] = dtsi
+    logging.info('# train instances before duplication: {}'.format(len(train_ldtsi)))
+    train_ldtsi = dict_to_list(label_to_dtsi, 0)
+    logging.info('# train instances after duplication: {}'.format(len(train_ldtsi)))
+    return train_ldtsi, extra_dtsi
+
+def remove_test_in_train(train_ldtsi, test_ldtsi):
+    logging.info('before len(train_ldtsi) = {}'.format(len(train_ldtsi)))
+    set_train_dtsi = set((d, t, s, i) for l, d, t, s, i in train_ldtsi)
+    set_train_ldtsi = set(train_ldtsi)
+    #assert len(set_train_ldtsi) == len(train_ldtsi)
+    set_test_dtsi = set((d, t, s, i) for l, d, t, s, i in test_ldtsi)
+    result = [(l, d, t, s, i) for l, d, t, s, i in train_ldtsi 
+            if (d, t, s, i) not in set_test_dtsi]
+    logging.info('after len(train_ldtsi) = {}'.format(len(result)))
+    return result
+
+def split_train_test(ldtsi, num_test):
+    # group by label_type
+    t_to_ldsi = list_to_dict(ldtsi, 2)
+    train_ldtsi = [] 
+    test_ldtsi = []
+    for label_type in sorted(t_to_ldsi.keys()):
+        ldsi= t_to_ldsi[label_type]
+        l_to_dsi = list_to_dict(ldsi, 0)
+        for rootlabel in sorted(l_to_dsi.keys()):
+            dsi = l_to_dsi[rootlabel]
+            if len(dsi) < num_test:
+                logging.info('rootlabel={}; label_type={}->less than {} images'.format(
+                    rootlabel, label_type, len(dsi)))
+            curr_num_test = min(num_test, int(len(dsi) / 2))
+            random.shuffle(dsi)
+            test_ldtsi.extend([(rootlabel, d, label_type, s, i) for d, s, i
+                in dsi[:curr_num_test]])
+            train_ldtsi.extend([(rootlabel, d, label_type, s, i) for d, s, i 
+                in dsi[curr_num_test:]])
+    return train_ldtsi, test_ldtsi
 
 def build_taxonomy_impl(taxonomy_folder, **kwargs):
     random.seed(777)
@@ -2180,7 +2074,6 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
     logging.info('cum_images_with_bb: {}'.format(tax.root.cum_images_with_bb))
     logging.info('cum_images_no_bb: {}'.format(tax.root.cum_images_no_bb))
 
-
     # write the simplified version of the tree
     dest = op.join(overall_dataset._data_root, 'root.simple.yaml')
     write_to_yaml_file(tax.dump(['images_with_bb']), dest)
@@ -2206,159 +2099,33 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
             split_idxes = dataset.select_tsv_rows(label_type)
             for rootlabel, split, idx in split_idxes:
                 ldtsi.append((rootlabel, dataset, label_type, split, idx))
+    # we need to remove the duplicates. the duplicates could come from such
+    # cases: for example, we have Laptop and laptop in the image. Both of the
+    # labels are mapped to laptop, which is in the target domain. In this case,
+    # the image could be in the list twice
+    ldtsi = list(set(ldtsi))
+
     # split into train val
     num_test = kwargs.get('num_test', 50)
     logging.info('splitting the images into train and test')
-    # group by label_type
-    t_to_ldsi = list_to_dict(ldtsi, 2)
-    train_ldtsi = [] 
-    test_ldtsi = []
-    for label_type in sorted(t_to_ldsi.keys()):
-        ldsi= t_to_ldsi[label_type]
-        l_to_dsi = list_to_dict(ldsi, 0)
-        for rootlabel in sorted(l_to_dsi.keys()):
-            dsi = l_to_dsi[rootlabel]
-            if len(dsi) < num_test:
-                logging.info('rootlabel={}; label_type={}->less than {} images'.format(
-                    rootlabel, label_type, len(dsi)))
-            curr_num_test = min(num_test, int(len(dsi) / 2))
-            random.shuffle(dsi)
-            test_ldtsi.extend([(rootlabel, d, label_type, s, i) for d, s, i
-                in dsi[:curr_num_test]])
-            train_ldtsi.extend([(rootlabel, d, label_type, s, i) for d, s, i 
-                in dsi[curr_num_test:]])
 
-    logging.info('creating the train data')
-    t_to_ldsi = list_to_dict(train_ldtsi, 2)
-    train_ldtsik = []
-    shuffle_idx = []
-    for label_type in sorted(t_to_ldsi.keys()):
-        ldsi = t_to_ldsi[label_type]
-        d_to_lsi = list_to_dict(ldsi, 1)
-        k = 0
-        sources = []
-        sources_origin_label = []
-        sources_label = []
-        with_bb = label_type == 'with_bb'
-        for dataset in sorted(d_to_lsi.keys(), key=lambda x: x.name):
-            lsi = d_to_lsi[dataset]
-            s_li = list_to_dict(lsi, 1)
-            for split in sorted(s_li.keys()):
-                li = s_li[split]
-                idx_to_l = list_to_dict(li, 1)
-                idx = sorted(idx_to_l.keys())
-                # link the data tsv
-                source = dataset.get_data(split)
-                out_split = 'train{}'.format(k)
-                train_ldtsik.extend([(l, dataset, label_type, split, i,
-                    k) for l, i in li])
-                k = k + 1
-                dest = out_dataset[label_type].get_data(
-                        out_split)
-                sources.append(source)
-                logging.info('converting labels: {}-{}'.format(
-                    dataset.name, split))
-                source_origin_label = dataset.get_data(split,
-                    'label', version=-1)
-                
-                #def internal_convert_label(sub_idx):
-                    #sub_converted_label = convert_label(source_origin_label,
-                            #sub_idx, dataset._sourcelabel_to_targetlabels,
-                            #with_bb=with_bb)
-                    #return sub_converted_label
-                #converted_label2 = parallel_convert_label(internal_convert_label,
-                        #idx, num_worker=2)
-
-                converted_label = convert_label(source_origin_label,
-                        idx, dataset._sourcelabel_to_targetlabels,
-                        with_bb=with_bb)
-                #for x1, x2 in izip(converted_label, converted_label2):
-                    #assert x1[0] == x2[0]
-                    #for r1, r2 in izip(x1[1], x2[1]):
-                        #if type(r1) is str or type(r2) is str:
-                            #assert r1 == 'd'
-                            #assert r2 == 'd'
-                        #else:
-                            #assert len(r1) == len(r2)
-                            #for k in r1.keys():
-                                #assert r1[k] == r2[k]
-
-                sources_origin_label.append(source_origin_label)
-                # convert the file name
-                logging.info('delifting the labels')
-                for i in tqdm(idx):
-                    l = converted_label[i]
-                    l[1] = json.dumps(delift_one_image(l[1], tax))
-                    l[0] = '{}_{}_{}'.format(dataset.name, split, l[0])
-                label_file = out_dataset[label_type].get_data(out_split, 'label')
-                logging.info('writing the label file {}'.format(label_file))
-                tsv_writer(converted_label, label_file)
-                sources_label.append(label_file)
-        write_to_file('\n'.join(sources),
-                out_dataset[label_type].get_data('trainX'))
-        write_to_file('\n'.join(sources_label), 
-                out_dataset[label_type].get_data('trainX', 'label'))
-        write_to_file('\n'.join(sources_origin_label),
-                out_dataset[label_type].get_data('trainX', 'origin.label'))
     logging.info('duplicating or removing the train images')
     # for each label, let's duplicate the image or remove the image
     max_image = kwargs.get('max_image_per_label', 1000)
     min_image = kwargs.get('min_image_per_label', 200)
-    label_to_dtsik = list_to_dict(train_ldtsik, 0)
-    extra_dtsik = []
-    for label in sorted(label_to_dtsik.keys()):
-        dtsik = label_to_dtsik[label]
-        if len(dtsik) > max_image:
-            # first remove the images with no bounding box
-            num_remove = len(dtsik) - max_image
-            type_to_dsik = list_to_dict(dtsik, 1)
-            if 'no_bb' in type_to_dsik:
-                dsik = type_to_dsik['no_bb']
-                if num_remove >= len(dsik):
-                    # remove all this images
-                    del type_to_dsik['no_bb']
-                    num_remove = num_remove - len(dsik)
-                else:
-                    random.shuffle(dsik)
-                    type_to_dsik['no_bb'] = dsik[: len(dsik) - num_remove]
-                    num_remove = 0
-            if num_remove > 0:
-                assert 'with_bb' in type_to_dsik
-                dsik = type_to_dsik['with_bb']
-                random.shuffle(dsik)
-                dsik = sorted(dsik, key=lambda x: -x[0].cleaness)
-                assert len(dsik) > num_remove
-                type_to_dsik['with_bb'] = dsik[: len(dsik) - num_remove]
-                num_remove = 0
-            dtsik = dict_to_list(type_to_dsik, 1)
-        elif len(dtsik) < min_image:
-            num_duplicate = int(np.ceil(float(min_image) / len(dtsik)))
-            logging.info('duplicate images for label of {}: {}->{}, {}'.format(
-                label, len(dtsik), min_image, num_duplicate))
-            extra_dtsik = (num_duplicate - 1) * dtsik
-        label_to_dtsik[label] = dtsik
-    logging.info('# train instances before duplication: {}'.format(len(train_ldtsik)))
-    train_ldtsik = dict_to_list(label_to_dtsik, 0)
-    logging.info('# train instances after duplication: {}'.format(len(train_ldtsik)))
 
-    logging.info('saving the shuffle file')
-    type_to_ldsik = list_to_dict(train_ldtsik, 2)
-    extra_type_to_dsik = list_to_dict(extra_dtsik, 1)
-    for label_type in sorted(type_to_ldsik.keys()):
-        ldsik = type_to_ldsik[label_type]
-        shuffle_info = [(str(k), str(i)) for l, d, s, i, k in ldsik]
-        shuffle_info = list(set(shuffle_info))
-        if label_type in sorted(extra_type_to_dsik.keys()):
-            dsik = extra_type_to_dsik[label_type]
-            # we should not de-duplicate it because it comes from the duplicate
-            # policy
-            extra_shuffle_info = [(str(k), str(i) ) for d, s, i, k in dsik]
-            shuffle_info.extend(extra_shuffle_info)
-        random.shuffle(shuffle_info)
-        tsv_writer(shuffle_info,
-                out_dataset[label_type].get_shuffle_file('train'))
+    ldtsi, extra_dtsi = remove_or_duplicate(ldtsi, 0, max_image * 3)
+    assert len(extra_dtsi) == 0
 
-    populate_output_num_images(train_ldtsik, 'toTrain', tax.root)
+    train_ldtsi, test_ldtsi = split_train_test(ldtsi, num_test)
+
+    train_ldtsi = remove_test_in_train(train_ldtsi, test_ldtsi)
+
+    train_ldtsi, extra_dtsi = remove_or_duplicate(train_ldtsi, min_image, max_image)
+
+    logging.info('creating the train data')
+    create_trainX(train_ldtsi, extra_dtsi, tax, out_dataset)
+
     populate_output_num_images(test_ldtsi, 'toTest', tax.root)
 
     # dump the tree to yaml format
@@ -2369,55 +2136,8 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
         target_file = op.join(out_dataset[label_type]._data_root, 'root.yaml')
         ensure_directory(op.dirname(target_file))
         shutil.copy(dest, target_file)
-    
-    single_test_file = False
-    if single_test_file:
-        pass
-    else:
-        t_to_ldsi = list_to_dict(test_ldtsi, 2)
-        for label_type in sorted(t_to_ldsi.keys()):
-            sources = []
-            sources_origin_label = []
-            sources_label = []
-            ldsi = t_to_ldsi[label_type]
-            d_to_lsi = list_to_dict(ldsi, 1)
-            k = 0
-            all_ki = []
-            with_bb = label_type == 'with_bb'
-            for dataset in sorted(d_to_lsi.keys(), key=lambda x: x.name):
-                lsi = d_to_lsi[dataset]
-                s_to_li = list_to_dict(lsi, 1)
-                for split in sorted(s_to_li.keys()):
-                    li = s_to_li[split]
-                    idx = sorted(list_to_dict(li, 1).keys())
-                    out_split = 'test{}'.format(k)
-                    s_file = dataset.get_data(split)
-                    sources.append(s_file)
-                    src_img_tsv = TSVFile(s_file)
-                    source_origin_label = dataset.get_data(split, 'label',
-                        version=-1)
-                    sources_origin_label.append(source_origin_label)
-                    src_label_tsv = TSVFile(source_origin_label)
-                    converted_label = convert_label(source_origin_label,
-                            idx, dataset._sourcelabel_to_targetlabels,
-                            with_bb=with_bb)
-                    logging.info('lifting {} - {}'.format(dataset.name, split))
-                    for i in tqdm(idx):
-                        l = converted_label[i]
-                        l[1] = json.dumps(lift_one_image(l[1], tax))
-                        l[0] = '{}_{}_{}'.format(dataset.name, split, l[0])
-                    all_ki.extend([(str(k), str(i)) for i in idx])
-                    label_file = out_dataset[label_type].get_data(out_split, 'label')
-                    tsv_writer(converted_label, label_file)
-                    sources_label.append(label_file)
-                    k = k + 1
-            write_to_file('\n'.join(sources),
-                    out_dataset[label_type].get_data('testX'))
-            write_to_file('\n'.join(sources_label), 
-                    out_dataset[label_type].get_data('testX', 'label'))
-            write_to_file('\n'.join(sources_origin_label),
-                    out_dataset[label_type].get_data('testX', 'origin.label'))
-            tsv_writer(all_ki, out_dataset[label_type].get_shuffle_file('test'))
+
+    create_testX(test_ldtsi, tax, out_dataset)
 
     logging.info('done')
 

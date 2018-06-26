@@ -1,0 +1,63 @@
+{% load static %}
+
+<style>
+    table#image_table {
+        border-collapse: collapse;
+        margin-left: auto;
+        margin-right: auto;
+    }
+
+    ul#label_list {
+        list-style: none;
+    }
+
+</style>
+<script src={% static "js/image_draw.js" %} type="text/javascript"></script>
+<script>
+    let images_dict = JSON.parse("{{ images|escapejs }}");
+    let label_list = JSON.parse("{{ label_list|escapejs }}");
+    let unchecked_list = [];
+
+    let static_filepath = {% static null %};
+
+    window.onload = function() {
+        draw_images(images_dict, static_filepath, label_list);
+    };
+
+    function onClick_abstraction() {
+        if (this.checked) {
+            let index = unchecked_list.indexOf(this.id);
+            unchecked_list.splice(index, 1);
+        } else {
+            unchecked_list.push(this.id);
+        }
+
+        update_images(images_dict, static_filepath, unchecked_list);
+    }
+</script>
+
+
+<ul id="label_list">
+    <li>Labels</li>
+</ul>
+
+<table id="image_table">
+        <tr>
+            <th>Raw Image</th>
+            <th>Image with target labels</th>
+            <th>Image with all labels</th>
+        </tr>
+</table>
+
+
+
+<center>
+    {% if label %}
+    <a href="{% url 'detection:view_image2' %}?data={{ data }}&split={{ split }}&version={{ version }}&label={{ label }}&start_id={{ previous_id }}">Previous</a>
+    <a href="{% url 'detection:view_image2' %}?data={{ data }}&split={{ split }}&version={{ version }}&label={{ label }}&start_id={{ next_id }}">Next</a>
+    {% else %}
+        <a href="{% url 'detection:view_image2' %}?data={{ data }}&label={{ label }}&start_id={{ previous_id }}">Previous</a>
+        <a href="{% url 'detection:view_image2' %}?data={{ data }}&label={{ label }}&start_id={{ next_id }}">Next</a>
+    {% endif %}
+</center>
+

@@ -144,7 +144,7 @@ def readable_confusion_entry(entry):
 def get_all_tree_data():
     names = sorted(os.listdir('./data'))
     return [name for name in names 
-        if op.isfile(op.join('data', name, 'root.yaml'))]
+        if op.isfile(op.join('data', name, 'root_enriched.yaml'))]
 
 def parse_test_data(predict_file):
     parts = predict_file.split('.')
@@ -205,6 +205,12 @@ def dict_to_list(d, idx):
                     r.append(v)
                     r.append(k)
             result.append(r)
+    return result
+
+def list_to_dict_unique(l, idx):
+    result = list_to_dict(l, idx)
+    for key in result:
+        result[key] = list(set(result[key]))
     return result
 
 def list_to_dict(l, idx):

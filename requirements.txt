@@ -6,3 +6,5 @@ psutil
 python-magic
 pathos
 django==1.11
+tqdm
+traceback2

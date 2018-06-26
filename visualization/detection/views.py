@@ -64,7 +64,11 @@ def run_in_qd(func, *args, **kwargs):
 def view_tree(request):
     if 'data' in request.GET:
         data = request.GET.get('data')
-        s = run_in_qd(gen_html_tree_view, data)
+        # provide the accuracy for each category
+        full_expid = request.GET.get('full_expid')
+        predict_file = request.GET.get('predict_file')
+        s = run_in_qd(gen_html_tree_view, data, full_expid,
+                predict_file)
         context = {'li_ul_tree_str': s}
         return render(request, 'detection/view_tree.html', context)
     else:
@@ -300,7 +304,10 @@ def save_image_in_static(im, rel_path):
     save_image(im, disk_path)
     return html_path
 
-def view_image(request, data, split, version, label, start_id):
+def view_image_js(request, data, split, version, label, start_id):
+    '''
+    use js to render the box in the client side
+    '''
     curr_dir = os.curdir
     os.chdir(get_qd_root())
     start_id = int(float(start_id))
@@ -317,6 +324,42 @@ def view_image(request, data, split, version, label, start_id):
             fname))
         origin_label_html_path = save_image_in_static(origin_label, '{}/{}/{}/origin_label_{}.jpg'.format(data, split,
             version,
+            fname))
+        html_path = save_image_in_static(im, '{}/{}/{}/bb_{}.jpg'.format(data, split,
+            version,
+            fname))
+        html_image_paths.append((fname, origin_html_path, origin_label_html_path , html_path, 
+            target_rects))
+    os.chdir(curr_dir)
+
+    context = {'images': html_image_paths,
+            'data': data,
+            'split': split,
+            'version': version,
+            'label': label,
+            'next_id': str(start_id + len(html_image_paths)),
+            'previous_id': str(max(0, start_id - max_image_shown))}
+    return render(request, 'detection/images.html', context)
+
+def view_image(request, data, split, version, label, start_id):
+    curr_dir = os.curdir
+    os.chdir(get_qd_root())
+    start_id = int(float(start_id))
+    images = visualize_box(data, split, version, label, start_id)
+    html_image_paths = []
+    max_image_shown = 10
+    has_next = False
+    for i, (fname, origin, origin_label, im, target_rects) in enumerate(images):
+        if i >= max_image_shown:
+            has_next = True
+            break 
+        origin_html_path = save_image_in_static(origin, '{}/{}/{}/origin_{}.jpg'.format(data, split,
+            version,
+            fname))
+        origin_label_html_path = save_image_in_static(origin_label, 
+                '{}/{}/{}/{}/origin_label_{}.jpg'.format(data, split,
+            version,
+            label,
             fname))
         html_path = save_image_in_static(im, '{}/{}/{}/bb_{}.jpg'.format(data, split,
             version,
