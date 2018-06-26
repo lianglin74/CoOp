@@ -1,0 +1,91 @@
+add_reorg: false
+data: TaxHardV1_1
+datas:
+- !!python/tuple
+  - coco2017
+  - 10
+- !!python/tuple
+  - voc0712
+  - 10
+- !!python/tuple
+  - Naturalist
+  - 10
+- !!python/tuple
+  - elder
+  - 10
+- !!python/tuple
+  - imagenet200Diff
+  - 10
+- !!python/tuple
+  - OpenImageV4_448
+  - 10
+- !!python/tuple
+  - open_images_clean_1
+  - 9
+- !!python/tuple
+  - open_images_clean_2
+  - 9
+- !!python/tuple
+  - open_images_clean_3
+  - 9
+- !!python/tuple
+  - imagenet1kLocClean
+  - 9
+- !!python/tuple
+  - imagenet3k_448Clean
+  - 9
+- !!python/tuple
+  - VisualGenomeClean
+  - 9
+- !!python/tuple
+  - brand1048Clean
+  - 8
+- !!python/tuple
+  - mturk700_url_as_keyClean
+  - 8
+- !!python/tuple
+  - crawl_office_v1
+  - 8
+- !!python/tuple
+  - crawl_office_v2
+  - 8
+- !!python/tuple
+  - Materialist
+  - 8
+- !!python/tuple
+  - 4000_Full_setClean
+  - 7
+- !!python/tuple
+  - MSLogoClean
+  - 8
+- !!python/tuple
+  - clothingClean
+  - 8
+- !!python/tuple
+  - imagenet22k_448
+  - 7
+detmodel: yolo
+effective_batch_size: 128
+expid: B_noreorg_extraconv2_tree_maxIter.100e_IndexLossWeight0
+max_iters: 100e
+monitor_train_only: false
+net: darknet19_448
+num_extra_convs: 2
+num_test: 50
+output_tree_path: true
+ovthresh:
+- 0
+- 0.3
+- 0.5
+restore_snapshot_iter: -1
+softmax_tree_prediction_threshold: 0.1
+taxonomy_folder: ./aux_data/taxonomy10k/TaxHard/TaxHardV1
+test_data: TaxHardV1_1_with_bb
+test_split: test
+tree_max_iters2: 30e
+yolo_full_gpu: true
+yolo_index_threshold_loss_extra_weight: 0
+yolo_softmax_norm_by_valid: true
+yolo_test_maintain_ratio: true
+yolo_tree: true
+yolo_tree_eval_label_lift: false

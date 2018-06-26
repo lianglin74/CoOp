@@ -1,0 +1,946 @@
+- animal:
+  - bird:
+    - albatross
+    - bald eagle
+    - fowl:
+      - hen
+      - turkey
+      - partridge
+      - snow goose
+    - goldfinch
+    - goose
+    - house finch
+    - hummingbird
+    - limicoline bird:
+      - little blue heron
+      - great white heron
+      - black stork
+      - night heron
+      - snowy heron
+      - white stork
+      - whooping crane
+    - lovebird
+    - ostrich
+    - owl:
+      - great grey owl
+    - peacock
+    - pelican
+    - penguin
+    - pigeon
+    - Rocky Mountain jay
+    - Rocky mountain pinon
+    - scrub bird
+    - sparrow
+    - sulphur-crested cockatoo
+    - swallow
+    - swan:
+      - black swan
+    - woodpecker
+    - vulture
+  - dinosaur:
+    - triceratops
+  - fish:
+    - clownfish
+    - barracouta
+    - butterfly fish
+    - salmon:
+      - coho salmon
+      - landlocked salmon
+    - eel
+    - garfish
+    - goldfish
+    - grouper
+    - jellyfish
+    - lionfish
+    - puffer
+    - bass
+    - seahorse
+    - sea slug
+    - sea urchin
+    - striped killifish
+    - striped marlin
+    - shark:
+      - blacktip shark
+      - hammerhead shark
+      - sand shark
+      - six-gilled shark
+      - tiger shark
+      - great white shark
+    - starfish
+    - stingray
+    - sturgeon
+    - sunfish
+    - toadfish
+    - trout:
+      - lake trout
+  - insect:
+    - beetle:
+      - apple maggot
+      - carabid beetle
+      - dayfly
+      - elater
+      - ladybug
+      - longicorn
+      - rhinoceros beetle
+      - tiger beetle
+    - tick:
+      - bluetick
+    - fly
+    - bee
+    - ant:
+      - army ant
+    - butterfly:
+      - cabbage butterfly
+      - lycaenid butterfly
+      - monarch butterfly
+      - ringlet butterfly
+      - sulfur butterfly
+    - moth
+    - mosquito
+    - cricket:
+      - snowy tree cricket
+    - mantid
+    - grasshopper
+  - mammal:
+    - anteater:
+      - aardvark
+      - tamandua
+    - antelope:
+      - black buck
+      - pronghorn
+      - nilgai
+    - alpaca
+    - armadillo:
+      - apar
+      - pichiciago
+    - bronco
+    - badger:
+      - honey badger
+    - bat:
+      - European brown bat
+    - bison:
+      - wisent
+    - beaver
+    - bear:
+      - grizzly bear
+      - American black bear
+      - brown bear
+      - sloth bear
+      - honey bear
+      - panda bear:
+        - red panda
+        - giant panda
+      - polar bear
+    - buffalo:
+      - anoa
+      - water buffalo
+    - camel:
+      - Arabian camel
+    - cat:
+      - bobcat
+      - cheetah
+      - cougar
+      - Egyptian cat
+      - jaguar
+      - jaguarundi cat
+      - leopard
+      - lynx
+      - margay cat
+      - marten cat
+      - Mexican hairless
+      - Pallas's cat
+      - Persian cat
+      - sand cat
+      - Siamese cat
+      - tabby cat
+      - tiger
+    - chinchilla
+    - chipmunk
+    - cow:
+      - longhorn
+    - coyote
+    - deer:
+      - elk
+    - dog:
+      - African hunting dog
+      - andiron
+      - Appenzeller
+      - beagle
+      - Bernese mountain dog
+      - Border collie
+      - borzoi
+      - boxer
+      - bulldog:
+        - French bulldog
+      - bull mastiff
+      - collie
+      - corgi:
+        - Pembroke Welsh corgi
+      - German shepherd
+      - German short-haired pointer
+      - Great Dane
+      - Greater Swiss Mountain dog
+      - hound:
+        - Afghan hound
+        - basset hound
+        - elkhound
+        - American foxhound
+        - gazelle hound
+        - black-and-tan coonhound
+        - bloodhound
+        - greyhound
+        - Ibizan hound
+        - Irish wolfhound
+        - Italian greyhound
+        - Norwegian elkhound
+        - otter hound
+        - Scottish deerhound
+      - malamute
+      - Newfoundland
+      - Old English sheepdog
+      - pariah dog
+      - pinscher:
+        - affenpinscher
+        - Doberman pinscher
+        - miniature pinscher
+      - Pomeranian
+      - poodle:
+        - toy poodle
+        - large poodle
+        - miniature poodle
+      - pug
+      - retriever:
+        - flat-coated retriever
+        - golden retriever
+        - Labrador retriever
+      - raccoon dog
+      - rottweiler
+      - Saint Bernard
+      - schnauzer:
+        - miniature schnauzer
+      - shepherd dog
+      - Shetland sheepdog
+      - Shih-Tzu
+      - Siberian husky
+      - spaniel:
+        - Blenheim spaniel
+        - Brittany spaniel
+        - clumber spaniel
+        - English springer spaniel
+        - English toy spaniel
+        - Irish water spaniel
+        - Japanese spaniel
+        - King Charles spaniel
+        - Sussex spaniel
+        - Welsh springer spaniel
+      - terrier:
+        - airedale terrier
+        - American pit bull terrier
+        - Australian terrier
+        - Bedlington terrier
+        - Boston terrier
+        - Border terrier
+        - cairn terrier
+        - Dandie Dinmont terrier
+        - Irish terrier
+        - Kerry blue terrier
+        - Lakeland terrier
+        - Maltese terrier
+        - Norfolk terrier
+        - pit bull terrier
+        - Norwich terrier
+        - Scottish terrier
+        - Sealyham terrier
+        - silky terrier
+        - smooth-haired fox terrier
+        - soft-coated wheaten terrier
+        - Staffordshire bullterrier
+        - Tibetan terrier
+        - West Highland white terrier
+        - wirehaired terrier
+        - Yorkshire terrier
+      - Tibetan mastiff
+      - weimaraner
+    - elephant:
+      - mammoth
+      - African elephant
+      - Indian elephant
+    - fox:
+      - Vulpes vulpes
+      - Arctic fox
+      - grey fox
+    - giraffe
+    - goat:
+      - mountain goat
+    - gopher
+    - hippopotamus
+    - horse
+    - hyena
+    - lemur:
+      - Madagascar cat
+    - lamb
+    - llama
+    - marine:
+      - dolphin:
+        - river dolphin
+      - manatee:
+        - sea cow
+      - otter:
+        - river otter
+      - platypus
+      - razorback
+      - sea lion
+      - seal:
+        - elephant seal
+      - walrus:
+        - Pacific walrus
+      - whale:
+        - grey whale
+        - orca
+        - black whale
+        - finback whale
+    - marsupial:
+      - wallaby
+      - kangaroo
+      - koala bear
+      - bandicoot
+      - springbuck
+      - wombat
+    - mongoose:
+      - meerkat
+    - mule
+    - opossum
+    - ox
+    - pig:
+      - boar
+      - warthog
+    - primate:
+      - ape
+      - baboon
+      - chimpanzee
+      - gorilla:
+        - silverback
+      - monkey:
+        - proboscis monkey
+        - African green monkey
+        - guenon monkey
+        - howler monkey
+        - lion monkey
+        - rhesus monkey
+        - spider monkey
+        - squirrel monkey
+        - titi monkey
+        - vervet monkey
+      - orangutan
+      - slow loris
+    - rabbit:
+      - Angora rabbit
+      - pika
+    - raccoon
+    - rhinoceros
+    - rodent:
+      - ferret
+      - gerbil
+      - guinea pig
+      - hamster
+      - hedgehog
+      - rat:
+        - black rat
+        - abrocome
+    - sheep:
+      - bighorn sheep
+      - merino sheep
+      - Barbary sheep
+      - Dall sheep
+    - sloth:
+      - three-toed sloth
+    - skunk
+    - snail
+    - squirrel:
+      - eastern chipmunk
+      - eastern fox squirrel
+    - weasel
+    - woodchuck
+    - wolf:
+      - aardwolf
+      - arctic wolf
+      - timber wolf
+    - zebra
+  - reptile:
+    - lizard:
+      - alligator lizard
+      - frilled lizard
+      - Komodo dragon
+      - monitor lizard
+      - night lizard
+      - side-blotched lizard
+      - whiptail lizard
+    - salamander:
+      - spotted salamander
+      - European fire salamander
+    - snake:
+      - black rat snake
+      - boa
+      - carpet snake
+      - diamondback rattlesnake
+      - grass snake
+      - ground snake
+      - horned rattlesnake
+      - Indian cobra
+      - king snake
+      - ringneck snake
+      - rock snake
+      - sand snake
+      - sea snake
+      - thunder snake
+      - vine snake
+      - water snake
+    - gecko
+    - turtle:
+      - box turtle
+      - sea turtle
+      - mud turtle
+      - loggerhead turtle
+      - leatherback turtle
+    - chameleon:
+      - American chameleon
+      - African chameleon
+    - crocodile:
+      - African crocodile
+    - alligator
+  - shellfish:
+    - lobster:
+      - American lobster
+      - crayfish
+    - crab:
+      - dungeness crab
+      - fiddler crab
+      - hermit crab
+      - king crab
+      - rock crab
+      - swimming crab
+    - mussel
+    - razor clam
+  - worm:
+    - flatworm
+    - roundworm
+    - red worm
+- appliance:
+  - blender
+  - coffee maker
+  - disposal
+  - Dutch oven
+  - espresso maker
+  - food processor
+  - hand blower
+  - hot plate
+  - ice maker
+  - oven
+  - Primus stove
+  - rotisserie
+  - sink
+  - stove
+  - toaster
+  - toaster oven
+  - waffle iron
+  - microwave
+  - refrigerator
+  - clothes dryer
+  - washing machine
+- architecture:
+  - arch:
+    - broken arch
+    - gothic arch
+    - moorish arch
+    - pointed arch
+    - roman arch
+    - round arch
+    - triumphal arch
+- booth:
+  - telephone booth
+  - voting booth
+- patio
+- room:
+  - hall:
+    - concert hall
+    - exhibition hall
+    - manor hall
+    - town hall
+  - lounge
+  - bathroom
+  - bedroom
+  - billiard room
+  - conference room
+  - control room
+  - dining room
+  - engine room
+  - kitchen
+  - living room
+  - locker room
+  - market:
+    - supermarket
+  - prison
+  - shop:
+    - barber shop
+    - bookshop
+    - butcher shop
+    - gift shop
+    - thriftshop
+    - convenience store
+    - country store
+    - package store
+    - shoe store
+- dry dock
+- marina
+- breakwater
+- beverage:
+  - absinthe
+  - brandy
+  - eggnog
+  - whiskey
+  - wine:
+    - red wine
+    - white wine
+  - fruit drink
+  - soft drink
+  - tea
+  - water
+- beach
+- pond
+- swamp
+- waterfront
+- hand
+- kidney
+- liver
+- bridge:
+  - cantilever bridge
+  - covered bridge
+  - drawbridge
+  - footbridge
+  - overpass
+  - rope bridge
+  - suspension bridge
+  - trestle bridge
+  - truss bridge
+  - viaduct
+  - steel arch bridge
+- building:
+  - castle
+  - mobile home
+  - palace
+  - tower:
+    - clock tower
+    - church tower
+    - minaret
+    - pylon
+    - watchtower
+    - fire tower
+    - control tower
+- floor
+- bannister
+- ceiling
+- fanlight
+- dome
+- fountain
+- porch
+- tile roof
+- cornice
+- skyscraper
+- yurt
+- container:
+  - bottle
+  - mug
+  - paper cup
+- door:
+  - barn door
+  - double door
+  - French door
+  - revolving door
+  - sliding door
+- electronics:
+  - Laptop
+  - Desktop
+  - keyboard
+  - computer mouse
+  - monitor
+  - projector
+  - telephone:
+    - corded telephone:
+      - speakerphone
+      - desk phone
+  - television
+- fabric:
+  - wool
+  - suede
+- fashion:
+  - belt
+  - bow tie
+  - scarf
+  - beachwear:
+    - swimsuit
+  - eyewear:
+    - eyeglasses
+  - footwear:
+    - stiletto
+    - snowshoe
+  - formalwear:
+    - dress:
+      - academic gown
+      - gown
+    - suit
+  - headwear:
+    - fedora
+    - hat:
+      - cowboy hat
+      - sunhat
+      - hardhat
+    - headdress
+    - helmet:
+      - crash helmet
+      - football helmet
+    - tiara
+    - wig
+  - outerwear:
+    - poncho
+    - trench coat
+  - pants:
+    - jean
+    - khakis
+    - bellbottom trousers
+    - shorts
+  - robe
+  - shirts:
+    - sweatshirt
+  - underwear:
+    - camisole
+- fence:
+  - chainlink fence
+  - picket fence
+  - rail fence
+  - hedge
+- furnishing:
+  - armoire
+  - bed
+  - bench
+  - bookcase
+  - cabinet:
+    - file cabinet
+  - chest of drawers
+  - chair
+  - crib
+  - desk
+  - dustbin
+  - entertainment center
+  - lawn furniture
+  - table:
+    - coffee table
+    - gaming table
+    - gueridon
+  - Wall clock
+  - wine rack
+- land:
+  - campsite
+  - chasm
+  - crater
+  - cultivated land
+  - field:
+    - grainfield
+    - steppe
+  - sinkhole
+  - volcanic crater
+- medicalImaging:
+  - sonogram
+  - arthrogram
+  - electronic fetal monitor
+- trombone
+- euphonium
+- guitar:
+  - acoustic guitar
+  - bass guitar
+  - electric guitar
+  - steel guitar
+- banjo
+- cello
+- double bass
+- viol
+- violin
+- dulcimer
+- harmonium
+- harp
+- mandolin
+- samisen
+- sitar
+- ukulele
+- zither
+- bassoon
+- flute
+- piccolo
+- saxophone
+- piano
+- keyboard instrument
+- accordion
+- harmonica
+- bell
+- steel drum
+- snare drum
+- altar
+- billboard
+- bookmark
+- bubble
+- bus stop
+- drinking fountain
+- emoji
+- half mast flag
+- kachina
+- knitting stitch
+- memorial
+- obelisk
+- sculpture
+- soap dish
+- stage
+- stitch
+- text
+- traffic light
+- turnstile
+- person:
+  - adult
+  - child
+  - infant
+  - elder
+  - __
+  - male
+  - female
+  - __
+  - athlete:
+    - basketball player
+    - baseball player
+    - climber
+    - cyclist
+    - football player
+    - golfer
+    - hang glider
+    - runner
+    - skateboarder
+    - ice skater
+    - skier
+    - swimmer
+    - tennis player
+  - formal:
+    - bride
+    - groom
+  - anchor
+  - beekeeper
+  - health professional
+  - driver
+  - firefighter
+  - mascot
+  - monk
+  - police officer
+  - clown
+  - dancer:
+    - ballet dancer
+  - fire-eater
+  - juggler
+  - musician:
+    - guitarist
+    - singer
+- wallet
+- coin
+- watch
+- plant:
+  - tree:
+    - silver maple
+    - silk tree
+    - orchard apple tree
+    - araucaria tree:
+      - american arborvitae tree
+      - colorado spruce tree
+    - coral tree
+    - olive tree
+    - palm tree
+  - flower:
+    - achimenes
+    - African daisy
+    - African grey
+    - African violet
+    - blue columbine
+    - blue daisy
+    - bluestem
+    - blue poppy
+    - common marigold
+    - common sunflower
+    - dahlia
+    - early purple orchid
+    - evergreen magnolia
+    - goat willow
+    - lizard orchid
+    - snowy orchid
+    - spider orchid
+    - strawflower
+    - sunflower
+    - treasure flower
+    - weeping willow
+    - welsh poppy
+    - wildflower
+    - yellow birch
+    - yellow chamomile
+    - yellow hammer
+    - yellow lady's slipper
+- sign:
+  - street sign
+- shuttlecock
+- badminton racket
+- basketball
+- backboard
+- baseball
+- baseball bat
+- soccer ball
+- bowling alley
+- bowling pin
+- bowling shoe
+- bowling ball
+- punching bag
+- billiard ball
+- croquet ball
+- croquet mallet
+- golf ball
+- gymnastics:
+  - uneven parallel bars
+  - gymnastic horse
+- table-tennis racquet
+- table-tennis table
+- ping-pong ball
+- rugby football
+- tennis ball
+- tennis racket
+- volleyball
+- volleyball net
+- eraser:
+  - rubber eraser
+- notebook
+- pen:
+  - ballpen
+- pencil
+- pushpin
+- paint brush
+- sharpener
+- blowtorch
+- drill
+- locking pliers
+- soldering iron
+- garden rake
+- plow
+- shovel
+- comb
+- pestle
+- utensil:
+  - fork
+  - spoon
+- automobile engine
+- brake
+- bucket seat
+- car wheel
+- connecting rod
+- crankshaft
+- electric motor
+- gearshift
+- grille
+- piston rod
+- tie rod
+- transmission
+- aircraft engine
+- airplane propeller
+- vehicle:
+  - aircraft:
+    - aircraft carrier:
+      - flattop
+    - amphibious aircraft
+    - helicopter
+    - drone
+    - stealth bomber
+    - single prop
+    - plane:
+      - airbus
+      - airplane
+      - airship
+      - biplane
+      - ski-plane
+      - warplane
+  - landVehicle:
+    - bulldozer
+    - bus:
+      - camping bus
+      - shuttle bus
+    - trolleybus
+    - car:
+      - ambulance
+      - bumper car
+      - convertible:
+        - hardtop
+      - golf cart
+      - hatchback
+      - all terrain vehicle
+      - race car
+      - station wagon
+      - taxi
+      - car transporter
+    - cycle:
+      - bicycle
+      - exercise bike
+      - motorcycle
+      - tricycle
+      - unicycle
+    - flatbed
+    - segway
+    - snowmobile
+    - snowplow
+    - stagecoach
+    - steamroller
+    - tank
+    - train:
+      - bullet train
+      - electric locomotive
+      - subway train
+    - trainPart:
+      - tie
+    - wheelchair
+  - space shuttle
+  - waterVehicle:
+    - boat:
+      - banana boat
+      - sailboat:
+        - square sail
+      - cruiser
+      - speedboat
+      - yacht
+      - cattleship
+      - container ship
+      - cruise ship
+      - liberty ship
+      - supertanker
+      - transport ship
+    - amphibious vehicle
+- weapon:
+  - ammunition:
+    - round
+    - shotgun shell
+  - bomb:
+    - atom bomb
+  - cannon
+  - gas:
+    - tear gas
+  - gun:
+    - bazooka
+    - launcher
+- window:
+  - bay window
+  - display window
+  - dormer window
+  - French window
+  - lancet window
+  - porthole
+  - rose window
+  - skylight
+  - window seat
+  - double-hung window
+  - sliding window

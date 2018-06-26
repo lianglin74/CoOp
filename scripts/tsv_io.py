@@ -16,6 +16,9 @@ import numpy as np
 import yaml
 from itertools import izip
 import progressbar 
+from tqdm import tqdm
+
+gl_cache = {}
 
 class TSVFile(object):
     def __init__(self, tsv_file):
@@ -23,14 +26,14 @@ class TSVFile(object):
         self.lineidx = op.splitext(tsv_file)[0] + '.lineidx' 
         self._fp = None
         self._lineidx = None
+        self._ensure_tsv_opened()
+        self._ensure_lineidx_loaded()
     
     def num_rows(self):
         self._ensure_lineidx_loaded()
         return len(self._lineidx) 
 
     def seek(self, idx):
-        self._ensure_tsv_opened()
-        self._ensure_lineidx_loaded()
         pos = self._lineidx[idx]
         self._fp.seek(pos)
         return [s.strip() for s in self._fp.readline().split('\t')]
@@ -39,8 +42,12 @@ class TSVFile(object):
         if not op.isfile(self.lineidx) and not op.islink(self.lineidx):
             generate_lineidx(self.tsv_file, self.lineidx)
         if self._lineidx is None:
-            with open(self.lineidx, 'r') as fp:
-                self._lineidx = [int(i.strip()) for i in fp.readlines()]
+            if self.lineidx in gl_cache:
+                self._lineidx = gl_cache[self.lineidx]
+            else:
+                with open(self.lineidx, 'r') as fp:
+                    self._lineidx = [int(i.strip()) for i in fp.readlines()]
+                gl_cache[self.lineidx] = self._lineidx
 
     def _ensure_tsv_opened(self):
         if self._fp is None:
@@ -134,6 +141,7 @@ class TSVDataset(object):
         return op.join(self._data_root, '{}.lineidx'.format(split_name))
 
     def get_latest_version(self, split, t=None):
+        assert t is not None, 'if it is none, it is always 0'
         v = 0
         if t is None:
             pattern = op.join(self._data_root, '{}.v*.tsv'.format(split))
@@ -225,8 +233,8 @@ class TSVDataset(object):
                 result[row[0]] = map(int, ss)
             return result
 
-    def load_inverted_label_as_list(self, split, label=None):
-        fname = self.get_data(split, 'inverted.label')
+    def load_inverted_label_as_list(self, split, version=None, label=None):
+        fname = self.get_data(split, 'inverted.label', version)
         if not op.isfile(fname):
             return []
         elif label is None:
@@ -288,7 +296,7 @@ class TSVDataset(object):
             return TSVFile(f).num_rows()
         else:
             f = self.get_data(split + 'X', version=version)
-            assert op.isfile(f)
+            assert op.isfile(f), f
             return len(load_list_file(self.get_shuffle_file(split)))
 
     def iter_data(self, split, t=None, version=None, 
@@ -347,10 +355,12 @@ class TSVDataset(object):
             else:
                 fname = self.get_data(split, t, version)
                 tsv = self._retrieve_tsv(fname)
-                for _i, i in enumerate(filter_idx):
+                for i in tqdm(filter_idx):
                     yield tsv.seek(i)
-                    if progress:
-                        pbar.update(_i)
+                #for _i, i in enumerate(filter_idx):
+                    #yield tsv.seek(i)
+                    #if progress:
+                        #pbar.update(_i)
 
     def _retrieve_tsv(self, fname):
         if fname in self._fname_to_tsv:
@@ -362,6 +372,27 @@ class TSVDataset(object):
 
     def write_data(self, rows, split, t=None, version=None):
         tsv_writer(rows, self.get_data(split, t, version))
+
+    def update_data(self, rows, split, t):
+        '''
+        if the data are the same, we will not do anything. 
+        '''
+        rows = list(rows)
+        assert t is not None
+        v = self.get_latest_version(split, t)
+        is_equal = True
+        for origin_row, new_row in izip(self.iter_data(split, t, v), rows):
+            if len(origin_row) != len(new_row):
+                is_equal = False
+                break
+            for o, n in zip(origin_row, new_row):
+                if o != n: 
+                    is_equal = False
+                    break
+            if not is_equal:
+                break
+        if not is_equal:
+            self.write_data(rows, split, t, v + 1)
 
 def tsv_writer(values, tsv_file_name):
     ensure_directory(os.path.dirname(tsv_file_name))

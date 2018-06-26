@@ -1,5 +1,3 @@
-import matplotlib
-matplotlib.use('Agg')
 from shutil import copyfile
 import cPickle as pkl
 import base64
@@ -81,7 +79,8 @@ from multiprocessing import Process, Queue
 from qd_common import get_mpi_rank, get_mpi_size
 from qd_common import get_mpi_local_rank, get_mpi_local_size
 from qd_common import concat_files
-from yoloinit import data_dependent_init2
+from yoloinit import data_dependent_init_ncc2
+from yoloinit import data_dependent_init_ncc1
 
 def num_non_empty_lines(file_name):
     with open(file_name) as fp:
@@ -132,8 +131,8 @@ def create_shuffle_for_init(data):
     logging.info(pformat(label_num))
             
 
-def data_dependent_init_tree2(pre_trained_full_expid, 
-        target_full_expid):
+def data_dependent_init_tree(pre_trained_full_expid, 
+        target_full_expid, t='ncc2'):
     target_exp = CaffeWrapper(full_expid=target_full_expid,
             load_parameter=True)
     pre_exp = CaffeWrapper(full_expid=pre_trained_full_expid, 
@@ -167,13 +166,21 @@ def data_dependent_init_tree2(pre_trained_full_expid,
     assert found
     write_to_file(str(net), init_target_proto)
     
+    assert t == 'ncc2' or t == 'ncc1'
+
     out_fname = op.join(op.dirname(target_proto), 'snapshot',
-        'model_iter_-1.caffemodel')
+        'model_iter_-1{}.caffemodel'.format('' if t == 'ncc2' else '_ncc1'))
     if not op.isfile(out_fname) or True:
-        process_run(data_dependent_init2, pretrained_weight,
-            pretrained_proto, init_target_proto, out_fname,
-            tr_cnt=20,
-            max_iters=4 * num_class)
+        if t == 'ncc2':
+            process_run(data_dependent_init_ncc2, pretrained_weight,
+                pretrained_proto, init_target_proto, out_fname,
+                tr_cnt=20,
+                max_iters=4 * num_class)
+        else:
+            process_run(data_dependent_init_ncc1, pretrained_weight,
+                pretrained_proto, init_target_proto, out_fname,
+                tr_cnt=20,
+                max_iters=4 * num_class)
     return out_fname
 
 class ProtoGenerator(object):
@@ -713,7 +720,7 @@ class CaffeWrapper(object):
             old_full_expid = init_from['full_expid']
             new_full_expid = self._full_expid
             assert self._kwargs.get('yolo_tree'), 'only tree-based is implemented'
-            base_model = data_dependent_init_tree2(old_full_expid, 
+            base_model = data_dependent_init_tree(old_full_expid, 
                 new_full_expid)
             # evaluate the accuracy
             m = self.best_model()
@@ -1689,6 +1696,7 @@ def default_paths(net, data, expid):
     return path_env
 
 def yolotrain_main(**kwargs):
+    init_logging()
     has_tax_folder = 'taxonomy_folder' in kwargs
     if not has_tax_folder:
         yolotrain(**kwargs)
@@ -1841,6 +1849,8 @@ def get_confusion_matrix(data, net, test_data, expid, threshold=0.2, **kwargs):
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a Yolo network')
+    parser.add_argument('-c', '--config_file', help='config file',
+            type=str)
     parser.add_argument('-g', '--gpus', help='GPU device id to use [0], e.g. -g 0 1 2 3.',
             type=int,
             nargs='+')
@@ -1954,5 +1964,9 @@ if __name__ == '__main__':
     '''
     init_logging()
     args = parse_args()
-    yolotrain_main(**vars(args))
+    kwargs = vars(args)
+    if kwargs.get('config_file'):
+        logging.info('loading parameter from {}'.format(kwargs['config_file']))
+        kwargs = load_from_yaml_file(kwargs['config_file'])
+    yolotrain_main(kwargs)
 
