@@ -539,6 +539,7 @@ class Taxonomy(object):
 
         # cache information
         self.name_to_ancestors = None
+        self.update()
 
     def update(self):
         self.name_to_ancestors = {}

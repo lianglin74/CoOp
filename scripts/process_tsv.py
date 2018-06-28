@@ -1121,6 +1121,81 @@ def visualize_predict(full_expid, predict_file, label, start_id, threshold):
                 [r['class'] for r in rects_pred])
         yield key, im_origin, im_gt_target, im_pred_target, im_gt, im_pred, ap
 
+def visualize_box_no_draw(data, split, version, label, start_id, color_map={}):
+    dataset = TSVDataset(data)
+    logging.info('loading inverted label')
+    if split is None:
+        # guess which split should be used. only support non-composite tsv
+        candidate_split = ['train', 'trainval', 'test']
+        for c in candidate_split:
+            if not op.isfile(dataset.get_data(c)):
+                continue
+            inverted = dataset.load_inverted_label(c, version, label)
+            if label not in inverted:
+                continue
+            n = len(inverted[label])
+            if n <= start_id:
+                start_id = start_id - n
+            else:
+                logging.info('split = {}'.format(split))
+                split = c
+                break
+        if not split:
+            logging.info('cannot find the valid')
+            return
+    else:
+        inverted = dataset.load_inverted_label(split, version, label)
+    logging.info('inverted label loaded')
+    logging.info('keys: {}'.format(inverted.keys()))
+    if label not in inverted:
+        return
+    idx = inverted[label]
+    if len(idx) == 0:
+        return
+    while start_id > len(idx):
+        start_id = start_id - len(idx)
+    while start_id < 0:
+        start_id = start_id + len(idx)
+    logging.info('start to read')
+    rows_image = dataset.iter_data(split, filter_idx=idx[start_id:])
+    rows_label = dataset.iter_data(split, 'label', version=version,
+            filter_idx=idx[start_id:])
+    for row_image, row_label in izip(rows_image, rows_label):
+        key = row_image[0]
+        assert key == row_label[0]
+        assert len(row_image) == 3
+        assert len(row_label) == 2
+        label_str = row_label[-1]
+        img_str = row_image[-1]
+        im = img_from_base64(img_str)
+        origin = np.copy(im)
+        rects = try_json_parse(label_str)
+        new_name = key.replace('/', '_').replace(':', '')
+        if type(rects) is list:
+            rects = [l for l in rects if 'conf' not in l or l['conf'] > 0.3]
+            def get_rect_class(rects):
+                all_class = []
+                all_rect = []
+                for rect in rects:
+                    label_class = rect['class']
+                    rect = rect['rect']
+                    all_class.append(label_class)
+                    if not (rect[0] == 0 and rect[1] == 0
+                            and rect[2] == 0 and rect[3] == 0):
+                        all_rect.append(rect)
+                    else:
+                        all_rect.append((0, 0, im.shape[1] - 1, im.shape[0] - 1))
+                return all_rect, all_class
+            all_rect, all_class = get_rect_class(rects)
+
+            all_rec_label, all_class_label = get_rect_class([l for l in rects if l['class']
+                    == label])
+
+            yield (new_name, origin, {'rect': all_rect, 'class': all_class},
+                   {'rect': all_rec_label, 'class': all_class_label})
+        else:
+            yield new_name, origin, [{'class': label_str, 'rect': [0, 0, 0, 0]}]
+
 def visualize_box(data, split, version, label, start_id, color_map={}):
     dataset = TSVDataset(data)
     logging.info('loading inverted label')

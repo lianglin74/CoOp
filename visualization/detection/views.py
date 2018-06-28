@@ -51,6 +51,7 @@ import uuid
 from qd_common import load_class_ap
 from process_tsv import visualize_predict
 from process_tsv import get_class_count
+from process_tsv import visualize_box_no_draw
 
 init_logging()
 
@@ -311,71 +312,34 @@ def view_image_js(request, data, split, version, label, start_id):
     curr_dir = os.curdir
     os.chdir(get_qd_root())
     start_id = int(float(start_id))
-    images = visualize_box(data, split, version, label, start_id)
+    images = visualize_box_no_draw(data, split, version, label, start_id)
     html_image_paths = []
-    max_image_shown = 10
-    has_next = False
-    for i, (fname, origin, origin_label, im, target_rects) in enumerate(images):
+    max_image_shown = 50
+    label_list = set()
+    for i, (fname, origin, all_info, label_info) in enumerate(images):
         if i >= max_image_shown:
-            has_next = True
-            break 
+            break
         origin_html_path = save_image_in_static(origin, '{}/{}/{}/origin_{}.jpg'.format(data, split,
             version,
             fname))
-        origin_label_html_path = save_image_in_static(origin_label, '{}/{}/{}/origin_label_{}.jpg'.format(data, split,
-            version,
-            fname))
-        html_path = save_image_in_static(im, '{}/{}/{}/bb_{}.jpg'.format(data, split,
-            version,
-            fname))
-        html_image_paths.append((fname, origin_html_path, origin_label_html_path , html_path, 
-            target_rects))
+        html_image_paths.append({"path": origin_html_path,
+                           "all_info": all_info,
+                           "label_info": label_info})
+        label_list.update(all_info['class'])
     os.chdir(curr_dir)
+    label_list = list(label_list)
+    label_list.remove(label)
+    label_list.insert(0, label)
 
-    context = {'images': html_image_paths,
+    context = {'images': json.dumps(html_image_paths),
+            'label_list': json.dumps(list(label_list)),
             'data': data,
             'split': split,
             'version': version,
             'label': label,
             'next_id': str(start_id + len(html_image_paths)),
             'previous_id': str(max(0, start_id - max_image_shown))}
-    return render(request, 'detection/images.html', context)
-
-def view_image(request, data, split, version, label, start_id):
-    curr_dir = os.curdir
-    os.chdir(get_qd_root())
-    start_id = int(float(start_id))
-    images = visualize_box(data, split, version, label, start_id)
-    html_image_paths = []
-    max_image_shown = 10
-    has_next = False
-    for i, (fname, origin, origin_label, im, target_rects) in enumerate(images):
-        if i >= max_image_shown:
-            has_next = True
-            break 
-        origin_html_path = save_image_in_static(origin, '{}/{}/{}/origin_{}.jpg'.format(data, split,
-            version,
-            fname))
-        origin_label_html_path = save_image_in_static(origin_label, 
-                '{}/{}/{}/{}/origin_label_{}.jpg'.format(data, split,
-            version,
-            label,
-            fname))
-        html_path = save_image_in_static(im, '{}/{}/{}/bb_{}.jpg'.format(data, split,
-            version,
-            fname))
-        html_image_paths.append((fname, origin_html_path, origin_label_html_path , html_path, 
-            target_rects))
-    os.chdir(curr_dir)
-
-    context = {'images': html_image_paths,
-            'data': data,
-            'split': split,
-            'version': version,
-            'label': label,
-            'next_id': str(start_id + len(html_image_paths)),
-            'previous_id': str(max(0, start_id - max_image_shown))}
-    return render(request, 'detection/images.html', context)
+    return render(request, 'detection/images_js.html', context)
 
 def view_image2(request):
     if request.GET.get('data', '') == '':
@@ -405,7 +369,7 @@ def view_image2(request):
                 type(version) is unicode else version
         label = request.GET.get('label')
         start_id = request.GET.get('start_id')
-        result = view_image(request, data, split, version, label, start_id)
+        result = view_image_js(request, data, split, version, label, start_id)
         return result
 
 def get_data_sources_for_composite():

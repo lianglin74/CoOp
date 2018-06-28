@@ -16,22 +16,25 @@
 <script>
     let images_dict = JSON.parse("{{ images|escapejs }}");
     let label_list = JSON.parse("{{ label_list|escapejs }}");
-    let unchecked_list = [];
 
     let static_filepath = {% static null %};
 
     window.onload = function() {
         draw_images(images_dict, static_filepath, label_list);
+        window.setTimeout(onClick_abstraction, 1000)
     };
 
     function onClick_abstraction() {
-        if (this.checked) {
-            let index = unchecked_list.indexOf(this.id);
-            unchecked_list.splice(index, 1);
-        } else {
-            unchecked_list.push(this.id);
+        let label_ul = document.getElementById("label_list");
+        inputs = label_ul.getElementsByTagName('input')
+        let unchecked_list = [];
+        for (let i = 0; i < inputs.length; i++) {
+            if (this == inputs[i] && !this.checked) {
+                unchecked_list.push(this.id)
+            } else if (!inputs[i].checked) {
+                unchecked_list.push(inputs[i].id)
+            }
         }
-
         update_images(images_dict, static_filepath, unchecked_list);
     }
 </script>
@@ -42,19 +45,14 @@
 </ul>
 
 <table id="image_table">
-        <tr>
-            <th>Raw Image</th>
-            <th>Image with target labels</th>
-            <th>Image with all labels</th>
-        </tr>
 </table>
 
 
 
 <center>
     {% if label %}
-    <a href="{% url 'detection:view_image2' %}?data={{ data }}&split={{ split }}&version={{ version }}&label={{ label }}&start_id={{ previous_id }}">Previous</a>
-    <a href="{% url 'detection:view_image2' %}?data={{ data }}&split={{ split }}&version={{ version }}&label={{ label }}&start_id={{ next_id }}">Next</a>
+        <a href="{% url 'detection:view_image2' %}?data={{ data }}&split={{ split }}&version={{ version }}&label={{ label }}&start_id={{ previous_id }}">Previous</a>
+        <a href="{% url 'detection:view_image2' %}?data={{ data }}&split={{ split }}&version={{ version }}&label={{ label }}&start_id={{ next_id }}">Next</a>
     {% else %}
         <a href="{% url 'detection:view_image2' %}?data={{ data }}&label={{ label }}&start_id={{ previous_id }}">Previous</a>
         <a href="{% url 'detection:view_image2' %}?data={{ data }}&label={{ label }}&start_id={{ next_id }}">Next</a>
