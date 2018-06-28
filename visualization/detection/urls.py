@@ -4,9 +4,6 @@ from . import views
 app_name = 'detection'
 
 urlpatterns = [
-    url(r'^view_image/(.*)/(.*)/(.*)/([0-9]+)$', 
-        views.view_image, 
-        name='view_image'),
     url(r'taxonomy_validation_result/$',
         views.validate_taxonomy,
         name='taxonomy_validation_result'),
