@@ -65,12 +65,13 @@ datas:
   - imagenet22k_448
   - 7
 detmodel: yolo
-effective_batch_size: 128
+effective_batch_size: 16
 expid: B_noreorg_extraconv2_tree_maxIter.100e_IndexLossWeight0
-max_iters: 100e
+max_iters: 1
 monitor_train_only: false
 net: darknet19_448
-num_extra_convs: 2
+num_extra_convs: 
+- 2
 num_test: 50
 output_tree_path: true
 ovthresh:
@@ -82,10 +83,12 @@ softmax_tree_prediction_threshold: 0.1
 taxonomy_folder: ./aux_data/taxonomy10k/TaxHard/TaxHardV1
 test_data: TaxHardV1_1_with_bb
 test_split: test
-tree_max_iters2: 30e
+tree_max_iters2: 0e
 yolo_full_gpu: true
 yolo_index_threshold_loss_extra_weight: 0
 yolo_softmax_norm_by_valid: true
 yolo_test_maintain_ratio: true
 yolo_tree: true
 yolo_tree_eval_label_lift: false
+gpus: 
+- 0

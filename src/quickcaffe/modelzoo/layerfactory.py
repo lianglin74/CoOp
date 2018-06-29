@@ -25,17 +25,28 @@ def conv(bottom, nout, ks=3, stride=1, pad=0, lr=1, weight_filler=dict(type='msr
                 num_output=nout, pad=pad, param = param, weight_filler=weight_filler, bias_filler=bias_filler)
     return _conv
 
-def conv_nobias(bottom, nout, ks=3, stride=1, pad=0, lr=1, weight_filler=dict(type='msra'), deploy=True):
+def conv_nobias(bottom, nout, ks=3, stride=1, pad=0, lr=1,
+        weight_filler=dict(type='msra'), deploy=True, group=0):
     if deploy:
-        _conv = L.Convolution(bottom, kernel_size=ks, stride=stride,
-                num_output=nout, pad=pad, bias_term=False)
+        if group > 0:
+            _conv = L.Convolution(bottom, kernel_size=ks, stride=stride,
+                    num_output=nout, pad=pad, bias_term=False, group=group)
+        else:
+            _conv = L.Convolution(bottom, kernel_size=ks, stride=stride,
+                    num_output=nout, pad=pad, bias_term=False)
     else:
         param = [dict(lr_mult=lr, decay_mult=1)]
-        _conv = L.Convolution(bottom, kernel_size=ks, stride=stride,
-                num_output=nout, pad=pad, bias_term=False, param = param, weight_filler=weight_filler)
+        if group > 0:
+            _conv = L.Convolution(bottom, kernel_size=ks, stride=stride,
+                    num_output=nout, pad=pad, bias_term=False, param = param,
+                    weight_filler=weight_filler, group=group)
+        else:
+            _conv = L.Convolution(bottom, kernel_size=ks, stride=stride,
+                    num_output=nout, pad=pad, bias_term=False, param = param, weight_filler=weight_filler)
     return _conv
 
-def fc(bottom, nout, lr=1, weight_filler=dict(type='msra'), bias_filler=dict(type='constant', value=0), deploy=True):
+def fc(bottom, nout, lr=1, weight_filler=dict(type='msra'),
+        bias_filler=dict(type='constant', value=0), deploy=True, **kwargs):
     if deploy:
         _fc = L.InnerProduct(bottom, num_output = nout)
     else:
@@ -72,8 +83,10 @@ def fc_bn(bottom, nout, lr=1, deploy=True):
     scale = L.Scale(_bn, in_place=True, scale_param=dict(bias_term=True))
     return _fc, _bn, scale
 
-def conv_bn(bottom, nout, ks=3, stride=1, pad=0, lr=1, bn_no_train=False, deploy=True):
-    _conv = conv_nobias(bottom, nout, ks=ks, stride=stride, pad=pad, lr=lr, deploy=deploy)
+def conv_bn(bottom, nout, ks=3, stride=1, pad=0, lr=1, bn_no_train=False,
+        deploy=True, group=0):
+    _conv = conv_nobias(bottom, nout, ks=ks, stride=stride, pad=pad, lr=lr,
+            deploy=deploy, group=group)
     _bn = bn(_conv, in_place=True, bn_no_train=bn_no_train, deploy=deploy)
     scale = L.Scale(_bn, in_place=True, scale_param=dict(bias_term=True))
     return _conv, _bn, scale

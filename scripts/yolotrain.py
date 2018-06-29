@@ -1860,8 +1860,10 @@ def parse_args():
             help='detection model', default='yolo')
     parser.add_argument('-t', '--iters', dest='max_iters',  help='number of iterations to train', 
             default=10000, required=False, type=str)
-    parser.add_argument('-d', '--data', help='the name of the dataset', required=True)
-    parser.add_argument('-e', '--expid', help='the experiment id', required=True)
+    parser.add_argument('-d', '--data', help='the name of the dataset',
+            required=False)
+    parser.add_argument('-e', '--expid', help='the experiment id',
+            required=False)
     parser.add_argument('-ft', '--force_train', 
             default=False,
             action='store_true', 
@@ -1968,5 +1970,5 @@ if __name__ == '__main__':
     if kwargs.get('config_file'):
         logging.info('loading parameter from {}'.format(kwargs['config_file']))
         kwargs = load_from_yaml_file(kwargs['config_file'])
-    yolotrain_main(kwargs)
+    yolotrain_main(**kwargs)
 
