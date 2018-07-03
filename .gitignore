@@ -128,7 +128,6 @@ tmp_run
 
 visualization/detection/static
 .machines.yaml
-aux_data/taxonomy10k
 
 visualization/db.sqlite3
 visualization/taxonomy/taxonomy.yaml

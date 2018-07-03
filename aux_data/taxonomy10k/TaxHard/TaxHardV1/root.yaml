@@ -1,0 +1,44 @@
+- person:
+  - adult
+  - child
+  - infant
+  - elder
+  - __
+  - male
+  - female
+  - __
+  - athlete:
+    - basketball player
+    - baseball player
+    - climber
+    - cyclist
+    - football player
+    - golfer
+    - hang glider
+    - runner
+    - skateboarder
+    - ice skater
+    - skier
+    - swimmer
+    - tennis player
+  - formal:
+    - bride
+    - groom
+  - anchor
+  - beekeeper
+  - health professional
+  - driver
+  - firefighter
+  - mascot
+  - monk
+  - police officer
+  - clown
+  - dancer:
+    - ballet dancer
+  - fire-eater
+  - juggler
+  - musician:
+    - guitarist
+    - singer
+- fork
+- spoon
