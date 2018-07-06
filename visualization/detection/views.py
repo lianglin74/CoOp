@@ -41,6 +41,7 @@ from django.http import HttpResponseRedirect
 from django.urls import reverse
 import cv2
 from django import template
+import simplejson as json
 from process_tsv import build_taxonomy_impl
 import sys
 import traceback2 as traceback
@@ -328,8 +329,9 @@ def view_image_js(request, data, split, version, label, start_id):
         label_list.update(all_info['class'])
     os.chdir(curr_dir)
     label_list = list(label_list)
-    label_list.remove(label)
-    label_list.insert(0, label)
+    if label is not None:
+        label_list.remove(label)
+        label_list.insert(0, label)
 
     context = {'images': json.dumps(html_image_paths),
             'label_list': json.dumps(list(label_list)),
@@ -497,7 +499,6 @@ def clean_up_taxonomy_folders(folder):
 def download_file(request, *callback_args, **callback_kwargs):
     request_url =' %s' % (request.get_full_path)
     print request_url
-    import ipdb;ipdb.set_trace(context=15)
     file_path = request_url.split('\'')[1].split('http://10.137.68.61:8000/detection/media/')[0].replace('/detection/media','')
     file_type = file_path.split('/')[-1].split('.')[-1]
     file_name = file_path.split('/')[-1]

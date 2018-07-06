@@ -11,6 +11,17 @@
         list-style: none;
     }
 
+    .sticky {
+        position: fixed;
+        top: 0;
+        width: 100%;
+    }
+
+    #label_checks {
+        background: #555;
+        color: #f1f1f1;
+    }
+
 </style>
 <script src={% static "js/image_draw.js" %} type="text/javascript"></script>
 <script>
@@ -25,8 +36,8 @@
     };
 
     function onClick_abstraction() {
-        let label_ul = document.getElementById("label_list");
-        inputs = label_ul.getElementsByTagName('input')
+        let label_ul = document.getElementById("label_table");
+        let inputs = label_ul.getElementsByTagName('input')
         let unchecked_list = [];
         for (let i = 0; i < inputs.length; i++) {
             if (this == inputs[i] && !this.checked) {
@@ -38,16 +49,29 @@
         update_images(images_dict, static_filepath, unchecked_list);
     }
 </script>
+<script>
+    window.onscroll = function() {myFunction()};
+    
+    function myFunction() {
+        let header = document.getElementById("label_checks");
+        let sticky = header.offsetTop;
+        if (window.pageYOffset > sticky) {
+            header.classList.add("sticky");
+        } else {
+            header.classList.remove("sticky");
+        }
+    }
+</script>
 
-
-<ul id="label_list">
-    <li>Labels</li>
-</ul>
+<div id="label_checks">
+Labels
+<input type="checkbox" onclick="onClickAllCheckbox()"></input><label>Select/Unselect All</label>
+<table id="label_table" >
+</table>
+</div>
 
 <table id="image_table">
 </table>
-
-
 
 <center>
     {% if label %}
@@ -58,4 +82,21 @@
         <a href="{% url 'detection:view_image2' %}?data={{ data }}&label={{ label }}&start_id={{ next_id }}">Next</a>
     {% endif %}
 </center>
+<script>
+    function onClickAllCheckbox() {
+        let label_ul = document.getElementById("label_table");
+        let inputs = label_ul.getElementsByTagName('input');
+        let is_all_checked = true;
+        for (let i = 0; i < inputs.length; i++) {
+            if (!inputs[i].checked) {
+                is_all_checked = false;
+                break;
+            }
+        }
+        for (let i = 0; i < inputs.length; i++) {
+            inputs[i].checked = !is_all_checked;
+        }
+        onClick_abstraction()
+    }
+</script>
 

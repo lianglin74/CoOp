@@ -126,7 +126,6 @@ tmp_run
 # vscode
 .vscode/
 
-visualization/detection/static
 .machines.yaml
 
 visualization/db.sqlite3
