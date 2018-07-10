@@ -2105,7 +2105,7 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
     output_ambigous_noffsets(tax.root, ambigous_noffset_file)
     
     data_sources = []
-
+    
     datas = kwargs['datas']
     cleaness = [d[1] if type(d) is tuple else 10 for d in datas]
     datas = [d[0] if type(d) is tuple else d for d in datas]
@@ -2344,6 +2344,234 @@ def standarize_crawled(tsv_input, tsv_output):
             yield image_name, json.dumps(rects), image_str
     tsv_writer(gen_rows(), tsv_output)
 
+def get_data_sources():
+    return [
+        ('coco2017', 10),
+        ('voc0712', 10), 
+        ('Naturalist', 10),
+        ('elder', 10),
+        ('imagenet200Diff', 10),
+        ('OpenImageV4_448', 10),
+        ('open_images_clean_1', 9),
+        ('open_images_clean_2', 9),
+        ('open_images_clean_3', 9),
+        ('imagenet1kLocClean', 9),
+        ('imagenet3k_448Clean', 9),
+        ('VisualGenomeClean', 9),
+        ('brand1048Clean', 8),
+        ('mturk700_url_as_keyClean', 8),
+        ('crawl_office_v1', 8),
+        ('crawl_office_v2', 8),
+        ('Materialist', 8),
+        ('4000_Full_setClean', 7),
+        ('MSLogoClean', 8),
+        ('clothingClean', 8),
+        ('imagenet22k_448', 7),
+        ]
+
+
+def get_img_url(img_key):
+    clean_name = _map_img_key_to_name(img_key)
+    url = _get_url_from_name(clean_name)
+    return url
+
+def _map_img_key_to_name(key):
+    _EXT = ".jpg"
+    if key.startswith("brand"):
+        return "brand" + str(hash(key)) + _EXT
+    else:
+        key = key.lower()
+        if key.endswith(_EXT):
+            return key
+        else:
+            return key + _EXT
+
+def _get_url_from_name(name):
+    _SITE = 'https://cogsimagestorage.blob.core.windows.net/'
+    _CONTAINER_NAME = "detectortrain"
+    return _SITE + _CONTAINER_NAME + "/" + name
+
+def parse_combine(key, datas):
+    def found_starts(key, datas):
+        found = None
+        for data in datas:
+            if key.startswith(data + '_'):
+                assert found is None
+                found = data
+        return found
+    data = found_starts(key, datas)
+    if data is None:
+        return None, None, key
+    else:
+        key = key[len(data) + 1 : ]
+        splits = ['train', 'trainval', 'test']
+        split = found_starts(key, splits)
+        key = key[len(split) + 1 : ]
+        return data, split, key
+
+def convert_to_uhrs_with_url(data):
+    dataset = TSVDataset(data)
+    datas = [d for d, _ in get_data_sources()]
+    for split in ['train', 'trainval', 'test']:
+        if not dataset.has(split, 'label'):
+            continue
+        v = dataset.get_latest_version(split, 'label')
+        def gen_rows():
+            for row in dataset.iter_data(split, 'label', version=v):
+                key = row[0]
+                _, _, key = parse_combine(key, datas)
+                row.append(get_img_url(key))
+                yield row
+        dataset.write_data(gen_rows(), split, 
+                'url', version=v)
+
+def find_same_rects(target, rects, iou=0.95):
+    same_class_rects = [r for r in rects if r['class'] == target['class']]
+    return [r for r in same_class_rects if 
+        calculate_iou(target['rect'], r['rect']) > iou]
+
+def rect_in_rects(target, rects, iou=0.95):
+    same_class_rects = [r for r in rects if r['class'] == target['class']]
+    return any(r for r in same_class_rects if 
+        calculate_iou(target['rect'], r['rect']) > iou)
+
+def load_key_rects(iter_data):
+    result = []
+    logging.info('loading key rects')
+    for row in tqdm(iter_data):
+        assert len(row) == 2
+        result.append((row[0], json.loads(row[1])))
+    return result
+
+def convert_uhrs_result_back_to_sources(in_tsv, debug=True, tree_file=None):
+    rows = tsv_reader(in_tsv)
+    key_rects3 = []
+    num_yes, num_no, num_un = 0, 0, 0
+    for row in rows:
+        # key, yes, no, uncertain
+        assert len(row) == 4
+        rects_yes = json.loads(row[1])
+        rects_no = json.loads(row[2])
+        rects_un = json.loads(row[3])
+        num_yes = num_yes + len(rects_yes)
+        num_no = num_no + len(rects_no)
+        num_un = num_un + len(rects_un)
+        key_rects3.append([row[0], [rects_yes, rects_no, rects_un]])
+
+    logging.info('#yes={}; #no={}; #un={}; #yes/(#yes+#no+#un)={}'.format(
+        num_yes, num_no, num_un, 1.*num_yes/(num_yes+num_no+num_un)))
+    
+    if tree_file:
+        tax = Taxonomy(load_from_yaml_file(tree_file))
+        mapper = LabelToSynset()
+        mapper.populate_noffset(tax.root)
+
+    datas = get_data_sources()
+    datas = [data for data, _ in datas]
+    datasplitkey_rects3 = [[parse_combine(key, datas), rects3] 
+            for key, rects3 in key_rects3]
+    data_split_key_rects3 = [(data, split, key, rects3) 
+            for (data, split, key), rects3 in datasplitkey_rects3]
+
+    data_to_split_key_rects3 = list_to_dict(data_split_key_rects3, 0)
+
+    for data in data_to_split_key_rects3:
+        logging.info(data)
+        if tree_file:
+            source_dataset = TSVDatasetSource(data, tax.root)
+            source_dataset._ensure_initialized()
+        else:
+            source_dataset = TSVDataset(data)
+        split_key_rects3 = data_to_split_key_rects3[data]
+        split_to_key_rects3 = list_to_dict(split_key_rects3, 0)
+        for split in split_to_key_rects3:
+            logging.info(split)
+            key_rects3 = split_to_key_rects3[split]
+            key_to_rects3 = list_to_dict(key_rects3, 0)
+            v = source_dataset.get_latest_version(split, 'label')
+            logging.info('{} - {}'.format(data, split))
+            source_key_rects = load_key_rects(source_dataset.iter_data(split, 'label', version=v))
+            is_equal = True
+            num_added, num_removed = 0, 0
+            meta = {'in_tsv': in_tsv}
+            for i, (key, origin_rects) in tqdm(enumerate(source_key_rects)):
+                if debug:
+                    old_origin_rects = copy.deepcopy(origin_rects)
+                yes_rects, no_rects, un_rects = key_to_rects3.get(key, [[[], [], []]])[0]
+                # if yes_rects are not in original, add it
+                for r in yes_rects:
+                    same_rects = find_same_rects(r, origin_rects)
+                    if len(same_rects) > 0:
+                        for s in same_rects:
+                            s['uhrs_confirm'] = s.get('uhrs_confirm', 0) + 1
+                    else:
+                        r['uhrs_confirm'] = r.get('uhrs_confirm', 0) + 1
+                        origin_rects.append(copy.deepcopy(r))
+                        is_equal = False
+                        num_added = num_added + 1
+                # if no_rects are in original, remove it
+                for r in no_rects:
+                    delete_rects = find_same_rects(r, origin_rects)
+                    if tree_file:
+                        if r['class'] in source_dataset._targetlabel_to_sourcelabels:
+                            for reverse_class in source_dataset._targetlabel_to_sourcelabels[r['class']]:
+                                r2 = copy.deepcopy(r)
+                                r2['class'] = reverse_class
+                                delete_rects2 = find_same_rects(r2, origin_rects)
+                                delete_rects.extend(delete_rects2)
+                    if 'class_from' in r:
+                        r2 = copy.deepcopy(r)
+                        r2['class'] = r2['class_from']
+                        delete_rects2 = find_same_rects(r2, origin_rects)
+                        delete_rects.extend(delete_rects2)
+                    for d in delete_rects:
+                        # delete rects may include duplicate terms
+                        if d in origin_rects:
+                            origin_rects.remove(d)
+                            num_removed = num_removed + 1
+                            is_equal = False
+                if debug:
+                    if len(origin_rects) != len(old_origin_rects):
+                        for _, _, im_str in source_dataset.iter_data(split, filter_idx=[i]):
+                            im = img_from_base64(im_str)
+                            old_im = im.copy()
+                            draw_bb(old_im, [r['rect'] for r in old_origin_rects],
+                                    [r['class'] for r in old_origin_rects])
+                            new_im = im.copy()
+                            draw_bb(new_im, [r['rect'] for r in origin_rects],
+                                    [r['class'] for r in origin_rects])
+                            yes_im = im.copy()
+                            draw_bb(yes_im, [r['rect'] for r in yes_rects],
+                                    [r['class'] for r in yes_rects])
+                            no_im = im.copy()
+                            draw_bb(no_im, [r['rect'] for r in no_rects],
+                                    [r['class'] for r in no_rects])
+
+                            logging.info(pformat(old_origin_rects))
+                            logging.info(pformat(origin_rects))
+                            logging.info(pformat(yes_rects))
+                            logging.info(pformat(no_rects))
+                            show_images([old_im, new_im, yes_im, no_im], 2, 2)
+    
+            meta['num_added_rects'] = num_added
+            meta['num_removed_rects'] = num_removed
+            meta['total_number_images'] = len(source_key_rects)
+    
+            meta['avg_added_rects'] = 1. * num_added / meta['total_number_images']
+            meta['avg_removed_rects'] = 1. * num_removed / meta['total_number_images']
+    
+            assert not source_dataset.has(split, 'label', v + 1)
+            if not is_equal:
+                source_dataset.write_data(((key, json.dumps(rects)) for key, rects in source_key_rects),
+                        split, 'label', version=v+1)
+                meta_file = source_dataset.get_data(split, 'label.metadata', version=v+1) + '.yaml'
+                write_to_yaml_file(meta, meta_file)
+                logging.info(pformat(meta))
+            else:
+                logging.info('equal - {} - {}'.format(data, split))
+        populate_dataset_details(data)
+
+
 def process_tsv_main(**kwargs):
     if kwargs['type'] == 'gen_tsv':
         input_folder = kwargs['input']
@@ -2378,6 +2606,19 @@ def process_tsv_main(**kwargs):
         populate_dataset_details(data)
     elif kwargs['type'] == 'build_all_data_index':
         populate_all_dataset_details()
+    elif kwargs['type'] == 'extract_for_uhrs':
+        taxonomy_folder = kwargs['input']
+        data = kwargs['data']
+        build_taxonomy_impl(taxonomy_folder,
+                data=data,
+                datas=get_data_sources(),
+                max_image_per_label=kwargs.get('max_image_per_label', 10000000),
+                min_image_per_label=kwargs.get('min_image_per_label', 0),
+                num_test=0)
+        convert_to_uhrs_with_url(data + '_with_bb')
+    elif kwargs['type'] == 'merge_labels':
+        in_tsv = kwargs['input']
+        convert_uhrs_result_back_to_sources(in_tsv)
     else:
         logging.info('unknown task {}'.format(kwargs['type']))
 
@@ -2403,6 +2644,14 @@ def parse_args():
             default=argparse.SUPPRESS,
             help='the dataset name under data/',
             type=str, 
+            required=False)
+    parser.add_argument('-maxi', '--max_image_per_label', 
+            default=argparse.SUPPRESS,
+            type=int, 
+            required=False)
+    parser.add_argument('-mini', '--min_image_per_label', 
+            default=argparse.SUPPRESS,
+            type=int, 
             required=False)
     return parser.parse_args()
 
