@@ -3,7 +3,6 @@ from process_image import show_images
 import shutil
 import glob
 import yaml
-import magic
 import matplotlib.pyplot as plt
 from tsv_io import tsv_reader, tsv_writer
 from pprint import pformat
@@ -772,7 +771,7 @@ def populate_dataset_details(data, check_image_details=False):
             label_idx_file = dataset.get_data(split, 'inverted.label', v)
             label_count_file = dataset.get_data(split, 'inverted.label.count', v)
             if op.isfile(label_idx_file):
-                if not op.isfile(label_count_file) or True:
+                if not op.isfile(label_count_file):
                     label_idx = dataset.load_inverted_label_as_list(split, v)
                     tsv_writer(((l, str(len(i))) for l, i in label_idx), label_count_file)
             else:
@@ -1144,12 +1143,10 @@ def visualize_box_no_draw(data, split, version, label, start_id, color_map={}):
             logging.info('cannot find the valid')
             return
     else:
-        inverted = dataset.load_inverted_label(split, version, label)
-    logging.info('inverted label loaded')
-    logging.info('keys: {}'.format(inverted.keys()))
-    if label not in inverted:
-        return
-    idx = inverted[label]
+        if label is not None:
+            idx = dataset.load_inverted_label(split, version, label)[label]
+        else:
+            idx = range(dataset.num_rows(split, t='label', version=version))
     if len(idx) == 0:
         return
     while start_id > len(idx):
@@ -1398,6 +1395,7 @@ class ImageTypeParser(object):
 
     def _ensure_init(self):
         if self.m is None:
+            import magic
             #m = magic.open(magic.MAGIC_MIME_TYPE)
             m = magic.from_file(magic.MAGIC_MIME_TYPE)
             m.load()
@@ -1747,7 +1745,7 @@ def convert_label(label_tsv, idx, label_mapper, with_bb):
                     r2['class'] = t 
                     if rect['class'] != t:
                         # keep this for logging
-                        r2['class_from'] = t
+                        r2['class_from'] = rect['class']
                     rects2.append(r2)
         assert len(rects2) > 0
         row[1] = rects2

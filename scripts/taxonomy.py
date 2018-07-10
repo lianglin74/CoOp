@@ -8,7 +8,7 @@ import cv2
 import yaml
 import numpy as np
 import logging
-from ete2 import Tree, TreeStyle, TextFace, add_face_to_node
+from ete2 import Tree
 import nltk
 from nltk.corpus import wordnet as wn
 from qd_common import write_to_file, read_to_buffer
