@@ -51,8 +51,10 @@ import logging
 import uuid
 from qd_common import load_class_ap
 from process_tsv import visualize_predict
+from process_tsv import visualize_predict_no_draw
 from process_tsv import get_class_count
 from process_tsv import visualize_box_no_draw
+import copy
 
 init_logging()
 
@@ -86,6 +88,53 @@ def view_exp_list(request):
     full_expids.sort()
     context = {'full_expids': full_expids}
     return render(request, 'detection/exp_list.html', context)
+
+def view_model_by_predict_file3(request, full_expid, predict_file, 
+        label, start_id, threshold):
+    start_id = int(float(start_id))
+    threshold = float(threshold)
+    
+    # qd code
+    curr_dir_backup = os.getcwd()
+    os.chdir(get_qd_root())
+
+    pairs = visualize_predict_no_draw(full_expid, predict_file, label, start_id, threshold)
+    max_pairs = 50
+    all_type_to_rects = []
+    all_url = []
+    for i, (key, im_origin, rects_gt, rects_pred, ap) in enumerate(pairs):
+        path_origin = save_image_in_static(im_origin, '{}/{}_origin.png'.format(
+            predict_file, key))
+        all_url.append(op.join('/static/', path_origin))
+        all_type_to_rects.append({'gt': rects_gt,
+            'pred': rects_pred})
+        if i >= max_pairs - 1:
+            break
+    
+    common_param = [('full_expid', full_expid), 
+            ('predict_file', predict_file), 
+            ('filter_label', label),
+            ('threshold', threshold)]
+    previous_param = []
+    previous_param.extend(common_param)
+    previous_start_id = start_id - max_pairs
+    previous_param.append(('start_id', previous_start_id))
+    next_param = []
+    next_param.extend(common_param)
+    next_param.append(('start_id', str(start_id + len(all_url))))
+    previous_button_param = '&'.join(['{}={}'.format(key, value) for key, value
+        in previous_param])
+    previous_link = reverse('detection:view_model') + '?' + previous_button_param
+    next_button_param = '&'.join(['{}={}'.format(key, value) for key, value in 
+        next_param])
+    next_link = reverse('detection:view_model') + '?' + next_button_param
+    
+    context = {'all_type_to_rects': json.dumps(all_type_to_rects),
+            'target_label': label,
+            'all_url': json.dumps(all_url),
+            'previous_link': previous_link,
+            'next_link': next_link}
+    return render(request, 'detection/images_js2.html', context)
 
 def view_model_by_predict_file2(request, full_expid, predict_file, 
         label, start_id, threshold):
@@ -256,24 +305,63 @@ def view_model_prediction_labelmap(request, full_expid, predict_file):
     return render(request, 'detection/view_model_prediction_labelmap.html',
             context)
 
+def view_test_model(request, full_expid, predict_file):
+    context = {'full_expid': full_expid,
+            'predict_file': predict_file}
+    return render(request, 'detection/test_model.html',
+            context)
+
+def test_model(request):
+    assert request.method == 'POST'
+    coded = request.FILES['image_file'].read()
+    import cv2
+    import numpy as np
+    nparr = np.frombuffer(coded, np.uint8)
+    im = cv2.imdecode(nparr, cv2.IMREAD_COLOR);
+    from yolotrain import predict_one_view
+    model_param = request.POST['predict_file'].split('.caffemodel')[0] + '.caffemodel'
+    all_bb, all_label, all_conf = run_in_qd(predict_one_view, im, 
+            request.POST['full_expid'], 
+            model_param)
+    infos = []
+    info = {}
+    info['pred'] = [{'rect': bb, 'class': l, 'conf': conf } for bb, l, conf in zip(all_bb, all_label, all_conf)]
+    infos.append(info)
+    import random
+    html_path = save_image_in_static(im, 'predict_request/{}.png'.format(int(1000 * random.random())))
+    context = {'all_type_to_rects': json.dumps(infos), 
+            'all_url': json.dumps(['/static/' + html_path])}
+    return render(request, 'detection/images_js2.html', context)
+
 def view_model(request):
     if 'full_expid' in request.GET and \
             'predict_file' in request.GET and \
             'filter_label' in request.GET and \
             'start_id' in request.GET and \
             'threshold' in request.GET:
-        return view_model_by_predict_file2(request, 
+        return view_model_by_predict_file3(request, 
                 request.GET['full_expid'],
                 request.GET['predict_file'],
                 request.GET['filter_label'],
                 request.GET['start_id'],
                 request.GET['threshold'])
+        #return view_model_by_predict_file2(request, 
+                #request.GET['full_expid'],
+                #request.GET['predict_file'],
+                #request.GET['filter_label'],
+                #request.GET['start_id'],
+                #request.GET['threshold'])
         #return view_model_by_predict_file(request, 
                 #request.GET['full_expid'],
                 #request.GET['predict_file'],
                 #request.GET['filter_label'],
                 #request.GET['start_id'],
                 #request.GET['threshold'])
+    elif 'full_expid' in request.GET and \
+            'predict_file' in request.GET and \
+            'test_model' in request.GET:
+        return view_test_model(request, 
+                request.GET['full_expid'], request.GET['predict_file'])
     elif 'full_expid' in request.GET and 'predict_file' in request.GET:
         return view_model_prediction_labelmap(request, 
                 request.GET['full_expid'], request.GET['predict_file'])
@@ -305,6 +393,50 @@ def save_image_in_static(im, rel_path):
         #im = cv2.resize(im, (int(im.shape[1] * factor), 400))
     save_image(im, disk_path)
     return html_path
+
+def view_image_js2(request, data, split, version, label, start_id):
+    '''
+    use js to render the box in the client side
+    '''
+    curr_dir = os.curdir
+    os.chdir(get_qd_root())
+    start_id = int(float(start_id))
+    images = visualize_box_no_draw(data, split, version, label, start_id)
+    all_type_to_rects = []
+    all_url = []
+    max_image_shown = 50
+    label_list = set()
+    for i, (fname, origin, all_info, label_info) in enumerate(images):
+        if i >= max_image_shown:
+            break
+        origin_html_path = save_image_in_static(origin, '{}/{}/{}/origin_{}.jpg'.format(data, split,
+            version,
+            fname))
+        gt = [{'class': l, 'rect': r} for l, r in zip(all_info['class'], all_info['rect'])]
+        all_url.append('/static/' + origin_html_path)
+        all_type_to_rects.append({'gt': gt })
+        label_list.update(all_info['class'])
+    os.chdir(curr_dir)
+    label_list = list(label_list)
+    if label is not None:
+        label_list.remove(label)
+        label_list.insert(0, label)
+
+    kwargs = copy.deepcopy(request.GET)
+    kwargs['start_id'] = str(max(0, start_id - max_image_shown))
+    previous_link = reverse('detection:view_image2')
+    previous_link = previous_link + '?' + '&'.join(['{}={}'.format(k, kwargs[k]) for k in kwargs])
+    kwargs = copy.deepcopy(request.GET)
+    kwargs['start_id'] = str(start_id + len(all_type_to_rects))
+    next_link = reverse('detection:view_image2')
+    next_link = next_link + '?' + '&'.join(['{}={}'.format(k, kwargs[k]) for k in kwargs])
+
+    context = {'all_type_to_rects': json.dumps(all_type_to_rects),
+            'target_label': label,
+            'all_url': json.dumps(all_url),
+            'previous_link': previous_link,
+            'next_link': next_link}
+    return render(request, 'detection/images_js2.html', context)
 
 def view_image_js(request, data, split, version, label, start_id):
     '''
@@ -371,7 +503,8 @@ def view_image2(request):
                 type(version) is unicode else version
         label = request.GET.get('label')
         start_id = request.GET.get('start_id')
-        result = view_image_js(request, data, split, version, label, start_id)
+        #result = view_image_js(request, data, split, version, label, start_id)
+        result = view_image_js2(request, data, split, version, label, start_id)
         return result
 
 def get_data_sources_for_composite():

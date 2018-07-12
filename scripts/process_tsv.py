@@ -1007,6 +1007,102 @@ def try_json_parse(s):
     except ValueError, e:
         return s
 
+def visualize_predict_no_draw(full_expid, predict_file, label, start_id, threshold):
+    test_data, test_data_split = parse_test_data(predict_file)
+    pred_full_path = op.join('output', full_expid, 'snapshot', predict_file)
+    pred_key_path = '{}.key.tsv'.format(pred_full_path)
+    pred_label_path = '{}.labelmap.th{}.tsv'.format(pred_full_path,
+            threshold)
+    pred_inverted_path = '{}.inverted.th{}.tsv'.format(pred_full_path,
+            threshold)
+    pred_sorted_cache_path = '{}.key_idxGT_idxPred_ap.th{}.{}.tsv'.format(
+            pred_full_path, threshold, label)
+    
+    test_dataset = TSVDataset(test_data)
+    if not op.isfile(pred_sorted_cache_path):
+        if not op.isfile(pred_key_path) or \
+                not op.isfile(pred_label_path) or \
+                not op.isfile(pred_inverted_path):
+            logging.info('loading {}'.format(pred_full_path))
+            inverted, pred_keys = create_inverted_list2(
+                    tsv_reader(pred_full_path), threshold)
+            pred_labels = inverted.keys()
+            logging.info('writing {}'.format(pred_key_path))
+            tsv_writer([[k] for k in pred_keys], pred_key_path)
+            tsv_writer(([l] for l in pred_labels), pred_label_path)
+            tsv_writer(((l, ' '.join(map(str, inverted[l]))) for l in
+                    pred_labels), pred_inverted_path)
+        keys_from_pred = []
+        labelmap = load_list_file(pred_label_path)
+        pred_keys = load_list_file(pred_key_path)
+        if label in labelmap:
+            inverted_row = TSVFile(pred_inverted_path).seek(labelmap.index(label))
+            assert inverted_row[0] == label
+            assert len(inverted_row) == 2
+            idx_from_pred = map(int, inverted_row[1].split(' '))
+            keys_from_pred = [pred_keys[i] for i in idx_from_pred]
+        else:
+            keys_from_pred = []
+        inverted_test_split = test_dataset.load_inverted_label(test_data_split, version=-1,
+                label=label)
+        if label in inverted_test_split:
+            idx_from_gt = inverted_test_split[label]
+        else:
+            idx_from_gt = []
+        rows = test_dataset.iter_data(test_data_split, t='label', version=-1,
+                filter_idx=idx_from_gt, unique=True)
+        keys_from_gt = [row[0] for row in rows]
+        target_keys = list(set(keys_from_pred + keys_from_gt))
+        target_keys = [k for k in target_keys if k in pred_keys]
+        target_idx_in_pred = [pred_keys.index(k) for k in target_keys]
+        gt_keys = test_dataset.load_keys(test_data_split)
+        target_idx_in_gt = [gt_keys.index(k) for k in target_keys]
+        rows_in_gt = test_dataset.iter_data(test_data_split, t='label', version=-1,
+                filter_idx=target_idx_in_gt)
+        pred_tsv = TSVFile(pred_full_path)
+        rows_in_pred = (pred_tsv.seek(i) for i in target_idx_in_pred)
+        target_aps = []
+        for row_in_gt, row_in_pred in izip(rows_in_gt, rows_in_pred):
+            assert row_in_gt[0] == row_in_pred[0]
+            assert len(row_in_gt) == 2
+            assert len(row_in_pred) == 2
+            rects_gt = json.loads(row_in_gt[1])
+            rects_pred = json.loads(row_in_pred[1])
+            rects_gt = [r for r in rects_gt if r['class'] == label]
+            rects_pred = [r for r in rects_pred if r['class'] == label]
+            ap = calculate_image_ap([r['rect'] for r in rects_gt], 
+                    [r['rect'] for r in rects_pred])
+            target_aps.append(ap)
+        key_idxGT_idxPred_aps = zip(target_keys, target_idx_in_gt,
+                target_idx_in_pred, target_aps)
+        key_idxGT_idxPred_aps = sorted(key_idxGT_idxPred_aps, key=lambda x:
+                x[-1])
+        tsv_writer(key_idxGT_idxPred_aps, pred_sorted_cache_path)
+    
+    tsv = TSVFile(pred_sorted_cache_path)
+    total_num = tsv.num_rows()
+    if total_num == 0:
+        return
+    while start_id < 0:
+        start_id = start_id + total_num
+    while start_id >= total_num:
+        start_id = start_id - total_num
+    i = start_id
+    tsv_pred = TSVFile(pred_full_path)
+    for i in range(start_id, total_num):
+        key, idx_gt, idx_pred, ap = tsv.seek(i)
+        idx_gt, idx_pred, ap = int(idx_gt), int(idx_pred), float(ap)
+        row_gt = next(test_dataset.iter_data(test_data_split,
+            filter_idx=[idx_gt]))
+        row_pred = tsv_pred.seek(idx_pred)
+        assert row_gt[0] == row_pred[0], (row_gt[0], row_pred[0])
+
+        rects_gt = json.loads(row_gt[1])
+        rects_pred = json.loads(row_pred[1])
+        rects_pred = [r for r in rects_pred if r['conf'] > threshold]
+        im_origin = img_from_base64(row_gt[-1])
+        yield key, im_origin, rects_gt, rects_pred, ap
+
 def visualize_predict(full_expid, predict_file, label, start_id, threshold):
     test_data, test_data_split = parse_test_data(predict_file)
     pred_full_path = op.join('output', full_expid, 'snapshot', predict_file)

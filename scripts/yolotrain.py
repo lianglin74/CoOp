@@ -170,7 +170,7 @@ def data_dependent_init_tree(pre_trained_full_expid,
 
     out_fname = op.join(op.dirname(target_proto), 'snapshot',
         'model_iter_-1{}.caffemodel'.format('' if t == 'ncc2' else '_ncc1'))
-    if not op.isfile(out_fname) or True:
+    if not op.isfile(out_fname):
         if t == 'ncc2':
             process_run(data_dependent_init_ncc2, pretrained_weight,
                 pretrained_proto, init_target_proto, out_fname,
@@ -362,6 +362,8 @@ class ProtoGenerator(object):
             solver_param['debug_info'] = kwargs['solver_debug_info']
         if kwargs.get('iter_size', 1) != 1:
             solver_param['iter_size'] = kwargs['iter_size']
+        if 'momentum_correction' in kwargs:
+            solver_param['momentum_correction'] = kwargs['momentum_correction']
 
         if lr_policy == 'multifixed':
             if kwargs.get('stagelr', None):
@@ -414,6 +416,23 @@ class ProtoGenerator(object):
         else:
             assert False
 
+def predict_one_view(im, full_expid, model_param):
+    from demo_detection import predict_one
+    c = CaffeWrapper(full_expid=full_expid, load_parameter=True)
+    test_proto_file = c._path_env['test_proto_file']
+    model_param = op.join('output', full_expid, 'snapshot', model_param)
+    model = construct_model(c._path_env['solver'],
+                        c._path_env['test_proto_file'],
+                        is_last=True)
+    pixel_mean = model.mean_value
+    label_names = load_list_file(c._labelmap)
+    source_image_tsv = im
+    thresh = 0.25
+    gpu = -1
+    result = predict_one(im, test_proto_file, model_param, pixel_mean, label_names,
+        source_image_tsv, thresh, gpu)
+    return result
+
 class CaffeWrapper(object):
     def __init__(self, load_parameter=False, **kwargs):
         self._kwargs = {} 
@@ -453,7 +472,6 @@ class CaffeWrapper(object):
         self._output_root = self._path_env['output_root']
         self._output = self._path_env['output']
         self._full_expid = op.basename(self._output)
-
 
         if 'detmodel' not in self._kwargs:
             self._kwargs['detmodel'] = 'yolo'
@@ -505,7 +523,7 @@ class CaffeWrapper(object):
         from demo_detection import predict_online
         predict_online(test_proto_file, model_param, pixel_mean, labels,
                 source_image_tsv, thresh, waitkey, gpu)
-    
+
     def _get_num_classes(self):
         if 'num_classes' not in self._kwargs:
             if 'target_synset_tree' in self._kwargs:
@@ -716,12 +734,12 @@ class CaffeWrapper(object):
         return model
 
     def _create_init_model(self, init_from):
-        if init_from['type'] == 'ncc2':
+        if init_from['type'] == 'ncc2' or init_from['type'] == 'ncc1':
             old_full_expid = init_from['full_expid']
             new_full_expid = self._full_expid
             assert self._kwargs.get('yolo_tree'), 'only tree-based is implemented'
             base_model = data_dependent_init_tree(old_full_expid, 
-                new_full_expid)
+                new_full_expid, t=init_from['type'])
             # evaluate the accuracy
             m = self.best_model()
             m.model_param = base_model
@@ -1416,6 +1434,7 @@ class CaffeWrapper(object):
                 is_last=False))
         all_model.append(construct_model(solver, test_proto_file,
                 is_last=True))
+        all_model = sorted(all_model, key=lambda x: x.model_iter)
         all_ready_model = [m for m in all_model if os.path.isfile(m.model_param)]
         valid = [(m, self._perf_file(m)) for m in all_ready_model if
                         os.path.isfile(self._perf_file(m))] 

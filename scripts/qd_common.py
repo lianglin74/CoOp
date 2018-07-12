@@ -174,7 +174,12 @@ def parse_iteration(predict_file):
     end_key = '.caffemodel'
     begin_idx = predict_file.find(begin_key)
     end_idx = predict_file.find(end_key)
-    return float(predict_file[begin_idx + len(begin_key) : end_idx])
+    num_str = predict_file[begin_idx + len(begin_key) : end_idx]
+    try:
+        return float(num_str)
+    except:
+        logging.info('interpreting {} as -1'.format(num_str))
+        return -1
 
 def get_all_predict_files(full_expid):
     model_folder = op.join('output', full_expid, 'snapshot')

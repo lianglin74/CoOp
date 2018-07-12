@@ -24,15 +24,16 @@
   </script>
 </head>
 
-<p>there are {{ prediction_files|length }} models</p>
-
-<ul class="col_ul">
-    {% for prediction_file in prediction_files %}
-    <li>
-        <a href="{% url 'detection:view_model' %}?full_expid={{ full_expid }}&predict_file={{ prediction_file }}">{{ prediction_file }}</a>
-        <a href="{% url 'detection:view_model' %}?full_expid={{ full_expid }}&predict_file={{ prediction_file }}&test_model=1">Online Test</a>
-    </li>
-    {% endfor %}
-</ul>
-
+<center>
+<form id="uploadbanner" 
+      enctype="multipart/form-data" 
+      method="post" 
+      action="/detection/test_model/">{% csrf_token %}
+    <input type='hidden' id='full_expid' name='full_expid' value='{{ full_expid }}' />
+    <input type='hidden' id='full_expid' name='predict_file' value='{{ predict_file }}' />
+    <input id="fileupload" name="image_file" type="file"
+        onchange="form.submit()" />
+    <!--<input type="submit" value="submit" id="submit" />-->
+</form>
+</center>
 
