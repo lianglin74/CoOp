@@ -1260,6 +1260,10 @@ class CaffeWrapper(object):
             return None
 
         if self._detmodel != 'classification':
+            if self._test_dataset.has(self._test_split, 'eval_label_to_keys'):
+                eval_label_to_keys_iter = self._test_dataset.iter_data(
+                        self._test_split, 'eval_label_to_keys')
+                kwargs['eval_label_to_keys_iter'] = eval_label_to_keys_iter
             eval_file = deteval_iter(truth_iter=self._test_dataset.iter_data(
                 self._test_split, 'label'), dets=predict_result, **kwargs)
             # create the index of the eval file so that others can load the
@@ -1297,7 +1301,31 @@ class CaffeWrapper(object):
                         s[size_type][thresh]['class_ap'] = \
                                 result[size_type][thresh]['class_ap']
                 write_to_file(json.dumps(s, indent=4, sort_keys=True), simple_file)
-
+            
+            simple_file = '{}.prec{}.threshold.tsv'.format(eval_file, 0.5)
+            if worth_create(eval_file, simple_file):
+                if result is None:
+                    logging.info('data reading...')
+                    eval_result= read_to_buffer(eval_file)
+                    logging.info('json parsing...')
+                    result = json.loads(eval_result)
+                class_thresh = result['overall']['0.3']['class_thresh']
+                for l in class_thresh:
+                    precision_ths = class_thresh[l].keys()
+                    break
+                assert '0.5' in precision_ths
+                for precision_th in precision_ths:
+                    simple_file = '{}.prec{}.threshold.tsv'.format(
+                            eval_file, precision_th)
+                    def gen_rows():
+                        for l in class_thresh:
+                            th_recall = class_thresh[l].get(precision_th, [1, 0])
+                            yield l, th_recall[0], th_recall[1]
+                    tsv_writer(gen_rows(), simple_file)
+            to_file = '{}.prec.threshold.tsv'.format(eval_file)
+            from_file = '{}.prec{}.threshold.tsv'.format(eval_file, 0.5)
+            if worth_create(from_file, to_file):
+                copyfile(from_file, to_file)
         else:
             eval_file = self._perf_file(model)
             if os.path.isfile(eval_file) and not worth_create(model_param,

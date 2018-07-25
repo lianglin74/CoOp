@@ -13,6 +13,7 @@ from functools import partial
 from qd_common import FileProgressingbar, worth_create
 import logging
 import copy
+from tsv_io import tsv_writer
 
 def load_truths_iter(rows):
     logging.info('loading gt')
@@ -196,9 +197,9 @@ def load_baseline(baselinefolder) :
             retdict[expname] = report_metrics;
     return retdict;
 
-def _eval(truths, detresults, ovthresh, confs=None):
+def _eval(truths, detresults, ovthresh, confs=None, label_to_keys=None):
     if confs is None:
-        confs = [0.3, 0.5, 0.9]
+        confs = [0.3,0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
     #calculate metrics
     y_scores = []
     y_trues = []
@@ -211,6 +212,12 @@ def _eval(truths, detresults, ovthresh, confs=None):
             continue;
         c_detects = detresults[label]        #detection results for current class
         c_truths = truths[label]             #truths for current class
+        if label_to_keys is not None:
+            valid_keys = label_to_keys.get(label, [])
+            c_truths = {key: c_truths[key] for key in c_truths if key in
+                valid_keys}
+            c_detects = [(key, conf, bbox) for key, conf, bbox in c_detects 
+                    if key in valid_keys]
         (c_y_scores, c_y_trues, c_npos) = evaluate_(c_detects, c_truths, ovthresh)
         if confs and np.sum(c_y_trues):
             precision, recall, thresholds = metrics.precision_recall_curve(c_y_trues, c_y_scores)
@@ -333,13 +340,14 @@ def  gen_truthslist(truths):
             truths_large[label][key] = crects_large;
     return {'small':truths_small, 'medium':truths_medium, 'large':truths_large, 'overall':truths};  
 
-def get_report (truths, dets, ovths, msreport):
+def get_report (truths, dets, ovths, msreport, label_to_keys=None):
     truths_list = gen_truthslist(truths) if msreport==True else {'overall':truths};
     reports = dict();
     for part in truths_list:
         reports[part] = dict()
         for ov_th in ovths:    
-            reports[part][ov_th] = _eval(truths_list[part], dets, ov_th);
+            reports[part][ov_th] = _eval(truths_list[part], dets, ov_th,
+                    label_to_keys=label_to_keys);
     return reports;   #return the overal reports
 
 def print_reports(reports, precths, report_file_table):
@@ -452,14 +460,20 @@ def deteval_iter(truth_iter, dets='', vocdets='', name='',
         if kwargs.get('yolo_tree_eval_label_lift', True):
             detresults = lift_detects(detresults, label_tree)
 
+    label_to_keys = None
+    if kwargs.get('eval_label_to_keys_iter'):
+        label_to_keys = {label_keys[0]: set(label_keys[1:]) for label_keys in
+            kwargs['eval_label_to_keys_iter']}
     #brief report on different object size
-    reports = get_report(truths, detresults, ovthresh, multiscale)
+    reports = get_report(truths, detresults, ovthresh, multiscale,
+            label_to_keys=label_to_keys)
     # detail report with p-r curve
     
     with open(report_file,"w") as fout:
         fout.write(json.dumps(reports,indent=4, sort_keys=True));
     
     print_reports(reports, precth, report_file + '.table')
+    
     if classap is not None and classap in ovthresh:
         caplist = sorted(reports['overall'][classap]['class_ap'].items(), key=lambda x:-x[1])
         for pair in caplist:
@@ -473,59 +487,9 @@ def deteval(truth='', dets='', vocdets='', name='',
     '''
     use deteval_iter if possible, which is more general
     '''
-    truthsfile = truth
-    # parse arguments
-    assert  os.path.isfile(truthsfile), truthsfile + " is not found"
-
-    #Load data
-    if dets!='' :
-        detsfile = dets
-        (report_dir, fbase, ext) = splitpath(detsfile);
-    elif vocdets!='':
-        report_dir = vocdets
-        fbase = 'voc2007'
-    else:
-        assert False, "argument dets/vocdets is missing!"
-
-    #save the evaluation result to the report file, which can be used as baseline
-    exp_name = name if name !="" else fbase;
-    report_name = exp_name if report_dir=='' else '/'.join([report_dir,exp_name]);
-    report_file = report_name + ".report" 
-
-    if os.path.isfile(report_file) and \
-            not kwargs.get('force_evaluate', False) and \
-            not worth_create(detsfile, report_file):
-        logging.info('skip to evaluate (exists) {}'.format(report_file))
-        return report_file
-
-    if dets!='' :
-        detresults = load_dets(detsfile);
-    elif vocdets!='':
-        detresults = load_voc_dets(vocdets);
-    else:
-        assert False, "argument dets/vocdets is missing!"
-        
-    truths = load_truths(truthsfile);
-    if 'target_synset_tree' in kwargs:
-        label_tree = LabelTree(kwargs['target_synset_tree']) 
-        truths = lift_truths(truths, label_tree)
-        if kwargs.get('yolo_tree_eval_label_lift', True):
-            detresults = lift_detects(detresults, label_tree)
-
-    #brief report on different object size
-    reports = get_report(truths, detresults, ovthresh, multiscale)
-    # detail report with p-r curve
-    
-    with open(report_file,"w") as fout:
-        fout.write(json.dumps(reports,indent=4, sort_keys=True));
-    
-    print_reports(reports, precth, report_file + '.table')
-    if classap is not None and classap in ovthresh:
-        caplist = sorted(reports['overall'][classap]['class_ap'].items(), key=lambda x:-x[1])
-        for pair in caplist:
-            print('%s\t%.4g'%pair)
-
-    return report_file
+    return deteval_iter(tsv_reader(truth),
+            dets, vocdets, name, precth, multiscale, ovthresh,
+            classap, baselinefolder, **kwargs)
 
 if __name__ == '__main__':
     args = parse_args();
