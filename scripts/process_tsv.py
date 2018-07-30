@@ -2594,18 +2594,7 @@ def convert_uhrs_result_back_to_sources(in_tsv, debug=True, tree_file=None):
                 if debug:
                     old_origin_rects = copy.deepcopy(origin_rects)
                 yes_rects, no_rects, un_rects = key_to_rects3.get(key, [[[], [], []]])[0]
-                # if yes_rects are not in original, add it
-                for r in yes_rects:
-                    same_rects = find_same_rects(r, origin_rects)
-                    if len(same_rects) > 0:
-                        for s in same_rects:
-                            s['uhrs_confirm'] = s.get('uhrs_confirm', 0) + 1
-                    else:
-                        r['uhrs_confirm'] = r.get('uhrs_confirm', 0) + 1
-                        origin_rects.append(copy.deepcopy(r))
-                        is_equal = False
-                        num_added = num_added + 1
-                # if no_rects are in original, remove it
+                # if no_rects are in original, remove it. remove first
                 for r in no_rects:
                     delete_rects = find_same_rects(r, origin_rects)
                     if tree_file:
@@ -2626,6 +2615,25 @@ def convert_uhrs_result_back_to_sources(in_tsv, debug=True, tree_file=None):
                             origin_rects.remove(d)
                             num_removed = num_removed + 1
                             is_equal = False
+                # if yes_rects are not in original, add it
+                for r in yes_rects:
+                    same_rects = find_same_rects(r, origin_rects)
+                    if len(same_rects) > 0:
+                        for s in same_rects:
+                            if s.get('uhrs_confirm', 0) == 0:
+                                is_equal = False
+                            s['uhrs_confirm'] = s.get('uhrs_confirm', 0) + 1
+                    else:
+                        r['uhrs_confirm'] = r.get('uhrs_confirm', 0) + 1
+                        origin_rects.append(copy.deepcopy(r))
+                        is_equal = False
+                        num_added = num_added + 1
+                for r in un_rects:
+                    same_rects = find_same_rects(r, origin_rects)
+                    for s in same_rects:
+                        if s.get('uhrs_uncertain', 0) == 0:
+                            is_equal = True
+                        s['uhrs_uncertain'] = s.get('uhrs_uncertain', 0) + 1
                 if debug:
                     if len(origin_rects) != len(old_origin_rects):
                         for _, _, im_str in source_dataset.iter_data(split, filter_idx=[i]):
