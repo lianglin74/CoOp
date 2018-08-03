@@ -998,10 +998,17 @@ def caffemodel_num_param(model_file):
                 result += len(b.data)
     return result
 
+def unicode_representer(dumper, uni):
+    node = yaml.ScalarNode(tag=u'tag:yaml.org,2002:str', value=uni)
+    return node
+
+yaml.add_representer(unicode, unicode_representer)
+
 def write_to_yaml_file(context, file_name):
     ensure_directory(op.dirname(file_name))
     with open(file_name, 'w') as fp:
-        yaml.dump(context, fp, default_flow_style=False)
+        yaml.dump(context, fp, default_flow_style=False,
+                encoding='utf-8', allow_unicode=True)
 
 def load_from_yaml_file(file_name):
     with open(file_name, 'r') as fp:

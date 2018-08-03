@@ -234,18 +234,18 @@ class ProtoGenerator(object):
 
         layers = str(n.to_proto()).split('layer {')[1:]
         layers = ['layer {' + x for x in layers]
-        if detmodel == 'fasterrcnn':
-            im_info2 = 3
-            image_dim = 224
-        elif detmodel == 'yolo':
-            im_info2 = 2
-            image_dim = 416
-        elif detmodel == 'classification':
-            image_dim = 224
-        else:
-            assert False
 
         if deploy:
+            if detmodel == 'fasterrcnn':
+                im_info2 = 3
+                image_dim = 224
+            elif detmodel == 'yolo':
+                im_info2 = 2
+                image_dim = 416
+            elif detmodel == 'classification':
+                image_dim = 224
+            else:
+                assert False
             layers[0] = 'input: {}\ninput_shape {{\n  dim: {}\n  dim: {}\n  dim: {}\n  dim: {}\n}}\n'.format(
                     '"data"', 1, 3, image_dim, image_dim)
             if detmodel == 'classification':
@@ -416,7 +416,18 @@ class ProtoGenerator(object):
         else:
             assert False
 
-def predict_one_view(im, full_expid, model_param):
+def predict_one_view(im, full_expid, predict_file):
+    if full_expid == 'brand1048Clean_net_RongFasterRCNN':
+        from tsvdet import tsvdet_iter
+        model_param = predict_file.split('.caffemodel')[0] + '.caffemodel'
+        for result in tsvdet_iter(op.join('output', full_expid, 'snapshot',
+            model_param), [im]):
+            return [r['rect'] for r in result], [r['class'] for r in result], [r['conf'] for r in result]
+    else:
+        return predict_one_yolo_view(im, full_expid, predict_file)
+
+def predict_one_yolo_view(im, full_expid, predict_file):
+    model_param = predict_file.split('.caffemodel')[0] + '.caffemodel'
     from demo_detection import predict_one
     c = CaffeWrapper(full_expid=full_expid, load_parameter=True)
     test_proto_file = c._path_env['test_proto_file']
@@ -427,11 +438,29 @@ def predict_one_view(im, full_expid, model_param):
     pixel_mean = model.mean_value
     label_names = load_list_file(c._labelmap)
     source_image_tsv = im
-    thresh = 0.25
-    gpu = -1
+    thresh = 0.2
+    gpu = 0
+    yolo_test_maintain_ratio = 'maintainRatio' in predict_file
     result = predict_one(im, test_proto_file, model_param, pixel_mean, label_names,
-        source_image_tsv, thresh, gpu)
-    return result
+        source_image_tsv, thresh, gpu,
+        yolo_test_maintain_ratio=yolo_test_maintain_ratio)
+    th_file = op.splitext(predict_file)[0] + '.report.prec.threshold.tsv'
+    th_file = op.join('output', full_expid, 'snapshot', th_file)
+    logging.info('using {}'.format(th_file))
+    if op.exists(th_file):
+        per_cat_th = {l: float(th) for l, th, _ in tsv_reader(th_file)}
+        result_bb, result_label, result_conf = [], [], []
+        for b, l, c in izip(*result):
+            if c > per_cat_th.get(l, 0.01):
+                result_bb.append(b)
+                result_label.append(l)
+                result_conf.append(c)
+            else:
+                logging.info('ignore {}-{}'.format(l, c))
+        return result_bb, result_label, result_conf
+    else:
+        logging.info('no per-cat threshold')
+        return result
 
 class CaffeWrapper(object):
     def __init__(self, load_parameter=False, **kwargs):
@@ -1260,7 +1289,9 @@ class CaffeWrapper(object):
             return None
 
         if self._detmodel != 'classification':
-            if self._test_dataset.has(self._test_split, 'eval_label_to_keys'):
+            if kwargs.get('use_eval_label_to_keys'):
+                assert self._test_dataset.has(self._test_split,
+                        'eval_label_to_keys')
                 eval_label_to_keys_iter = self._test_dataset.iter_data(
                         self._test_split, 'eval_label_to_keys')
                 kwargs['eval_label_to_keys_iter'] = eval_label_to_keys_iter
@@ -1310,21 +1341,23 @@ class CaffeWrapper(object):
                     logging.info('json parsing...')
                     result = json.loads(eval_result)
                 class_thresh = result['overall']['0.3']['class_thresh']
+                precision_ths = None
                 for l in class_thresh:
                     precision_ths = class_thresh[l].keys()
                     break
-                assert '0.5' in precision_ths
-                for precision_th in precision_ths:
-                    simple_file = '{}.prec{}.threshold.tsv'.format(
-                            eval_file, precision_th)
-                    def gen_rows():
-                        for l in class_thresh:
-                            th_recall = class_thresh[l].get(precision_th, [1, 0])
-                            yield l, th_recall[0], th_recall[1]
-                    tsv_writer(gen_rows(), simple_file)
+                if precision_ths:
+                    assert '0.5' in precision_ths
+                    for precision_th in precision_ths:
+                        simple_file = '{}.prec{}.threshold.tsv'.format(
+                                eval_file, precision_th)
+                        def gen_rows():
+                            for l in class_thresh:
+                                th_recall = class_thresh[l].get(precision_th, [1, 0])
+                                yield l, th_recall[0], th_recall[1]
+                        tsv_writer(gen_rows(), simple_file)
             to_file = '{}.prec.threshold.tsv'.format(eval_file)
             from_file = '{}.prec{}.threshold.tsv'.format(eval_file, 0.5)
-            if worth_create(from_file, to_file):
+            if op.isfile(from_file) and worth_create(from_file, to_file):
                 copyfile(from_file, to_file)
         else:
             eval_file = self._perf_file(model)
@@ -1826,6 +1859,8 @@ def yolo_tree_train(**ikwargs):
         kwargs['max_iters'] = kwargs['tree_max_iters2']
     else:
         kwargs['max_iters'] = '30e'
+    if kwargs['max_iters'] == 0 or kwargs['max_iters'] == '0e':
+        return
     c = CaffeWrapper(**kwargs)
     if not monitor_train_only:
         model = c.train()

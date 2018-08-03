@@ -28,6 +28,11 @@
     let all_type_to_rects = JSON.parse("{{ all_type_to_rects|escapejs }}");
     let target_label = '{{ target_label }}'
     let all_url = JSON.parse("{{ all_url|escapejs }}");
+    {% if all_key %}
+    let all_key = JSON.parse("{{ all_key |escapejs }}");
+    {% else %}
+    let all_key = []
+    {% endif %}
     
     let label_list_dic = {};
     let type_list_dic = {};
@@ -54,7 +59,7 @@
     let type_list = Object.keys(type_list_dic);
 
     window.onload = function() {
-        draw_images(all_url);
+        draw_images(all_url, all_key);
         add_label_points(label_list);
         add_type_points(type_list);
         window.setTimeout(onClick_abstraction, 1000)

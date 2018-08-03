@@ -263,7 +263,7 @@ def im_detect(caffe_net, im, pixel_mean, network_input_size=416, stat=None, **kw
         time_curr = time.time()
         stat['minum_mean'] = time_curr - time_start
         time_start = time_curr
-
+    
     if kwargs.get('yolo_test_maintain_ratio'):
         h, w = im_orig.shape[0:2]
         alpha = network_input_size / np.sqrt(h * w)
@@ -394,11 +394,12 @@ def postfilter(im, scores, boxes, class_map, max_per_image=1000, thresh=0.005):
     return json.dumps(det_results)
 
 def detect_image(caffe_net, im, pixel_mean, names, stat=None, thresh=0,
-        yolo_tree=False):
+        yolo_tree=False, **kwargs):
     '''
     this is not used in evaluation
     '''
-    scores, boxes = im_detect(caffe_net, im, pixel_mean, stat=stat)
+    scores, boxes = im_detect(caffe_net, im, pixel_mean, stat=stat,
+            **kwargs)
     if stat:
         time_start = time.time()
     bblist = result2bblist3(im, scores, boxes, names, thresh, yolo_tree)

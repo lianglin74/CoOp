@@ -31,9 +31,8 @@
       action="/detection/test_model/">{% csrf_token %}
     <input type='hidden' id='full_expid' name='full_expid' value='{{ full_expid }}' />
     <input type='hidden' id='full_expid' name='predict_file' value='{{ predict_file }}' />
-    <input id="fileupload" name="image_file" type="file"
-        onchange="form.submit()" />
-    <!--<input type="submit" value="submit" id="submit" />-->
+    <input id="fileupload" name="image_file" type="file" />
+    <input type="submit" value="submit" id="submit" />
 </form>
 </center>
 

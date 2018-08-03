@@ -68,6 +68,581 @@ import copy
 from tsv_io import create_inverted_list2
 from qd_common import calculate_image_ap
 from tqdm import tqdm
+from pymongo import MongoClient
+import pymongo
+from datetime import datetime
+
+def inject_image(data, split):
+    dataset = TSVDataset(data)
+    client = MongoClient()
+    db = client['qd']
+    images = db['image']
+    images.delete_many(filter={'data': data, 'split': split})
+    images.create_index([
+        ('data', pymongo.ASCENDING),
+        ('split', pymongo.ASCENDING),
+        ('key', pymongo.ASCENDING),
+        ],
+        unique=True)
+    from StringIO import StringIO
+    from process_tsv import ImageTypeParser
+    from cloud_storage import CloudStorage
+    all_data = []
+    
+    datas = [d for d, _ in get_data_sources()]
+    
+    logging.info('injecting {} - {}'.format(data, split))
+    for i, (key, label_str) in tqdm(enumerate(dataset.iter_data(split, 'label'))):
+        url = get_img_url(parse_combine(key)[-1])
+        doc = {'data': data,
+                'split': split,
+                'key': key,
+                'idx_in_split': i,
+                'url': url,
+                'create_time': datetime.now(),
+                }
+        all_data.append(doc)
+    
+    for i, (key, hw) in enumerate(dataset.iter_data(split, 'hw')):
+        h, w = [int(_) for _ in hw.split(' ')]
+        assert all_data[i]['key'] == key
+        all_data[i]['height'] = h
+        all_data[i]['width'] = w
+        
+    logging.info(len(all_data))
+    if len(all_data) > 0:
+        images.insert_many(all_data)
+
+
+def ensure_update_pred_with_correctness(data, split,
+        full_expid, predict_file):
+    ensure_inject_gt(data, split)
+    ensure_inject_pred(full_expid, predict_file, data, split)
+
+    client = MongoClient()
+    db = client['qd']
+    task = db['task']
+    result = task.find_one(filter={'task_type': 'inject_update_pred_with_correctness',
+        'data': data, 'split': split, 
+        'full_expid': full_expid, 
+        'predict_file': predict_file})
+    if result is None or result['status'] == 'started':
+        if result is None:
+            task.insert_one({'task_type': 'inject_update_pred_with_correctness',
+                'data': data, 
+                'split': split, 
+                'full_expid': full_expid,
+                'predict_file': predict_file,
+                'status': 'started', 
+                'create_time': datetime.now()})
+        update_pred_with_correctness(data, split,
+            full_expid,
+            predict_file)
+        task.update_many(filter={'task_type': 'inject_update_pred_with_correctness',
+            'data': data, 
+            'split': split, 
+            'full_expid': full_expid,
+            'predict_file': predict_file},
+            update={'$set': {'status': 'done'}})
+
+def update_pred_with_correctness(test_data, test_split,
+        full_expid,
+        predict_file):
+    client = MongoClient()
+    db = client['qd']
+    pred_collection = db['predict_result']
+    _gt = db['ground_truth']
+    _pred = db['predict_result']
+
+    # get the latest version of the gt
+    pipeline = [{'$match': {'data': test_data, 
+                            'split': test_split,
+                            'version': {'$lte': 0}}},
+                {'$group': {'_id': {'data': '$data',
+                                    'split': '$split',
+                                    'key': '$key',
+                                    'action_target_id': '$action_target_id'},
+                            'contribution': {'$sum': '$contribution'},
+                            'class': {'$first': '$class'},
+                            'rect': {'$first': '$rect'}}},
+                {'$match': {'contribution': {'$gte': 1}}}, # if it is 0, it means we removed the box
+                {'$addFields': {'data': '$_id.data', 
+                                'split': '$_id.split',
+                                'key': '$_id.key'}},
+                ]
+    def get_query_pipeline(data, split, key, class_name):
+        return [{'$match': {'$expr': {'$and': [{'$eq': ['$data', '$${}'.format(data)]},
+                                               {'$eq': ['$split', '$${}'.format(split)]},
+                                               {'$eq': ['$key', '$${}'.format(key)]},
+                                               {'$eq': ['$class', '$${}'.format(class_name)]}]}}},
+                 {'$group': {'_id': '$action_target_id',
+                             'contribution': {'$sum': '$contribution'},
+                             'create_time': {'$max': '$create_time'},
+                             'rect': {'$first': '$rect'}}},
+                 {'$match': {'contribution': {'$gte': 1}}},
+                ]
+    
+    # get the target prediction bounding boxes
+    pipeline = [{'$match': {'full_expid': full_expid,
+                            'pred_file': predict_file}},
+                {'$group': {'_id': {'data': '$data',
+                                   'split': '$split', 
+                                   'key': '$key', 
+                                   'class': '$class'},
+                           'pred_box': {'$push': {'rect': '$rect',
+                                                  'conf': '$conf',
+                                                  'pred_box_id': '$_id'}}}},
+                {'$lookup': {'from': 'ground_truth',
+                             'let': {'target_data': '$_id.data', 
+                                     'target_split': '$_id.split',
+                                     'target_key': '$_id.key', 
+                                     'target_class': '$_id.class'},
+                             'pipeline': get_query_pipeline('target_data',
+                                                            'target_split', 
+                                                            'target_key', 
+                                                            'target_class'),
+                             'as': 'gt_box'}},
+            ]
+    all_correct_box, all_wrong_box = [], []
+    for row in tqdm(_pred.aggregate(pipeline, allowDiskUse=True)):
+        curr_pred = row['pred_box']
+        curr_gt = row['gt_box']
+        curr_pred = sorted(curr_pred, key=lambda x: -x['conf'])
+        for p in curr_pred:
+            matched = [g for g in curr_gt if not g.get('used', False)
+                    and calculate_iou(g['rect'], p['rect']) > 0.3]
+            if len(matched) == 0:
+                all_wrong_box.append(p['pred_box_id'])
+            else:
+                all_correct_box.append(p['pred_box_id'])
+                matched[0]['used'] = True
+        if len(all_correct_box) > 1000:
+            logging.info('updating')
+            _pred.update_many({'_id': {'$in': all_correct_box}}, 
+                    {'$set': {'correct': 1}})
+            all_correct_box = []
+        if len(all_wrong_box) > 1000:
+            logging.info('updating')
+            _pred.update_many({'_id': {'$in': all_wrong_box}}, 
+                    {'$set': {'correct': 0}})
+            all_wrong_box = []
+    if len(all_correct_box) > 0:
+        _pred.update_many({'_id': {'$in': all_correct_box}}, 
+                {'$set': {'correct': 1}})
+        all_correct_box = []
+    if len(all_wrong_box) > 0:
+        _pred.update_many({'_id': {'$in': all_wrong_box}}, 
+                {'$set': {'correct': 0}})
+        all_wrong_box = []
+
+
+def ensure_inject_expid_pred(full_expid, predict_file):
+    data, split = parse_test_data(predict_file)
+    ensure_inject_image(data, split)
+    ensure_inject_gt(data, split)
+    ensure_inject_pred(full_expid,
+            predict_file,
+            data, 
+            split)
+    ensure_update_pred_with_correctness(data, split,
+        full_expid, predict_file)
+
+def ensure_inject_pred(full_expid, predict_file, data, split):
+    client = MongoClient()
+    db = client['qd']
+    task = db['task']
+    result = task.find_one(filter={'task_type': 'inject_pred',
+        'data': data, 
+        'split': split, 
+        'full_expid': full_expid,
+        'predict_file': predict_file})
+    if result is None or result['status'] == 'started':
+        if result is None:
+            task.insert_one({'task_type': 'inject_pred',
+                'data': data, 
+                'split': split, 
+                'full_expid': full_expid,
+                'predict_file': predict_file,
+                'status': 'started', 
+                'create_time': datetime.now()})
+        inject_pred(full_expid, predict_file, data, split)
+        task.update_many(filter={'task_type': 'inject_pred',
+            'data': data, 
+            'split': split, 
+            'full_expid': full_expid,
+            'predict_file': predict_file}, 
+            update={'$set': {'status': 'done'}})
+
+def inject_pred(full_expid, pred_file, test_data, test_split):
+    '''
+    try to replace inject_pred
+    '''
+    client = MongoClient()
+    db = client['qd']
+    pred_collection = db['predict_result']
+    pred_collection.delete_many({'full_expid': full_expid, 'pred_file': pred_file})
+    all_rect = []
+    for key, label_str in tqdm(tsv_reader(op.join('output', full_expid, 'snapshot', pred_file))):
+        rects = json.loads(label_str)
+        for i, r in enumerate(rects):
+            r['full_expid'] = full_expid
+            r['pred_file'] = op.basename(pred_file)
+            r['data'] = test_data
+            r['split'] = test_split
+            r['key'] = key
+        all_rect.extend(rects)
+        if len(all_rect) > 1000:
+            pred_collection.insert_many(all_rect)
+            all_rect = []
+    if len(all_rect) > 0:
+        pred_collection.insert_many(all_rect)
+
+
+def ensure_inject_image(data, split):
+    client = MongoClient()
+    db = client['qd']
+    task = db['task']
+    result = task.find_one(filter={'task_type': 'inject_image',
+        'data': data, 'split': split})
+    if result is None or result['status'] == 'started':
+        if result is None:
+            task.insert_one({'task_type': 'inject_image',
+                'data': data, 
+                'split': split, 
+                'status': 'started', 
+                'create_time': datetime.now()})
+        inject_image(data, split)
+        task.update_many(filter={'task_type': 'inject_image',
+            'data': data, 
+            'split': split}, update={'$set': {'status': 'done'}})
+
+
+def ensure_inject_gt(data, split):
+    client = MongoClient()
+    db = client['qd']
+    task = db['task']
+    if split is None:
+        for s in ['train', 'trainval', 'test']:
+            ensure_inject_gt(data, s)
+    else:
+        result = task.find_one(filter={'task_type': 'inject_gt',
+            'data': data, 'split': split})
+        if result is None or result['status'] == 'started':
+            if result is None:
+                task.insert_one({'task_type': 'inject_gt',
+                    'data': data, 
+                    'split': split, 
+                    'status': 'started', 
+                    'create_time': datetime.now()})
+            ensure_inject_image(data, split)
+            inject_gt(data, split)
+            task.update_many(filter={'task_type': 'inject_gt',
+                'data': data, 
+                'split': split}, update={'$set': {'status': 'done'}})
+
+def inject_gt(data, split):
+    client = MongoClient()
+    db = client['qd']
+    gt = db['ground_truth']
+    dataset = TSVDataset(data)
+    gt.delete_many({'data': data, 'split': split})
+    all_rect = []
+    version = 0
+    previous_key_to_rects = {}
+    while True:
+        if not dataset.has(split, 'label', version):
+            break
+        logging.info('{}-{}-{}'.format(data, split, version))
+        for i, (key, label_str) in tqdm(enumerate(dataset.iter_data(
+            split, 'label', version=version))):
+            full_key = '_'.join([data, split, key])
+            rects = json.loads(label_str)
+            for j, r in enumerate(rects):
+                r['data'] = data
+                r['split'] = split
+                r['key'] = key
+                r['action_target_id'] = hash_sha1([data, split, key, r['class'], r['rect']])
+                r['version'] = version
+            if version == 0:
+                for r in rects:
+                    r['action_type'] = 'add'
+                    r['contribution'] = 1
+                    r['create_time'] = datetime.now()
+                all_rect.extend(rects)
+            else:
+                previous_rects = previous_key_to_rects[key]
+                previous_not_in_current = copy.deepcopy([r for r in previous_rects if
+                        not rect_in_rects(r, rects, iou=0.99)])
+                current_not_in_previous = copy.deepcopy([r for r in rects if 
+                        not rect_in_rects(r, previous_rects, iou=0.99)])
+                for r in previous_not_in_current:
+                    r['action_type'] = 'remove'
+                    r['contribution'] = -1
+                    r['create_time'] = datetime.now()
+                all_rect.extend(previous_not_in_current)
+                for r in current_not_in_previous:
+                    r['action_type'] = 'add'
+                    r['contribution'] = 1
+                    r['create_time'] = datetime.now()
+                all_rect.extend(current_not_in_previous)
+            previous_key_to_rects[key] = rects
+            if len(all_rect) > 1000:
+                for r in all_rect:
+                    if '_id' in r:
+                        del r['_id']
+                gt.insert_many(all_rect)
+                all_rect = []
+        version = version + 1
+    if len(all_rect) >= 1:
+        gt.insert_many(all_rect)
+        all_rect = []
+
+def hash_sha1(s):
+    import hashlib
+    if type(s) is not str:
+        s = pformat(s)
+    return hashlib.sha1(s.encode('utf-8')).hexdigest()
+
+class VisualizationDatabaseByMongoDB():
+    def __init__(self):
+        self._client = MongoClient()
+        self._db = self._client['qd']
+        self._pred = self._db['predict_result']
+        self._gt = self._db['ground_truth']
+
+    def _get_positive_start(self, start_id, max_item):
+        if start_id < 0:
+            rank = pymongo.DESCENDING
+            start_id = min(0, start_id + max_item)
+            start_id = abs(start_id)
+        else:
+            rank = pymongo.ASCENDING
+        return rank, start_id
+
+    def query_pipeline(self, pipeline):
+        image_info = list(self._gt.aggregate(pipeline))
+        logging.info(len(image_info))
+        image_info = [{'key': x['_id']['key'], 
+            'url': x['url'], 
+            'gt': x.get('gt', []), 
+            'pred': x.get('pred', [])} for x in image_info]
+        return image_info
+
+    def query_predict_recall(self, full_expid, pred_file, class_name, threshold, start_id, max_item):
+        ensure_inject_expid_pred(full_expid, pred_file)
+
+        rank, start_id = self._get_positive_start(start_id, max_item)
+        # from the predict file
+        row = self._pred.find_one({'full_expid': full_expid, 'pred_file':
+            pred_file})
+        if row is None:
+            logging.info('no prediction data in db')
+            return []
+        data = row['data']
+        split = row['split']
+        logging.info(data)
+        logging.info(split)
+        pipeline = [{'$match': {'data': data, 'split': split, 'class': class_name}},
+                    {'$group': {'_id': {'key': '$key', 'target_action_id': '$target_action_id'},
+                                'contribution': {'$sum': '$contribution'},
+                                'num_target_label': {'$sum': 1}}},
+                    {'$match': {'contribution': {'$gte': 1}}},
+                    {'$group': {'_id': {'key': '$_id.key'}, 
+                                'num_contribution': {'$sum': 1}}},
+                    ## add the number of correct predicted
+                    {'$lookup': {   
+                        'from': 'predict_result', 
+                        'let': {'key': '$_id.key'},
+                        'pipeline': [{'$match': {'full_expid': full_expid,
+                                                 'pred_file': pred_file,
+                                                 'class': class_name,
+                                                 'conf': {'$gte': threshold}}},
+                                     {'$group': {'_id': {'key': '$key'}, 
+                                                 'correct': {'$sum': '$correct'}}},
+                                      {'$match': {'$expr': {'$and': [{'$eq': ['$_id.key', '$$key']}]}}},
+                                      ],
+                        'as': 'recall',
+                        }},
+                    {'$unwind': {'path': '$recall', 'preserveNullAndEmptyArrays': True}},
+                    {'$addFields': {'recall': {'$divide': ['$recall.correct', '$num_target_label']}}},
+                    {'$sort': {'recall': rank}},
+                    {'$skip': start_id},
+                    {'$limit': max_item},
+                    # add the field of url
+                    {'$lookup': {   
+                        'from': 'image', 
+                        'let': {'key': '$_id.key'},
+                        'pipeline': [{'$match': {'$expr': {'$and': [{'$eq': ['$data', data]},
+                                                                    {'$eq': ['$split', split]},
+                                                                    {'$eq': ['$key', '$$key']},],}}},
+                                     {'$project': {'url': True, '_id': 0}}],
+                        'as': 'url',
+                        }},
+                    {'$addFields': {'url': {'$arrayElemAt': ['$url', 0]}}},
+                    #{'$unwind': '$url'},
+                    {'$addFields': {'url': '$url.url'}},
+                    ## add the field of pred
+                    {'$lookup': {   
+                        'from': 'predict_result', 
+                        'let': {'key': '$_id.key'},
+                        'pipeline': [{'$match': {'$expr': {'$and': [{'$eq': ['$full_expid', full_expid]},
+                                                                    {'$eq': ['$pred_file', pred_file]},
+                                                                    {'$eq': ['$key', '$$key']},
+                                                                    {'$gte': ['$conf', threshold]}]}}},
+                                     {'$project': {'conf': True, 'rect': True, 'class': True, '_id': 0}}],
+                        'as': 'pred',
+                        }
+                    },
+                    ## add the gt field
+                    {'$lookup': {
+                        'from': 'ground_truth',
+                        'let': {'key': '$_id.key'},
+                        'pipeline': [{'$match': {'$expr': {'$and': [{'$eq': ['$data', data]},
+                                                                    {'$eq': ['$split', split]},
+                                                                    {'$eq': ['$key', '$$key']},],}}},
+                                    {'$group': {'_id': {'action_target_id': '$action_target_id'},
+                                                'contribution': {'$sum': '$contribution'},
+                                                'rect': {'$first': '$rect'},
+                                                'class': {'$first': '$class'},
+                                                'conf': {'$first': '$conf'}}, },
+                                    {'$match': {'contribution': {'$gte': 1}}},
+                                    ],
+                        'as': 'gt',
+                        }}
+                    ]
+        image_info = list(self._gt.aggregate(pipeline))
+        logging.info(len(image_info))
+        image_info = [{'key': x['_id']['key'], 
+            'url': x['url'], 
+            'gt': x['gt'], 
+            'pred': x['pred']} for x in image_info]
+        return image_info
+
+    def query_predict_precision(self, full_expid, pred_file, class_name, threshold, start_id, max_item):
+        ensure_inject_expid_pred(full_expid, pred_file)
+
+        rank, start_id = self._get_positive_start(start_id, max_item)
+        pipeline = [
+                {'$match': {'full_expid': full_expid,
+                            'pred_file': pred_file,
+                            'class': class_name,
+                            'conf': {'$gte': threshold}}},
+                {'$group': {'_id': {'data': '$data',
+                                    'split': '$split',
+                                    'key': '$key'}, 
+                            'correct': {'$sum': '$correct'},
+                            'total': {'$sum': 1}}},
+                {'$addFields': {'precision': {'$divide': ['$correct', '$total']}}},
+                {'$sort': {'precision': rank}},
+                {'$skip': start_id},
+                {'$limit': max_item},
+                # add the field of url
+                {'$lookup': {   
+                    'from': 'image', 
+                    'let': {'data': '$_id.data', 
+                            'split': '$_id.split',
+                            'key': '$_id.key'},
+                    'pipeline': [{'$match': {'$expr': {'$and': [{'$eq': ['$data', '$$data']},
+                                                                {'$eq': ['$split', '$$split']},
+                                                                {'$eq': ['$key', '$$key']},],}}},
+                                 {'$project': {'url': True, '_id': 0}}],
+                    'as': 'url',
+                    }},
+                {'$unwind': '$url'},
+                {'$addFields': {'url': '$url.url'}},
+                ## add the field of pred
+                {'$lookup': {   
+                    'from': 'predict_result', 
+                    'let': {'data': '$_id.data', 
+                            'split': '$_id.split',
+                            'key': '$_id.key'},
+                    'pipeline': [{'$match': {'$expr': {'$and': [{'$eq': ['$full_expid', full_expid]},
+                                                                {'$eq': ['$pred_file', pred_file]},
+                                                                {'$eq': ['$key', '$$key']},
+                                                                {'$gte': ['$conf', threshold]}]}}},
+                                 {'$project': {'conf': True, 'rect': True, 'class': True, '_id': 0}}],
+                    'as': 'pred',
+                    }
+                },
+                ## add the gt field
+                {'$lookup': {
+                    'from': 'ground_truth',
+                    'let': {'data': '$_id.data', 
+                            'split': '$_id.split',
+                            'key': '$_id.key'},
+                    'pipeline': [{'$match': {'$expr': {'$and': [{'$eq': ['$data', '$$data']},
+                                                                {'$eq': ['$split', '$$split']},
+                                                                {'$eq': ['$key', '$$key']},],}}},
+                                {'$group': {'_id': {'action_target_id': '$action_target_id'},
+                                            'contribution': {'$sum': '$contribution'},
+                                            'rect': {'$first': '$rect'},
+                                            'class': {'$first': '$class'},
+                                            'conf': {'$first': '$conf'}}, },
+                                {'$match': {'contribution': {'$gte': 1}}},
+                                ],
+                    'as': 'gt',
+                    }}
+                ]
+        image_info = list(self._pred.aggregate(pipeline))
+        image_info = [{'key': x['_id']['key'], 
+            'url': x['url'], 
+            'gt': x['gt'], 
+            'pred': x['pred']} for x in image_info]
+        return image_info
+
+    def query_ground_truth(self, data, split, version, label, start_id, max_item):
+        ensure_inject_gt(data, split)
+        rank, start_id = self._get_positive_start(start_id, max_item)
+        
+        match_pairs = {'data': data}
+        if split is not None:
+            match_pairs['split'] = split
+        if label is not None:
+            match_pairs['class'] = label
+        if version is not None:
+            match_pairs['version'] = {'$lte': version}
+        pipeline = [{'$match': match_pairs},
+                    {'$group': {'_id': {'key': '$key'},
+                                'contribution': {'$sum': '$contribution'}}},
+                    {'$match': {'contribution': {'$gte': 1}}},
+                    {'$sort': {'_id.key': rank}},
+                    {'$skip': start_id},
+                    {'$limit': max_item},
+                    # add gt boxes
+                    {'$lookup': {
+                        'from': 'ground_truth',
+                        'let': {'key': '$_id.key'},
+                        'pipeline': [{'$match': {'$expr': {'$and': [{'$eq': ['$data', data]},
+                                                                    {'$eq': ['$key', '$$key']},],}}},
+                                    {'$group': {'_id': {'action_target_id': '$action_target_id'},
+                                                'contribution': {'$sum': '$contribution'},
+                                                'rect': {'$first': '$rect'},
+                                                'class': {'$first': '$class'},
+                                                'conf': {'$first': '$conf'}}, },
+                                    {'$match': {'contribution': {'$gte': 1}}},
+                                    ],
+                        'as': 'gt',
+                        }},
+                    # add url
+                    {'$lookup': {   
+                        'from': 'image', 
+                        'let': {'key': '$_id.key'},
+                        'pipeline': [{'$match': {'$expr': {'$and': [{'$eq': ['$data', data]},
+                                                                    {'$eq': ['$split', split]},
+                                                                    {'$eq': ['$key', '$$key']},],}}},
+                                     {'$project': {'url': True, '_id': 0}}],
+                        'as': 'url',
+                        }},
+                    {'$unwind': '$url'},
+                    {'$addFields': {'url': '$url.url'}},
+                    ]
+
+        image_info = list(self._gt.aggregate(pipeline))
+        logging.info(len(image_info))
+        image_info = [{'key': x['_id']['key'], 
+            'url': x['url'], 
+            'gt': x['gt']} for x in image_info]
+        return image_info
 
 def get_class_count(data, splits):
     dataset = TSVDataset(data)
@@ -427,6 +1002,8 @@ def update_confusion_matrix(predicts, gts, threshold,
 
 
 def normalize_to_str(s):
+    if type(s) is str:
+        s = s.decode('unicode_escape')
     return unicodedata.normalize('NFKD', s).encode('ascii','ignore')
 
 def normalize_str_in_rects(data, out_data):
@@ -623,7 +1200,7 @@ def populate_dataset_details(data, check_image_details=False):
         logging.info('no labelmap, generating...')
         labelmap = []
         for split in splits:
-            label_tsv = dataset.get_data(split, 'label', version=-1)
+            label_tsv = dataset.get_data(split, 'label', version=0)
             if not op.isfile(label_tsv):
                 continue
             for row in tsv_reader(label_tsv):
@@ -634,7 +1211,7 @@ def populate_dataset_details(data, check_image_details=False):
                     labelmap.append(row[1])
         if len(labelmap) == 0:
             logging.warning('there are no labels!')
-        labelmap = list(set(labelmap))
+        labelmap = sorted(list(set(labelmap)))
         logging.info('find {} labels'.format(len(labelmap)))
         need_update = False
         if op.isfile(dataset.get_labelmap_file()):
@@ -731,11 +1308,11 @@ def populate_dataset_details(data, check_image_details=False):
     if not op.isfile(dataset.get_noffsets_file()):
         logging.info('no noffset file. generating...')
         labelmap = dataset.load_labelmap()
-        mapper = LabelToSynset()
+        mapper = LabelToSynset(True)
         ambigous = []
         ss = [mapper.convert(l) for l in labelmap]
-        for l, s in zip(labelmap, ss):
-            if type(s) is list and len(s) > 1:
+        for l, (success, s) in zip(labelmap, ss):
+            if not success and len(s) > 1:
                 d = create_info_for_ambigous_noffset(l, [synset_to_noffset(s1)
                     for s1 in s])
                 ambigous.append(d)
@@ -786,14 +1363,31 @@ def populate_dataset_details(data, check_image_details=False):
 
     add_node_to_ancestors(dataset)
 
+    populate_all_label_counts(dataset)
+
+def populate_all_label_counts(dataset):
+    for split in ['train', 'trainval', 'test']:
+        v = 0
+        while True:
+            if dataset.has(split, 'inverted.label.count', v):
+                if not dataset.has(split, 'inverted.label.count.total', v):
+                    count = sum([int(count) for _, count in dataset.iter_data(split,
+                        'inverted.label.count', v)])
+                    dataset.write_data([(str(count),)],
+                            split,
+                            'inverted.label.count.total', v)
+                v = v + 1
+            else:
+                break
+
 def add_node_to_ancestors(dataset):
     tree_file = op.join(dataset._data_root, 'root.yaml')
     out_file = op.join(dataset._data_root, 'treenode_to_ancestors.tsv') 
     if op.isfile(tree_file) and worth_create(tree_file, out_file):
         tax = Taxonomy(load_from_yaml_file(tree_file))
         tax.update()
-        tsv_writer([[name, ','.join(tax.name_to_ancestors[name])] for name in
-            tax.name_to_ancestors], out_file)
+        tsv_writer([[name, ','.join(tax.name_to_ancestors_list[name])] for name in
+            tax.name_to_ancestors_list], out_file)
 
 def populate_num_images_composite(dataset):
     data = dataset.name
@@ -1238,11 +1832,10 @@ def visualize_box_no_draw(data, split, version, label, start_id, color_map={}):
         if not split:
             logging.info('cannot find the valid')
             return
+    if label is not None:
+        idx = dataset.load_inverted_label(split, version, label)[label]
     else:
-        if label is not None:
-            idx = dataset.load_inverted_label(split, version, label)[label]
-        else:
-            idx = range(dataset.num_rows(split, t='label', version=version))
+        idx = range(dataset.num_rows(split, t='label', version=version))
     if len(idx) == 0:
         return
     while start_id > len(idx):
@@ -1279,13 +1872,8 @@ def visualize_box_no_draw(data, split, version, label, start_id, color_map={}):
                     else:
                         all_rect.append((0, 0, im.shape[1] - 1, im.shape[0] - 1))
                 return all_rect, all_class
-            all_rect, all_class = get_rect_class(rects)
 
-            all_rec_label, all_class_label = get_rect_class([l for l in rects if l['class']
-                    == label])
-
-            yield (new_name, origin, {'rect': all_rect, 'class': all_class},
-                   {'rect': all_rec_label, 'class': all_class_label})
+            yield (new_name, origin, rects)
         else:
             yield new_name, origin, [{'class': label_str, 'rect': [0, 0, 0, 0]}]
 
@@ -1521,7 +2109,7 @@ class DatasetSource(object):
         pass
 
 class TSVDatasetSource(TSVDataset, DatasetSource):
-    def __init__(self, name, root=None):
+    def __init__(self, name, root=None, version=-1):
         super(TSVDatasetSource, self).__init__(name)
         self._noffset_count = {}
         self._type = None
@@ -1533,6 +2121,7 @@ class TSVDatasetSource(TSVDataset, DatasetSource):
         self._type_to_datasetlabel_to_split_idx = None
         self._type_to_datasetlabel_to_count = None
         self._type_to_split_label_idx = None
+        self._version = version
 
     def populate_info(self, root):
         self._ensure_initialized()
@@ -1584,10 +2173,12 @@ class TSVDatasetSource(TSVDataset, DatasetSource):
         for split in splits:
             logging.info('loading the inverted file: {}-{}'.format(self.name,
                 split))
-            if not op.isfile(self.get_data(split, 'label', version=-1)):
+            if not op.isfile(self.get_data(split, 'label', 
+                    version=self._version)):
                 continue
             for t in types:
-                rows = self.iter_data(split, 'inverted.label.{}'.format(t), -1)
+                rows = self.iter_data(split, 'inverted.label.{}'.format(t), 
+                        version=self._version)
                 inverted = {r[0]: (map(int, r[1].split(' ')) if len(r[1]) > 0
                     else []) for r in rows}
                 label_idx = dict_to_list(inverted, 0)
@@ -1616,8 +2207,8 @@ class TSVDatasetSource(TSVDataset, DatasetSource):
         # since we will update the label and will not update the labelmap
         labelmap = []
         for split in ['train', 'test', 'trainval']:
-            if self.has(split, 'labelmap', -1):
-                for row in self.iter_data(split, 'labelmap', -1):
+            if self.has(split, 'labelmap', self._version):
+                for row in self.iter_data(split, 'labelmap', self._version):
                     labelmap.append(row[0])
         labelmap = list(set(labelmap))
         hash_labelmap = set(labelmap)
@@ -1850,7 +2441,9 @@ def convert_label(label_tsv, idx, label_mapper, with_bb):
 
 def create_info_for_ambigous_noffset(name, noffsets):
     definitions = [str(noffset_to_synset(n).definition()) for n in noffsets]
-    de = [{'noffset': n, 'definition': d.replace("`", '').replace("'", '')}
+    de = [{'noffset': n, 
+          'definition': d.replace("`", '').replace("'", ''),
+          'nick_name': str(get_nick_name(noffset_to_synset(n)))}
             for n, d in zip(noffsets, definitions)]
     d = {'name': name,
             'definitions': de,
@@ -1975,7 +2568,8 @@ def parallel_map_to_array(func, all_task, num_worker=128):
         result.extend(s)
     return result
 
-def create_trainX(train_ldtsi, extra_dtsi, tax, out_dataset):
+def create_trainX(train_ldtsi, extra_dtsi, tax, out_dataset, 
+        version=-1, lift_train=False):
     t_to_ldsi = list_to_dict(train_ldtsi, 2)
     extra_t_to_ldsi = list_to_dict(extra_dtsi, 1)
     train_ldtsik = []
@@ -2015,7 +2609,7 @@ def create_trainX(train_ldtsi, extra_dtsi, tax, out_dataset):
                 logging.info('converting labels: {}-{}'.format(
                     dataset.name, split))
                 source_origin_label = dataset.get_data(split,
-                    'label', version=-1)
+                    'label', version=version)
                 
                 converted_label = convert_label(source_origin_label,
                         idx, dataset._sourcelabel_to_targetlabels,
@@ -2025,7 +2619,10 @@ def create_trainX(train_ldtsi, extra_dtsi, tax, out_dataset):
                 logging.info('delifting the labels')
                 for i in tqdm(idx):
                     l = converted_label[i]
-                    l[1] = json.dumps(delift_one_image(l[1], tax))
+                    if lift_train:
+                        l[1] = json.dumps(lift_one_image(l[1], tax))
+                    else:
+                        l[1] = json.dumps(delift_one_image(l[1], tax))
                     l[0] = '{}_{}_{}'.format(dataset.name, split, l[0])
                 label_file = out_dataset[label_type].get_data(out_split, 'label')
                 logging.info('writing the label file {}'.format(label_file))
@@ -2057,7 +2654,7 @@ def create_trainX(train_ldtsi, extra_dtsi, tax, out_dataset):
 
     populate_output_num_images(train_ldtsik, 'toTrain', tax.root)
 
-def create_testX(test_ldtsi, tax, out_dataset):
+def create_testX(test_ldtsi, tax, out_dataset, version):
     t_to_ldsi = list_to_dict(test_ldtsi, 2)
     for label_type in t_to_ldsi:
         sources = []
@@ -2079,7 +2676,7 @@ def create_testX(test_ldtsi, tax, out_dataset):
                 sources.append(s_file)
                 src_img_tsv = TSVFile(s_file)
                 source_origin_label = dataset.get_data(split, 'label',
-                        version=-1)
+                        version=version)
                 sources_origin_label.append(source_origin_label)
                 src_label_tsv = TSVFile(source_origin_label)
                 converted_label = convert_label(source_origin_label,
@@ -2207,9 +2804,10 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
     datas = [d[0] if type(d) is tuple else d for d in datas]
     
     logging.info('extract the images from: {}'.format(','.join(datas)))
-
+    
+    label_version = kwargs.get('version', -1)
     for d, c in izip(datas, cleaness):
-        dataset = TSVDatasetSource(d, tax.root)
+        dataset = TSVDatasetSource(d, tax.root, label_version)
         dataset.cleaness = c
         data_sources.append(dataset)
     
@@ -2293,7 +2891,8 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
     train_ldtsi, extra_dtsi = remove_or_duplicate(train_ldtsi, min_image, max_image)
 
     logging.info('creating the train data')
-    create_trainX(train_ldtsi, extra_dtsi, tax, out_dataset)
+    create_trainX(train_ldtsi, extra_dtsi, tax, out_dataset, 
+            version=label_version, lift_train=kwargs.get('lift_train', False))
 
     populate_output_num_images(test_ldtsi, 'toTest', tax.root)
 
@@ -2306,7 +2905,7 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
         ensure_directory(op.dirname(target_file))
         shutil.copy(dest, target_file)
 
-    create_testX(test_ldtsi, tax, out_dataset)
+    create_testX(test_ldtsi, tax, out_dataset, version=label_version)
 
     logging.info('done')
 
@@ -2440,30 +3039,56 @@ def standarize_crawled(tsv_input, tsv_output):
             yield image_name, json.dumps(rects), image_str
     tsv_writer(gen_rows(), tsv_output)
 
-def get_data_sources():
-    return [
-        ('coco2017', 10),
-        ('voc0712', 10), 
-        ('Naturalist', 10),
-        ('elder', 10),
-        ('imagenet200Diff', 10),
-        ('OpenImageV4_448', 10),
-        ('open_images_clean_1', 9),
-        ('open_images_clean_2', 9),
-        ('open_images_clean_3', 9),
-        ('imagenet1kLocClean', 9),
-        ('imagenet3k_448Clean', 9),
-        ('VisualGenomeClean', 9),
-        ('brand1048Clean', 8),
-        ('mturk700_url_as_keyClean', 8),
-        ('crawl_office_v1', 8),
-        ('crawl_office_v2', 8),
-        ('Materialist', 8),
-        ('4000_Full_setClean', 7),
-        ('MSLogoClean', 8),
-        ('clothingClean', 8),
-        ('imagenet22k_448', 7),
-        ]
+def get_data_sources(public_only=False):
+    if not public_only:
+        return [
+            ('coco2017', 10),
+            ('voc0712', 10), 
+            ('Naturalist', 10),
+            ('elder', 10),
+            ('imagenet200Diff', 10),
+            ('OpenImageV4_448', 10),
+            ('open_images_clean_1', 9),
+            ('open_images_clean_2', 9),
+            ('open_images_clean_3', 9),
+            ('imagenet1kLocClean', 9),
+            ('imagenet3k_448Clean', 9),
+            ('VisualGenomeClean', 9),
+            ('brand1048Clean', 8),
+            ('mturk700_url_as_keyClean', 8),
+            ('crawl_office_v1', 8),
+            ('crawl_office_v2', 8),
+            ('Materialist', 8),
+            ('MSLogoClean', 8),
+            ('clothingClean', 8),
+            ('imagenet22k_448', 7),
+            ('4000_Full_setClean', 7),
+            ]
+    else:
+        return [
+            ('coco2017', 10),
+            ('voc0712', 10), 
+            ('Naturalist', 10),
+            ('elder', 10),
+            ('imagenet200Diff', 10),
+            ('OpenImageV4_448', 10),
+            #('open_images_clean_1', 9),
+            #('open_images_clean_2', 9),
+            #('open_images_clean_3', 9),
+            ('imagenet1kLocClean', 9),
+            ('imagenet3k_448Clean', 9),
+            ('VisualGenomeClean', 9),
+            ('brand1048Clean', 8),
+            #('mturk700_url_as_keyClean', 8),
+            #('crawl_office_v1', 8),
+            #('crawl_office_v2', 8),
+            ('Materialist', 8),
+            #('4000_Full_setClean', 7),
+            #('MSLogoClean', 8),
+            #('clothingClean', 8),
+            ('imagenet22k_448', 7),
+            ]
+
 
 
 def get_img_url(img_key):
@@ -2487,27 +3112,16 @@ def _get_url_from_name(name):
     _CONTAINER_NAME = "detectortrain"
     return _SITE + _CONTAINER_NAME + "/" + name
 
-def parse_combine(key, datas):
-    def found_starts(key, datas):
-        found = None
-        for data in datas:
-            if key.startswith(data + '_'):
-                assert found is None
-                found = data
-        return found
-    data = found_starts(key, datas)
-    if data is None:
-        return None, None, key
-    else:
-        key = key[len(data) + 1 : ]
-        splits = ['train', 'trainval', 'test']
-        split = found_starts(key, splits)
-        key = key[len(split) + 1 : ]
-        return data, split, key
+def parse_combine(key):
+    splits = ['_train_', '_trainval_', '_test_']
+    for split in splits:
+        if split  in key:
+            data_key = key.split(split)
+            return data_key[0], split[1:-1], data_key[1]
+    return None, None, key
 
 def convert_to_uhrs_with_url(data):
     dataset = TSVDataset(data)
-    datas = [d for d, _ in get_data_sources()]
     for split in ['train', 'trainval', 'test']:
         if not dataset.has(split, 'label'):
             continue
@@ -2515,7 +3129,7 @@ def convert_to_uhrs_with_url(data):
         def gen_rows():
             for row in dataset.iter_data(split, 'label', version=v):
                 key = row[0]
-                _, _, key = parse_combine(key, datas)
+                _, _, key = parse_combine(key)
                 row.append(get_img_url(key))
                 yield row
         dataset.write_data(gen_rows(), split, 
@@ -2536,7 +3150,7 @@ def load_key_rects(iter_data):
     logging.info('loading key rects')
     for row in tqdm(iter_data):
         assert len(row) == 2
-        result.append((row[0], json.loads(row[1])))
+        result.append([row[0], json.loads(row[1])])
     return result
 
 def convert_uhrs_result_back_to_sources(in_tsv, debug=True, tree_file=None):
@@ -2564,7 +3178,7 @@ def convert_uhrs_result_back_to_sources(in_tsv, debug=True, tree_file=None):
 
     datas = get_data_sources()
     datas = [data for data, _ in datas]
-    datasplitkey_rects3 = [[parse_combine(key, datas), rects3] 
+    datasplitkey_rects3 = [[parse_combine(key), rects3] 
             for key, rects3 in key_rects3]
     data_split_key_rects3 = [(data, split, key, rects3) 
             for (data, split, key), rects3 in datasplitkey_rects3]
@@ -2657,18 +3271,17 @@ def convert_uhrs_result_back_to_sources(in_tsv, debug=True, tree_file=None):
                             logging.info(pformat(no_rects))
                             show_images([old_im, new_im, yes_im, no_im], 2, 2)
     
-            meta['num_added_rects'] = num_added
-            meta['num_removed_rects'] = num_removed
-            meta['total_number_images'] = len(source_key_rects)
-    
-            meta['avg_added_rects'] = 1. * num_added / meta['total_number_images']
-            meta['avg_removed_rects'] = 1. * num_removed / meta['total_number_images']
-    
             assert not source_dataset.has(split, 'label', v + 1)
             if not is_equal:
                 source_dataset.write_data(((key, json.dumps(rects)) for key, rects in source_key_rects),
                         split, 'label', version=v+1)
                 meta_file = source_dataset.get_data(split, 'label.metadata', version=v+1) + '.yaml'
+                meta['num_added_rects'] = num_added
+                meta['num_removed_rects'] = num_removed
+                meta['total_number_images'] = len(source_key_rects)
+    
+                meta['avg_added_rects'] = 1. * num_added / meta['total_number_images']
+                meta['avg_removed_rects'] = 1. * num_removed / meta['total_number_images']
                 write_to_yaml_file(meta, meta_file)
                 logging.info(pformat(meta))
             else:

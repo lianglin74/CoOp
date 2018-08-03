@@ -41,7 +41,8 @@ def labels2noffsets(labels):
 
 def get_nick_name(s):
     n = s.name()
-    return n[: -5]
+    result = n[: -5]
+    return result.replace('_', ' ')
 
 def create_markdown_url(noffsets):
     urls = ['[{0}](http://www.image-net.org/synset?wnid={0})'.format(noffset) for
@@ -298,7 +299,8 @@ def dump_tree(root, feature_name=None, for_train=False):
             result[f] = root.__getattribute__(f)
     elif type(feature_name) == list:
         for f in feature_name:
-            result[f] = root.__getattribute__(f)
+            if hasattr(root, f):
+                result[f] = root.__getattribute__(f)
     elif type(feature_name) == str:
         if feature_name != 'name':
             result[feature_name] = root.__getattribute__(feature_name)
@@ -309,7 +311,7 @@ def dump_tree(root, feature_name=None, for_train=False):
             del result['sub_group']
     if len(result) == 0 and len(root.children) == 0:
         # in this case, we just use a string to represent the node
-        return root.name
+        return str(root.name)
     else:
         result[root.name] = []
         if for_train:
@@ -322,7 +324,7 @@ def dump_tree(root, feature_name=None, for_train=False):
                     # we add the seperator to denote a new sub group
                     result[root.name].append('__')
                     pre_sub_group = c.sub_group
-            result[root.name].append(dump_tree(c, feature_name, for_train))
+            result[str(root.name)].append(dump_tree(c, feature_name, for_train))
         return result
 
 def synonym_list():
@@ -366,7 +368,7 @@ def create_labelmap_map(from_labelmap, to_labelmap):
     return result
 
 class LabelToSynset(object):
-    def __init__(self):
+    def __init__(self, disambiguity_by_22k=False):
         self._white_list = {'apple': [wn.synset_from_pos_and_offset('n', 7739125)],
                     'banana': [wn.synset_from_pos_and_offset('n', 7753592)],
                     'bear': [wn.synset_from_pos_and_offset('n', 2131653)],
@@ -410,6 +412,10 @@ class LabelToSynset(object):
                     assert self._white_list[l] == anchor 
                 else:
                     self._white_list[l] = anchor 
+        self.disambiguity_by_22k = disambiguity_by_22k
+        if disambiguity_by_22k:
+            self.imagenet22k_noffsets = \
+                set(load_list_file('./data/imagenet22k_448/labelmap.txt'))
 
     def populate_noffset(self, root):
         if not hasattr(root, 'noffset') or root.noffset is None:
@@ -441,6 +447,7 @@ class LabelToSynset(object):
             for d in wl:
                 if d['noffset'] is None:
                     continue
+                d['name'] = d['name'].lower()
                 if d['name'] not in self._white_list:
                     self._white_list[d['name']] = []
                 self._white_list[d['name']].extend([noffset_to_synset(x) for x in
@@ -482,6 +489,10 @@ class LabelToSynset(object):
                 logging.info('successfully disambiguate {} based on the parent {}'.format(
                     label, [ps.name() for ps in parent_synsets]))
 
+        if len(result) > 1 and self.disambiguity_by_22k:
+            result = [r for r in result if synset_to_noffset(r) in
+                self.imagenet22k_noffsets]
+ 
         if len(result) == 1:
             return True, result
 
@@ -543,12 +554,14 @@ class Taxonomy(object):
 
     def update(self):
         self.name_to_ancestors = {}
+        self.name_to_ancestors_list = {}
         for node in self.root.iter_search_nodes():
             if node == self.root:
                 continue
             name = node.name
             ancestors = node.get_ancestors()[:-1]
             self.name_to_ancestors[name] = set(a.name for a in ancestors)
+            self.name_to_ancestors_list[name] = [a.name for a in ancestors]
 
     def _add_current_as_child(self, one, root):
         '''
@@ -736,6 +749,8 @@ def merge_all_tax(all_tax):
     all_node_names = {}
     duplicate_names = []
     for n in root_tax.root.iter_search_nodes():
+        if n == root_tax.root:
+            continue
         if n.name.lower() in all_node_names:
             duplicate_names.append(n.name)
         else:

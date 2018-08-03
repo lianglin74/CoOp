@@ -439,6 +439,12 @@ def deteval_iter(truth_iter, dets='', vocdets='', name='',
     report_name = exp_name if report_dir=='' else '/'.join([report_dir,exp_name]);
     report_file = report_name + ".report" 
 
+    label_to_keys = None
+    if kwargs.get('eval_label_to_keys_iter'):
+        label_to_keys = {label_keys[0]: set(label_keys[1:]) for label_keys in
+            kwargs['eval_label_to_keys_iter']}
+        report_file = report_file + '.eval_label_to_keys'
+
     if os.path.isfile(report_file) and \
             not kwargs.get('force_evaluate', False) and \
             not worth_create(detsfile, report_file):
@@ -460,10 +466,6 @@ def deteval_iter(truth_iter, dets='', vocdets='', name='',
         if kwargs.get('yolo_tree_eval_label_lift', True):
             detresults = lift_detects(detresults, label_tree)
 
-    label_to_keys = None
-    if kwargs.get('eval_label_to_keys_iter'):
-        label_to_keys = {label_keys[0]: set(label_keys[1:]) for label_keys in
-            kwargs['eval_label_to_keys_iter']}
     #brief report on different object size
     reports = get_report(truths, detresults, ovthresh, multiscale,
             label_to_keys=label_to_keys)

@@ -286,7 +286,7 @@ class TSVDataset(object):
 
     def num_rows(self, split, t=None, version=None):
         f = self.get_data(split, t, version)
-        if op.isfile(f):
+        if op.isfile(f) or op.islink(f):
             return TSVFile(f).num_rows()
         else:
             f = self.get_data(split + 'X', version=version)
