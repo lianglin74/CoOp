@@ -261,6 +261,15 @@ class TSVDataset(object):
                 op.isfile(self.get_data('{}X'.format(split), t, version)) and 
                 op.isfile(self.get_shuffle_file(split)))
 
+    def last_update_time(self, split, t=None, version=None):
+        tsv_file = self.get_data(split, t, version)
+        if op.isfile(tsv_file):
+            return os.path.getmtime(tsv_file)
+        assert version is None or version == 0, 'composite dataset always v=0'
+        tsv_file = self.get_data('{}X'.format(split), t, version)
+        assert op.isfile(tsv_file)
+        return os.path.getmtime(tsv_file)
+
     def iter_composite(self, split, t, version, filter_idx=None):
         splitX = split + 'X'
         file_list = load_list_file(self.get_data(splitX, t, version))

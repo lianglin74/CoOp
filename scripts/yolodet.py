@@ -495,10 +495,14 @@ def result2bblist(im, probs, boxes, class_map, thresh=0):
             right = (x+w/2.);
             top   = (y-h/2.);
             bot   = (y+h/2.);
-
+            
             left = max(left, 0)
+            left = min(left, im_w - 1)
+            right = max(right, 0)
             right = min(right, im_w - 1)
             top = max(top, 0)
+            top= min(top, im_h - 1)
+            bot = max(bot, 0)
             bot = min(bot, im_h - 1)
 
             crect = dict();

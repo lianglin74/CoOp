@@ -130,3 +130,4 @@ tmp_run
 
 visualization/db.sqlite3
 visualization/taxonomy/taxonomy.yaml
+aux_data/configs/azure_blob_account.yaml

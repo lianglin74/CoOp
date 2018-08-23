@@ -71,6 +71,75 @@ from tqdm import tqdm
 from pymongo import MongoClient
 import pymongo
 from datetime import datetime
+import inspect
+
+def ensure_inject_expid(full_expid):
+    from qd_common import get_all_predict_files
+    from qd_common import load_solver
+    solver_prototxt = op.join('output', full_expid,
+        'solver.prototxt')
+    solver_param = load_solver(solver_prototxt)
+    model_param = '{0}_iter_{1}.caffemodel'.format(
+            solver_param.snapshot_prefix, solver_param.max_iter)
+    all_predict = glob.glob(model_param + '*.predict')
+    for p in all_predict:
+        ensure_inject_expid_pred(full_expid, op.basename(p))
+
+def ensure_inject_dataset(data):
+    for split in ['train', 'trainval', 'test']:
+        ensure_upload_image_to_blob(data, split)
+        ensure_inject_image(data, split)
+        ensure_inject_gt(data, split)
+
+def ensure_inject_decorate(func):
+    def func_wrapper(*args, **kwargs):
+        client = get_mongodb_client()
+        db = client['qd']
+        task = db['task']
+        func_name = func.func_name
+        if func_name.startswith('ensure_'):
+            func_name = func_name[len('ensure_'): ]
+        argnames, ins_varargs, ins_kwargs, ins_defaults = inspect.getargspec(func)
+        # we have not supported if other paramseters is not None
+        assert ins_varargs is None and ins_kwargs is None and ins_defaults is None
+        assert len(argnames) == len(args)
+        assert len(kwargs) == 0
+        query = {'task_type': func_name}
+        for n, v in zip(argnames, args):
+            assert n not in query
+            query[n] = v
+        result = task.update_one(filter=query,
+                                update={'$setOnInsert': query},
+                                upsert=True)
+        if result.matched_count == 0:
+            task.update_one(filter=query,
+                    update={'$set': {'status': 'started', 
+                                     'create_time': datetime.now()}})
+            func(*args, **kwargs)
+            task.update_many(filter=query, 
+                    update={'$set': {'status': 'done'}})
+        else:
+            logging.info('ignore to inject')
+    return func_wrapper
+
+@ensure_inject_decorate
+def ensure_upload_image_to_blob(data, split):
+    from cloud_storage import CloudStorage
+    from StringIO import StringIO
+    s = CloudStorage()
+    dataset = TSVDataset(data)
+    if not dataset.has(split):
+        logging.info('{} - {} does not exist'.format(data, split))
+        return
+    logging.info('{} - {}'.format(data, split))
+    if not op.isfile(dataset.get_data(split)) and \
+            op.isfile(dataset.get_data(split + 'X')):
+        logging.info('ignore to upload images for composite dataset')
+        return
+    for key, _, str_im in tqdm(dataset.iter_data(split)):
+        clean_name = _map_img_key_to_name(key)
+        s.upload_stream(StringIO(base64.b64decode(str_im)), 
+                clean_name)
 
 def inject_image(data, split):
     dataset = TSVDataset(data)
@@ -113,6 +182,8 @@ def inject_image(data, split):
     if len(all_data) > 0:
         images.insert_many(all_data)
 
+def get_mongodb_client():
+    return MongoClient()
 
 def ensure_update_pred_with_correctness(data, split,
         full_expid, predict_file):
@@ -235,7 +306,6 @@ def update_pred_with_correctness(test_data, test_split,
                 {'$set': {'correct': 0}})
         all_wrong_box = []
 
-
 def ensure_inject_expid_pred(full_expid, predict_file):
     data, split = parse_test_data(predict_file)
     ensure_inject_image(data, split)
@@ -325,77 +395,116 @@ def ensure_inject_gt(data, split):
         for s in ['train', 'trainval', 'test']:
             ensure_inject_gt(data, s)
     else:
-        result = task.find_one(filter={'task_type': 'inject_gt',
-            'data': data, 'split': split})
-        if result is None or result['status'] == 'started':
-            if result is None:
-                task.insert_one({'task_type': 'inject_gt',
+        dataset = TSVDataset(data)
+        version = 0
+        set_previous_key_rects = False
+        while dataset.has(split, 'label', version=version):
+            query = {'task_type': 'inject_gt',
+                                    'data': data, 
+                                    'split': split, 
+                                    'version': version}
+            result = task.update_one(filter=query,
+                                    update={'$setOnInsert': query},
+                                    upsert=True)
+            if result.matched_count == 0:
+                logging.info('start to inserting {}-{}-{}'.format(data,
+                    split, version))
+                # no process is working on inserting current version
+                task.update_one(filter=query,
+                        update={'$set': {'status': 'started', 
+                                         'create_time': datetime.now()}})
+                if not set_previous_key_rects:
+                    if version == 0:
+                        previous_key_to_rects = {}
+                    else:
+                        key_rects = load_key_rects(dataset.iter_data(split, 'label',
+                            version=version-1))
+                        previous_key_to_rects = {key: rects for key, rects in key_rects}
+                    set_previous_key_rects = True
+                inject_gt_version(data, split, version, previous_key_to_rects)
+                task.update_many(filter={'task_type': 'inject_gt',
                     'data': data, 
-                    'split': split, 
-                    'status': 'started', 
-                    'create_time': datetime.now()})
-            ensure_inject_image(data, split)
-            inject_gt(data, split)
-            task.update_many(filter={'task_type': 'inject_gt',
-                'data': data, 
-                'split': split}, update={'$set': {'status': 'done'}})
+                    'split': split,
+                    'version': version}, update={'$set': {'status': 'done'}})
+            else:
+                # it is done or it is started by anohter process. let's skip
+                # this version
+                set_previous_key_rects = False
+            version = version + 1
 
-def inject_gt(data, split):
+def inject_gt_version(data, split, version, previous_key_to_rects):
     client = MongoClient()
     db = client['qd']
     gt = db['ground_truth']
     dataset = TSVDataset(data)
-    gt.delete_many({'data': data, 'split': split})
+    gt.delete_many({'data': data, 'split': split, 'version': version})
+    dataset = TSVDataset(data)
+
+    if not dataset.has(split, 'label', version):
+        return False
     all_rect = []
-    version = 0
-    previous_key_to_rects = {}
-    while True:
-        if not dataset.has(split, 'label', version):
-            break
-        logging.info('{}-{}-{}'.format(data, split, version))
-        for i, (key, label_str) in tqdm(enumerate(dataset.iter_data(
-            split, 'label', version=version))):
-            full_key = '_'.join([data, split, key])
-            rects = json.loads(label_str)
-            for j, r in enumerate(rects):
+    logging.info('{}-{}-{}'.format(data, split, version))
+    for i, (key, label_str) in tqdm(enumerate(dataset.iter_data(
+        split, 'label', version=version))):
+        rects = json.loads(label_str)
+        for j, r in enumerate(rects):
+            r['data'] = data
+            r['split'] = split
+            r['key'] = key
+            r['action_target_id'] = hash_sha1([data, split, key, r['class'], r['rect']])
+            r['version'] = version
+        if version == 0:
+            assert key not in previous_key_to_rects
+            for r in rects:
+                r['action_type'] = 'add'
+                r['contribution'] = 1
+                r['create_time'] = datetime.now()
+            all_rect.extend(rects)
+        else:
+            previous_rects = previous_key_to_rects[key]
+            previous_not_in_current = copy.deepcopy([r for r in previous_rects if
+                    not rect_in_rects(r, rects, iou=0.99)])
+            current_not_in_previous = copy.deepcopy([r for r in rects if 
+                    not rect_in_rects(r, previous_rects, iou=0.99)])
+            for r in previous_not_in_current:
                 r['data'] = data
                 r['split'] = split
                 r['key'] = key
                 r['action_target_id'] = hash_sha1([data, split, key, r['class'], r['rect']])
                 r['version'] = version
-            if version == 0:
-                for r in rects:
-                    r['action_type'] = 'add'
-                    r['contribution'] = 1
-                    r['create_time'] = datetime.now()
-                all_rect.extend(rects)
-            else:
-                previous_rects = previous_key_to_rects[key]
-                previous_not_in_current = copy.deepcopy([r for r in previous_rects if
-                        not rect_in_rects(r, rects, iou=0.99)])
-                current_not_in_previous = copy.deepcopy([r for r in rects if 
-                        not rect_in_rects(r, previous_rects, iou=0.99)])
-                for r in previous_not_in_current:
-                    r['action_type'] = 'remove'
-                    r['contribution'] = -1
-                    r['create_time'] = datetime.now()
-                all_rect.extend(previous_not_in_current)
-                for r in current_not_in_previous:
-                    r['action_type'] = 'add'
-                    r['contribution'] = 1
-                    r['create_time'] = datetime.now()
-                all_rect.extend(current_not_in_previous)
-            previous_key_to_rects[key] = rects
-            if len(all_rect) > 1000:
-                for r in all_rect:
-                    if '_id' in r:
-                        del r['_id']
-                gt.insert_many(all_rect)
-                all_rect = []
-        version = version + 1
-    if len(all_rect) >= 1:
-        gt.insert_many(all_rect)
+                r['action_type'] = 'remove'
+                r['contribution'] = -1
+                r['create_time'] = datetime.now()
+                r['version'] = version
+            all_rect.extend(previous_not_in_current)
+            for r in current_not_in_previous:
+                r['data'] = data
+                r['split'] = split
+                r['key'] = key
+                r['action_target_id'] = hash_sha1([data, split, key, r['class'], r['rect']])
+                r['version'] = version
+                r['action_type'] = 'add'
+                r['contribution'] = 1
+                r['create_time'] = datetime.now()
+                r['version'] = version
+            all_rect.extend(current_not_in_previous)
+        previous_key_to_rects[key] = rects
+        if len(all_rect) > 10000:
+            logging.info('inserting {} - {} - {}'.format(data, split, version))
+            db_insert_many(gt, all_rect)
+            all_rect = []
+
+    if len(all_rect) > 0:
+        logging.info('inserting {} - {} - {}'.format(data, split, version))
+        db_insert_many(gt, all_rect)
         all_rect = []
+    return True
+
+def db_insert_many(collection, all_info):
+    for a in all_info:
+        if '_id' in a:
+            del a['_id']
+    collection.insert_many(all_info)
 
 def hash_sha1(s):
     import hashlib
@@ -419,18 +528,27 @@ class VisualizationDatabaseByMongoDB():
             rank = pymongo.ASCENDING
         return rank, start_id
 
-    def query_pipeline(self, pipeline):
-        image_info = list(self._gt.aggregate(pipeline))
+    def query_pipeline(self, pipeline, collection, db_name):
+        image_info = list(self._client[db_name][collection].aggregate(
+            pipeline, allowDiskUse=True))
         logging.info(len(image_info))
+        if len(image_info) > 0:
+            logging.info(pformat(image_info[0]))
         image_info = [{'key': x['_id']['key'], 
-            'url': x['url'], 
+            'url': x.get('url', ''), 
             'gt': x.get('gt', []), 
             'pred': x.get('pred', [])} for x in image_info]
         return image_info
 
-    def query_predict_recall(self, full_expid, pred_file, class_name, threshold, start_id, max_item):
-        ensure_inject_expid_pred(full_expid, pred_file)
+    def insert(self, dic, collection, db_name):
+        return self._client[db_name][collection].insert(dic)
 
+    def query_by_id(self, _id, collection, db_name):
+        from bson.objectid import ObjectId
+        return list(self._client[db_name][collection].find({'_id':
+            ObjectId(_id)}))[0]
+
+    def query_predict_recall(self, full_expid, pred_file, class_name, threshold, start_id, max_item):
         rank, start_id = self._get_positive_start(start_id, max_item)
         # from the predict file
         row = self._pred.find_one({'full_expid': full_expid, 'pred_file':
@@ -479,7 +597,6 @@ class VisualizationDatabaseByMongoDB():
                         'as': 'url',
                         }},
                     {'$addFields': {'url': {'$arrayElemAt': ['$url', 0]}}},
-                    #{'$unwind': '$url'},
                     {'$addFields': {'url': '$url.url'}},
                     ## add the field of pred
                     {'$lookup': {   
@@ -519,8 +636,6 @@ class VisualizationDatabaseByMongoDB():
         return image_info
 
     def query_predict_precision(self, full_expid, pred_file, class_name, threshold, start_id, max_item):
-        ensure_inject_expid_pred(full_expid, pred_file)
-
         rank, start_id = self._get_positive_start(start_id, max_item)
         pipeline = [
                 {'$match': {'full_expid': full_expid,
@@ -591,16 +706,25 @@ class VisualizationDatabaseByMongoDB():
         return image_info
 
     def query_ground_truth(self, data, split, version, label, start_id, max_item):
-        ensure_inject_gt(data, split)
         rank, start_id = self._get_positive_start(start_id, max_item)
         
         match_pairs = {'data': data}
+        gt_match = []
+        gt_match.append({'$eq': ['$data', data]})
+        url_match = []
+        url_match.append({'$eq': ['$data', data]})
         if split is not None:
             match_pairs['split'] = split
+            gt_match.append({'$eq': ['$split', split]})
+            url_match.append({'$eq': ['$split', split]})
         if label is not None:
             match_pairs['class'] = label
+            gt_match.append({'$eq': ['$class', label]})
         if version is not None:
             match_pairs['version'] = {'$lte': version}
+            gt_match.append({'$lte': ['$version', version]})
+        gt_match.append({'$eq': ['$key', '$$key']})
+        url_match.append({'$eq': ['$key', '$$key']})
         pipeline = [{'$match': match_pairs},
                     {'$group': {'_id': {'key': '$key'},
                                 'contribution': {'$sum': '$contribution'}}},
@@ -612,14 +736,13 @@ class VisualizationDatabaseByMongoDB():
                     {'$lookup': {
                         'from': 'ground_truth',
                         'let': {'key': '$_id.key'},
-                        'pipeline': [{'$match': {'$expr': {'$and': [{'$eq': ['$data', data]},
-                                                                    {'$eq': ['$key', '$$key']},],}}},
-                                    {'$group': {'_id': {'action_target_id': '$action_target_id'},
-                                                'contribution': {'$sum': '$contribution'},
-                                                'rect': {'$first': '$rect'},
-                                                'class': {'$first': '$class'},
-                                                'conf': {'$first': '$conf'}}, },
-                                    {'$match': {'contribution': {'$gte': 1}}},
+                        'pipeline': [{'$match': {'$expr': {'$and': gt_match}}},
+                                     {'$group': {'_id': {'action_target_id': '$action_target_id'},
+                                                 'contribution': {'$sum': '$contribution'},
+                                                 'rect': {'$first': '$rect'},
+                                                 'class': {'$first': '$class'},
+                                                 'conf': {'$first': '$conf'}}, },
+                                     {'$match': {'contribution': {'$gte': 1}}},
                                     ],
                         'as': 'gt',
                         }},
@@ -627,9 +750,7 @@ class VisualizationDatabaseByMongoDB():
                     {'$lookup': {   
                         'from': 'image', 
                         'let': {'key': '$_id.key'},
-                        'pipeline': [{'$match': {'$expr': {'$and': [{'$eq': ['$data', data]},
-                                                                    {'$eq': ['$split', split]},
-                                                                    {'$eq': ['$key', '$$key']},],}}},
+                        'pipeline': [{'$match': {'$expr': {'$and': url_match}}},
                                      {'$project': {'url': True, '_id': 0}}],
                         'as': 'url',
                         }},
@@ -1251,7 +1372,8 @@ def populate_dataset_details(data, check_image_details=False):
         while True:
             if not dataset.has(split, 'label', v):
                 break
-            if not dataset.has(split, 'labelmap', v):
+            if not dataset.has(split, 'labelmap', v) or \
+                dataset.last_update_time(split, 'labelmap', v) < dataset.last_update_time(split, 'label', v):
                 curr_labelmap = set()
                 update_labelmap(dataset.iter_data(split, 'label', v), 
                         dataset.num_rows(split),
@@ -1262,7 +1384,8 @@ def populate_dataset_details(data, check_image_details=False):
                 curr_labelmap = None
             if not dataset.has(split, 'inverted.label', v) or \
                     not dataset.has(split, 'inverted.label.with_bb', v) or \
-                    not dataset.has(split, 'inverted.label.no_bb', v):
+                    not dataset.has(split, 'inverted.label.no_bb', v) or \
+                    dataset.last_update_time(split, 'inverted.label', v) < dataset.last_update_time(split, 'label', v):
                 if curr_labelmap is None:
                     curr_labelmap = []
                     for row in dataset.iter_data(split, 'labelmap', v):
@@ -1858,7 +1981,6 @@ def visualize_box_no_draw(data, split, version, label, start_id, color_map={}):
         rects = try_json_parse(label_str)
         new_name = key.replace('/', '_').replace(':', '')
         if type(rects) is list:
-            rects = [l for l in rects if 'conf' not in l or l['conf'] > 0.3]
             def get_rect_class(rects):
                 all_class = []
                 all_rect = []
@@ -3358,6 +3480,10 @@ def process_tsv_main(**kwargs):
     elif kwargs['type'] == 'merge_labels':
         in_tsv = kwargs['input']
         convert_uhrs_result_back_to_sources(in_tsv)
+    elif kwargs['type'] == 'ensure_inject_dataset':
+        ensure_inject_dataset(kwargs['data'])
+    elif kwargs['type'] == 'ensure_inject_expid':
+        ensure_inject_expid(kwargs['full_expid'])
     else:
         logging.info('unknown task {}'.format(kwargs['type']))
 
@@ -3384,6 +3510,10 @@ def parse_args():
     parser.add_argument('-da', '--data', 
             default=argparse.SUPPRESS,
             help='the dataset name under data/',
+            type=str, 
+            required=False)
+    parser.add_argument('-fe', '--full_expid', 
+            default=argparse.SUPPRESS,
             type=str, 
             required=False)
     parser.add_argument('-maxi', '--max_image_per_label', 

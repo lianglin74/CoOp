@@ -1808,8 +1808,8 @@ def yolo_tree_train(**ikwargs):
              'source':'train',
              'weight': 1},
             ]
-    assert 'dataset_ops' not in kwargs or \
-            len(kwargs['dataset_ops']) == 0
+    if 'dataset_ops' in kwargs:
+        del kwargs['dataset_ops']
     kwargs['dataset_ops'] = dataset_ops
     expid = kwargs['expid']
     kwargs['expid'] = expid + '_bb_only'

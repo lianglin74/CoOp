@@ -1010,6 +1010,9 @@ def write_to_yaml_file(context, file_name):
         yaml.dump(context, fp, default_flow_style=False,
                 encoding='utf-8', allow_unicode=True)
 
+def load_from_yaml_str(s):
+    return yaml.load(s, Loader=yaml.CLoader)
+
 def load_from_yaml_file(file_name):
     with open(file_name, 'r') as fp:
         return yaml.load(fp, Loader=yaml.CLoader)
