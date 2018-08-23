@@ -1,0 +1,9 @@
+type: taxonomy_to_tsv
+data: TaxTest
+input: ./aux_data/taxonomy10k/TaxHard/TaxHardV1
+datas: 
+    - data: OpenImageV4_448
+      valid_splits:
+          - train
+          - trianval
+    - voc0712

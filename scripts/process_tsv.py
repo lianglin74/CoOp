@@ -2109,7 +2109,8 @@ class DatasetSource(object):
         pass
 
 class TSVDatasetSource(TSVDataset, DatasetSource):
-    def __init__(self, name, root=None, version=-1):
+    def __init__(self, name, root=None, version=-1, 
+            valid_splits=['train', 'trainval', 'test']):
         super(TSVDatasetSource, self).__init__(name)
         self._noffset_count = {}
         self._type = None
@@ -2122,6 +2123,7 @@ class TSVDatasetSource(TSVDataset, DatasetSource):
         self._type_to_datasetlabel_to_count = None
         self._type_to_split_label_idx = None
         self._version = version
+        self._valid_splits = valid_splits
 
     def populate_info(self, root):
         self._ensure_initialized()
@@ -2151,7 +2153,7 @@ class TSVDatasetSource(TSVDataset, DatasetSource):
         if self._initialized:
             return
         populate_dataset_details(self.name)
-        splits = ['trainval', 'train', 'test']
+        splits = self._valid_splits 
         types = ['with_bb', 'no_bb']
         # check the type of the dataset
         #for split in splits:
@@ -2206,7 +2208,7 @@ class TSVDatasetSource(TSVDataset, DatasetSource):
         # load the labelmap for all splits, self.load_labelmap is not correct,
         # since we will update the label and will not update the labelmap
         labelmap = []
-        for split in ['train', 'test', 'trainval']:
+        for split in self._valid_splits:
             if self.has(split, 'labelmap', self._version):
                 for row in self.iter_data(split, 'labelmap', self._version):
                     labelmap.append(row[0])
@@ -2770,6 +2772,27 @@ def split_train_test(ldtsi, num_test):
                 in dsi[curr_num_test:]])
     return train_ldtsi, test_ldtsi
 
+def parse_data_clean_splits(data_infos):
+    datas, cleaness, all_valid_splits = [], [], []
+    default_splits = ['train', 'trianval', 'test']
+    for data_info in data_infos:
+        if type(data_info) is str:
+            datas.append(data_info)
+            cleaness.append(10)
+            all_valid_splits.append(default_splits)
+        elif type(data_info) is tuple or type(data_info) is list:
+            assert len(data_info) > 0
+            datas.append(data_info[0])
+            cleaness.append(data_info[1] if len(data_info) > 1 else 10)
+            all_valid_splits.append(data_info[2] if len(data_info) > 2 else default_splits)
+        elif type(data_info) is dict:
+            datas.append(data_info['data'])
+            cleaness.append(data_info.get('cleaness', 10))
+            all_valid_splits.append(data_info.get('valid_splits', default_splits))
+        else:
+            raise Exception('unkwown data_info = {}'.format(data_info))
+    return datas, cleaness, all_valid_splits
+
 def build_taxonomy_impl(taxonomy_folder, **kwargs):
     random.seed(777)
     dataset_name = kwargs.get('data', 
@@ -2800,14 +2823,13 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
     data_sources = []
     
     datas = kwargs['datas']
-    cleaness = [d[1] if type(d) is tuple else 10 for d in datas]
-    datas = [d[0] if type(d) is tuple else d for d in datas]
+    datas, cleaness, all_valid_splits = parse_data_clean_splits(kwargs['datas'])
     
     logging.info('extract the images from: {}'.format(','.join(datas)))
     
     label_version = kwargs.get('version', -1)
-    for d, c in izip(datas, cleaness):
-        dataset = TSVDatasetSource(d, tax.root, label_version)
+    for d, c, valid_splits in izip(datas, cleaness, all_valid_splits):
+        dataset = TSVDatasetSource(d, tax.root, label_version, valid_splits)
         dataset.cleaness = c
         data_sources.append(dataset)
     
@@ -3341,8 +3363,10 @@ def process_tsv_main(**kwargs):
 
 def parse_args():
     parser = argparse.ArgumentParser(description='TSV Management')
+    parser.add_argument('-c', '--config_file', help='config file',
+            type=str)
     parser.add_argument('-t', '--type', help='what type it is: gen_tsv',
-            type=str, required=True)
+            type=str, required=False)
     parser.add_argument('-i', '--input', help='input',
             type=str, required=False)
     parser.add_argument('-p', '--prototxt', help='proto file',
@@ -3376,4 +3400,9 @@ if __name__ == '__main__':
     init_logging()
     args = parse_args()
     process_tsv_main(**vars(args))
+    kwargs = vars(args)
+    if kwargs.get('config_file'):
+        logging.info('loading parameter from {}'.format(kwargs['config_file']))
+        kwargs = load_from_yaml_file(kwargs['config_file'])
+    process_tsv_main(**kwargs)
 
