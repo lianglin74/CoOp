@@ -1959,6 +1959,7 @@ def parse_args():
     parser.add_argument('-nc', '--num_extra_convs', 
             default=3,
             type=int,
+            nargs='+',
             help='the number of extra conv layers')
     parser.add_argument('-eb', '--effective_batch_size', 
             default=64,
