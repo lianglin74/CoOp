@@ -137,6 +137,7 @@ def ensure_upload_image_to_blob(data, split):
         logging.info('ignore to upload images for composite dataset')
         return
     for key, _, str_im in tqdm(dataset.iter_data(split)):
+        key = parse_combine(key)[-1]
         clean_name = _map_img_key_to_name(key)
         s.upload_stream(StringIO(base64.b64decode(str_im)), 
                 clean_name)
@@ -308,6 +309,7 @@ def update_pred_with_correctness(test_data, test_split,
 
 def ensure_inject_expid_pred(full_expid, predict_file):
     data, split = parse_test_data(predict_file)
+    ensure_upload_image_to_blob(data, split)
     ensure_inject_image(data, split)
     ensure_inject_gt(data, split)
     ensure_inject_pred(full_expid,
@@ -344,12 +346,10 @@ def ensure_inject_pred(full_expid, predict_file, data, split):
             update={'$set': {'status': 'done'}})
 
 def inject_pred(full_expid, pred_file, test_data, test_split):
-    '''
-    try to replace inject_pred
-    '''
     client = MongoClient()
     db = client['qd']
     pred_collection = db['predict_result']
+    logging.info('cleaning {} - {}'.format(full_expid, pred_file))
     pred_collection.delete_many({'full_expid': full_expid, 'pred_file': pred_file})
     all_rect = []
     for key, label_str in tqdm(tsv_reader(op.join('output', full_expid, 'snapshot', pred_file))):
@@ -2896,7 +2896,7 @@ def split_train_test(ldtsi, num_test):
 
 def parse_data_clean_splits(data_infos):
     datas, cleaness, all_valid_splits = [], [], []
-    default_splits = ['train', 'trianval', 'test']
+    default_splits = ['train', 'trainval', 'test']
     for data_info in data_infos:
         if type(data_info) is str:
             datas.append(data_info)
@@ -3529,7 +3529,6 @@ def parse_args():
 if __name__ == '__main__':
     init_logging()
     args = parse_args()
-    process_tsv_main(**vars(args))
     kwargs = vars(args)
     if kwargs.get('config_file'):
         logging.info('loading parameter from {}'.format(kwargs['config_file']))
