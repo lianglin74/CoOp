@@ -2346,12 +2346,16 @@ class TSVDatasetSource(TSVDataset, DatasetSource):
         name_to_targetlabels = {}
         targetlabel_has_whitelist = set()
         invalid_list = []
+        any_source_key = 'label_names_in_all_dataset_source'
         for node in root.iter_search_nodes():
             if node == root:
                 continue
-            if hasattr(node, self.name):
-                # this is like a white-list
-                values = node.__getattribute__(self.name)
+            if hasattr(node, self.name) or hasattr(node, any_source_key):
+                if hasattr(node, self.name):
+                    # this is like a white-list
+                    values = node.__getattribute__(self.name)
+                else:
+                    values = node.__getattribute__(any_source_key)
                 if values is not None:
                     source_terms = values.split(',')
                     for t in source_terms:
