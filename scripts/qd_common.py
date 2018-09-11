@@ -12,7 +12,12 @@ import logging
 import numpy as np
 import logging
 import glob
-import caffe
+try:
+    import caffe
+    from itertools import izip as zip
+except ImportError:
+    # in python3, we don't need itertools.izip since zip is izip
+    pass
 import time
 import matplotlib.pyplot as plt
 from pprint import pprint
@@ -22,7 +27,6 @@ import re
 from google.protobuf import text_format
 import base64
 import cv2
-from itertools import izip
 import shutil
 
 class ProgressBar(object):
@@ -235,7 +239,7 @@ def generate_lineidx(filein, idxout):
         fsize = os.fstat(tsvin.fileno()).st_size
         fpos = 0;
         while fpos!=fsize:
-    	    tsvout.write(str(fpos)+"\n");
+            tsvout.write(str(fpos)+"\n");
             tsvin.readline()
             fpos = tsvin.tell();
 
@@ -473,6 +477,7 @@ def setup_yaml():
     """ https://stackoverflow.com/a/8661021 """
     represent_dict_order = lambda self, data:  self.represent_mapping('tag:yaml.org,2002:map', data.items())
     yaml.add_representer(OrderedDict, represent_dict_order)    
+    yaml.add_representer(unicode, unicode_representer)
 
 def init_logging():
     np.seterr(divide = "raise", over="warn", under="warn",  invalid="raise")
@@ -1001,8 +1006,6 @@ def caffemodel_num_param(model_file):
 def unicode_representer(dumper, uni):
     node = yaml.ScalarNode(tag=u'tag:yaml.org,2002:str', value=uni)
     return node
-
-yaml.add_representer(unicode, unicode_representer)
 
 def write_to_yaml_file(context, file_name):
     ensure_directory(op.dirname(file_name))

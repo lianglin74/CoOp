@@ -8,13 +8,17 @@ from qd_common import read_to_buffer, load_list_file
 from qd_common import write_to_yaml_file, load_from_yaml_file
 import os
 import os.path as op
-from ete2 import Tree
+from ete3 import Tree
 from qd_common import generate_lineidx
 from qd_common import parse_test_data
 from qd_common import img_from_base64
 import numpy as np
 import yaml
-from itertools import izip
+try:
+    from itertools import izip as zip
+except ImportError:
+    # python 3
+    pass
 import progressbar 
 from tqdm import tqdm
 
@@ -333,7 +337,7 @@ class TSVDataset(object):
                         filter_idx)
                 if unique:
                     returned = set()
-                for i, (r_data, r_label) in enumerate(izip(rows_data, rows_label)):
+                for i, (r_data, r_label) in enumerate(zip(rows_data, rows_label)):
                     r_data[0] = r_label[0]
                     r_data[1] = r_label[1]
                     if unique and r_data[0] in returned:
@@ -384,7 +388,7 @@ class TSVDataset(object):
         assert t is not None
         v = self.get_latest_version(split, t)
         is_equal = True
-        for origin_row, new_row in izip(self.iter_data(split, t, v), rows):
+        for origin_row, new_row in zip(self.iter_data(split, t, v), rows):
             if len(origin_row) != len(new_row):
                 is_equal = False
                 break

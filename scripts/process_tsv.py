@@ -3187,7 +3187,50 @@ def standarize_crawled(tsv_input, tsv_output):
             yield image_name, json.dumps(rects), image_str
     tsv_writer(gen_rows(), tsv_output)
 
-def get_data_sources(public_only=False):
+def get_data_sources(public_only=False, version=None):
+    '''
+    gradually deprecate the parameter of public_only. Use the parameter of
+    version
+    '''
+    if version:
+        if version=='exclude_golden_test':
+            return [
+                    {
+                        'data': 'coco2017', 
+                        'valid_splits': ['train', 'trainval'],
+                        'cleaness': 10
+                    },
+                    {
+                        'data': 'voc0712', 
+                        'valid_splits': ['train', 'trainval'],
+                        'cleaness': 10
+                    },
+                    {
+                        'data': 'OpenImageV4_448', 
+                        'valid_splits': ['train', 'trainval'],
+                        'cleaness': 10
+                    },
+                    ('Naturalist', 10),
+                    ('elder', 10),
+                    ('imagenet200Diff', 10),
+                    ('open_images_clean_1', 9),
+                    ('open_images_clean_2', 9),
+                    ('open_images_clean_3', 9),
+                    ('imagenet1kLocClean', 9),
+                    ('imagenet3k_448Clean', 9),
+                    ('VisualGenomeClean', 9),
+                    ('brand1048Clean', 8),
+                    ('mturk700_url_as_keyClean', 8),
+                    ('crawl_office_v1', 8),
+                    ('crawl_office_v2', 8),
+                    ('Materialist', 8),
+                    ('MSLogoClean', 8),
+                    ('clothingClean', 8),
+                    ('imagenet22k_448', 7),
+                    ('4000_Full_setClean', 7),
+            ]
+        else:
+            raise ValueError('Unknown version = {}'.format(version))
     if not public_only:
         return [
             ('coco2017', 10),
