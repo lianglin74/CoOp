@@ -2843,12 +2843,14 @@ def remove_or_duplicate(train_ldtsi, min_image, max_image):
                     del type_to_dsi['no_bb']
                     num_remove = num_remove - len(dsi)
                 else:
+                    random.seed(9999)
                     random.shuffle(dsi)
                     type_to_dsi['no_bb'] = dsi[: len(dsi) - num_remove]
                     num_remove = 0
             if num_remove > 0:
                 assert 'with_bb' in type_to_dsi
                 dsi = type_to_dsi['with_bb']
+                random.seed(9999)
                 random.shuffle(dsi)
                 dsi = sorted(dsi, key=lambda x: -x[0].cleaness)
                 assert len(dsi) > num_remove
