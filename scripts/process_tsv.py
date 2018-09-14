@@ -2371,10 +2371,14 @@ class TSVDatasetSource(TSVDataset, DatasetSource):
             else:
                 # we will keep the lower case always for case-insensitive
                 # comparison
-                t = node.name.lower()
-                if t not in name_to_targetlabels:
-                    name_to_targetlabels[t] = set()
-                name_to_targetlabels[t].add(node.name)
+                all_candidate_src_names = [node.name.lower()]
+                if hasattr(node, 'alias_names'):
+                    all_candidate_src_names.extend([s.strip() for s in
+                        node.alias_names.split(',')])
+                for t in set(all_candidate_src_names):
+                    if t not in name_to_targetlabels:
+                        name_to_targetlabels[t] = set()
+                    name_to_targetlabels[t].add(node.name)
 
         sourcelabel_targetlabel = [] 
         assert len(invalid_list) == 0, pformat(invalid_list)
