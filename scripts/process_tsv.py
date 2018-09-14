@@ -2925,6 +2925,29 @@ def parse_data_clean_splits(data_infos):
             raise Exception('unkwown data_info = {}'.format(data_info))
     return datas, cleaness, all_valid_splits
 
+def attach_properties(src_nodes, dst_tree):
+    name_to_dst_node = {n.name: n for n in dst_tree.iter_search_nodes() if
+            n != dst_tree}
+    confusings = []
+    for src_node in src_nodes:
+        if src_node.name not in name_to_node:
+            continue
+        dst_node = name_to_dst_node[src_node.name]
+        for f in src_node.features:
+            if f in ['support', 'name', 'dist']:
+                continue
+            if f in dst_node.features:
+                if dst_node.__getattribute__(f) == src_node.__getattribute__(f):
+                    continue
+                else:
+                    confusings.append({'name': src_node.name,
+                        'feature': f,
+                        'value in tree': dst_node.__getattribute__(f),
+                        'value in property list': src_node.__getattribute__(f)})
+            else:
+                dst_node.add_feature(f, src_node.__getattribute__(f))
+    assert len(confusings) == 0, pformat(confusings)
+
 def build_taxonomy_impl(taxonomy_folder, **kwargs):
     random.seed(777)
     dataset_name = kwargs.get('data', 
@@ -2937,6 +2960,12 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
     init_logging()
     all_tax = load_all_tax(taxonomy_folder)
     tax = merge_all_tax(all_tax)
+    if 'term_data_source_matching_folder' in kwargs:
+        all_matching_tax = load_all_tax(kwargs['term_data_source_matching_folder'])
+        attach_properties([n for t in all_matching_tax 
+                             for n in t.iter_search_nodes() 
+                                if n != t],
+                          tax.root)
     tax.update()
     initialize_images_count(tax.root)
     mapper = LabelToSynset()
