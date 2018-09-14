@@ -3528,7 +3528,7 @@ def process_tsv_main(**kwargs):
         convert_to_uhrs_with_url(data + '_with_bb')
     elif kwargs['type'] == 'merge_labels':
         in_tsv = kwargs['input']
-        convert_uhrs_result_back_to_sources(in_tsv)
+        convert_uhrs_result_back_to_sources(in_tsv, debug=False)
     elif kwargs['type'] == 'ensure_inject_dataset':
         ensure_inject_dataset(kwargs['data'])
     elif kwargs['type'] == 'ensure_inject_expid':
