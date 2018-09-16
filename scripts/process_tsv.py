@@ -289,12 +289,12 @@ def update_pred_with_correctness(test_data, test_split,
                 all_correct_box.append(p['pred_box_id'])
                 matched[0]['used'] = True
         if len(all_correct_box) > 1000:
-            logging.info('updating')
+            logging.info('updating {} correct boxes'.format(len(all_correct_box)))
             _pred.update_many({'_id': {'$in': all_correct_box}}, 
                     {'$set': {'correct': 1}})
             all_correct_box = []
         if len(all_wrong_box) > 1000:
-            logging.info('updating')
+            logging.info('updating {} wrong boxes'.format(len(all_wrong_box)))
             _pred.update_many({'_id': {'$in': all_wrong_box}}, 
                     {'$set': {'correct': 0}})
             all_wrong_box = []
@@ -2958,6 +2958,7 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
             overall_dataset.get_labelmap_file()))
         return
     init_logging()
+    logging.info('building {}'.format(dataset_name))
     all_tax = load_all_tax(taxonomy_folder)
     tax = merge_all_tax(all_tax)
     if 'term_data_source_matching_folder' in kwargs:

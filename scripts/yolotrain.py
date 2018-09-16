@@ -82,6 +82,24 @@ from qd_common import concat_files
 from yoloinit import data_dependent_init_ncc2
 from yoloinit import data_dependent_init_ncc1
 
+def yolo_predict(**iparam):
+    '''
+    requires test_data and test_split
+    '''
+    full_expid = iparam['full_expid']
+    param = copy.deepcopy(iparam)
+
+    param['class_specific_nms'] = False
+    param['load_parameter'] = True
+    param['full_expid'] = full_expid
+    param['test_input_sizes'] = [416]
+
+    logging.info(pformat(param))
+    c = CaffeWrapper(**param)
+    m = c.best_model()
+    predict_result = c.predict(m)
+    c.evaluate(m, predict_result)
+
 def num_non_empty_lines(file_name):
     with open(file_name) as fp:
         context = fp.read()
