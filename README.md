@@ -100,6 +100,28 @@ This repo is for the algorithm development for IRIS object detection. The curren
    4. Go to the website of http://ip:8000/detection/view_model to view all the
       model under output/
    5. Go to http://ip:8000/detection/view_tree/ to view the tree structure data
-    
+
+3. Evaluate detection results
+    * Copy all the files from `\\ivm-server2\IRIS\OD\eval\prediction` to `./groundtruth`.
+
+    ```
+    mkdir groundtruth && cd groundtruth
+    cp -r path_to_groundtruth_folder/* .
+    ```
+    This folder includes baseline detection results on `MIT1k` and `Instagram` and their ground truth labels.
+
+    * Run prediction using your own model, update ground truth labels if needed.
+    See details at https://cognitionwiki.com/display/OB/How+to+evaluate+OD+models+via+human
+
+    * Run evaluation
+    ```
+    python evaluation/human_eval.py --set mit1k --result PATH_TO_RESULT
+    python evaluation/human_eval.py --set instagram --result PATH_TO_RESULT
+    ```
+    Or just run
+    ```
+    python evaluation/human_eval.py
+    ```
+    to see the current baselines.
 ## Contribute
 TODO: Explain how other colleagues can contribute. 
