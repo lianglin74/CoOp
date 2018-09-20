@@ -14,6 +14,54 @@ import argparse
 import logging
 import os.path as op
 import copy
+from taxonomy import Taxonomy
+from taxonomy import LabelToSynset
+from process_tsv import TSVDatasetSource
+
+def check_coverage(root_yaml, golden_data):
+    tax = Taxonomy(load_from_yaml_file(root_yaml))
+
+    mapper = LabelToSynset()
+    mapper.populate_noffset(tax.root)
+
+    golden_source = TSVDatasetSource(golden_data, tax.root)
+    golden_source._ensure_initialized()
+    labelmap = golden_source.load_labelmap()
+    result = []
+    line = 'num labels in golden dataset = {}'.format(len(labelmap))
+    result.append(line)
+
+    mapped_labels = [l for l in labelmap if l in
+            golden_source._sourcelabel_to_targetlabels]
+    line = '#mapped label = {}'.format(len(mapped_labels))
+    result.append(line)
+
+    ignored_labels = [l for l in labelmap if l not in
+            golden_source._sourcelabel_to_targetlabels]
+    line = 'ignored_label = {}'.format(len(ignored_labels))
+    label_to_count = {}
+    for split in ['train', 'trainval', 'test']:
+        for label, count in golden_source.iter_data(split,
+                'inverted.label.count', 0):
+            if label not in ignored_labels:
+                continue
+            if label not in label_to_count:
+                label_to_count[label] = 0
+            label_to_count[label] = label_to_count[label] + int(count)
+    result.append(line)
+
+    line = ', '.join(ignored_labels)
+    result.append(line)
+
+    ignored_but_has_many = [l for l in ignored_labels if label_to_count.get(l,
+        0) > 50]
+    line = 'ignored but has many'
+    result.append(line)
+
+    line = ', '.join(ignored_but_has_many)
+    result.append(line)
+
+    logging.info('\n'.join(result))
 
 def evaluate_tax_fullexpid(full_expid, **kwargs):
     '''
@@ -53,10 +101,6 @@ def evaluate_tax_fullexpid(full_expid, **kwargs):
         populate_dataset_details(out_with_bb)
         all_test_data.append({'test_data': out_with_bb, 'test_split': 'train'})
     
-    if 'test_data' in kwargs:
-        del kwargs['test_data']
-    if 'test_split' in kwargs:
-        del kwargs['test_split']
     for test_data_info in all_test_data:
         curr_param = copy.deepcopy(kwargs)
         for k in test_data_info:
@@ -95,7 +139,9 @@ if __name__ == '__main__':
     init_logging()
     kwargs = parse_args()
     logging.info('param:\n{}'.format(pformat(kwargs)))
-    locals()[kwargs['type']](**kwargs)
+    function_name = kwargs['type']
+    del kwargs['type']
+    locals()[function_name](**kwargs)
     '''
     examples:
     1. evaluate the model on different test datasets
