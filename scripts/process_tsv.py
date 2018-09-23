@@ -2831,11 +2831,12 @@ def create_testX(test_ldtsi, tax, out_dataset, version):
                 out_dataset[label_type].get_data('testX', 'origin.label'))
         tsv_writer(all_ki, out_dataset[label_type].get_shuffle_file('test'))
 
-def remove_or_duplicate(train_ldtsi, min_image, max_image):
+def remove_or_duplicate(train_ldtsi, min_image, label_to_max_image):
     label_to_dtsi = list_to_dict(train_ldtsi, 0)
     extra_dtsi = []
     for label in label_to_dtsi:
         dtsi = label_to_dtsi[label]
+        max_image = label_to_max_image[label]
         if len(dtsi) > max_image:
             # first remove the images with no bounding box
             num_remove = len(dtsi) - max_image
@@ -2930,11 +2931,11 @@ def attach_properties(src_nodes, dst_tree):
             n != dst_tree}
     confusings = []
     for src_node in src_nodes:
-        if src_node.name not in name_to_node:
+        if src_node.name not in name_to_dst_node:
             continue
         dst_node = name_to_dst_node[src_node.name]
         for f in src_node.features:
-            if f in ['support', 'name', 'dist']:
+            if f in ['support', 'name', 'dist', 'sub_group']:
                 continue
             if f in dst_node.features:
                 if dst_node.__getattribute__(f) == src_node.__getattribute__(f):
@@ -3062,17 +3063,23 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
 
     logging.info('duplicating or removing the train images')
     # for each label, let's duplicate the image or remove the image
-    max_image = kwargs.get('max_image_per_label', 1000)
+    default_max_image = kwargs.get('max_image_per_label', 1000)
+    label_to_max_image = {n.name: n.__getattribute__('max_image_extract_for_train') if
+            'max_image_extract_for_train' in n.features else default_max_image
+                for n in tax.root.iter_search_nodes() 
+                    if n != tax.root}
     min_image = kwargs.get('min_image_per_label', 200)
 
-    ldtsi, extra_dtsi = remove_or_duplicate(ldtsi, 0, max_image * 3)
+    ldtsi, extra_dtsi = remove_or_duplicate(ldtsi, 0, {l: label_to_max_image[l]
+            * 3 for l in label_to_max_image})
     assert len(extra_dtsi) == 0
 
     train_ldtsi, test_ldtsi = split_train_test(ldtsi, num_test)
 
     train_ldtsi = remove_test_in_train(train_ldtsi, test_ldtsi)
 
-    train_ldtsi, extra_dtsi = remove_or_duplicate(train_ldtsi, min_image, max_image)
+    train_ldtsi, extra_dtsi = remove_or_duplicate(train_ldtsi, min_image,
+            label_to_max_image)
 
     logging.info('creating the train data')
     create_trainX(train_ldtsi, extra_dtsi, tax, out_dataset, 
