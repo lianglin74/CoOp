@@ -6,7 +6,7 @@ from qd_common import init_logging
 from yolotrain import CaffeWrapper
 from process_tsv import build_taxonomy_impl
 from tsv_io import TSVDataset
-from qd_common import load_from_yaml_file
+from qd_common import write_to_yaml_file, load_from_yaml_file
 from pprint import pformat
 from process_tsv import populate_dataset_details
 from yolotrain import yolo_predict
@@ -17,6 +17,37 @@ import copy
 from taxonomy import Taxonomy
 from taxonomy import LabelToSynset
 from process_tsv import TSVDatasetSource
+
+def extract_full_taxonomy_to_vso_format(full_taxonomy_yaml, hier_tax_yaml,
+        property_yaml):
+    tax = Taxonomy(load_from_yaml_file(full_taxonomy_yaml))
+    write_to_yaml_file(tax.dump(feature_name='name', for_train=True), 
+            hier_tax_yaml)
+    
+    ps = []
+    for n in tax.root.traverse('preorder'):
+        if n == tax.root:
+            continue
+        c = {}
+        c['name'] = n.name
+        for f in n.features:
+            if f in ['support', 'name', 'dist', 'sub_group']:
+                continue
+            c[f] = n.__getattribute__(f)
+        if len(c) > 1:
+            ps.append(c)
+    write_to_yaml_file(ps, property_yaml)
+
+def create_taxonomy_based_on_vso(hier_tax_yaml, property_yaml,
+        full_taxonomy_yaml):
+    tax = Taxonomy(load_from_yaml_file(hier_tax_yaml))
+    property_tax = Taxonomy(load_from_yaml_file(property_yaml))
+    from process_tsv import attach_properties
+    attach_properties([n for n in property_tax.root.iter_search_nodes() 
+                            if n != property_tax.root], tax.root)
+    from qd_common import ensure_directory
+    ensure_directory(op.dirname(full_taxonomy_yaml))
+    write_to_yaml_file(tax.dump(for_train=True), full_taxonomy_yaml)
 
 def check_coverage(root_yaml, golden_data):
     tax = Taxonomy(load_from_yaml_file(root_yaml))

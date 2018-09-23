@@ -60,7 +60,27 @@ This repo is for the algorithm development for IRIS object detection. The curren
    python scripts/train.py --gpu 0 --net zf --data voc20 --iters 7000 --expid dbg
    ```
 
-## Examples
+# Examples
+## Taxonomy
+1. create a full txonomy yaml file based on the hierarchical file and mapping file
+   ```
+   python scripts/tools.py -p \
+       "{'type': 'create_taxonomy_based_on_vso', \
+       'hier_tax_yaml': '/input_path/ObjectDetection/Taxonomy/Latest/taxonomy.yaml', \
+       'property_yaml': '/input_path/ObjectDetection/Taxonomy/Latest/mapping.yaml', \
+       'full_taxonomy_yaml': '/output_path/root.yaml'}"
+   ``` 
+2. extract the hier taxonomy yaml and the properties or mapping yaml from a full taxonomy yaml file
+   ```
+   python scripts/tools.py -p \
+       "{'type': 'extract_full_taxonomy_to_vso_format', \
+       'hier_tax_yaml': '/output_path/t.yaml', \
+       'property_yaml': '/output_path/p.yaml', \
+       'full_taxonomy_yaml': '/input_path/a.yaml'}"
+   ```
+
+
+## Training
 1. Run Yolo with a customized taxonomy
    1. Prepare the data. 
       1. Create a sub folder, named 'data' under $QD_ROOT (the root folder of
@@ -87,7 +107,8 @@ This repo is for the algorithm development for IRIS object detection. The curren
        ```
        Replace the_path_to_taxonomy by the path of the taxonomy folder
 
-2. Visualize the data under data/ and the model prediction result under output/
+## Visualization
+1. Visualize the data under data/ and the model prediction result under output/
    1. go to the folder of visualization
       ```
       cd visualize
@@ -101,7 +122,8 @@ This repo is for the algorithm development for IRIS object detection. The curren
       model under output/
    5. Go to http://ip:8000/detection/view_tree/ to view the tree structure data
 
-3. Evaluate detection results
+## Evaluation
+1. Evaluate detection results
     * Copy all the files from `\\ivm-server2\IRIS\OD\eval\prediction` to `./groundtruth`.
 
     ```
@@ -123,5 +145,6 @@ This repo is for the algorithm development for IRIS object detection. The curren
     python evaluation/human_eval.py
     ```
     to see the current baselines.
+    ::
 ## Contribute
 TODO: Explain how other colleagues can contribute. 
