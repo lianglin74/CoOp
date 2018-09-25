@@ -2878,6 +2878,9 @@ def remove_or_duplicate(train_ldtsi, min_image, label_to_max_image):
 def remove_test_in_train(train_ldtsi, test_ldtsi):
     logging.info('before len(train_ldtsi) = {}'.format(len(train_ldtsi)))
     set_train_dtsi = set((d, t, s, i) for l, d, t, s, i in train_ldtsi)
+    if len(train_ldtsi) > 0 and type(train_ldtsi[0]) is list:
+        # we need to convert it to immutable tuple since list is not hashable
+        train_ldtsi = [(l, d, t, s, i) for l, d, t, s, i in train_ldtsi]
     set_train_ldtsi = set(train_ldtsi)
     #assert len(set_train_ldtsi) == len(train_ldtsi)
     set_test_dtsi = set((d, t, s, i) for l, d, t, s, i in test_ldtsi)
@@ -3061,9 +3064,7 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
 
     # split into train val
     num_test = kwargs.get('num_test', 50)
-    logging.info('splitting the images into train and test')
 
-    logging.info('duplicating or removing the train images')
     # for each label, let's duplicate the image or remove the image
     default_max_image = kwargs.get('max_image_per_label', 1000)
     label_to_max_image = {n.name: n.__getattribute__('max_image_extract_for_train') 
@@ -3071,15 +3072,23 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
             else default_max_image
         for n in tax.root.iter_search_nodes() if n != tax.root}
     min_image = kwargs.get('min_image_per_label', 200)
-
+    
+    logging.info('keep a small image pool to split')
+    # reduce the computing cost
     ldtsi, extra_dtsi = remove_or_duplicate(ldtsi, 0, {l: label_to_max_image[l]
             * 3 for l in label_to_max_image})
     assert len(extra_dtsi) == 0
-
-    train_ldtsi, test_ldtsi = split_train_test(ldtsi, num_test)
-
-    train_ldtsi = remove_test_in_train(train_ldtsi, test_ldtsi)
-
+    
+    logging.info('select the best test image')
+    # generate the test set from teh best data source
+    test_ldtsi, extra_dtsi = remove_or_duplicate(ldtsi, 0, {l: num_test for l in
+        label_to_max_image})
+    assert len(extra_dtsi) == 0
+    
+    logging.info('removing test images from image pool')
+    train_ldtsi = remove_test_in_train(ldtsi, test_ldtsi)
+    
+    logging.info('select the final training images')
     train_ldtsi, extra_dtsi = remove_or_duplicate(train_ldtsi, min_image,
             label_to_max_image)
 
