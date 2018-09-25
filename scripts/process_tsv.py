@@ -2364,6 +2364,7 @@ class TSVDatasetSource(TSVDataset, DatasetSource):
                             name_to_targetlabels[t] = set()
                         if t not in hash_labelmap:
                             invalid_list.append((t, self.name, node.name))
+                            continue
                         name_to_targetlabels[t].add(node.name)
                 # even if it is None, we will also add it to white-list so that
                 # we will not automatically match the term.
@@ -2381,7 +2382,8 @@ class TSVDatasetSource(TSVDataset, DatasetSource):
                     name_to_targetlabels[t].add(node.name)
 
         sourcelabel_targetlabel = [] 
-        assert len(invalid_list) == 0, pformat(invalid_list)
+        if len(invalid_list) != 0: 
+            logging.warn('invalid white list information: {}'.format(pformat(invalid_list)))
 
         #result = {}
         label_to_synset = LabelToSynset()
@@ -3064,10 +3066,10 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
     logging.info('duplicating or removing the train images')
     # for each label, let's duplicate the image or remove the image
     default_max_image = kwargs.get('max_image_per_label', 1000)
-    label_to_max_image = {n.name: n.__getattribute__('max_image_extract_for_train') if
-            'max_image_extract_for_train' in n.features else default_max_image
-                for n in tax.root.iter_search_nodes() 
-                    if n != tax.root}
+    label_to_max_image = {n.name: n.__getattribute__('max_image_extract_for_train') 
+            if 'max_image_extract_for_train' in n.features and n.__getattribute__('max_image_extract_for_train') > default_max_image
+            else default_max_image
+        for n in tax.root.iter_search_nodes() if n != tax.root}
     min_image = kwargs.get('min_image_per_label', 200)
 
     ldtsi, extra_dtsi = remove_or_duplicate(ldtsi, 0, {l: label_to_max_image[l]
