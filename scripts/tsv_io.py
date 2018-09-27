@@ -380,7 +380,7 @@ class TSVDataset(object):
     def write_data(self, rows, split, t=None, version=None):
         tsv_writer(rows, self.get_data(split, t, version))
 
-    def update_data(self, rows, split, t):
+    def update_data(self, rows, split, t, generate_info=None):
         '''
         if the data are the same, we will not do anything. 
         '''
@@ -399,9 +399,15 @@ class TSVDataset(object):
             if not is_equal:
                 break
         if not is_equal:
+            logging.info('creating {} for {}'.format(v + 1, self.name))
+            if generate_info:
+                self.write_data(generate_info, split, '{}.generate.info'.format(t), v + 1)
             self.write_data(rows, split, t, v + 1)
+            return v + 1
+        else:
+            logging.info('ignore to create since the label matches the latest')
 
-def tsv_writer(values, tsv_file_name):
+def tsv_writer(values, tsv_file_name, sep='\t'):
     ensure_directory(os.path.dirname(tsv_file_name))
     tsv_lineidx_file = os.path.splitext(tsv_file_name)[0] + '.lineidx'
     idx = 0
@@ -411,7 +417,7 @@ def tsv_writer(values, tsv_file_name):
         assert values is not None
         for value in values:
             assert value
-            v = '{0}\n'.format('\t'.join(map(str, value)))
+            v = '{0}\n'.format(sep.join(map(str, value)))
             fp.write(v)
             fpidx.write(str(idx) + '\n')
             idx = idx + len(v)
@@ -594,13 +600,13 @@ def get_all_data_info():
 
 def load_labels(file_name):
     rows = tsv_reader(file_name)
-    labels = {}
-    label_to_idx = {}
+    key_to_rects = {}
+    key_to_idx = {}
     for i, row in enumerate(rows):
         key = row[0]
         rects = json.loads(row[1])
         #assert key not in labels, '{}-{}'.format(file_name, key)
-        labels[key] = rects
-        label_to_idx[key] = i
-    return labels, label_to_idx
+        key_to_rects[key] = rects
+        key_to_idx[key] = i
+    return key_to_rects, key_to_idx
 

@@ -17,6 +17,9 @@ import copy
 from taxonomy import Taxonomy
 from taxonomy import LabelToSynset
 from process_tsv import TSVDatasetSource
+from yolotrain import yolotrain_main
+from process_tsv import convert_pred_to_dataset_label
+from qd_common import print_as_html
 
 def extract_full_taxonomy_to_vso_format(full_taxonomy_yaml, hier_tax_yaml,
         property_yaml):
@@ -100,6 +103,7 @@ def evaluate_tax_fullexpid(full_expid, **kwargs):
     '''
     c = CaffeWrapper(full_expid=full_expid, load_parameter=True)
     data = c._data
+    data_with_bb = data + '_with_bb'
 
     # evaluate on Tax1300V11_3_with_bb
     all_test_data = [{'test_data': data+'_with_bb', 'test_split':'test'}]
@@ -132,43 +136,35 @@ def evaluate_tax_fullexpid(full_expid, **kwargs):
         populate_dataset_details(out_with_bb)
         all_test_data.append({'test_data': out_with_bb, 'test_split': 'train'})
     
+    all_eval_file = []
     for test_data_info in all_test_data:
         curr_param = copy.deepcopy(kwargs)
         for k in test_data_info:
             curr_param[k] = test_data_info[k]
-        yolo_predict(full_expid=full_expid, 
+        eval_file = yolo_predict(full_expid=full_expid, 
                 **curr_param)
-
-def parse_args():
-    parser = argparse.ArgumentParser(description='Train a Yolo network')
-    parser.add_argument('-c', '--config_file', help='config file',
-            type=str)
-    parser.add_argument('-p', '--param', help='parameter string, yaml format',
-            type=str)
-    args = parser.parse_args()
-    kwargs =  {}
-    if args.config_file:
-        logging.info('loading parameter from {}'.format(args.config_file))
-        configs = load_from_yaml_file(args.config_file)
-        for k in configs:
-            kwargs[k] = configs[k]
-    from qd_common import  load_from_yaml_str
-    if args.param:
-        configs = load_from_yaml_str(args.param)
-        for k in configs:
-            if k not in kwargs:
-                kwargs[k] = configs[k]
-            elif kwargs[k] == configs[k]:
-                continue
-            else:
-                logging.info('overwriting {} to {} for {}'.format(kwargs[k], 
-                    configs[k], k))
-                kwargs[k] = configs[k]
-    return kwargs
+        all_eval_file.append(eval_file)
+    
+    report_table = {'mAP': {}, 'person': {}}
+    for eval_file, test_data_info in zip(all_eval_file, all_test_data):
+        test_data = test_data_info['test_data']
+        if op.isfile(eval_file):
+            overall_map_info = load_from_yaml_file(eval_file + '.map.json')
+            per_class_map_info = load_from_yaml_file(eval_file +
+                    '.class_ap.json')
+            report_table['mAP'][test_data] = overall_map_info['overall']['0.5']['map']
+            report_table['person'][test_data] = per_class_map_info['overall']['0.5']['class_ap'].get('person', -1)
+        else:
+            report_table['mAP'][test_data] = -1
+            report_table['person'][test_data] = -1
+    
+    html_output = op.join('output', full_expid, 'snapshot', 'maps', 'index.html')
+    print_as_html(report_table, html_output)
 
 if __name__ == '__main__':
     init_logging()
-    kwargs = parse_args()
+    from qd_common import parse_general_args
+    kwargs = parse_general_args()
     logging.info('param:\n{}'.format(pformat(kwargs)))
     function_name = kwargs['type']
     del kwargs['type']

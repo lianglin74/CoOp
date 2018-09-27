@@ -28,7 +28,48 @@ from google.protobuf import text_format
 import base64
 import cv2
 import shutil
+import argparse
 
+
+def print_as_html(table, html_output):
+    from jinja2 import Environment, FileSystemLoader
+    j2_env = Environment(loader=FileSystemLoader('./'), trim_blocks=True)
+    cols = []
+    for row in table:
+        cols.extend(table[row])
+    cols = list(set(cols))
+    r = j2_env.get_template('aux_data/html_template/table_viewer.html').render(
+        table=table,
+        rows=table.keys(),
+        cols=cols)
+    write_to_file(r, html_output)
+
+def parse_general_args():
+    parser = argparse.ArgumentParser(description='Train a Yolo network')
+    parser.add_argument('-c', '--config_file', help='config file',
+            type=str)
+    parser.add_argument('-p', '--param', help='parameter string, yaml format',
+            type=str)
+    args = parser.parse_args()
+    kwargs =  {}
+    if args.config_file:
+        logging.info('loading parameter from {}'.format(args.config_file))
+        configs = load_from_yaml_file(args.config_file)
+        for k in configs:
+            kwargs[k] = configs[k]
+    from qd_common import  load_from_yaml_str
+    if args.param:
+        configs = load_from_yaml_str(args.param)
+        for k in configs:
+            if k not in kwargs:
+                kwargs[k] = configs[k]
+            elif kwargs[k] == configs[k]:
+                continue
+            else:
+                logging.info('overwriting {} to {} for {}'.format(kwargs[k], 
+                    configs[k], k))
+                kwargs[k] = configs[k]
+    return kwargs
 class ProgressBar(object):
     def __init__(self, maxval):
         assert maxval > 0
@@ -640,7 +681,6 @@ def adjust_tree_prediction_threshold(n, tree_th):
     found = False
     for l in n.layer:
         if l.type == 'SoftmaxTreePrediction':
-            assert not found
             found = True
             l.softmaxtreeprediction_param.threshold = tree_th
     assert found
@@ -797,21 +837,38 @@ def get_channel(net, blob_name):
                 return l.convolution_param.num_output
     assert False, 'not found'
 
-def fix_net_parameters(net, **kwargs):
-    last_fixed_param = kwargs['last_fixed_param']
+def fix_net_parameters(net, last_fixed_param):
     found = False
+    no_param_layers = set(['TsvBoxData', 'ReLU', 'Pooling', 'Reshape',
+            'EuclideanLoss', 'Sigmoid'])
+    unknown_layers = []
     for l in net.layer:
-        if l.type == 'Convolution':
+        if l.type == 'Convolution' or l.type == 'Scale':
+            if l.type == 'Convolution':
+                assert len(l.param) >= 1
+            else:
+                if len(l.param) == 0:
+                    p = l.param.add()
+                    p.lr_mult = 0
+                    p.decay_mult = 0
+                    if l.scale_param.bias_term:
+                        p = l.param.add()
+                        p.lr_mult = 0
+                        p.decay_mult = 0
             for p in l.param:
                 p.lr_mult = 0
                 p.decay_mult = 0
         elif l.type == 'BatchNorm':
             l.batch_norm_param.use_global_stats = True
+        else:
+            if l.type not in no_param_layers:
+                unknown_layers.append(l.type)
         if l.name == last_fixed_param:
             for b in l.bottom:
                 l.propagate_down.append(False)
             found = True
             break
+    assert len(unknown_layers) == 0, ', '.join(unknown_layers)
     assert found
 
 def set_no_bias(net, layer_name):

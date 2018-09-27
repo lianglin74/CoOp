@@ -98,7 +98,8 @@ def yolo_predict(**iparam):
     c = CaffeWrapper(**param)
     m = c.best_model()
     predict_result = c.predict(m)
-    c.evaluate(m, predict_result)
+    eval_file = c.evaluate(m, predict_result)
+    return eval_file
 
 def num_non_empty_lines(file_name):
     with open(file_name) as fp:

@@ -3080,10 +3080,13 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
     assert len(extra_dtsi) == 0
     
     logging.info('select the best test image')
-    # generate the test set from teh best data source
-    test_ldtsi, extra_dtsi = remove_or_duplicate(ldtsi, 0, {l: num_test for l in
-        label_to_max_image})
-    assert len(extra_dtsi) == 0
+    if num_test == 0:
+        test_ldtsi = []
+    else:
+        # generate the test set from teh best data source
+        test_ldtsi, extra_dtsi = remove_or_duplicate(ldtsi, 0, {l: num_test for l in
+            label_to_max_image})
+        assert len(extra_dtsi) == 0
     
     logging.info('removing test images from image pool')
     train_ldtsi = remove_test_in_train(ldtsi, test_ldtsi)
