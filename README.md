@@ -146,5 +146,23 @@ This repo is for the algorithm development for IRIS object detection. The curren
     ```
     to see the current baselines.
     ::
+
+2. Evaluate a model trained on the composite dataset on all test sets 
+    * Replace the full expid to adapt to your model
+    ```
+    python scripts/tools.py -p \
+        "{'type': 'evaluate_tax_fullexpid', \
+          'full_expid': 'Tax1300V14.1_0.0_0.0_darknet19_448_B_noreorg_bb_only'}"
+    ```
+
+3. Evaluate a model on the test split of voc20
+    ```
+    python scripts/tools.py -p \
+        "{'type': 'yolo_predict', \
+          'full_expid': 'Tax1300V14.1_0.0_0.0_darknet19_448_B_noreorg_bb_only', \
+          'test_data': 'voc20', \
+          'test_split': 'test'}"
+    ```
+
 ## Contribute
 TODO: Explain how other colleagues can contribute. 
