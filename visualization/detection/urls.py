@@ -10,12 +10,27 @@ urlpatterns = [
     url(r'^view_image/$', 
         views.view_image2, 
         name='view_image2'),
+    url(r'^view_result/$', 
+        views.view_image3, 
+        name='view_image3'),
+    url(r'^view_compare/$', 
+        views.view_compare, 
+        name='view_compare'),
+    url(r'^view_compare2/$', 
+        views.view_compare2, 
+        name='view_compare2'),
     url(r'^taxonomy_verification/$',
         views.input_taxonomy,
         name='taxonomy_verification'),
     url(r'^view_tree/$', 
         views.view_tree, 
         name='view_tree'),
+    url(r'^view_tree2/$', 
+        views.view_tree2, 
+        name='view_tree2'),
+    url(r'^verify_data/$',
+        views.verify_data,
+        name='verify_data'),
     # if no parameter is given -> show all the exps
     # if full_expid is given -> show all the prediction results, i.e. *.predict
     # file
@@ -36,6 +51,6 @@ urlpatterns = [
         name='confirm'),
     url(r'^media/(.*)$',
         views.download_file,
-        name='return_file'),
+        name='return_file')
 ]
 

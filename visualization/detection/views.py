@@ -6,8 +6,12 @@ from django.views.decorators.csrf import csrf_exempt
 import sys
 import os
 import os.path as op
+import glob
+
 def get_qd_root():
     return op.dirname(op.dirname(op.dirname(op.realpath(__file__))))
+
+
 import os.path as op
 sys.path.append(op.join(get_qd_root(), 'scripts'))
 from tsv_io import tsv_reader
@@ -55,7 +59,6 @@ from process_tsv import visualize_predict_no_draw
 from process_tsv import get_class_count
 from process_tsv import visualize_box_no_draw
 import copy
-import time
 
 init_logging()
 
@@ -78,8 +81,25 @@ def view_tree(request):
         return render(request, 'detection/view_tree.html', context)
     else:
         data_list = run_in_qd(get_all_tree_data)
-        context = { 'data_names': data_list }
+        context = {'data_names': data_list}
         return render(request, 'detection/view_list_has_tree.html', context)
+
+
+def view_tree2(request):
+    if 'data' in request.GET:
+        data = request.GET.get('data')
+        # provide the accuracy for each category
+        full_expid = request.GET.get('full_expid')
+        predict_file = request.GET.get('predict_file')
+        s = run_in_qd(gen_html_tree_view, data, full_expid,
+                predict_file)
+        context = {'li_ul_tree_str': s}
+        return render(request, 'detection/view_tree.html', context)
+    else:
+        data_list = run_in_qd(get_all_tree_data)
+        context = {'data_names': data_list}
+        return render(request, 'detection/view_list_has_tree.html', context)
+
 
 def view_exp_list(request):
     curr_dir = os.curdir
@@ -89,6 +109,7 @@ def view_exp_list(request):
     full_expids.sort()
     context = {'full_expids': full_expids}
     return render(request, 'detection/exp_list.html', context)
+
 
 class VisualizationDatabaseByFileSystem():
     def query_predict_precision(self, full_expid, pred_file, class_name, threshold, start_id, max_item):
@@ -103,9 +124,10 @@ class VisualizationDatabaseByFileSystem():
             result.append(c)
         return result
 
+
 def CreateVisualizationDatabase():
     try:
-        #return VisualizationDatabaseByFileSystem()
+        # return VisualizationDatabaseByFileSystem()
         from process_tsv import VisualizationDatabaseByMongoDB
         MongoClient().admin.command('ismaster')
         logging.info('creating mongodb database')
@@ -114,7 +136,9 @@ def CreateVisualizationDatabase():
         logging.info('no mongodb is availalbe. Reverse back to file system')
         return VisualizationDatabaseByFileSystem()
 
+
 _db = CreateVisualizationDatabase()
+
 
 def submit_pipeline(request):
     if request.method == 'GET':
@@ -124,19 +148,19 @@ def submit_pipeline(request):
         task_id = _db.insert('pipeline', pipeline)
         return HttpResponseRedirect('/detection/process_pipeline/')
 
-def view_model_by_predict_file4(request, full_expid, predict_file, 
-        label, start_id, threshold):
+
+def view_model_by_predict_file4(request, full_expid, predict_file, label, start_id, threshold):
     '''
     use js to render the box compared with version 2
     '''
-    start_time = time.time()
+    # start_time = time.time()
     start_id = int(float(start_id))
     threshold = float(threshold)
-    
+
     # qd code
     curr_dir_backup = os.getcwd()
     os.chdir(get_qd_root())
-    
+
     max_pairs = 50
     if request.GET.get('acc_type', 'precision') == 'precision':
         pairs = _db.query_predict_precision(full_expid,
@@ -144,7 +168,7 @@ def view_model_by_predict_file4(request, full_expid, predict_file,
     else:
         pairs = _db.query_predict_recall(full_expid,
                 predict_file, label, threshold, start_id, max_pairs)
-    #pairs = visualize_predict_no_draw(full_expid, predict_file, label, start_id, threshold)
+    # pairs = visualize_predict_no_draw(full_expid, predict_file, label, start_id, threshold)
     all_type_to_rects = []
     all_url = []
     all_key = []
@@ -157,9 +181,9 @@ def view_model_by_predict_file4(request, full_expid, predict_file,
         all_key.append(key)
         if i >= max_pairs - 1:
             break
-    
-    common_param = [('full_expid', full_expid), 
-            ('predict_file', predict_file), 
+
+    common_param = [('full_expid', full_expid),
+            ('predict_file', predict_file),
             ('filter_label', label),
             ('threshold', threshold)]
     previous_param = []
@@ -171,33 +195,36 @@ def view_model_by_predict_file4(request, full_expid, predict_file,
     next_param.append(('start_id', str(start_id + len(all_url))))
     previous_button_param = '&'.join(['{}={}'.format(key, value) for key, value
         in previous_param])
-    previous_link = reverse('detection:view_model') + '?' + previous_button_param
-    next_button_param = '&'.join(['{}={}'.format(key, value) for key, value in 
+    previous_link = reverse('detection:view_model') + \
+                            '?' + previous_button_param
+    next_button_param = '&'.join(['{}={}'.format(key, value) for key, value in
         next_param])
     next_link = reverse('detection:view_model') + '?' + next_button_param
-    
+
     context = {'all_type_to_rects': json.dumps(all_type_to_rects),
             'target_label': label,
             'all_key': json.dumps(all_key),
             'all_url': json.dumps(all_url),
             'previous_link': previous_link,
             'next_link': next_link}
-    logging.info('time cost: {}'.format(time.time() - start_time))
+    # logging.info('time cost: {}'.format(time.time() - start_time))
     return render(request, 'detection/images_js2.html', context)
 
-def view_model_by_predict_file3(request, full_expid, predict_file, 
+
+def view_model_by_predict_file3(request, full_expid, predict_file,
         label, start_id, threshold):
     '''
     use js to render the box compared with version 2
     '''
     start_id = int(float(start_id))
     threshold = float(threshold)
-    
+
     # qd code
     curr_dir_backup = os.getcwd()
     os.chdir(get_qd_root())
 
-    pairs = visualize_predict_no_draw(full_expid, predict_file, label, start_id, threshold)
+    pairs = visualize_predict_no_draw(
+        full_expid, predict_file, label, start_id, threshold)
     max_pairs = 50
     all_type_to_rects = []
     all_url = []
@@ -211,9 +238,9 @@ def view_model_by_predict_file3(request, full_expid, predict_file,
         all_key.append(key)
         if i >= max_pairs - 1:
             break
-    
-    common_param = [('full_expid', full_expid), 
-            ('predict_file', predict_file), 
+
+    common_param = [('full_expid', full_expid),
+            ('predict_file', predict_file),
             ('filter_label', label),
             ('threshold', threshold)]
     previous_param = []
@@ -225,11 +252,12 @@ def view_model_by_predict_file3(request, full_expid, predict_file,
     next_param.append(('start_id', str(start_id + len(all_url))))
     previous_button_param = '&'.join(['{}={}'.format(key, value) for key, value
         in previous_param])
-    previous_link = reverse('detection:view_model') + '?' + previous_button_param
-    next_button_param = '&'.join(['{}={}'.format(key, value) for key, value in 
+    previous_link = reverse('detection:view_model') + \
+                            '?' + previous_button_param
+    next_button_param = '&'.join(['{}={}'.format(key, value) for key, value in
         next_param])
     next_link = reverse('detection:view_model') + '?' + next_button_param
-    
+
     context = {'all_type_to_rects': json.dumps(all_type_to_rects),
             'target_label': label,
             'all_key': json.dumps(all_key),
@@ -238,11 +266,12 @@ def view_model_by_predict_file3(request, full_expid, predict_file,
             'next_link': next_link}
     return render(request, 'detection/images_js2.html', context)
 
-def view_model_by_predict_file(request, full_expid, predict_file, 
+
+def view_model_by_predict_file(request, full_expid, predict_file,
         label, start_id, threshold):
     start_id = int(float(start_id))
     threshold = float(threshold)
-    
+
     # qd code
     curr_dir_backup = os.getcwd()
     os.chdir(get_qd_root())
@@ -256,7 +285,8 @@ def view_model_by_predict_file(request, full_expid, predict_file,
     os.chdir(curr_dir_backup)
 
     image_pairs = []
-    target_images, image_aps = get_target_images(predicts, gts, label, threshold)
+    target_images, image_aps = get_target_images(
+        predicts, gts, label, threshold)
     pairs = gt_predict_images(predicts, gts, test_data, target_images,
             label,
             start_id,
@@ -273,12 +303,13 @@ def view_model_by_predict_file(request, full_expid, predict_file,
             full_expid, predict_file, key))
         path_pred_target = save_image_in_static(im_pred_target,
                 '{}/{}/{}_pred_target.png'.format(full_expid, predict_file, key))
-        image_pairs.append((path_origin, path_gt_target, path_pred_target, path_gt, path_pred, ap))
+        image_pairs.append((path_origin, path_gt_target,
+                           path_pred_target, path_gt, path_pred, ap))
         if i >= max_pairs - 1:
             break
-    
-    common_param = [('full_expid', full_expid), 
-            ('predict_file', predict_file), 
+
+    common_param = [('full_expid', full_expid),
+            ('predict_file', predict_file),
             ('filter_label', label),
             ('threshold', threshold)]
     previous_param = []
@@ -293,9 +324,9 @@ def view_model_by_predict_file(request, full_expid, predict_file,
     next_param.append(('start_id', str(start_id + len(image_pairs))))
     previous_button_param = '&'.join(['{}={}'.format(key, value) for key, value
         in previous_param])
-    next_button_param = '&'.join(['{}={}'.format(key, value) for key, value in 
+    next_button_param = '&'.join(['{}={}'.format(key, value) for key, value in
         next_param])
-    
+
     if label not in confusion_pred_gt:
         html_confusion_pred_gt = []
     else:
@@ -316,6 +347,7 @@ def view_model_by_predict_file(request, full_expid, predict_file,
 
     return render(request, 'detection/predict_result.html', context)
 
+
 def view_model_prediction_labelmap(request, full_expid, predict_file):
     curr_dir = os.curdir
     os.chdir(get_qd_root())
@@ -332,7 +364,8 @@ def view_model_prediction_labelmap(request, full_expid, predict_file):
             class_ap = class_ap['overall']['-1']['class_ap']
         else:
             assert False
-        labelmap_ap = [[l, '{:.2f}'.format(class_ap.get(l, -1))] for l in labelmap]
+        labelmap_ap = [
+            [l, '{:.2f}'.format(class_ap.get(l, -1))] for l in labelmap]
     else:
         labelmap_ap = [[l, None] for l in labelmap]
     if 'data' in request.GET:
@@ -354,6 +387,7 @@ def view_model_prediction_labelmap(request, full_expid, predict_file):
     return render(request, 'detection/view_model_prediction_labelmap.html',
             context)
 
+
 def view_test_model(request, full_expid, predict_file):
     context = {'full_expid': full_expid,
             'predict_file': predict_file}
@@ -373,19 +407,22 @@ def test_model(request):
                         interpolation=cv2.INTER_LINEAR)
     from yolotrain import predict_one_view
     predict_file = request.POST['predict_file']
-    all_bb, all_label, all_conf = run_in_qd(predict_one_view, im, 
-            request.POST['full_expid'], 
+    all_bb, all_label, all_conf = run_in_qd(predict_one_view, im,
+            request.POST['full_expid'],
             predict_file
             )
     infos = []
     info = {}
-    info['pred'] = [{'rect': bb, 'class': l, 'conf': conf } for bb, l, conf in zip(all_bb, all_label, all_conf)]
+    info['pred'] = [{'rect': bb, 'class': l, 'conf': conf}
+        for bb, l, conf in zip(all_bb, all_label, all_conf)]
     infos.append(info)
     import random
-    html_path = save_image_in_static(im, 'predict_request/{}.png'.format(int(1000 * random.random())))
-    context = {'all_type_to_rects': json.dumps(infos), 
+    html_path = save_image_in_static(
+        im, 'predict_request/{}.png'.format(int(1000 * random.random())))
+    context = {'all_type_to_rects': json.dumps(infos),
             'all_url': json.dumps(['/static/' + html_path])}
     return render(request, 'detection/images_js2.html', context)
+
 
 def view_model(request):
     if 'full_expid' in request.GET and \
@@ -393,31 +430,31 @@ def view_model(request):
             'filter_label' in request.GET and \
             'start_id' in request.GET and \
             'threshold' in request.GET:
-        return view_model_by_predict_file4(request, 
+        return view_model_by_predict_file4(request,
                 request.GET['full_expid'],
                 request.GET['predict_file'],
                 request.GET['filter_label'],
                 request.GET['start_id'],
                 request.GET['threshold'])
-        #return view_model_by_predict_file3(request, 
-                #request.GET['full_expid'],
-                #request.GET['predict_file'],
-                #request.GET['filter_label'],
-                #request.GET['start_id'],
-                #request.GET['threshold'])
-        #return view_model_by_predict_file(request, 
-                #request.GET['full_expid'],
-                #request.GET['predict_file'],
-                #request.GET['filter_label'],
-                #request.GET['start_id'],
-                #request.GET['threshold'])
+        # return view_model_by_predict_file3(request,
+                # request.GET['full_expid'],
+                # request.GET['predict_file'],
+                # request.GET['filter_label'],
+                # request.GET['start_id'],
+                # request.GET['threshold'])
+        # return view_model_by_predict_file(request,
+                # request.GET['full_expid'],
+                # request.GET['predict_file'],
+                # request.GET['filter_label'],
+                # request.GET['start_id'],
+                # request.GET['threshold'])
     elif 'full_expid' in request.GET and \
             'predict_file' in request.GET and \
             'test_model' in request.GET:
-        return view_test_model(request, 
+        return view_test_model(request,
                 request.GET['full_expid'], request.GET['predict_file'])
     elif 'full_expid' in request.GET and 'predict_file' in request.GET:
-        return view_model_prediction_labelmap(request, 
+        return view_model_prediction_labelmap(request,
                 request.GET['full_expid'], request.GET['predict_file'])
     elif 'full_expid' in request.GET:
         full_expid = request.GET['full_expid']
@@ -429,53 +466,70 @@ def view_model(request):
     else:
         return view_exp_list(request)
 
+
 def edit_model_label(request):
     if request.method == 'POST':
         all_valid_label = request.POST.getlist('valid')
-        write_to_file('\n'.join(all_valid_label), 
+        write_to_file('\n'.join(all_valid_label),
                 '/tmp/valid2.csv')
         return HttpResponseRedirect('/detection/confirm/')
+
 
 def confirm(request):
     return HttpResponse('confirm')
 
+
 def save_image_in_static(im, rel_path):
     html_path = 'detection/{}'.format(rel_path)
     disk_path = op.join(op.dirname(__file__), 'static', html_path)
-    #if im.shape[0] > 400:
-        #factor = 400. / im.shape[0]
-        #im = cv2.resize(im, (int(im.shape[1] * factor), 400))
+    # if im.shape[0] > 400:
+        # factor = 400. / im.shape[0]
+        # im = cv2.resize(im, (int(im.shape[1] * factor), 400))
     save_image(im, disk_path)
     return html_path
 
-def view_image_js3(request, data, split, version, label, start_id):
+def isfloat(value):
+  try:
+    float(value)
+    return True
+  except ValueError:
+    return False
+
+def view_image_compare2(request, data, split, version, label, start_id, min_conf=None):
     '''
-    use js to render the box in the client side, using the db interface
+    use js to render the box in the client side
     '''
     curr_dir = os.curdir
     os.chdir(get_qd_root())
     start_id = int(float(start_id))
-    max_image_shown = 50
-    images = _db.query_ground_truth(data, split, version, label, start_id,
-            max_image_shown)
+    images = visualize_box_no_draw(data, split, version, label, start_id)
     all_type_to_rects = []
     all_url = []
+    max_image_shown = 50
     all_key = []
-    for i, info in enumerate(images):
-        key, url, gt = info['key'], info['url'], info['gt']
+    for i, (fname, origin, gt) in enumerate(images):
+        if i >= max_image_shown:
+            break
+
+        origin_html_path = save_image_in_static(
+            origin, '{}/{}/{}/origin_{}.jpg'.format(data, split, version, fname))
+
         all_key.append(fname)
-        all_url.append(url)
-        all_type_to_rects.append({'gt': gt })
+        all_url.append('/static/' + origin_html_path)
+        all_type_to_rects.append({'gt': gt})
+
     os.chdir(curr_dir)
 
     kwargs = copy.deepcopy(request.GET)
     kwargs['start_id'] = str(max(0, start_id - max_image_shown))
-    previous_link = reverse('detection:view_image2')
-    previous_link = previous_link + '?' + '&'.join(['{}={}'.format(k, kwargs[k]) for k in kwargs])
+    previous_link = reverse('detection:view_compare2')
+    previous_link = previous_link + '?' + \
+        '&'.join(['{}={}'.format(k, kwargs[k]) for k in kwargs])
     kwargs = copy.deepcopy(request.GET)
     kwargs['start_id'] = str(start_id + len(all_type_to_rects))
-    next_link = reverse('detection:view_image2')
-    next_link = next_link + '?' + '&'.join(['{}={}'.format(k, kwargs[k]) for k in kwargs])
+    next_link = reverse('detection:view_compare2')
+    next_link = next_link + '?' + \
+        '&'.join(['{}={}'.format(k, kwargs[k]) for k in kwargs])
 
     context = {'all_type_to_rects': json.dumps(all_type_to_rects),
             'target_label': label,
@@ -483,7 +537,97 @@ def view_image_js3(request, data, split, version, label, start_id):
             'all_key': json.dumps(all_key),
             'previous_link': previous_link,
             'next_link': next_link}
-    return render(request, 'detection/images_js2.html', context)
+
+    return render(request, 'detection/images_compare.html', context)
+
+def view_image_compare(request, data, split, version, label, start_id, min_conf=None):
+    '''
+    use js to render the box in the client side
+    '''
+    curr_dir = os.curdir
+    os.chdir(get_qd_root())
+    start_id = int(float(start_id))
+    images = visualize_box_no_draw(data, split, version, label, start_id)
+    all_type_to_rects = []
+    all_url = []
+    max_image_shown = 50
+    all_key = []
+    for i, (fname, origin, gt) in enumerate(images):
+        if i >= max_image_shown:
+            break
+
+        origin_html_path = save_image_in_static(
+            origin, '{}/{}/{}/origin_{}.jpg'.format(data, split, version, fname))
+
+        all_key.append(fname)
+        all_url.append('/static/' + origin_html_path)
+        all_type_to_rects.append({'gt': gt})
+
+    os.chdir(curr_dir)
+
+    kwargs = copy.deepcopy(request.GET)
+    kwargs['start_id'] = str(max(0, start_id - max_image_shown))
+    previous_link = reverse('detection:view_compare')
+    previous_link = previous_link + '?' + \
+        '&'.join(['{}={}'.format(k, kwargs[k]) for k in kwargs])
+    kwargs = copy.deepcopy(request.GET)
+    kwargs['start_id'] = str(start_id + len(all_type_to_rects))
+    next_link = reverse('detection:view_compare')
+    next_link = next_link + '?' + \
+        '&'.join(['{}={}'.format(k, kwargs[k]) for k in kwargs])
+
+    context = {'all_type_to_rects': json.dumps(all_type_to_rects),
+            'target_label': label,
+            'all_url': json.dumps(all_url),
+            'all_key': json.dumps(all_key),
+            'previous_link': previous_link,
+            'next_link': next_link}
+
+    return render(request, 'detection/images_compare.html', context)
+
+def view_image_js3(request, data, split, version, label, start_id):
+    '''
+    use js to render the box in the client side
+    '''
+    curr_dir = os.curdir
+    os.chdir(get_qd_root())
+    start_id = int(float(start_id))
+    images = visualize_box_no_draw(data, split, version, label, start_id)
+    all_type_to_rects = []
+    all_url = []
+    max_image_shown = 50
+    all_key = []
+    for i, (fname, origin, gt) in enumerate(images):
+        if i >= max_image_shown:
+            break
+        origin_html_path = save_image_in_static(origin, '{}/{}/{}/origin_{}.jpg'.format(data, split,
+            version,
+            fname))
+        all_key.append(fname)
+        all_url.append('/static/' + origin_html_path)
+        all_type_to_rects.append({'gt': gt})
+    os.chdir(curr_dir)
+
+    kwargs = copy.deepcopy(request.GET)
+    kwargs['start_id'] = str(max(0, start_id - max_image_shown))
+    previous_link = reverse('detection:view_image3')
+    previous_link = previous_link + '?' + \
+        '&'.join(['{}={}'.format(k, kwargs[k]) for k in kwargs])
+    kwargs = copy.deepcopy(request.GET)
+    kwargs['start_id'] = str(start_id + len(all_type_to_rects))
+    next_link = reverse('detection:view_image3')
+    next_link = next_link + '?' + \
+        '&'.join(['{}={}'.format(k, kwargs[k]) for k in kwargs])
+
+    context = {'all_type_to_rects': json.dumps(all_type_to_rects),
+            'target_label': label,
+            'all_url': json.dumps(all_url),
+            'all_key': json.dumps(all_key),
+            'previous_link': previous_link,
+            'next_link': next_link}
+
+    return render(request, 'detection/images_js3.html', context)
+
 
 def view_image_js2(request, data, split, version, label, start_id):
     '''
@@ -505,17 +649,19 @@ def view_image_js2(request, data, split, version, label, start_id):
             fname))
         all_key.append(fname)
         all_url.append('/static/' + origin_html_path)
-        all_type_to_rects.append({'gt': gt })
+        all_type_to_rects.append({'gt': gt})
     os.chdir(curr_dir)
 
     kwargs = copy.deepcopy(request.GET)
     kwargs['start_id'] = str(max(0, start_id - max_image_shown))
     previous_link = reverse('detection:view_image2')
-    previous_link = previous_link + '?' + '&'.join(['{}={}'.format(k, kwargs[k]) for k in kwargs])
+    previous_link = previous_link + '?' + \
+        '&'.join(['{}={}'.format(k, kwargs[k]) for k in kwargs])
     kwargs = copy.deepcopy(request.GET)
     kwargs['start_id'] = str(start_id + len(all_type_to_rects))
     next_link = reverse('detection:view_image2')
-    next_link = next_link + '?' + '&'.join(['{}={}'.format(k, kwargs[k]) for k in kwargs])
+    next_link = next_link + '?' + \
+        '&'.join(['{}={}'.format(k, kwargs[k]) for k in kwargs])
 
     context = {'all_type_to_rects': json.dumps(all_type_to_rects),
             'target_label': label,
@@ -523,50 +669,283 @@ def view_image_js2(request, data, split, version, label, start_id):
             'all_key': json.dumps(all_key),
             'previous_link': previous_link,
             'next_link': next_link}
+
     return render(request, 'detection/images_js2.html', context)
 
-#def view_image_js(request, data, split, version, label, start_id):
-    #'''
-    #use js to render the box in the client side
-    #'''
-    #curr_dir = os.curdir
-    #os.chdir(get_qd_root())
-    #start_id = int(float(start_id))
-    #images = visualize_box_no_draw(data, split, version, label, start_id)
-    #html_image_paths = []
-    #max_image_shown = 50
-    #label_list = set()
-    #for i, (fname, origin, all_info, label_info) in enumerate(images):
-        #if i >= max_image_shown:
-            #break
-        #origin_html_path = save_image_in_static(origin, '{}/{}/{}/origin_{}.jpg'.format(data, split,
-            #version,
-            #fname))
-        #html_image_paths.append({"path": origin_html_path,
-                           #"all_info": all_info,
-                           #"label_info": label_info})
-        #label_list.update(all_info['class'])
-    #os.chdir(curr_dir)
-    #label_list = list(label_list)
-    #if label is not None:
-        #label_list.remove(label)
-        #label_list.insert(0, label)
+# def view_image_js(request, data, split, version, label, start_id):
+    # '''
+    # use js to render the box in the client side
+    # '''
+    # curr_dir = os.curdir
+    # os.chdir(get_qd_root())
+    # start_id = int(float(start_id))
+    # images = visualize_box_no_draw(data, split, version, label, start_id)
+    # html_image_paths = []
+    # max_image_shown = 50
+    # label_list = set()
+    # for i, (fname, origin, all_info, label_info) in enumerate(images):
+        # if i >= max_image_shown:
+            # break
+        # origin_html_path = save_image_in_static(origin, '{}/{}/{}/origin_{}.jpg'.format(data, split,
+            # version,
+            # fname))
+        # html_image_paths.append({"path": origin_html_path,
+                           # "all_info": all_info,
+                           # "label_info": label_info})
+        # label_list.update(all_info['class'])
+    # os.chdir(curr_dir)
+    # label_list = list(label_list)
+    # if label is not None:
+        # label_list.remove(label)
+        # label_list.insert(0, label)
 
-    #context = {'images': json.dumps(html_image_paths),
-            #'label_list': json.dumps(list(label_list)),
-            #'data': data,
-            #'split': split,
-            #'version': version,
-            #'label': label,
-            #'next_id': str(start_id + len(html_image_paths)),
-            #'previous_id': str(max(0, start_id - max_image_shown))}
-    #return render(request, 'detection/images_js.html', context)
+    # context = {'images': json.dumps(html_image_paths),
+            # 'label_list': json.dumps(list(label_list)),
+            # 'data': data,
+            # 'split': split,
+            # 'version': version,
+            # 'label': label,
+            # 'next_id': str(start_id + len(html_image_paths)),
+            # 'previous_id': str(max(0, start_id - max_image_shown))}
+    # return render(request, 'detection/images_js.html', context)
+def view_compare2(request):
+    if request.GET.get('data', '') == '':
+        curr_dir = os.curdir
+        os.chdir(get_qd_root())
+        # name_splits_labels = get_all_data_info()
+        names = get_all_data_info2()
+        os.chdir(curr_dir)
+        context = {'names': names}
+        return render(request, 'detection/data_list_result.html', context)
+    elif request.GET.get('split', '') == '' and request.GET.get('label', '') == '':
+        curr_dir = os.curdir
+        os.chdir(get_qd_root())
+        name_splits_labels = get_all_data_info2(request.GET['data'])
+        os.chdir(curr_dir)
+        context = {'name_splits_label_counts': name_splits_labels}
+        return render(request, 'detection/image_overview_result.html', context)
+    else:
+        data = request.GET.get('data')
+        split = request.GET.get('split')
+        if split == 'None':
+            split = None
+        version = request.GET.get('version')
+        if version == 'None':
+            version = None
+        version = int(version) if type(version) is str or \
+                type(version) is unicode else version
+        label = request.GET.get('label')
+        start_id = request.GET.get('start_id')
+
+        min_conf = request.GET.get('min_conf')
+        if min_conf == 'None':
+            min_conf = None
+
+        result = view_image_compare2(
+            request, data, split, version, label, start_id)
+        return result
+
+def view_compare(request):
+    if request.GET.get('data', '') == '':
+        curr_dir = os.curdir
+        os.chdir(get_qd_root())
+        # name_splits_labels = get_all_data_info()
+        names = get_all_data_info2()
+        os.chdir(curr_dir)
+        context = {'names': names}
+        return render(request, 'detection/data_list_result.html', context)
+    elif request.GET.get('split', '') == '' and request.GET.get('label', '') == '':
+        curr_dir = os.curdir
+        os.chdir(get_qd_root())
+        name_splits_labels = get_all_data_info2(request.GET['data'])
+        os.chdir(curr_dir)
+        context = {'name_splits_label_counts': name_splits_labels}
+        return render(request, 'detection/image_overview_result.html', context)
+    else:
+        data = request.GET.get('data')
+        split = request.GET.get('split')
+        if split == 'None':
+            split = None
+        version = request.GET.get('version')
+        if version == 'None':
+            version = None
+        version = int(version) if type(version) is str or \
+                type(version) is unicode else version
+        label = request.GET.get('label')
+        start_id = request.GET.get('start_id')
+
+        min_conf = request.GET.get('min_conf')
+        if min_conf == 'None':
+            min_conf = None
+
+        result = view_image_compare(
+            request, data, split, version, label, start_id)
+        return result
+
+def view_image3(request):
+    if request.GET.get('data', '') == '':
+        curr_dir = os.curdir
+        os.chdir(get_qd_root())
+        # name_splits_labels = get_all_data_info()
+        names = get_all_data_info2()
+        os.chdir(curr_dir)
+        context = {'names': names}
+        return render(request, 'detection/data_list_result.html', context)
+    elif request.GET.get('split', '') == '' and request.GET.get('label', '') == '':
+        curr_dir = os.curdir
+        os.chdir(get_qd_root())
+        name_splits_labels = get_all_data_info2(request.GET['data'])
+        os.chdir(curr_dir)
+        context = {'name_splits_label_counts': name_splits_labels}
+        return render(request, 'detection/image_overview_result.html', context)
+    else:
+        data = request.GET.get('data')
+        split = request.GET.get('split')
+        if split == 'None':
+            split = None
+        version = request.GET.get('version')
+        if version == 'None':
+            version = None
+        version = int(version) if type(version) is str or \
+                type(version) is unicode else version
+        label = request.GET.get('label')
+        start_id = request.GET.get('start_id')
+        result = view_image_js3(request, data, split, version, label, start_id)
+        return result
+
+def view_verify_data(request, data, split, version, label, start_id):
+    start_id = int(float(start_id))
+    proj_root = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+    collage_folder = "detection/static/detection/{}/{}/collage".format(data, split)
+
+    # filelist = glob.glob(os.path.join(proj_root, collage_folder))
+    filelist_fname = os.path.join(collage_folder, "filenamelist.txt")
+    if os.path.isfile(filelist_fname):
+        with open(filelist_fname,'r') as f:
+            lines = f.readlines()
+            filelist = [line.strip('\n') for line in lines]
+        # [s.strip() for s in self._fp.readline().split('\t')]
+    # filelist.sort()
+    term_number = len(filelist)
+    
+    all_url = []
+    all_key = []
+    fname = filelist[start_id]
+
+    base=os.path.basename(fname)
+    basename = os.path.splitext(base)[0]
+    term_names = [s.strip() for s in basename.split('_')]
+    term_name = term_names[0]
+
+    j=1
+    while not isfloat(term_names[j]):
+        term_name = term_name + " " + term_names[j]
+        j = j+1
+
+    origin_html_path = 'detection/{}/{}/collage/{}.jpg'.format(data, split, basename)
+
+    all_key.append(term_name)
+    all_url.append('/static/' + origin_html_path)
+
+    label_fname = os.path.join(proj_root, "detection/static", os.path.splitext(origin_html_path)[0] + '.txt')
+    # option = label_fname #for debug
+    comment = ""
+    if os.path.isfile(label_fname):
+        with open(label_fname, 'r') as f:
+            line = f.readline()
+            option = line.rstrip('\n')
+            comment = f.read()
+    else:
+        option = None
+
+    # os.chdir(curr_dir)
+
+    kwargs = copy.deepcopy(request.GET)
+    if start_id == 0:
+        kwargs['start_id'] = str(term_number-1)
+    else:
+        kwargs['start_id'] = str(max(0, start_id - 1))
+
+    previous_link = reverse('detection:verify_data')
+    previous_link = previous_link + '?' + \
+        '&'.join(['{}={}'.format(k, kwargs[k]) for k in kwargs])
+
+    kwargs = copy.deepcopy(request.GET)
+
+    if start_id == term_number-1:
+        kwargs['start_id'] = str(0)    
+    else:
+        kwargs['start_id'] = str(min(term_number-1, start_id + 1))
+
+    next_link = reverse('detection:verify_data')
+    next_link = next_link + '?' + \
+        '&'.join(['{}={}'.format(k, kwargs[k]) for k in kwargs])
+
+    context = {
+        'all_url': json.dumps(all_url),
+        'all_key': json.dumps(all_key),
+        'option': json.dumps(option),
+        'next_id': kwargs['start_id'],
+        'comment': comment,
+        'label_fname': label_fname,
+        'data': data,
+        'split': split,
+        'previous_link': previous_link,
+        'next_link': next_link
+        }
+
+    return render(request, 'detection/verify_collage.html', context)
+
+def verify_data(request):
+
+    if request.method == 'POST':
+        label_fname = request.POST.get('label_fname')
+
+        option = request.POST.get('radio_option')
+        # option_2 = request.POST.get('radio_option')
+        if option !='1' and option != '2':
+            option = '3'
+        
+        comment = request.POST.get('comment')
+
+        with open(label_fname, 'w') as f:
+            f.write("{}\n".format(str(option)))
+            f.write(comment)
+
+        start_id = request.POST.get('next_id')
+        data = request.POST.get('data')
+        split = request.POST.get('split')
+    else:
+        start_id = request.GET.get('start_id')
+        data = request.GET.get('data')
+        split = request.GET.get('split')
+        
+    if start_id == None:
+        start_id = '0'
+
+    if split == None:
+        split = 'train'
+
+    version = request.GET.get('version')
+    if version == 'None':
+        version = None
+    version = int(version) if type(version) is str or \
+            type(version) is unicode else version
+
+    if data == None:
+        data = 'Tax1300V14_1_with_bb'
+
+    label = request.GET.get('label')
+    if label == 'None':
+        label = 'aardwolf'
+
+    return view_verify_data(request, data, split, version, label, start_id)
 
 def view_image2(request):
     if request.GET.get('data', '') == '':
         curr_dir = os.curdir
         os.chdir(get_qd_root())
-        #name_splits_labels = get_all_data_info()
+        # name_splits_labels = get_all_data_info()
         names = get_all_data_info2()
         os.chdir(curr_dir)
         context = {'names': names}
@@ -590,9 +969,9 @@ def view_image2(request):
                 type(version) is unicode else version
         label = request.GET.get('label')
         start_id = request.GET.get('start_id')
-        #result = view_image_js(request, data, split, version, label, start_id)
+        # result = view_image_js(request, data, split, version, label, start_id)
         result = view_image_js2(request, data, split, version, label, start_id)
-        #result = view_image_js3(request, data, split, version, label, start_id)
+        # result = view_image_js3(request, data, split, version, label, start_id)
         return result
 
 def get_data_sources_for_composite():
