@@ -5,20 +5,27 @@ from __future__ import print_function
 import argparse
 import collections
 import json
+import logging
 import matplotlib.pyplot as plt
 import os
 import pandas as pd
 import yaml
 
+import _init_paths
+from qd_common import init_logging
 from utils import read_from_file
 from utils import search_bbox_in_list
 from utils import write_to_file
 
+
 parser = argparse.ArgumentParser(
     description='Human evaluation for object detection')
-parser.add_argument('--gt', default='./groundtruth', type=str,
-                    help='''path to ground truth folder or yaml config file,
-                    default is ./groundtruth''')
+parser.add_argument('--gt', default='./groundtruth/config.yaml', type=str,
+                    help='''path to yaml config file in the ground truth folder,
+                    default is ./groundtruth/config.yaml''')
+parser.add_argument('--blacklist', default='', type=str,
+                    help='''blacklist filename, blocking categories you don't
+                    want to evaluate here''')
 parser.add_argument('--set', default='', type=str,
                     help='''dataset name to be evaluated on, default is MIT1K
                     and Instagram''')
@@ -49,6 +56,7 @@ def parse_config_info(rootpath, config):
             obj_threshold: optional, default 0, minimum objectness to pass
                 threshold, will be ignored if the prediction result doesn't
                 have "obj" field
+            blacklist: optional, file to block some categories
     Returns:
         config dict with absolute path, default values filled
     """
@@ -67,6 +75,12 @@ def parse_config_info(rootpath, config):
             config["display"] = os.path.join(rootpath, config["display"])
     else:
         config["display"] = None
+
+    if "blacklist" in config and config["blacklist"]:
+        if not os.path.isfile(config["blacklist"]):
+            config["blacklist"] = os.path.join(rootpath, config["blacklist"])
+    else:
+        config["blacklist"] = None
 
     if "conf_threshold" not in config:
         config["conf_threshold"] = 0
@@ -103,21 +117,28 @@ def load_result(rootpath, config):
     else:
         threshold_dict = None
     if config["display"]:
-        display_dict = {p[0]: p[1] for p in read_from_file(config["display"])}
+        display_dict = {p[0]: p[1] for p in read_from_file(
+            config["display"], check_num_cols=2)}
     else:
         display_dict = None
+    if config["blacklist"]:
+        blacklist = set(l[0].lower() for l in read_from_file(
+            config["blacklist"], check_num_cols=1))
+    else:
+        blacklist = None
     for cols in read_from_file(config["result"]):
         imgkey, bboxes = cols[0:2]
         assert(imgkey not in result)
         result[imgkey] = _thresholding_detection(
                             json.loads(bboxes),
                             threshold_dict, display_dict,
-                            config["obj_threshold"], config["conf_threshold"])
+                            config["obj_threshold"], config["conf_threshold"],
+                            blacklist)
     return result
 
 
 def _thresholding_detection(bbox_list, thres_dict, display_dict,
-                            obj_threshold, conf_threshold):
+                            obj_threshold, conf_threshold, blacklist):
     res = []
     for b in bbox_list:
         if "obj" in b and b["obj"] < obj_threshold:
@@ -125,13 +146,69 @@ def _thresholding_detection(bbox_list, thres_dict, display_dict,
         if b["conf"] < conf_threshold:
             continue
         term = b["class"]
-        if thres_dict:
-            if term not in thres_dict or b["conf"] < thres_dict[term]:
-                continue
+        if blacklist and term.lower() in blacklist:
+            continue
+        if thres_dict and term in thres_dict and b["conf"] < thres_dict[term]:
+            continue
         if display_dict and term in display_dict:
             b['class'] = display_dict[term]
         res.append(b)
     return res
+
+
+def filter_gt(gt_config_file, bbox_iou, blacklist=None,
+              override_min_conf=None):
+    """
+    Remove ground truth that does not appear in any of the baseline outputs
+    Args:
+        gt_config_file: filepath to the config yaml file
+        bbox_iou: the IoU threshold to consider two bboxes as the same
+        blacklist: file to block some categories
+        override_min_conf: default None, if specified, the conf_threshold and
+            per-class thresholds in baseline_info will be ignored, all gt will
+            be filtered using this number
+    """
+    gt_root = os.path.split(gt_config_file)[0]
+    with open(gt_config_file, 'r') as fp:
+        gt_cfg = yaml.load(fp)
+    filtered_dirpath = os.path.join(gt_root, "filtered")
+    if not os.path.exists(filtered_dirpath):
+        os.mkdir(filtered_dirpath)
+
+    for dataset_name, dataset in gt_cfg.items():
+        out_gt_file = os.path.join(gt_root, dataset["groundtruth"]["filtered"])
+        all_gt_file = os.path.join(gt_root, dataset["groundtruth"]["original"])
+        all_gt_ids = [cols[0] for cols in read_from_file(all_gt_file)]
+        all_gt = {cols[0]: json.loads(cols[1]) for cols in
+                  read_from_file(all_gt_file)}
+        cur_gt = collections.defaultdict(list)
+        for baseline, baseline_info in dataset['baselines'].items():
+            if override_min_conf:
+                baseline_info["conf_threshold"] = override_min_conf
+                if "threshold" in baseline_info:
+                    del baseline_info["threshold"]
+            if blacklist:
+                baseline_info["blacklist"] = blacklist
+            filtered_res_file = os.path.join(
+                filtered_dirpath, os.path.split(baseline_info["result"])[-1])
+            result = load_result(gt_root, baseline_info)
+            filtered_res_data = [[k, json.dumps(result[k])] for k in result]
+            write_to_file(filtered_res_data, filtered_res_file)
+            for imgkey, bbox_list in result.items():
+                for b in bbox_list:
+                    # skip if bbox is already in current ground truth
+                    if search_bbox_in_list(b, cur_gt[imgkey], bbox_iou) >= 0:
+                        continue
+                    # add bbox to ground truth if it's correct
+                    if search_bbox_in_list(b, all_gt[imgkey], bbox_iou) >= 0:
+                        cur_gt[imgkey].append(b)
+        cur_gt_data = [[imgkey, json.dumps(cur_gt[imgkey])]
+                       for imgkey in all_gt_ids]
+        write_to_file(cur_gt_data, out_gt_file)
+        logging.info("filter ground truth in {}: #_before: {}, #_after: {}"
+                     .format(dataset_name,
+                             sum(len(v) for k, v in all_gt.items()),
+                             sum(len(v) for k, v in cur_gt.items())))
 
 
 def eval_result(gt, result, iou_threshold):
@@ -193,10 +270,10 @@ def eval_dataset(gt_root, dataset_name, dataset, iou_threshold,
         use_filtered_gt: indicate whether ground truth labels should only
             include detection output under current thresholding settings
     """
-    print('|*{0}*\t\t|*{1}*|*{2:}*|*{3:}*|*{4}@{6}*|*{5}@{6}*|*{7}*|'.format(
-        dataset_name,
-        '#_gt_bboxes', '#_result_bboxes', '#_correct_bboxes',
-        'prec', 'recall', iou_threshold, '#_result_categories'))
+    print('\n|*{0}*\t\t|*{1}*|*{2:}*|*{3:}*|*{4}@{6}*|*{5}@{6}*|*{7}*|'
+          .format(dataset_name, '#_gt_bboxes', '#_result_bboxes',
+                  '#_correct_bboxes', 'prec', 'recall', iou_threshold,
+                  '#_result_categories'))
 
     if use_filtered_gt:
         gt_file = dataset['groundtruth']["filtered"]
@@ -219,10 +296,9 @@ def eval_dataset(gt_root, dataset_name, dataset, iou_threshold,
             precision, recall, num_unique_categories = eval_result(
                                                     gt, result, iou_threshold)
         print('|{:15}\t|{:10}\t|{:10}\t|{:10}\t|{:10.2f}\t|{:10.2f}\t|{:10}|'
-              .format(
-                  baseline, num_gt_bboxes, num_result_bboxes,
-                  num_correct_bboxes, precision, recall,
-                  num_unique_categories))
+              .format(baseline, num_gt_bboxes, num_result_bboxes,
+                      num_correct_bboxes, precision, recall,
+                      num_unique_categories))
 
         num_res_per_class, num_cor_per_class = eval_result_per_class(
             gt, result, iou_threshold)
@@ -295,17 +371,10 @@ def draw_pr_curve(gt_root, dataset_name, dataset, iou_threshold,
     plt.xticks([])
     plt.ylabel("Precision")
     plt.title(dataset_name)
-    plt.show()
     fig.savefig(os.path.join(gt_root, dataset_name + "_pr_curve.png"))
 
 
 def main(args):
-    if isinstance(args, dict):
-        args = argparse.Namespace()
-
-    if not args.gt.endswith('yaml'):
-        args.gt = os.path.join(args.gt, 'config.yaml')
-
     gt_root = os.path.split(args.gt)[0]
     with open(args.gt, 'r') as fp:
         gt_cfg = yaml.load(fp)
@@ -318,9 +387,23 @@ def main(args):
                 dataset["baselines"]["new result"]["result"] = args.result
                 dataset["baselines"]["new result"]["conf_threshold"] \
                     = args.result_conf
+            if args.blacklist:
+                for _, config in dataset["baselines"].items():
+                    config["blacklist"] = args.blacklist
             eval_dataset(gt_root, dataset_name, dataset, args.iou_threshold)
             draw_pr_curve(gt_root, dataset_name, dataset, args.iou_threshold)
 
-if __name__ == '__main__':
+
+def parse_args():
     args = parser.parse_args()
+    if isinstance(args, dict):
+        args = argparse.Namespace()
+    if not args.gt.endswith('yaml'):
+        raise Exception("Please specify the config yaml file.")
+    return args
+
+if __name__ == '__main__':
+    init_logging()
+    args = parse_args()
+    filter_gt(args.gt, args.iou_threshold, args.blacklist)
     main(args)
