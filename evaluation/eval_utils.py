@@ -6,7 +6,8 @@ import yaml
 
 import _init_paths
 from process_tsv import get_img_url
-from utils import read_from_file, write_to_file, search_bbox_in_list
+from utils import read_from_file, write_to_file
+from utils import search_bbox_in_list, is_valid_bbox
 
 
 def parse_config_info(rootpath, config):
