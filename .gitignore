@@ -46,6 +46,15 @@ output/
 *.VC.db
 *.deps
 x64/
+*.user
+*.db
+*.aux
+*.log
+*.out
+*.toc
+evaluation/UHRSDataCollection/.vs/*
+evaluation/UHRSDataCollection/UHRSDataCollection/bin/*
+evaluation/UHRSDataCollection/UHRSDataCollection/obj/*
 
 # exclude PytCharm IDE directory
 .idea/
