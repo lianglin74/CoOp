@@ -1,6 +1,16 @@
+from enum import Enum
 import os
 import subprocess
 from tqdm import tqdm
+
+
+class State(Enum):
+    IDLE = 1
+    UPLOAD_START = 2
+    UPLOAD_FINISH = 3
+    WAIT_FOR_TASK = 4
+    WAIT_FINISH = 5
+    DOWNLOAD_START = 6
 
 
 class UhrsTaskManager():
@@ -10,6 +20,12 @@ class UhrsTaskManager():
         self._task_log = task_log  # tsv file to store task id and name
         rootpath = os.path.dirname(os.path.realpath(__file__))
         self._uhrs_exe_path = os.path.join(rootpath, "./UHRSDataCollection/UHRSDataCollection/bin/Debug/UHRSDataCollection.exe")
+        if task_log and os.path.isfile(task_log):
+            self.state = State.UPLOAD_FINISH
+        elif task_log and os.path.isdir(task_log):
+            raise Exception("task log should be a file")
+        else:
+            self.state = State.IDLE
 
     def block_worker(self, worker_id):
         args = [self._uhrs_exe_path, "block_judge", repr(worker_id)]
@@ -26,29 +42,41 @@ class UhrsTaskManager():
         """Uploads task files in dirpath with prefix to UHRS, each hit will be
         judged by num_judges workers
         """
+        if self.state != State.IDLE:
+            raise Exception("cannot upload from state {}".format(self.state))
+        self.state = State.UPLOAD_START
         task_group_id = self._get_task_group_id(task_hitapp)
         args = [self._uhrs_exe_path, "upload_from_folder", repr(task_group_id),
                 dirpath, prefix, self._task_log, "0.0", repr(num_judges)]
         subprocess.check_call(args)
+        self.state = State.UPLOAD_FINISH
 
     def download_tasks_to_folder(self, task_hitapp, dirpath):
+        if self.state != State.WAIT_FINISH:
+            raise Exception("cannot download from state {}".format(self.state))
+        self.state = State.DOWNLOAD_START
         task_group_id = self._get_task_group_id(task_hitapp)
         args = [self._uhrs_exe_path, "download_to_folder", repr(task_group_id),
                 dirpath, self._task_log]
         subprocess.check_call(args)
+        self.state = State.IDLE
 
     def wait_until_task_finish(self, task_hitapp):
+        if self.state != State.UPLOAD_FINISH:
+            raise Exception("cannot wait from state {}".format(self.state))
+        self.state = State.WAIT_FOR_TASK
         num_done, num_total = self._count_task_progress(
             task_hitapp, self._task_log)
         with tqdm(total=num_total) as pbar:
             while not self._is_task_finished(task_hitapp, self._task_log):
                 num_done, _ = self._count_task_progress(
-                    task_hitapp, logfile)
+                    task_hitapp, self._task_log)
                 pbar.update(num_done - pbar.n)
                 time.sleep(300)
             num_done, _ = self._count_task_progress(
-                    task_hitapp, logfile)
+                    task_hitapp, self._task_log)
             pbar.update(num_done - pbar.n)
+        self.state = State.WAIT_FINISH
 
     def _is_task_finished(self, task_hitapp, logfile):
         task_ids = self._read_task_ids_from_log(logfile)
