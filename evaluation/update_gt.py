@@ -5,6 +5,8 @@ from analyze_task import analyze_verify_box_task
 from eval_utils import merge_gt, process_prediction_to_verify
 from generate_task import generate_verify_box_task
 from uhrs import UhrsTaskManager
+import _init_paths
+from qd_common import init_logging
 
 parser = argparse.ArgumentParser(description='Update ground truth for new detection')
 parser.add_argument('source', type=str,
@@ -98,5 +100,6 @@ def main(args):
     merge_gt(args.gt, [res_file], args.iou_threshold)
 
 if __name__ == "__main__":
+    init_logging()
     args = parser.parse_args()
     main(args)
