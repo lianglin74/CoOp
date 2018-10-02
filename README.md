@@ -123,28 +123,46 @@ This repo is for the algorithm development for IRIS object detection. The curren
    5. Go to http://ip:8000/detection/view_tree/ to view the tree structure data
 
 ## Evaluation
-1. Evaluate detection results
-    * Copy all the files from `\\ivm-server2\IRIS\OD\eval\prediction` to `./groundtruth`.
+1. Human evaluation on MIT1K and Instagram
+    1. Run detector on datasets, default is `MIT1k` and `Instagram`.
+       Name the prediction result file as [dataset].[source].tsv,
+       where source should be a unique, concise name to describe the model.
 
-    ```
-    mkdir groundtruth && cd groundtruth
-    cp -r path_to_groundtruth_folder/* .
-    ```
-    This folder includes baseline detection results on `MIT1k` and `Instagram` and their ground truth labels.
+    2. Copy all the files from `\\ivm-server2\IRIS\OD\eval\prediction` to `./groundtruth`.
+        ```
+        mkdir groundtruth && cd groundtruth
+        cp -r path_to_groundtruth_folder/* .
+        ```
+       This folder includes baseline detection results and their ground truth labels.
 
-    * Run prediction using your own model, update ground truth labels if needed.
-    See details at https://cognitionwiki.com/display/OB/How+to+evaluate+OD+models+via+human
+    3. If needed, update ground truth labels with new detection results,
+		   see details at https://cognitionwiki.com/display/OB/How+to+evaluate+OD+models+via+human
 
-    * Run evaluation
-    ```
-    python evaluation/human_eval.py --set mit1k --result PATH_TO_RESULT
-    python evaluation/human_eval.py --set instagram --result PATH_TO_RESULT
-    ```
-    Or just run
-    ```
-    python evaluation/human_eval.py
-    ```
-    to see the current baselines.
+       Copy honey pot labels from `\\ivm-server2\IRIS\OD\eval\honeypot`
+        ```
+        mkdir honeypot
+        cp -r path_to_honeypot_folder/* honeypot/
+        ```
+       Compile C# code in evaluation/UHRSDataCollection. Run script
+        ```
+        mkdir tasks
+        python evaluation/update_gt.py MODEL_SOURCE PATH_TO_RESULT_FOLDER \
+            --dataset instagram mit1k \
+            --gt ./groundtruth/config.yaml \
+            --task ./tasks/ \
+            --honeypot ./honeypot/voc20_easy_gt.txt
+        ```
+
+    4. Run evaluation
+        ```
+        python evaluation/human_eval.py --set mit1k --result PATH_TO_RESULT
+        python evaluation/human_eval.py --set instagram --result PATH_TO_RESULT
+        ```
+        Or just run
+        ```
+        python evaluation/human_eval.py
+        ```
+        to see the current baselines.
     ::
 
 2. Evaluate a model trained on the composite dataset on all test sets 
