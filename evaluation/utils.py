@@ -1,6 +1,9 @@
 from __future__ import absolute_import
 from __future__ import division
 
+import json
+import os
+
 
 def read_from_file(filepath, sep='\t', check_num_cols=None):
     with open(filepath, 'r') as fin:
@@ -13,10 +16,21 @@ def read_from_file(filepath, sep='\t', check_num_cols=None):
 
 
 def write_to_file(data, filepath, sep='\t'):
-    with open(filepath, 'w') as fout:
+    with open(filepath+".tmp", 'w') as fout:
         for cols in data:
             fout.write(sep.join([str(c) for c in cols]))
             fout.write('\n')
+    if os.path.isfile(filepath):
+        os.remove(filepath)
+    os.rename(filepath + ".tmp", filepath)
+
+
+def escape_json_obj(json_obj):
+    return json.dumps(json_obj).replace(',', '#').replace('"', '$')
+
+
+def load_escaped_json(json_str):
+    return json.loads(json_str.replace('#', ',').replace('$', '"'))
 
 
 def search_bbox_in_list(new_bbox, existing_list, iou_threshold):
