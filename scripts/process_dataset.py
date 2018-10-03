@@ -92,7 +92,7 @@ def process_dataset(source_dataset, output_root_data_path, dataset_ops,
     source = source_dataset.get_train_tsvs()
     sources.append(source)
     train_label_files = source_dataset.get_train_tsvs('label')
-    if all(op.isfile(f) for f in train_label_files):
+    if len(train_label_files) != 0 and all(op.isfile(f) for f in train_label_files):
         source_labels.append(train_label_files)
     shuffle_file = source_dataset.get_train_shuffle_file()
     if op.isfile(shuffle_file):

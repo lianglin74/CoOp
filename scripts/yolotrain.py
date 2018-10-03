@@ -1976,7 +1976,7 @@ def parse_args():
             required=False,
             help='if the reorg layer should be added')
     parser.add_argument('-nc', '--num_extra_convs', 
-            default=3,
+            default=[3],
             type=int,
             nargs='+',
             help='the number of extra conv layers')
