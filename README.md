@@ -121,6 +121,24 @@ This repo is for the algorithm development for IRIS object detection. The curren
    4. Go to the website of http://ip:8000/detection/view_model to view all the
       model under output/
    5. Go to http://ip:8000/detection/view_tree/ to view the tree structure data
+2. Visualize comparsion between two models prediction results/
+   1. make folder under data to contain visualiztion result
+   2. using python script build_compare.py under ./script with following
+      parameters
+      1. left side tsv filename
+      2. right side tsv filename
+      3. images tsv filename
+      4. ouput tsv filenname(test.tsv)
+      5. left side threshold filename
+      6. right side threshold filename
+      7. left side result tag
+      8. right side result tag
+      9. left side min confidence
+      10. right side min confidence
+   3. build visualization index 
+      python ./scripts/process_tsv.py --type build_data_index --input
+      $data_folder_name
+   4. go to http://$server_name:8000/detection/view_compare and "select data folder"
 
 ## Evaluation
 1. Human evaluation on MIT1K and Instagram

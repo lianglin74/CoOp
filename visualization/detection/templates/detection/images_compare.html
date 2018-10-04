@@ -1,0 +1,529 @@
+<!--{% load static %}-->
+<!DOCTYPE html>
+<html>
+<style>
+    * {
+        box-sizing: border-box;
+    }
+
+    table#image_table {
+        border-collapse: collapse;
+        margin-left: auto;
+        margin-right: auto;
+    }
+
+    ul#label_list {
+        list-style: none;
+    }
+
+    .sticky {
+        position: fixed;
+        top: 0;
+        width: 100%;
+    }
+
+    #label_checks {
+        background: #555;
+        color: #f1f1f1;
+    }
+
+    body {
+        margin: 0;
+        font-family: Arial, Helvetica, sans-serif;
+    }
+
+    /* .header {
+        text-align: left;
+        padding: 32px;
+    } */
+
+    .row {
+        display: -ms-flexbox;
+        /* IE 10 */
+        display: flex;
+        -ms-flex-wrap: wrap;
+        /* IE 10 */
+        flex-wrap: wrap;
+        padding: 0 4px;
+    }
+
+    /* Create two equal columns that sits next to each other */
+
+    .column {
+        -ms-flex: 25%;
+        /* IE 10 */
+        flex: 25%;
+        padding: 0 4px;
+    }
+
+    .column img {
+        margin-top: 8px;
+        vertical-align: middle;
+    }
+
+    div {
+        word-wrap: break-word;
+        font-size: small;
+    }
+    /* Style the buttons */
+
+    .btn {
+        border: none;
+        outline: none;
+        padding: 6px 10px;
+        background-color: #f1f1f1;
+        cursor: pointer;
+        font-size: 18px;
+    }
+
+    .btn:hover {
+        background-color: #ddd;
+    }
+
+    .btn.active {
+        background-color: #666;
+        color: white;
+    }
+</style>
+
+<head>
+    <!-- <script type="text/javascript">
+        if (document.images) {
+            img1 = new Image();
+            img1.src = "image.jpg";
+        }
+    </script> -->
+</head>
+
+<body>
+    <script>
+        let colors = {};
+        let bk_colors = {};
+        let type_to_linetype = { 'gt': [], 'pred': [5] };
+        // let gold_colors = [[0, 0, 0], [0, 255, 0], [255, 255, 0], [0, 0, 255], [255, 0, 255]];
+        let gold_colors = [[255, 0, 0], [0, 255, 0], [255, 255, 0], [0, 0, 255], [255, 255, 0]];
+        let bk_gold_colors = [[28, 28, 28], [20, 20, 20], [25, 25, 25], [128, 128, 128], [25, 25, 25]];
+        var image_cols = 4;
+        let scale = 1;
+
+        function draw_bb(ctx, current_type_to_rects, width, height, img_scale, shift_y) {
+            let placed_positions = {}
+            for (let t in current_type_to_rects) {
+                let rects = current_type_to_rects[t];
+
+                for (let i = 0; i < rects.length; i++) {
+                    let rect_dic = rects[i];
+                    let rect = rect_dic['rect'];
+                    //if (rect_dic['conf'] > 0.5) 
+                    {
+                        let display_rect = [1, 2, 3, 4];
+                        display_rect[0] = rect[0] * img_scale;
+                        display_rect[1] = rect[1] * img_scale;
+                        display_rect[2] = rect[2] * img_scale;
+                        display_rect[3] = rect[3] * img_scale;
+
+                        let label = rect_dic['class'];
+                        if (colors[label] == null) {
+                            if (gold_colors.length !== 0) {
+                                colors[label] = gold_colors.pop();
+                                bk_colors[label] = bk_gold_colors.pop();
+                            } else {
+                                colors[label] = [Math.floor(Math.random() * 256), Math.floor(Math.random() * 256),
+                                Math.floor(Math.random() * 256)];
+                                let avg_color = (colors[label][0] + colors[label][1] + colors[label][2]) / 3.0;
+                                if (avg_color < 128) {
+                                    bk_colors[label] = [128, 128, 128];
+                                }
+                                else {
+                                    bk_colors[label] = [25, 25, 25];
+                                }
+                            }
+                        }
+
+                        let label_color = colors[label];
+                        let color_format = 'rgb(' + label_color[0] + ',' + label_color[1] + ',' + label_color[2] + ')';
+
+                        let bk_color = bk_colors[label];
+                        let bk_color_format = 'rgb(' + bk_color[0] + ',' + bk_color[1] + ',' + bk_color[2] + ', 0.8)';
+
+                        if (rect_dic['conf'] != null) {
+                            // ctx.beginPath();
+
+                            ctx.font = "20px Times";
+
+                            // let text_left = [display_rect[0] + 2, display_rect[1] - 4];
+                            // let text_bottom = [display_rect[0] + 2, display_rect[3] - 4];
+
+                            ctx.fillStyle = color_format;
+
+                            let text_x = display_rect[0] + 2;
+                            let text_y = display_rect[1] + 15;
+
+                            let flag = 1
+                            while ([Math.floor(text_x), Math.floor(text_y)] in placed_positions) {
+                                text_y = text_y + 20;
+                                flag++;
+                            }
+
+                            //if (flag == 1) {
+                            if (rect_dic['conf'] > 0 && rect_dic['conf'] < 1) {
+
+                                ctx.rect(display_rect[0], display_rect[1], display_rect[2] - display_rect[0], display_rect[3] - display_rect[1]);
+
+                                label = label + ': ' + rect_dic['conf'].toFixed(2);
+                                //}
+
+                                placed_positions[[Math.floor(text_x), Math.floor(text_y)]] = 'x'
+
+                                if ( !(document.documentMode || /Edge/.test(navigator.userAgent)) ){
+                                    ctx.fillStyle = bk_color_format;
+                                    ctx.fillRect(text_x, text_y - 14 + shift_y, ctx.measureText(label).width, 20)
+                                }
+
+
+                                ctx.fillStyle = color_format;
+                                ctx.fillText(label, text_x, text_y + shift_y);
+                            }
+                            ctx.strokeStyle = color_format;
+
+                            ctx.lineWidth = 2;
+
+                            // ctx.closePath();
+                            // ctx.stroke();
+                        }
+                    }
+                }
+            }
+        }
+
+        function make_canvas_element(canvas_obj, img_src, current_type_to_rects) {
+            let ctx = canvas_obj.getContext('2d');
+            let img = new Image();
+            img.src = img_src;
+            //gAllImages.push(img)
+
+            img.onload = function () {
+                let scale = window.innerWidth / image_cols / img.width;
+                canvas_obj.width = img.width * scale;
+                canvas_obj.height = img.height * scale + 2;
+                ctx.beginPath();
+                ctx.drawImage(img, 0, 0, canvas_obj.width, img.height * scale);
+                draw_bb(ctx, current_type_to_rects, img.width * scale, img.height * scale, scale, 0);
+                ctx.closePath();
+                ctx.stroke();
+            };
+
+        }
+
+        function draw_images_div(all_url, all_key, all_type_to_rects) {
+            var j = 1;
+            for (i = 0; i < all_url.length; i++) {
+
+                let elem = document.createElement("canvas");
+                elem.id = 'Canvas' + i.toString();
+                elem.setAttribute("style", "width:100%");
+                let id = "col" + j.toString();
+
+                if (all_key.length > i) {
+                    let key = all_key[i];
+                    let p = document.createElement('p');
+                    p.setAttribute("style", "width:" + (window.innerWidth /
+                        image_cols - 50) + "px");
+                    p.appendChild(document.createTextNode(key))
+                    p.setAttribute("class", "text-block");
+                    document.getElementById(id).appendChild(p);
+                }
+
+                document.getElementById(id).appendChild(elem);
+
+                j++;
+                if (j > image_cols) {
+                    j = 1;
+                }
+            }
+
+            // for (i = 0; i < all_url.length; i++) {
+            //     let id = 'Canvas' + i.toString();
+            //     let canvas = document.getElementById(id);
+            //     let img_src = all_url[i];
+            //     make_canvas_element(canvas, img_src, []);
+            // }
+        }
+
+        function update_label_list(type_to_rects, unchecked_labels, unchecked_type) {
+            current_type_to_rects = Object.assign({}, type_to_rects)
+
+            for (let t of unchecked_type.entries()) {
+                delete current_type_to_rects[t[0]];
+            }
+
+            for (let t in current_type_to_rects) {
+                let current_rects = current_type_to_rects[t];
+                current_type_to_rects[t] = current_rects.filter(function (r) { return !unchecked_labels.has(r['class']) })
+            }
+
+            return current_type_to_rects;
+        }
+
+        function update_images(all_type_to_rects, all_url, unchecked_labels, unchecked_type, black_list) {
+            let unchecked_labels_set = new Set(unchecked_labels);
+            let unchecked_type_set = new Set(unchecked_type)
+            let black_list_set = new Set(black_list)
+
+            var j = 1;
+
+            for (i = 0; i < all_type_to_rects.length; i++) {
+
+                let type_to_rects = all_type_to_rects[i];
+                let img_src = all_url[i];
+
+                let id = 'Canvas' + i.toString();
+                let canvas = document.getElementById(id);
+
+                let all_label_info = type_to_rects['all_info'];
+                current_type_to_rects = update_label_list(type_to_rects, unchecked_labels_set, unchecked_type_set);
+                make_canvas_element(canvas, img_src, current_type_to_rects);
+
+                j++;
+                if (j > image_cols) {
+                    j = 1;
+                }
+            }
+        }
+
+        function get_unchecked_list(name) {
+            let label_ul = document.getElementById(name);
+            let inputs = label_ul.getElementsByTagName('input')
+            let unchecked = [];
+            for (let i = 0; i < inputs.length; i++) {
+                if (!inputs[i].checked) {
+                    unchecked.push(inputs[i].id)
+                }
+            }
+            return unchecked;
+        }
+
+        function add_type_points(type_list) {
+            let label_table = document.getElementById("type_table");
+
+            let row = label_table.insertRow(-1)
+            for (let i = 0; i < type_list.length; i++) {
+
+                let label_checkbox = document.createElement('input');
+                label_checkbox.type = "checkbox";
+                label_checkbox.id = type_list[i];
+                label_checkbox.onclick = onClick_abstraction;
+                label_checkbox.checked = true;
+
+                let label = document.createElement('label');
+                label.htmlFor = type_list[i];
+                label.appendChild(document.createTextNode(type_list[i]));
+
+                let cell = row.insertCell(-1)
+                cell.appendChild(label_checkbox);
+                cell.appendChild(label);
+            }
+        }
+
+        function add_label_points(label_list) {
+            let label_table = document.getElementById("label_table");
+
+            let row = label_table.insertRow(-1)
+            for (let i = 0; i < label_list.length; i++) {
+
+                let label_checkbox = document.createElement('input');
+                label_checkbox.type = "checkbox";
+                label_checkbox.id = label_list[i];
+                label_checkbox.onclick = onClick_abstraction;
+                // label_checkbox.checked = i == 0;
+                label_checkbox.checked = true;
+
+                let label = document.createElement('label');
+                label.htmlFor = label_list[i];
+                label.appendChild(document.createTextNode(label_list[i]));
+
+                let cell = row.insertCell(-1)
+                cell.appendChild(label_checkbox);
+                cell.appendChild(label);
+            }
+
+            let chbox_Checks = document.getElementById("select_all");
+            chbox_Checks.checked = true;
+        }
+
+
+
+    </script>
+    <script>
+        let black_list = JSON.parse("{{ black_list|escapejs }}");
+        let all_type_to_rects = JSON.parse("{{ all_type_to_rects|escapejs }}");
+        let target_label = '{{ target_label }}'
+        let all_url = JSON.parse("{{ all_url|escapejs }}");
+        {% if all_key %}
+        let all_key = JSON.parse("{{ all_key |escapejs }}");
+        {% else %}
+        let all_key = []
+        {% endif %}
+
+        let label_list_dic = {};
+        let type_list_dic = {};
+
+        for (let i = 0; i < all_type_to_rects.length; i++) {
+            let type_to_rects = all_type_to_rects[i];
+            for (let t in type_to_rects) {
+                type_list_dic[t] = 1;
+                let rects = type_to_rects[t];
+                for (let r in rects) {
+                    label_list_dic[rects[r]['class']] = 1;
+                }
+            }
+        }
+
+        let label_list = Object.keys(label_list_dic);
+        if (target_label != '') {
+            let index = label_list.indexOf(target_label);
+            if (index > -1) {
+                label_list.splice(index, 1);
+                label_list.splice(0, 0, target_label);
+            }
+        }
+
+        let type_list = Object.keys(type_list_dic);
+
+        window.onload = function () {
+            gAllImages = [];
+
+            draw_images_div(all_url, all_key, all_type_to_rects);
+            add_label_points(label_list);
+            //add_type_points(type_list);
+            //window.setTimeout(onClick_abstraction, 5000)
+            onClick_abstraction()
+        };
+
+        function onClick_abstraction() {
+            unchecked_labels = get_unchecked_list('label_table');
+            unchecked_types = get_unchecked_list('type_table');
+            update_images(all_type_to_rects, all_url, unchecked_labels, unchecked_types);
+        }
+    </script>
+    <script>
+        window.onscroll = function () { myFunction() };
+
+        function myFunction() {
+            let header = document.getElementById("label_checks");
+            let sticky = header.offsetTop;
+            if (window.pageYOffset > sticky) {
+                header.classList.add("sticky");
+            } else {
+                header.classList.remove("sticky");
+            }
+        }
+    </script>
+
+    <div id="label_checks">
+        <input type="checkbox" id="select_all" onclick="onClickAllCheckbox()">
+        <label>Select/Unselect All</label>
+        <!-- <input type="range" min="0.2" max="1" value="0.5" class="slider" id="myRange"> -->
+        <table id="type_table">
+        </table>
+        <table id="label_table">
+        </table>
+        <!-- Header -->
+        <div class="header" id="myHeader">
+            <!-- <p>Click on the buttons to change the grid view.</p> -->
+            <button class="btn" onclick="one()">1</button>
+            <button class="btn" onclick="two()">2</button>
+            <button class="btn active" onclick="four()">4</button>
+        </div>
+    </div>
+
+    <div class="row" id="row1">
+        <div class="column" id="col1">
+        </div>
+        <div class="column" id="col2">
+        </div>
+        <div class="column" id="col3">
+        </div>
+        <div class="column" id="col4">
+        </div>
+    </div>
+
+    <center>
+        {% if previous_link %}
+        <a href="{{ previous_link }}">
+            <font size="6">Previous</font>
+        </a>
+        {% endif %} {% if next_link %}
+        <a href="{{ next_link }}">
+            <font size="6">Next</font>
+        </a>
+        {% endif%}
+    </center>
+    <script>
+        function onClickAllCheckbox() {
+            let label_ul = document.getElementById("label_table");
+            let inputs = label_ul.getElementsByTagName('input');
+            let is_all_checked = true;
+            for (let i = 0; i < inputs.length; i++) {
+                if (!inputs[i].checked) {
+                    is_all_checked = false;
+                    break;
+                }
+            }
+
+            for (let i = 0; i < inputs.length; i++) {
+                inputs[i].checked = !is_all_checked;
+            }
+            onClick_abstraction()
+        }
+    </script>
+
+    <script>
+        // Add active class to the current button (highlight it)
+        var header = document.getElementById("myHeader");
+        var btns = header.getElementsByClassName("btn");
+
+        for (var i = 0; i < btns.length; i++) {
+            btns[i].addEventListener("click", function () {
+                var current = document.getElementsByClassName("active");
+                current[0].className = current[0].className.replace(" active", "");
+                this.className += " active";
+            });
+        }
+
+        // Get the elements with class="column"
+        var elements = document.getElementsByClassName("column");
+
+        // Declare a loop variable
+        var i;
+
+        // Full-width images
+        function one() {
+            for (i = 0; i < elements.length; i++) {
+                elements[i].style.msFlex = "100%";  // IE10
+                elements[i].style.flex = "100%";
+            }
+        }
+
+        // Two images side by side
+        function two() {
+            for (i = 0; i < elements.length; i++) {
+                elements[i].style.msFlex = "50%";  // IE10
+                elements[i].style.flex = "50%";
+            }
+            // document.write("two");
+        }
+
+
+        // Four images side by side
+        function four() {
+            for (i = 0; i < elements.length; i++) {
+                elements[i].style.msFlex = "25%";  // IE10
+                elements[i].style.flex = "25%";
+            }
+        }
+
+    </script>
+</body>
+
+</html>

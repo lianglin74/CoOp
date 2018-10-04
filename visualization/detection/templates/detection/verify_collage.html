@@ -1,0 +1,149 @@
+<html>
+
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body, html {
+            height: 100%;
+            font-family: Arial, Helvetica, sans-serif;
+        }
+        
+        * {
+            box-sizing: border-box;
+        }
+        
+        /* Set a style for the submit button */
+        .btn {
+            background-color: #333;
+            color: white;
+            padding: 16px 20px;
+            border: none;
+            cursor: pointer;
+            width: 100%;
+            opacity: 0.9;
+            font-size: 20px;
+        }
+
+        a {
+            text-decoration: none;
+            display: inline-block;
+            padding: 8px 16px;
+            width: 140px;            
+        }
+
+        .term:hover {
+            background-color: #ddd;
+            color: black;
+        }
+        
+
+        .btn:hover {
+            opacity: 1;
+        }
+        
+        .term:link, .term:visited {
+            background-color: white;
+            color: blue;
+            padding: 14px 25px;
+            width: 100%;
+            text-align: left;
+            text-decoration: none;
+            display: inline-block;
+        }
+
+        .previous {
+            background-color: #333;
+            color: white;
+        }
+
+        .next {
+            background-color: #333;
+            color: white;
+        }
+
+        .previous:hover, .previous:active {
+            background-color: #333;
+        }
+
+        .next:hover, .next:active {
+            background-color: #333;
+        }
+        /* table, th, td {
+            border: 1px solid black;
+        } */
+
+        </style>
+</head>
+
+<body>
+    <script>
+        function draw_image(all_url, all_key) {
+            let img = document.getElementById("img_collage")
+            img.setAttribute("src", all_url[0]);
+
+            let term_name = document.getElementById("term_name")
+            term_name.appendChild(document.createTextNode("{{ next_id }}: " + all_key))
+
+            term_name.setAttribute('href','https://www.bing.com/images/search?q=' + all_key + '&form=monitr');
+            term_name.setAttribute('target','_blank');
+            term_name.setAttribute('title', 'click to see example images of "' + all_key + '“');
+            
+        }
+    </script>
+
+    <script>
+        let all_url = JSON.parse("{{ all_url|escapejs }}");
+        let all_key = JSON.parse("{{ all_key |escapejs }}");
+        let option = JSON.parse("{{ option |escapejs }}");
+
+        window.onload = function () {
+            draw_image(all_url, all_key);
+
+            if (option != null) {
+                document.forms["uploadbanner"][option].checked = true;
+            }
+            //document.gendersForm.gender.value="F";
+
+        };
+
+    </script>
+
+    <p id="demo"></p>
+    <table width=100%>
+        <tr>
+            <td>
+                <img id="img_collage" width="1333px">
+            </td>
+            <td style="text-align:left;vertical-align:top;padding:0">
+                <form id="uploadbanner" enctype="multipart/form-data" method="POST" action="/detection/verify_data/">{% csrf_token %}
+                     <h4>Left images randomly sample from training data set. Is it good for following term? </h4>
+                    <h3><a id="term_name" class="term"></a> </h3>
+                    <h3>
+                        <input id="yes" name="radio_option" type="radio" value="1"> Yes<br><br>
+                        <input id="no" name="radio_option" type="radio" value="2"> No<br><br>
+
+                        <label id="term_name">Comments:</label>
+                        <div id="bing_link"></div>
+                        <TEXTAREA id="comment" name="comment" 
+                                    rows="20"  cols="70"
+                                    tabindex="40">{{ comment }}
+                        </TEXTAREA><br><br>
+                        <input id="submit" type="submit" value="Submit" class="btn" />
+                        <br><br><br><br><br><br><br>
+                    </h3>
+                
+                <br><br><br><br><br><br>
+                <input type='hidden' id='next_id' name='next_id' value='{{ next_id }}' />
+                <input type='hidden' id='label_fname' name='label_fname' value='{{ label_fname }}' />
+                <input type='hidden' id='data' name='data' value='{{ data }}' />
+                <input type='hidden' id='split' name='split' value='{{ split }}' />
+                </form>
+                <a href="{{ previous_link }}" class="previous">&laquo;Previous</a>
+                <a href="{{ next_link }}" class="next">Next&raquo;</a>
+            </td>
+
+        </tr>
+    </table>
+</body>
+
+</html>
