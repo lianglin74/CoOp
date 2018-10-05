@@ -239,7 +239,7 @@ class ProtoGenerator(object):
             det.add_input_data(n, num_classes, **kwargs)
         else:
             n.data = caffe.layers.Layer()
-            if detmodel == 'yolo' or detmodel == 'fasterrcnn':
+            if detmodel.startswith('yolo') or detmodel == 'fasterrcnn':
                 # create a placeholder, and replace later
                 n.im_info = caffe.layers.Layer()
             elif detmodel == 'classification':
@@ -258,7 +258,7 @@ class ProtoGenerator(object):
             if detmodel == 'fasterrcnn':
                 im_info2 = 3
                 image_dim = 224
-            elif detmodel == 'yolo':
+            elif detmodel.startswith('yolo'):
                 im_info2 = 2
                 image_dim = 416
             elif detmodel == 'classification':
@@ -307,7 +307,7 @@ class ProtoGenerator(object):
             set_no_bias(net, self._kwargs['no_bias'])
         if not deploy and len(self._kwargs.get('last_fixed_param', '')) > 0:
             from qd_common import fix_net_parameters
-            fix_net_parameters(net, **self._kwargs)
+            fix_net_parameters(net, self._kwargs.get('last_fixed_param'))
         if not deploy and self._kwargs.get('num_bn_fix', 0) > 0:
             from qd_common import fix_net_bn_layers
             fix_net_bn_layers(net, self._kwargs['num_bn_fix'])
@@ -424,6 +424,8 @@ class ProtoGenerator(object):
             return mzoo.FasterRCNN()
         elif model_name == 'yolo':
             return mzoo.Yolo()
+        elif model_name == 'yolomultisource':
+            return mzoo.YoloMultiSource()
         elif model_name == 'vggstyle':
             return mzoo.VGGStyle()
         elif model_name == 'classification':
@@ -526,8 +528,6 @@ class CaffeWrapper(object):
         self._detmodel = self._kwargs['detmodel']
         if 'yolo_max_truth' not in self._kwargs:
             self._kwargs['yolo_max_truth'] = 30
-
-        self._tree = None
         if self._kwargs.get('yolo_tree', False):
             source_dataset = TSVDataset(self._data)
             self._kwargs['target_synset_tree'] = source_dataset.get_tree_file()
@@ -548,6 +548,12 @@ class CaffeWrapper(object):
         if 'yolo_extract_target_prediction' in self._kwargs:
             assert 'extract_features' not in self._kwargs
             self._kwargs['extract_features'] = 'target_prediction'
+
+        self._test_version = self._kwargs.get('test_version', 0)
+
+        self._train_data_info = dynamic_process_tsv(source_dataset, 
+                    self._path_env['output_data_root'], 
+                    **self._kwargs)
 
     def demo(self, source_image_tsv=None, m=None):
         labels = load_list_file(self._labelmap)
@@ -573,15 +579,7 @@ class CaffeWrapper(object):
                 source_image_tsv, thresh, waitkey, gpu)
 
     def _get_num_classes(self):
-        if 'num_classes' not in self._kwargs:
-            if 'target_synset_tree' in self._kwargs:
-                self._tree = LabelTree(self._kwargs['target_synset_tree'])
-                num_classes = len(self._tree.noffsets)
-            else:
-                num_classes = num_non_empty_lines(self._labelmap)
-        else:
-            assert False
-            num_classes = kwargs['num_classes']
+        num_classes = num_non_empty_lines(self._labelmap)
 
         return num_classes
 
@@ -687,7 +685,7 @@ class CaffeWrapper(object):
         start_time = time.time()
         all_stat = []
         for im in ims:
-            if self._kwargs['detmodel'] == 'yolo':
+            if self._kwargs['detmodel'].startswith('yolo'):
                 stat = {}
                 scores, boxes = im_detect(net, im, model.mean_value,
                         network_input_size=self._kwargs.get('test_input_sizes',
@@ -734,17 +732,19 @@ class CaffeWrapper(object):
         write_to_yaml_file(self._kwargs, op.join(path_env['output'], 
             'parameters_{}.yaml'.format(datetime.now().strftime('%Y_%m_%d_%H_%M_%S'))))
 
-        source_dataset = TSVDataset(self._data)
-
-        x = dynamic_process_tsv(source_dataset, path_env['output_data_root'], 
-                self._tree,
-                **kwargs)
-
-        num_classes = self._get_num_classes()
-
-        sources, source_labels, source_shuffles, data_batch_weights, labelmap = x
-
         if not kwargs.get('skip_genprototxt', False):
+            source_dataset = TSVDataset(self._data)
+            data_info = self._train_data_info 
+            sources = data_info['sources'] 
+            source_labels = data_info['source_labels']
+            source_shuffles = data_info['source_shuffles']
+            data_batch_weights = data_info['data_batch_weights']
+            labelmaps = data_info['labelmaps']
+            tree_files = data_info['tree_files']
+            if not self._kwargs.get('yolo_tree', False):
+                tree_files = None
+            num_classes = [num_non_empty_lines(l) for l in labelmaps]
+
             if len(source_shuffles) > 0:
                 num_train_images = sum([TSVFile(s).num_rows() for s in
                         source_shuffles])
@@ -753,12 +753,14 @@ class CaffeWrapper(object):
                     for ss in sources
                     for s in ss])
 
-            p = ProtoGenerator(parse_basemodel_with_depth(net), num_classes, sources=sources, 
-                    labelmap=labelmap,
+            p = ProtoGenerator(parse_basemodel_with_depth(net), num_classes, 
+                    sources=sources, 
+                    labelmap=labelmaps,
                     source_labels=source_labels, 
                     source_shuffles=source_shuffles,
                     data_batch_weights=data_batch_weights,
                     num_train_images=num_train_images,
+                    tree_files=tree_files,
                     **kwargs)
             p.generate_prototxt(path_env['train_proto_file'], 
                     path_env['test_proto_file'], path_env['solver'])
@@ -1120,7 +1122,8 @@ class CaffeWrapper(object):
                     mean_value, 
                     scale,
                     outtsv_file,
-                    cmapfile=self._labelmap,
+                    # do not use self._labelmap since it is one labelmap
+                    cmapfile=self._train_data_info['labelmaps'],
                     **self._kwargs)
         else:
             assert get_mpi_local_rank() == 0
@@ -1156,7 +1159,8 @@ class CaffeWrapper(object):
                         mean_value, 
                         scale,
                         curr_outtsv_file,
-                        cmapfile=self._labelmap,
+                        # do not use self._labelmap since it is one labelmap
+                        cmapfile=self._train_data_info['labelmaps'],
                         **self._kwargs)
             if mpi_rank == 0:
                 # need to wait and merge all the results
@@ -1313,9 +1317,14 @@ class CaffeWrapper(object):
                         'eval_label_to_keys')
                 eval_label_to_keys_iter = self._test_dataset.iter_data(
                         self._test_split, 'eval_label_to_keys')
-                kwargs['eval_label_to_keys_iter'] = eval_label_to_keys_iter
-            eval_file = deteval_iter(truth_iter=self._test_dataset.iter_data(
-                self._test_split, 'label'), dets=predict_result, **kwargs)
+                label_to_keys = {label_keys[0]: set(label_keys[1:]) for label_keys in
+                    eval_label_to_keys_iter}
+            else:
+                label_to_keys = None
+            eval_file = self._perf_file(model)
+            deteval_iter(truth_iter=self._test_dataset.iter_data(
+                self._test_split, 'label', version=self._test_version), dets=predict_result,
+                report_file=eval_file, label_to_keys=label_to_keys, **kwargs)
             # create the index of the eval file so that others can load the
             # information fast
             result = None
@@ -1365,7 +1374,6 @@ class CaffeWrapper(object):
                     precision_ths = class_thresh[l].keys()
                     break
                 if precision_ths:
-                    assert '0.5' in precision_ths
                     for precision_th in precision_ths:
                         simple_file = '{}.prec{}.threshold.tsv'.format(
                                 eval_file, precision_th)
@@ -1460,10 +1468,18 @@ class CaffeWrapper(object):
 
     def _param_dist_file(self, model):
         return model.model_param + '.param'
-
+    
     def _perf_file(self, model):
         if self._detmodel != 'classification':
-            return op.splitext(self._predict_file(model))[0] + '.report'
+            report_file = op.splitext(self._predict_file(model))[0] + '.report'
+            if self._kwargs.get('eval_label_to_keys_iter'):
+                report_file = report_file + '.eval_label_to_keys'
+            if self._test_version != 0 and self._test_version != None:
+                if self._test_version == -1:
+                    self._test_version = self._test_dataset.get_latest_version(self._test_split,
+                            'label')
+                report_file = report_file + '.v{}'.format(self._test_version)
+            return report_file
         else:
             return self._predict_file(model) + '.report'
     

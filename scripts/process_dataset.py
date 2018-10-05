@@ -43,12 +43,11 @@ def ensure_dataset_sample(source_dataset, sample_label, sample_image, out_data):
     write_to_file('\n'.join(sampled_labels), op.join(out_data, 'labelmap.txt'))
 
 def dynamic_process_tsv(source_dataset, output_data_path, 
-        tree,
         **kwargs):
     if 'dataset_ops' not in kwargs:
         kwargs['dataset_ops'] = []
     return process_dataset(source_dataset, output_data_path,
-            kwargs['dataset_ops'], tree)
+            kwargs['dataset_ops'])
 
 def construct_low_shot(source_dataset, labels, num_train_images, shuffle_file):
     assert len(labels) == 1
@@ -75,19 +74,11 @@ def construct_low_shot(source_dataset, labels, num_train_images, shuffle_file):
     write_to_file('\n'.join(map(str, selected)), shuffle_file + '.selected')
     write_to_file('\n'.join(map(str, shuffle)), shuffle_file)
 
-def process_dataset(source_dataset, output_root_data_path, dataset_ops,
-        synset_tree):
+def process_dataset(source_dataset, output_root_data_path, dataset_ops):
     sources, source_labels = [], []
     source_shuffles, data_batch_weights = [], []
-    labelmap = None
-    if synset_tree:
-        noffsets = synset_tree.noffsets
-        labelmap = op.join(output_root_data_path,
-            op.basename(synset_tree.basefilename))
-        write_to_file('\n'.join(noffsets), labelmap)
-    else:
-        synset_tree = None
-        labelmap = source_dataset.get_labelmap_file()
+    labelmaps = [source_dataset.get_labelmap_file()]
+    tree_files = [source_dataset.get_tree_file()]
 
     source = source_dataset.get_train_tsvs()
     sources.append(source)
@@ -106,7 +97,10 @@ def process_dataset(source_dataset, output_root_data_path, dataset_ops,
             source_labels = []
             data_batch_weights = []
             source_shuffles = []
+            labelmaps = []
+            tree_files = []
         elif operator['op'] == 'select_top':
+            assert False, 'no longer support -> create a new dataset pls'
             # dataset_ops = [{'op':'select_top', 'num_top': 1}]
             # only select the first few training images. This is used to verify
             # if the training loss can be reduced if we only have a few
@@ -119,38 +113,26 @@ def process_dataset(source_dataset, output_root_data_path, dataset_ops,
             assert len(source_shuffles) == 0
             source_shuffles.append(shuffle_file)
         elif operator['op'] == 'add':
-            # add a new dataset.
-            if 'path' not in operator:
-                extra_dataset = TSVDataset(operator['name'])
-                if operator['source'] == 'train':
-                    curr_source = extra_dataset.get_train_tsvs()
-                    curr_labels = extra_dataset.get_train_tsvs('label')
-                elif operator['source'] == 'trainval':
-                    raise NotImplemented
-                    curr_source = extra_dataset.get_trainval_tsv()
-                else:
-                    assert False
-                #curr_labelmap = extra_dataset.load_labelmap()
-                if op.isfile(extra_dataset.get_train_shuffle_file()):
-                    source_shuffles.append(extra_dataset.get_train_shuffle_file())
-                sources.append(curr_source)
-                if len(curr_labels) == len(curr_source):
-                    source_labels.append(curr_labels)
-                data_batch_weights.append(operator['weight'])
+            extra_dataset = TSVDataset(operator['name'])
+            if operator['source'] == 'train':
+                curr_source = extra_dataset.get_train_tsvs()
+                curr_labels = extra_dataset.get_train_tsvs('label')
+            elif operator['source'] == 'trainval':
+                raise NotImplemented
+                curr_source = extra_dataset.get_trainval_tsv()
             else:
                 assert False
-                curr_source = op.join(operator['path'], operator['source'] + '.tsv')
-                #curr_labelmap = load_list_file(op.join(operator['path'],
-                    #'labelmap.txt'))
-            #source_label = op.join(output_root_data_path, operator['name'],
-                    #'{}_{}_{}'.format(basename_no_ext(synset_tree.basefilename), 
-                        #basename_no_ext(curr_source), 'label.tsv'))
-            #if not op.isfile(source_label):
-                #map_label(curr_source, 
-                        #curr_labelmap,
-                        #synset_tree,
-                        #source_label)
+            #curr_labelmap = extra_dataset.load_labelmap()
+            if op.isfile(extra_dataset.get_train_shuffle_file()):
+                source_shuffles.append(extra_dataset.get_train_shuffle_file())
+            sources.append(curr_source)
+            labelmaps.append(extra_dataset.get_labelmap_file())
+            if len(curr_labels) == len(curr_source):
+                source_labels.append(curr_labels)
+            data_batch_weights.append(operator['weight'])
+            tree_files.append(extra_dataset.get_tree_file())
         elif operator['op'] == 'sample':
+            assert False, 'no longer support -> create a new dataset pls'
             # randomly sample the training data by a probability for all
             assert len(dataset_ops) == 1
             sample_label = operator['sample_label']
@@ -163,6 +145,7 @@ def process_dataset(source_dataset, output_root_data_path, dataset_ops,
             sources = [op.join(out_folder, 'train.tsv')]
             labelmap = op.join(out_folder, 'labelmap.txt')
         elif operator['op'] == 'low_shot':
+            assert False, 'no longer support -> create a new dataset pls'
             assert len(dataset_ops) == 1
             labels = operator['labels'].split(',')
             num_train = operator['num_train']
@@ -174,6 +157,7 @@ def process_dataset(source_dataset, output_root_data_path, dataset_ops,
                 construct_low_shot(source_dataset, labels,
                         num_train, shuffle_file)
         elif operator['op'] == 'mask_background':
+            assert False, 'no longer support -> create a new dataset pls'
             assert i == 0
             sources = []
             new_label_idx = operator['new_label_idx']
@@ -203,7 +187,12 @@ def process_dataset(source_dataset, output_root_data_path, dataset_ops,
             sources.append(op.join(target_folder, 'train.tsv'))
         else:
             assert False
-    return sources, source_labels, source_shuffles, data_batch_weights, labelmap
+    return {'sources': sources, 
+            'source_labels': source_labels, 
+            'source_shuffles': source_shuffles, 
+            'data_batch_weights': data_batch_weights, 
+            'labelmaps': labelmaps,
+            'tree_files': tree_files}
 
 def create_mask_label_map(old_label_idx,
         new_label_idx, num_label):

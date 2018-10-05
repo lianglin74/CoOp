@@ -73,6 +73,46 @@ import pymongo
 from datetime import datetime
 import inspect
 
+def convert_pred_to_dataset_label(full_expid, predict_file, 
+        th_file, min_value):
+    pred_file = op.join('output',
+            full_expid,
+            'snapshot',
+            predict_file)
+
+    from qd_common import parse_test_data
+    data, split = parse_test_data(predict_file)
+
+    from process_tsv import load_key_rects
+
+    dataset = TSVDataset(data)
+    populate_dataset_details(data)
+    latest_version = dataset.get_latest_version(split, 'label')
+    gt_key_rects = load_key_rects(dataset.iter_data(split, 'label',
+        latest_version))
+    pred_key_rects = load_key_rects(tsv_reader(pred_file))
+    pred_key_to_rects = {key: rects for key, rects in pred_key_rects}
+    if th_file:
+        th_file = op.join('output', full_expid, 'snapshot', th_file)
+        per_cat_th = {l: max(float(th), min_value) for l, th, _ in tsv_reader(th_file)}
+    else:
+        per_cat_th = {}
+    def gen_rows():
+        for key, rects in gt_key_rects:
+            pred_rects = pred_key_to_rects.get(key, [])
+            pred_rects = [r for r in pred_rects 
+                    if r['conf'] >= per_cat_th.get(r['class'], 0)]
+            yield key, json.dumps(pred_rects)
+    info = [('full_expid', full_expid), 
+            ('predict_file', pred_file), 
+            ('th_file', th_file),
+            ('min_value', min_value)]
+    dataset.update_data(gen_rows(), split, 'label',
+            generate_info=info)
+
+    populate_dataset_details(data)
+
+
 def ensure_inject_expid(full_expid):
     from qd_common import get_all_predict_files
     from qd_common import load_solver
