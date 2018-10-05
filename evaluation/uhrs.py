@@ -1,6 +1,7 @@
 from enum import Enum
 import os
 import subprocess
+import time
 from tqdm import tqdm
 
 
@@ -28,7 +29,7 @@ class UhrsTaskManager():
             self.state = State.IDLE
 
     def block_worker(self, worker_id):
-        args = [self._uhrs_exe_path, "block_judge", repr(worker_id)]
+        args = [self._uhrs_exe_path, "block_judge", repr(int(worker_id))]
         subprocess.check_call(args)
 
     def block_workers(self, worker_id_file):

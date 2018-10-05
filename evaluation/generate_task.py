@@ -90,7 +90,7 @@ def write_task_file(data, filepath):
 
 
 def generate_verify_box_task(label_file, gt_file, outbase,
-                             description_file=None, num_tasks_per_hit=8,
+                             description_file=None, num_tasks_per_hit=10,
                              num_hp_per_hit=2, hp_neg_prob=0.5):
     """
     Params:

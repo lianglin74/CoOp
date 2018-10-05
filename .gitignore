@@ -56,6 +56,9 @@ evaluation/UHRSDataCollection/.vs/*
 evaluation/UHRSDataCollection/UHRSDataCollection/bin/*
 evaluation/UHRSDataCollection/UHRSDataCollection/obj/*
 
+#include lib in UHRSDataCollection
+!evaluation/UHRSDataCollection/packages/*
+
 # exclude PytCharm IDE directory
 .idea/
 
