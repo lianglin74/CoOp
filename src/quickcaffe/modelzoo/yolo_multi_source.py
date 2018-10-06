@@ -167,7 +167,7 @@ class YoloMultiSource(object):
         else:
             num_threads = 1
         # Only with -fg set use the new layer structure
-        with_new_layers = kwargs.get('yolo_full_gpu', False) and kwargs.get('target_synset_tree', False)
+        with_new_layers = kwargs.get('yolo_full_gpu', False)
         assert with_new_layers, 'we will no longer support this'
         effective_batch_size = kwargs.get('effective_batch_size', 64.0)
         iter_size = kwargs.get('iter_size', 1)
@@ -403,19 +403,20 @@ class YoloMultiSource(object):
                         str(i), 
                         extra_train_param,
                         label_name=label_name,
-                        tree_file=kwargs['tree_files'][i],
+                        tree_file=kwargs['tree_files'][i] if kwargs['tree_files'] else None,
                         **kwargs)
         else:
             for i, num_output in enumerate(num_outputs):
                 last_top_name = 'last_conv{}'.format(i)
                 n[last_top_name] = L.Convolution(last_top, kernel_size=1,
                         num_output=num_output, **last_conv_param)
-                extra_test_param['tree'] = kwargs['tree_files'][i]
+                if kwargs['tree_files']:
+                    extra_test_param['tree'] = kwargs['tree_files'][i]
                 self.add_yolo_test_loss(n, biases, num_classes[i], 
                         last_top_name, 
                         str(i),
                         extra_test_param,
-                        tree_file=kwargs['tree_files'][i],
+                        tree_file=kwargs['tree_files'][i] if kwargs['tree_files'] else None,
                         **kwargs)
 
     def add_yolo_train_loss_bb_only(self, n, biases, num_classes, last_top, suffix, 
