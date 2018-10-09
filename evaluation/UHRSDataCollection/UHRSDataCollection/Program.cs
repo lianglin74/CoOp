@@ -3,6 +3,7 @@ using System.IO;
 using System.Reflection;
 using System.Threading;
 
+using CmdParser;
 using Microsoft.Search.UHRS.Client;
 using Microsoft.Search.UHRS.Client.ManagementReference;
 using Microsoft.Search.UHRS.Client.ManagementExReference;
@@ -10,10 +11,12 @@ using Microsoft.Search.UHRS.Client.ServiceReference;
 using Microsoft.Search.UHRS.Client.AuditReference;
 using Microsoft.Search.UHRS.Client.DataStreamingReference;
 using Microsoft.Search.UHRS.Client.AuthReference;
+using System.Diagnostics;
 
 namespace CVUHRS
 {
-    static class Program {
+    static class Program
+    {
         public static readonly int[] AllHitappIds = { 34524, 34872, 34879, 35716, 35851, 35852, 35853 };
 
         public static ManagementClient Management
@@ -102,7 +105,7 @@ namespace CVUHRS
             {
                 using (var s = Streaming.DownloadTaskFile(sf, taskGroupId))
                 {
-                    using (Stream file = new FileStream(resultPath, FileMode.CreateNew, FileAccess.Write))
+                    using (Stream file = new FileStream(resultPath, FileMode.Create, FileAccess.Write))
                     {
                         s.CopyTo(file);
                         file.Close();
@@ -110,7 +113,7 @@ namespace CVUHRS
                 }
                 return true;
             }
-            Console.WriteLine($"Sync timed out after {retryIntervalSec*numMaxTries/60} min");
+            Console.WriteLine($"Sync timed out after {retryIntervalSec * numMaxTries / 60} min");
             return false;
         }
 
@@ -144,41 +147,66 @@ namespace CVUHRS
             return false;
         }
 
-        public static void UploadTasksFromFolder(int taskGroupId, string folderPath, string filePrefix,
-            string taskIdNameFile, double consensusThreshold, int numJudgement)
+        public class ArgsUploadFromFolder
         {
-            string[] filePaths = Directory.GetFiles(folderPath, $"{filePrefix}*", SearchOption.TopDirectoryOnly);
+            [Argument(ArgumentType.Required, HelpText = "Task group Id")]
+            public int taskGroupId = -1;
+            [Argument(ArgumentType.Required, HelpText = "Folder of task files to be uploaded")]
+            public string folderPath = null;
+            [Argument(ArgumentType.AtMostOnce, HelpText = "Prefix of filenames that should be uploaded (default: empty string)")]
+            public string filePrefix = "";
+            [Argument(ArgumentType.Required, HelpText = "TSV file to write uploaded task id and names")]
+            public string taskIdNameFile = null;
+            [Argument(ArgumentType.Required, HelpText = "Number of judgments required per HIT")]
+            public int numJudgment = 0;
+            [Argument(ArgumentType.AtMostOnce, HelpText = "Specify if want to use consensus mode (default: 0.0)")]
+            public double consensusThreshold = 0.0;
+        }
+
+        public static void UploadTasksFromFolder(ArgsUploadFromFolder cmd)
+        {
+            string[] filePaths = Directory.GetFiles(cmd.folderPath, $"{cmd.filePrefix}*", SearchOption.TopDirectoryOnly);
             Console.WriteLine(filePaths);
-            using (var writer = new StreamWriter(taskIdNameFile))
+            using (var writer = new StreamWriter(cmd.taskIdNameFile))
             {
                 string taskName;
                 int taskId = 0;
                 foreach (string filePath in filePaths)
                 {
                     taskName = Path.GetFileNameWithoutExtension(filePath);
-                    if (!TryUploadTaskWrapped(filePath, consensusThreshold, numJudgement, taskGroupId,
+                    if (!TryUploadTaskWrapped(filePath, cmd.consensusThreshold, cmd.numJudgment, cmd.taskGroupId,
                         taskName, out taskId))
                     {
-                        throw new Exception($"Failed to upload {taskGroupId}: {folderPath}");
+                        throw new Exception($"Failed to upload {cmd.taskGroupId}: {cmd.folderPath}");
                     }
                     writer.WriteLine(string.Format("{0}\t{1}", taskId, taskName));
                 }
             }
         }
 
-        public static void DownloadTasksToFolder(int taskGroupId, string folderPath, string taskIdNameFile)
+        public class ArgsDownloadToFolder
         {
-            var lines = File.ReadAllLines(taskIdNameFile);
+            [Argument(ArgumentType.Required, HelpText = "Task group Id")]
+            public int taskGroupId = -1;
+            [Argument(ArgumentType.Required, HelpText = "Output folder for downloaded files")]
+            public string folderPath = null;
+            [Argument(ArgumentType.Required, HelpText = "TXT file of task ids to be downloaded, the first column of each line should be id")]
+            public string taskIdFile = null;
+        }
+
+        public static void DownloadTasksToFolder(ArgsDownloadToFolder cmd)
+        {
+            var lines = File.ReadAllLines(cmd.taskIdFile);
             int taskId;
             foreach (string line in lines)
             {
                 var parts = line.Split('\t');
                 if (!int.TryParse(parts[0], out taskId))
                 {
-                    throw new Exception($"Fail to parse task ID {parts[0]} in file {taskIdNameFile}");
+                    throw new Exception($"Fail to parse task ID {parts[0]} in file {cmd.taskIdFile}");
                 }
-                string resultPath = Path.Combine(folderPath, taskId.ToString());
-                if (!TryDownloadTaskWrapped(taskGroupId, taskId, resultPath))
+                string resultPath = Path.Combine(cmd.folderPath, taskId.ToString());
+                if (!TryDownloadTaskWrapped(cmd.taskGroupId, taskId, resultPath))
                 {
                     // TODO: implement retry logic
                     throw new Exception($"Fail to download {taskId}: {resultPath}");
@@ -186,7 +214,13 @@ namespace CVUHRS
             }
         }
 
-        public static void BlockSingleJudge(int judgeId)
+        public class ArgsBlockSingleJudge
+        {
+            [Argument(ArgumentType.Required, HelpText = "Judge/Worker id")]
+            public int judgeId = -1;
+        }
+
+        private static void BlockJudgeHelper(int judgeId)
         {
             foreach (int hitAppId in AllHitappIds)
             {
@@ -195,15 +229,26 @@ namespace CVUHRS
             Console.WriteLine($"Blocked judge: {judgeId} in all HitApps");
         }
 
-        public static void BlockJudges(string filePath)
+        public static void BlockSingleJudge(ArgsBlockSingleJudge cmd)
         {
-            var judgeIds = File.ReadAllLines(filePath);
+            BlockJudgeHelper(cmd.judgeId);
+        }
+
+        public class ArgsBlockJudges
+        {
+            [Argument(ArgumentType.Required, HelpText = "TXT file of judge ids to be blocked")]
+            public string filepath = null;
+        }
+
+        public static void BlockJudges(ArgsBlockJudges cmd)
+        {
+            var judgeIds = File.ReadAllLines(cmd.filepath);
             foreach (string judgeIdStr in judgeIds)
             {
                 int judgeId;
                 if (Int32.TryParse(judgeIdStr, out judgeId))
                 {
-                    BlockSingleJudge(judgeId);    
+                    BlockJudgeHelper(judgeId);
                 }
                 else
                 {
@@ -212,99 +257,41 @@ namespace CVUHRS
             }
         }
 
-        public static void GetTaskState(int taskGroupId, int taskId)
+        public class ArgsTaskState
+        {
+            [Argument(ArgumentType.Required, HelpText = "Task group id")]
+            public int taskGroupId = -1;
+            [Argument(ArgumentType.Required, HelpText = "Task id")]
+            public int taskId = -1;
+        }
+
+        public static void GetTaskState(ArgsTaskState cmd)
         {
             Microsoft.Search.UHRS.Client.ManagementReference.SimpleTask task
-                = Management.GetTask(taskGroupId, taskId);
+                = Management.GetTask(cmd.taskGroupId, cmd.taskId);
             Console.WriteLine($"{task.State} {task.JudgmentsDone} {task.JudgmentsTotal}");
         }
 
         static int Main(string[] args)
         {
-            if (args == null)
-            {
-                throw new ArgumentException("Empty arguments");
-            }
             //use my windows sign in to sign into the UHRS portal
             Authenticate();
-            string taskType = args[0].ToLower();
-            
-            if (taskType == "upload_from_folder")
-            {
-                // args: taskGroupId(int), pathToTaskFolder(str), filePrefix(str),
-                // pathToTaskIdNameMap(str), consensusThreshold(double), numJudgement(int)
-                int taskGroupId, numJudgement;
-                double consensusThreshold;
-                if (!int.TryParse(args[1], out taskGroupId))
-                {
-                    throw new ArgumentException($"cannot parse task group id {args[0]}");
-                }
-                if (!double.TryParse(args[5], out consensusThreshold))
-                {
-                    throw new ArgumentException($"cannot parse consensus threshold {args[4]}");
-                }
-                if (!int.TryParse(args[6], out numJudgement))
-                {
-                    throw new ArgumentException($"cannot parse number of judgement {args[5]}");
-                }
-                string pathToTaskFolder = args[2];
-                string filePrefix = args[3];
-                string taskIdNameMap = args[4];
-                UploadTasksFromFolder(taskGroupId, pathToTaskFolder, filePrefix, 
-                    taskIdNameMap, consensusThreshold, numJudgement);
-                return 0;
-            }
 
-            if (taskType == "download_to_folder")
-            {
-                // args: taskGroupId(int), pathToTaskFolder(str), taskIdNameMap(str)
-                int taskGroupId;
-                string pathToTaskFolder, taskIdNameMap;
-                if (!int.TryParse(args[1], out taskGroupId))
-                {
-                    throw new ArgumentException($"cannot parse task group id {args[0]}");
-                }
-                pathToTaskFolder = args[2];
-                taskIdNameMap = args[3];
-                DownloadTasksToFolder(taskGroupId, pathToTaskFolder, taskIdNameMap);
-                return 0;
-            }
+            ParserX.AddTask<ArgsUploadFromFolder>(UploadTasksFromFolder, "Upload tasks from folder, write task ids and names");
+            ParserX.AddTask<ArgsDownloadToFolder>(DownloadTasksToFolder, "Download tasks to folder");
+            ParserX.AddTask<ArgsBlockSingleJudge>(BlockSingleJudge, "Block a single judge/worker on all HitApp");
+            ParserX.AddTask<ArgsBlockJudges>(BlockJudges, "Block judges/workers on all HitApp");
+            ParserX.AddTask<ArgsTaskState>(GetTaskState, "Print task state, #judgments done, #judgments required");
 
-            if (taskType == "block_judges")
+            if (ParserX.ParseArgumentsWithUsage(args))
             {
-                string filepath = args[1];
-                BlockJudges(filepath);
-                return 0;
+                Stopwatch timer = Stopwatch.StartNew();
+                ParserX.RunTask();
+                timer.Stop();
+                Console.WriteLine("Time used: {0}", timer.Elapsed);
             }
-
-            if (taskType == "block_judge")
-            {
-                int judgeId;
-                if (!int.TryParse(args[1], out judgeId))
-                {
-                    throw new ArgumentException($"cannot parse judge id {args[1]}");
-                }
-                BlockSingleJudge(judgeId);
-                return 0;
-            }
-
-            if (taskType == "get_task_state")
-            {
-                int taskGroupId, taskId;
-                if (!int.TryParse(args[1], out taskGroupId))
-                {
-                    throw new ArgumentException($"cannot parse task group id {args[1]}");
-                }
-                if (!int.TryParse(args[2], out taskId))
-                {
-                    throw new ArgumentException($"cannot parse task id {args[2]}");
-                }
-                GetTaskState(taskGroupId, taskId);
-                return 0;
-            }
-
-            throw new NotImplementedException($"Unrecognized task: {taskType}");
+            return 0;
         }
     }
-      
+
 }

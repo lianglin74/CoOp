@@ -52,9 +52,9 @@ x64/
 *.log
 *.out
 *.toc
-evaluation/UHRSDataCollection/.vs/*
-evaluation/UHRSDataCollection/UHRSDataCollection/bin/*
-evaluation/UHRSDataCollection/UHRSDataCollection/obj/*
+.vs/
+evaluation/UHRSDataCollection/bin/
+evaluation/UHRSDataCollection/*/obj/
 
 #include lib in UHRSDataCollection
 !evaluation/UHRSDataCollection/packages/*

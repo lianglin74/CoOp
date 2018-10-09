@@ -1,4 +1,5 @@
 from enum import Enum
+import logging
 import os
 import subprocess
 import time
@@ -20,8 +21,9 @@ class UhrsTaskManager():
     def __init__(self, task_log):
         self._task_log = task_log  # tsv file to store task id and name
         rootpath = os.path.dirname(os.path.realpath(__file__))
-        self._uhrs_exe_path = os.path.join(rootpath, "./UHRSDataCollection/UHRSDataCollection/bin/Debug/UHRSDataCollection.exe")
+        self._uhrs_exe_path = os.path.join(rootpath, "./UHRSDataCollection/bin/Release/UHRSDataCollection.exe")
         if task_log and os.path.isfile(task_log):
+            logging.info("tasks already uploaded at {}".format(task_log))
             self.state = State.UPLOAD_FINISH
         elif task_log and os.path.isdir(task_log):
             raise Exception("task log should be a file")
@@ -29,17 +31,19 @@ class UhrsTaskManager():
             self.state = State.IDLE
 
     def block_worker(self, worker_id):
-        args = [self._uhrs_exe_path, "block_judge", repr(int(worker_id))]
+        args = [self._uhrs_exe_path, "BlockSingleJudge",
+                "-judgeId", repr(int(worker_id))]
         subprocess.check_call(args)
 
     def block_workers(self, worker_id_file):
         if not os.path.isfile(worker_id_file):
             raise Exception("file does not exist: {}".format(worker_id_file))
-        args = [self._uhrs_exe_path, "block_judges", worker_id_file]
+        args = [self._uhrs_exe_path, "BlockJudges",
+                "-filepath", worker_id_file]
         subprocess.check_call(args)
 
     def upload_tasks_from_folder(self, task_hitapp, dirpath, prefix="",
-                                 num_judges=5):
+                                 consensus_thresh=0.0, num_judges=5):
         """Uploads task files in dirpath with prefix to UHRS, each hit will be
         judged by num_judges workers
         """
@@ -47,8 +51,14 @@ class UhrsTaskManager():
             raise Exception("cannot upload from state {}".format(self.state))
         self.state = State.UPLOAD_START
         task_group_id = self._get_task_group_id(task_hitapp)
-        args = [self._uhrs_exe_path, "upload_from_folder", repr(task_group_id),
-                dirpath, prefix, self._task_log, "0.0", repr(num_judges)]
+        args = [self._uhrs_exe_path, "UploadTasksFromFolder",
+                "-taskGroupId", repr(task_group_id),
+                "-folderPath", dirpath,
+                "-taskIdNameFile", self._task_log,
+                "-consensusThreshold", repr(consensus_thresh),
+                "-numJudgment", repr(num_judges)]
+        if prefix:
+            args.extend(["-filePrefix", prefix])
         subprocess.check_call(args)
         self.state = State.UPLOAD_FINISH
 
@@ -57,8 +67,10 @@ class UhrsTaskManager():
             raise Exception("cannot download from state {}".format(self.state))
         self.state = State.DOWNLOAD_START
         task_group_id = self._get_task_group_id(task_hitapp)
-        args = [self._uhrs_exe_path, "download_to_folder", repr(task_group_id),
-                dirpath, self._task_log]
+        args = [self._uhrs_exe_path, "DownloadTasksToFolder",
+                "-taskGroupId", repr(task_group_id),
+                "-folderPath", dirpath,
+                "-taskIdFile", self._task_log]
         subprocess.check_call(args)
         self.state = State.IDLE
 
@@ -112,9 +124,10 @@ class UhrsTaskManager():
         3 - Completed
         """
         task_group_id = self._get_task_group_id(task_hitapp)
-        ret = subprocess.check_output([self._uhrs_exe_path, "get_task_state",
-                                       repr(task_group_id), repr(task_id)])
-        return [int(r) for r in ret.decode().rstrip('\r\n').split(' ')]
+        ret = subprocess.check_output([self._uhrs_exe_path, "GetTaskState",
+                                       "-taskGroupId", repr(task_group_id),
+                                       "-taskId", repr(task_id)])
+        return [int(r) for r in ret.decode().split('\r\n', 1)[0].split(' ')]
 
     def _get_task_group_id(self, task_hitapp):
         if task_hitapp == "verify_box":
@@ -123,5 +136,25 @@ class UhrsTaskManager():
             return 86329
         elif task_hitapp == "verify_box_group":
             return 91381
+        elif task_hitapp == "test":
+            return 88209
         else:
             raise Exception("Unknown task: {}".format(task_hitapp))
+
+
+def test():
+    rootpath = "//ivm-server2/IRIS/OD/eval/tasks/test/"
+    uhrs_client = UhrsTaskManager(os.path.join(rootpath, "log.txt"))
+    w_id = 388605
+    w_file = os.path.join(rootpath, "bad_worker.txt")
+    task_hitapp = "test"
+    with open(w_file, 'w') as fp:
+        fp.write(str(w_id) + '\n')
+    uhrs_client.block_worker(w_id)
+    uhrs_client.block_workers(w_file)
+    upload_dir = os.path.join(rootpath, "upload")
+    download_dir = os.path.join(rootpath, "download")
+    uhrs_client.upload_tasks_from_folder(task_hitapp, upload_dir, num_judges=1)
+    # check active task at https://prod.uhrs.playmsn.com/Manage/Task/TaskList?hitappid=35295
+    uhrs_client.wait_until_task_finish(task_hitapp)
+    uhrs_client.download_tasks_to_folder(task_hitapp, download_dir)
