@@ -140,6 +140,22 @@ This repo is for the algorithm development for IRIS object detection. The curren
       $data_folder_name
    4. go to http://$server_name:8000/detection/view_compare and "select data folder"
 
+## Deploy
+1. Convert the model trained with -full_gpu to the model without -full_gpu
+   1. Context: in the deployment env, we might still use the old structure,
+      where we use RegionOutput layer. The new structure uses the
+      RegionPrediction layer. The main difference is the layout of the last
+      conv layer's output. The old one is x, y, w, h, obj, cls, x, y, w, h,
+      obj, cls, e.t.c. The newer one is xxxxx, yyyy, wwwww. The initailization
+      algorithm of the deployment env might copy the weight for the bounding
+      boxes, i.e. x, y, w, h. Thus, we have to convert the model to the old
+      version. 
+   2. Command line: 
+   ```
+   python scripts/tools.py -p "{'type': 'convert_full_gpu_yolo_to_non_full_gpu_yolo', \
+                                'full_expid': 'brand1048_darknet19_448_B_noreorg_rotate10_init3553_extraConvKernel.1.3.1_TsvBoxSamples50ExtraConvGroups1_4_1EffectBatchSize128'}"
+   ```
+
 ## Evaluation
 1. Human evaluation on MIT1K and Instagram
     1. Run detector on datasets, default is `MIT1k` and `Instagram`.
