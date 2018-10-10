@@ -41,16 +41,82 @@ This repo is for the algorithm development for IRIS object detection. The curren
    ```
    git clone --recursive https://github.com/leizhangcn/quickdetection.git 
    ```
+2. Install nccl2 if you have not done so
+
+   cuda 9 (works with ubuntu 16.04)
+   ```
+    wget https://amsword.blob.core.windows.net/setup/nvidia-machine-learning-repo-ubuntu1604_1.0.0-1_amd64-cuda9.deb -O a.deb
+    sudo dpkg -i a.deb
+    sudo apt-get install -y libnccl2=2.2.12-1+cuda9.0 libnccl-dev=2.2.12-1+cuda9.0
+    rm a.deb
+   ```
+
+   cuda 9.2 (works with ubuntu 17.10 and ubuntu 16.04)
+   ```
+    wget https://amsword.blob.core.windows.net/setup/nccl-repo-ubuntu1604-2.3.5-ga-cuda9.2_1-1_amd64.deb -O a.deb
+    sudo dpkg -i a.deb
+    sudo apt install libnccl2=2.3.5-2+cuda9.2 libnccl-dev=2.3.5-2+cuda9.2
+   ```
+
+   [Check here to find which version you have installed for cuda](https://medium.com/@changrongko/nv-how-to-check-cuda-and-cudnn-version-e05aa21daf6c)
+
 2. install the dependency
    ```
    ./install_dep.sh
    ```
 
-2. Compile the source code by
+3. Compile the source code by
    ```
    ./compile.sh
    ```
-3. (Optional) mkdir data/ and mkdir output. Link the source dataset to data and link your existing model folder to output. 
+
+   1. if you find the following error. 
+   ```
+   error: use of enum ‘cudaFuncAttribute’ without previous declaration
+   ```
+   please update the file of cudnn.h by 
+   sudo opening /usr/include/cudnn.h, and then changing the line of 
+   ```
+    #include "driver_types.h" 
+   ```
+   to 
+   ```
+    #include <driver_types.h>
+   ```
+   [See here for more context](https://devtalk.nvidia.com/default/topic/1025801/cudnn-test-did-not-pass/)
+
+   2. if you find the error of internal compiler error: Killed (program cc1plus). Please compile the caffe with 
+   fewer cpus by replacing make -j to make -j2 in compile.sh. 
+
+   [See here for more context](https://stackoverflow.com/questions/30887143/make-j-8-g-internal-compiler-error-killed-program-cc1plus)
+
+   3. if you find the folloowing error 
+   ```
+   classification.o: undefined reference to symbol '_ZN2cv6imreadERKNS_6StringEi'
+   ```
+   most likely, you have opencv 3 installed. Uncomment the following in
+   src/CCSCaffe/Makefile.config
+   ```
+   # OPENCV_VERSION := 3
+   ```
+   [See here for more context](https://stackoverflow.com/questions/31253870/caffe-opencv-error)
+
+   4. If you find the link error for opencv when using opencv 3
+   replace the following line in Makefile
+   ```
+	ifeq ($(OPENCV_VERSION), 3)
+		LIBRARIES += opencv_imgcodecs
+	endif
+   ```
+   with
+   ```
+	ifeq ($(OPENCV_VERSION), 3)
+		LIBRARIES += opencv_imgcodecs opencv_videoio
+	endif
+   ```
+
+
+4. (Optional) mkdir data/ and mkdir output. Link the source dataset to data and link your existing model folder to output. 
 
    Copy the data from //ivm-server2/IRIS/IRISObjectDetection/Data/datasets to QuickDetectionRoot/data. 
    Copy the model from //ivm-server2/IRIS/IRISObjectDetection/Data/imagenet_models to QuickDetectionRoot/models.
