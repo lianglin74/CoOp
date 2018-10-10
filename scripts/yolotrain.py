@@ -457,14 +457,19 @@ def predict_one_yolo_view(im, full_expid, predict_file):
                         c._path_env['test_proto_file'],
                         is_last=True)
     pixel_mean = model.mean_value
-    label_names = load_list_file(c._labelmap)
+    all_label_names = [load_list_file(labelmap_file) for labelmap_file in
+            c._train_data_info['labelmaps']]
     source_image_tsv = im
     thresh = 0.2
     gpu = 0
     yolo_test_maintain_ratio = 'maintainRatio' in predict_file
-    result = predict_one(im, test_proto_file, model_param, pixel_mean, label_names,
+    block_label_config = op.join('output', full_expid,
+            'multi_head_block_labels.yaml')
+    block_labels = load_from_yaml_file(block_label_config) if op.isfile(block_label_config) else None
+    result = predict_one(im, test_proto_file, model_param, pixel_mean, all_label_names,
         source_image_tsv, thresh, gpu,
-        yolo_test_maintain_ratio=yolo_test_maintain_ratio)
+        yolo_test_maintain_ratio=yolo_test_maintain_ratio,
+        block_labels=block_labels)
     th_file = op.splitext(predict_file)[0] + '.report.prec.threshold.tsv'
     th_file = op.join('output', full_expid, 'snapshot', th_file)
     logging.info('using {}'.format(th_file))

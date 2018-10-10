@@ -97,8 +97,8 @@ def to_grey(w):
     nw = np.repeat(nw, 3, axis=2)
     return nw
 
-def predict_one(im, test_proto_file, model_param, pixel_mean, label_names,
-        source_image_tsv, thresh, gpu=0):
+def predict_one(im, test_proto_file, model_param, pixel_mean, all_label_names,
+        source_image_tsv, thresh, gpu=0, **kwargs):
     if gpu >= 0:
         caffe.set_device(gpu)
         caffe.set_mode_gpu()
@@ -113,8 +113,8 @@ def predict_one(im, test_proto_file, model_param, pixel_mean, label_names,
     for l in net_proto.layer:
         if l.type == 'SoftmaxTreePrediction':
             yolo_tree = True
-    all_bb, all_label, all_conf = detect_image(net, im, pixel_mean, label_names, 
-            thresh=thresh, yolo_tree=yolo_tree)
+    all_bb, all_label, all_conf = detect_image(net, im, pixel_mean, all_label_names, 
+            thresh=thresh, yolo_tree=yolo_tree, **kwargs)
     return all_bb, all_label, all_conf
 
 def predict_online(test_proto_file, model_param, pixel_mean, label_names,

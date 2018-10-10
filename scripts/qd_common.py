@@ -1,5 +1,5 @@
 import _init_paths
-import yaml
+import ruamel.yaml as yaml
 from collections import OrderedDict
 import progressbar 
 import json
@@ -292,6 +292,67 @@ def fix_net_bn_layers(net, num_bn_fix):
                 num_bn_fix = num_bn_fix - 1
             else:
                 break
+
+def yolo_new_to_old(new_proto, new_model, old_model):
+    assert op.isfile(new_proto)
+    assert op.isfile(new_model)
+
+    ensure_directory(op.dirname(new_model))
+
+    # infer the number of anchors and the number of classes
+    proto = load_net(new_proto)
+    target_layers = [l for l in proto.layer if l.type == 'RegionTarget']
+    assert len(target_layers) == 1
+    target_layer = target_layers[0]
+    biases_length = len(target_layer.region_target_param.biases)
+
+    num_anchor = biases_length / 2
+    assert num_anchor * 2 == biases_length
+    
+    last_conv_layers = [l for l in proto.layer if l.name == 'last_conv']
+    assert len(last_conv_layers) == 1
+    last_conv_layer = last_conv_layers[0]
+    num_classes = (last_conv_layer.convolution_param.num_output / num_anchor -
+        5)
+    assert last_conv_layer.type == 'Convolution'
+    assert last_conv_layer.convolution_param.num_output == ((5 + num_classes) *
+        num_anchor)
+    net = caffe.Net(new_proto, new_model, caffe.TRAIN)
+    target_param = net.params[last_conv_layer.name]
+    new_weight = target_param[0].data
+    old_weight = np.zeros_like(new_weight)
+    has_bias = len(target_param) > 1
+    all_new = [new_weight]
+    all_old = [old_weight]
+    if has_bias:
+        new_bias = target_param[1].data
+        old_bias = np.zeros_like(new_bias)
+        all_new.append(new_bias[:, np.newaxis])
+        all_old.append(old_bias[:, np.newaxis])
+
+    for i in xrange(num_anchor):
+        for new_p, old_p in zip(all_new, all_old):
+            x = new_p[i + 0 * num_anchor, :]
+            y = new_p[i + 1 * num_anchor, :]
+            w = new_p[i + 2 * num_anchor, :]
+            h = new_p[i + 3 * num_anchor, :]
+            o = new_p[i + 4 * num_anchor, :]
+            new_cls_start = i * num_classes + 5 * num_anchor
+            cls = new_p[new_cls_start : (new_cls_start + num_classes), :]
+
+            old_p[0 + i * (5 + num_classes), :] = x
+            old_p[1 + i * (5 + num_classes), :] = y
+            old_p[2 + i * (5 + num_classes), :] = w
+            old_p[3 + i * (5 + num_classes), :] = h
+            old_p[4 + i * (5 + num_classes), :] = o
+            old_cls_start = 5 + i * (5 + num_classes)
+            old_p[old_cls_start: (old_cls_start + num_classes),
+                    :] = cls
+    
+    for new_p, old_p in zip(all_new, all_old):
+        new_p[...] = old_p
+
+    net.save(old_model)
 
 def yolo_old_to_new(old_proto, old_model, new_model):
     '''

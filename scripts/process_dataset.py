@@ -129,7 +129,7 @@ def process_dataset(source_dataset, output_root_data_path, dataset_ops):
             labelmaps.append(extra_dataset.get_labelmap_file())
             if len(curr_labels) == len(curr_source):
                 source_labels.append(curr_labels)
-            data_batch_weights.append(operator['weight'])
+            data_batch_weights.append(operator.get('weight', 1))
             tree_files.append(extra_dataset.get_tree_file())
         elif operator['op'] == 'sample':
             assert False, 'no longer support -> create a new dataset pls'

@@ -393,20 +393,33 @@ def postfilter(im, scores, boxes, class_map, max_per_image=1000, thresh=0.005):
     
     return json.dumps(det_results)
 
-def detect_image(caffe_net, im, pixel_mean, names, stat=None, thresh=0,
-        yolo_tree=False, **kwargs):
+def detect_image(caffe_net, im, pixel_mean, all_names, stat=None, thresh=0,
+        yolo_tree=False, block_labels=None, **kwargs):
     '''
     this is not used in evaluation
     '''
-    scores, boxes = im_detect(caffe_net, im, pixel_mean, stat=stat,
-            **kwargs)
-    if stat:
-        time_start = time.time()
-    bblist = result2bblist3(im, scores, boxes, names, thresh, yolo_tree)
-    if stat != None:
-        time_curr = time.time()
-        stat['result2bb'] = time_curr - time_start
-        time_start = time_curr
+    if len(all_names) == 1:
+        scores, boxes = im_detect(caffe_net, im, pixel_mean, stat=stat,
+                **kwargs)
+        if stat:
+            time_start = time.time()
+        bblist = result2bblist3(im, scores, boxes, names, thresh, yolo_tree)
+        if stat:
+            time_curr = time.time()
+            stat['result2bb'] = time_curr - time_start
+            time_start = time_curr
+    else:
+        im_detect(caffe_net, im, pixel_mean, stat=stat,
+                **kwargs)
+        bblist = []
+        for i, names in enumerate(all_names):
+            scores, bbox = pick_blob_result(caffe_net, i)
+            r = result2bblist3(im, scores, bbox, names, thresh, yolo_tree)
+            if block_labels:
+                current_block_labels = block_labels[i]
+                if current_block_labels:
+                    r = [s for s in r if s['class'] not in current_block_labels]
+            bblist.extend(r)
 
     all_bb = [bb['rect'] for bb in bblist]
     all_label = [bb['class'] for bb in bblist]
