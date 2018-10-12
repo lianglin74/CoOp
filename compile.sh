@@ -17,7 +17,7 @@ if [ ! -f 'Makefile.config' ]; then
     echo "CUSTOM_CXX := g++ --std=c++11" >> Makefile.config
 
     LSB_RELEASE_INFO=$(lsb_release -r)
-    if [[ $LSB_RELEASE_INFO = *"16.04" ]]; then
+    if [[ $LSB_RELEASE_INFO = *"16.04" || $LSB_RELEASE_INFO = *"17.10" ]]; then
         echo 'INCLUDE_DIRS := $(INCLUDE_DIRS) /usr/include/hdf5/serial' >> Makefile.config
         echo 'LIBRARY_DIRS := $(LIBRARY_DIRS) /usr/lib/x86_64-linux-gnu/hdf5/serial' >> Makefile.config
     fi
