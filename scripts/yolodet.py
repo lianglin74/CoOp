@@ -403,7 +403,7 @@ def detect_image(caffe_net, im, pixel_mean, all_names, stat=None, thresh=0,
                 **kwargs)
         if stat:
             time_start = time.time()
-        bblist = result2bblist3(im, scores, boxes, names, thresh, yolo_tree)
+        bblist = result2bblist3(im, scores, boxes, all_names[0], thresh, yolo_tree)
         if stat:
             time_curr = time.time()
             stat['result2bb'] = time_curr - time_start

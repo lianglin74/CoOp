@@ -425,7 +425,7 @@ def test_model(request):
         im, 'predict_request/{}.png'.format(int(1000 * random.random())))
     context = {'all_type_to_rects': json.dumps(infos),
                'all_url': json.dumps(['/static/' + html_path])}
-    return render(request, 'detection/images_js2.html', context)
+    return render(request, 'detection/images_js3.html', context)
 
 
 def view_model(request):
