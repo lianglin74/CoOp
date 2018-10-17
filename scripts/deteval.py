@@ -104,8 +104,11 @@ def load_dets(filein):
             rects = json.loads(cols[1]);
             for rect in rects:
                 label = rect['class'].strip();
-                # coords +1 as we did for load_truths
-                bbox = [ x+1 for x in rect['rect'] ];
+                if 'rect' in rect:
+                    # coords +1 as we did for load_truths
+                    bbox = [ x+1 for x in rect['rect'] ];
+                else:
+                    bbox = None
                 if label not in retdict:
                     retdict[label]=[]
                 retdict[label] += [ (key,rect['conf'],bbox)]
@@ -119,10 +122,13 @@ def rect_area(rc):
 
 #calculate the Jaccard similarity between two rectangles
 def IoU(rc1, rc2):
-    rc_inter =  [max(rc1[0],rc2[0]), max(rc1[1],rc2[1]),min(rc1[2],rc2[2]), min(rc1[3],rc2[3]) ]
-    iw = rc_inter [2] - rc_inter [0] + 1;
-    ih = rc_inter [3] - rc_inter [1] + 1;
-    return (float(iw))*ih/(rect_area(rc1)+rect_area(rc2)-iw*ih) if (iw>0 and ih>0) else 0;
+    if rc1 and rc2:
+        rc_inter =  [max(rc1[0],rc2[0]), max(rc1[1],rc2[1]),min(rc1[2],rc2[2]), min(rc1[3],rc2[3]) ]
+        iw = rc_inter [2] - rc_inter [0] + 1;
+        ih = rc_inter [3] - rc_inter [1] + 1;
+        return (float(iw))*ih/(rect_area(rc1)+rect_area(rc2)-iw*ih) if (iw>0 and ih>0) else 0;
+    else:
+        return 0
 
 #evaluate the detection results
 def evaluate_(c_detects, c_truths, ovthresh):
