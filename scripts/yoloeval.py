@@ -192,36 +192,37 @@ def postfilter(im, scores, boxes, class_map, max_per_image=1000, thresh=0.005):
     return json.dumps(det_results)
 
 def result2json(im, probs, boxes, class_map):
-    class_num = probs.shape[1] - 1;        #the last one is obj_score * max_prob
+    class_num = probs.shape[1] - 1        #the last one is obj_score * max_prob
 
-    det_results = [];
+    det_results = []
     for i, box in enumerate(boxes):
         if probs[i, 0:-1].max() == 0:
-            continue;
+            continue
         for j in range(class_num):
-            if probs[i,j] == 0:
+            if probs[i, j] == 0:
                 continue
 
-            x,y,w,h = box
+            x, y, w, h = box
         
             im_h, im_w = im.shape[0:2]
-            left  = (x-w/2.);
-            right = (x+w/2.);
-            top   = (y-h/2.);
-            bot   = (y+h/2.);
+            left = (x - w / 2.)
+            right = (x + w / 2.)
+            top = (y - h / 2.)
+            bot = (y + h / 2.)
 
             left = max(left, 0)
             right = min(right, im_w - 1)
             top = max(top, 0)
             bot = min(bot, im_h - 1)
 
-            crect = dict();
-            crect['rect'] = map(float, [left,top,right,bot])
+            crect = dict()
+            crect['rect'] = map(float, [left, top, right, bot])
             crect['class'] = class_map[j]
-            crect['conf'] = float(probs[i, j])
+            crect['conf'] = max(round(probs[i, j], 4), 0.00001)
+            crect['obj'] = max(round(probs[i, -1], 4), 0.00001)
             det_results += [crect]
     
-    return json.dumps(det_results)
+    return json.dumps(det_results, separators=(',', ':'))
 
 def detprocess(caffenet, caffemodel, pixel_mean, cmap, gpu, key_idx, img_idx, in_queue, out_queue):
     if gpu >= 0:
