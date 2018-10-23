@@ -703,7 +703,7 @@ def load_all_tax(tax_folder):
     all_yaml = glob.glob(op.join(tax_folder, '*.yaml'))
     all_tax = []
     for y in all_yaml:
-	print y
+        logging.info(y)
         with open(y, 'r') as fp:
             config_tax = yaml.safe_load(fp)
         name = op.splitext(op.basename(y))[0]
