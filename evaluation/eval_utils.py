@@ -1,4 +1,5 @@
 import collections
+import copy
 import json
 import logging
 import os
@@ -169,7 +170,8 @@ def filter_gt(gt_config_file, bbox_iou, blacklist=None,
         all_gt = {cols[0]: json.loads(cols[1]) for cols in
                   read_from_file(all_gt_file)}
         cur_gt = collections.defaultdict(list)
-        for baseline, baseline_info in dataset['baselines'].items():
+        for baseline_info in dataset['baselines']:
+            baseline = baseline_info["name"]
             if override_min_conf:
                 baseline_info["conf_threshold"] = override_min_conf
                 if "threshold" in baseline_info:
@@ -281,3 +283,22 @@ def merge_gt(gt_config_file, res_files, bbox_matching_iou):
                 os.remove(outfile+".old")
             os.rename(outfile, outfile+".old")
         write_to_file(temp, outfile)
+
+
+def populate_pred(infile, outfile):
+    map_add = {"man": "person", "woman": "person"}
+    count_add = 0
+    with open(outfile, 'w') as fout:
+        for cols in read_from_file(infile, check_num_cols=2):
+            bboxes = json.loads(cols[1])
+            to_add = []
+            for b in bboxes:
+                term = b["class"].lower()
+                if term in map_add:
+                    tmp = copy.deepcopy(b)
+                    tmp["class"] = map_add[term]
+                    if search_bbox_in_list(tmp, bboxes, 0.8) < 0:
+                        to_add.append(tmp)
+                        count_add += 1
+            fout.write("{}\t{}\n".format(cols[0], json.dumps(bboxes + to_add)))
+    print("added {} bboxes".format(count_add))

@@ -80,6 +80,7 @@ def main(args):
     ensure_dir_empty(task_download_dir)
 
     res_file = os.path.join(task_dir, "eval_result.tsv")
+
     round_count = 0
     while True:
         round_count += 1
@@ -91,9 +92,10 @@ def main(args):
             download_files, "uhrs", res_file,
             os.path.join(task_upload_dir, rejudge_filename),
             os.path.join(task_dir, 'all_workers.tsv'))
-        if num_rejudge > 5 and round_count < 4:
+        if num_rejudge > 5 and round_count < 8:
             uhrs_client.upload_tasks_from_folder(
-                task_hitapp, task_upload_dir, prefix=rejudge_filename)
+                task_hitapp, task_upload_dir, prefix=rejudge_filename,
+                num_judges=1)
         else:
             break
 

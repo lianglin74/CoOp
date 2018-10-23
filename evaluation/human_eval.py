@@ -115,13 +115,13 @@ def eval_dataset(gt_root, dataset_name, dataset, iou_threshold,
                                     for c in df_per_class["category"]])
 
     # evaluate all baselines
-    for baseline, baseline_info in dataset['baselines'].items():
+    for baseline_info in dataset['baselines']:
         result = load_result(gt_root, baseline_info)
         num_gt_bboxes, num_result_bboxes, num_correct_bboxes, \
             precision, recall, num_unique_categories = eval_result(
                                                     gt, result, iou_threshold)
         print('|{:15}\t|{:10}\t|{:10}\t|{:10}\t|{:10.2f}\t|{:10.2f}\t|{:10}|'
-              .format(baseline, num_gt_bboxes, num_result_bboxes,
+              .format(baseline_info["name"], num_gt_bboxes, num_result_bboxes,
                       num_correct_bboxes, precision, recall,
                       num_unique_categories))
 
@@ -134,7 +134,7 @@ def eval_dataset(gt_root, dataset_name, dataset, iou_threshold,
             else:
                 pr.append([float(num_cor_per_class[c]) / num_res_per_class[c],
                            float(num_cor_per_class[c]) / num_gt_per_class[c]])
-        col_name = baseline + " precision (recall)"
+        col_name = baseline_info["name"] + " precision (recall)"
         df_per_class[col_name] = pd.Series(["{:.2f} ({:.2f})".format(
                                             p * 100, r * 100)
                                             for p, r in pr])
@@ -153,7 +153,7 @@ def draw_pr_curve(gt_root, dataset_name, dataset, iou_threshold,
     num_gt = sum(len(v) for k, v in gt.items())
 
     fig, ax = plt.subplots()
-    for baseline, baseline_info in dataset['baselines'].items():
+    for baseline_info in dataset['baselines']:
         # the chosen conf threshold to present final prediction
         if "conf_threshold" in baseline_info:
             chosen_threshold = baseline_info["conf_threshold"]
@@ -189,7 +189,7 @@ def draw_pr_curve(gt_root, dataset_name, dataset, iou_threshold,
         # as they are not stable
         start_idx = 100
         plt.plot(recall_list[start_idx:], precision_list[start_idx:], '-D',
-                 markevery=[chosen_idx - start_idx], label=baseline)
+                 markevery=[chosen_idx - start_idx], label=baseline_info["name"])
     ax.margins(0.05)
     plt.legend()
     plt.xlabel("Recall")
@@ -208,12 +208,11 @@ def main(args):
         if len(args.set) == 0 or args.set.lower() == dataset_name.lower():
             if args.result:
                 # if new result is given, add to existing models
-                dataset["baselines"]["new result"] = {}
-                dataset["baselines"]["new result"]["result"] = args.result
-                dataset["baselines"]["new result"]["conf_threshold"] \
-                    = args.result_conf
+                dataset["baselines"].append(
+                    {"name": "new result", "result": args.result,
+                     "conf_threshold": args.result_conf})
             if args.blacklist:
-                for _, config in dataset["baselines"].items():
+                for config in dataset["baselines"]:
                     config["blacklist"] = args.blacklist
             eval_dataset(gt_root, dataset_name, dataset, args.iou_threshold)
             draw_pr_curve(gt_root, dataset_name, dataset, args.iou_threshold)

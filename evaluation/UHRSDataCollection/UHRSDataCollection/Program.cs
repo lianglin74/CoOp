@@ -18,6 +18,7 @@ namespace CVUHRS
     static class Program
     {
         public static readonly int[] AllHitappIds = { 34524, 34872, 34879, 35716, 35851, 35852, 35853 };
+        public const string ServerAddress = @"prod.uhrs.playmsn.com";
 
         public static ManagementClient Management
         {
@@ -46,11 +47,9 @@ namespace CVUHRS
 
         public static void AuthenticateLegacy(string UserName, string Password)
         {
-            string serverAddress = @"prod.uhrs.playmsn.com";
-
             UHRSServiceClientSetup.SetUserName(UserName); //necessary because the second call doesn't actually use its parameter...
             UHRSServiceClientSetup.SetPassword(Password); //necessary because the second call doesn't actually use its parameter...
-            UHRSServiceClientSetup.SetServerAddress(serverAddress); //necessary because the second call doesn't actually use its parameter...
+            UHRSServiceClientSetup.SetServerAddress(ServerAddress); //necessary because the second call doesn't actually use its parameter...
             try
             {
                 UHRSServiceClientSetup.LogInLegacy();
@@ -71,16 +70,21 @@ namespace CVUHRS
 
         public static void Authenticate()
         {
-            string serverAddress = @"prod.uhrs.playmsn.com"; //verify that stuff works with INT
-            try
+            int count = 0;
+            bool isSuccess = false;
+            while (!isSuccess && count++ < 10)
             {
-                UHRSServiceClientSetup.SetServerAddress(serverAddress); //necessary because the second call doesn't actually use its parameter...
-                UHRSServiceClientSetup.WinLogin(serverAddress);
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine("An error occurred when trying to log in using current credentials!");
-                Console.Error.WriteLine(ex);
+                try
+                {
+                    UHRSServiceClientSetup.SetServerAddress(ServerAddress); //necessary because the second call doesn't actually use its parameter...
+                    UHRSServiceClientSetup.WinLogin(ServerAddress);
+                    isSuccess = true;
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine("An error occurred when trying to log in using current credentials!");
+                    Console.Error.WriteLine(ex);
+                }
             }
         }
 
