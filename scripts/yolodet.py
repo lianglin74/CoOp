@@ -654,6 +654,7 @@ def tsvdet_iter(caffenet, caffemodel, in_rows, key_idx,img_idx, pixel_mean,
             if len(cols) > img_idx:
                 if in_queue.full():
                     if time.time() - last_print_time > 10:
+                        logging.info(outtsv_file)
                         logging.info('reader is waiting for the process. {}'.format(count))
                         last_print_time = time.time()
                 count = count + 1
@@ -682,8 +683,7 @@ def tsvdet_iter(caffenet, caffemodel, in_rows, key_idx,img_idx, pixel_mean,
 
     assert not kwargs.get('debug_detect', False)
 
-    outtsv_file_tmp = outtsv_file + '.tmp'
-    def writer_process(out_queue, num_worker, outtsv_file_tmp):
+    def writer_process(out_queue, num_worker, outtsv_file):
         def yield_output():
             num_finished = 0
             last_print_time = 0
@@ -694,6 +694,7 @@ def tsvdet_iter(caffenet, caffemodel, in_rows, key_idx,img_idx, pixel_mean,
                 else:
                     if out_queue.empty():
                         if time.time() - last_print_time > 10:
+                            logging.info(outtsv_file)
                             logging.info('writer waiting to get the data. {}'.format(count))
                             last_print_time = time.time()
                     x = out_queue.get()
@@ -702,10 +703,10 @@ def tsvdet_iter(caffenet, caffemodel, in_rows, key_idx,img_idx, pixel_mean,
                     else:
                         count = count + 1
                         yield x
-        tsv_writer(yield_output(), outtsv_file_tmp)
+        tsv_writer(yield_output(), outtsv_file)
 
     writer = mp.Process(target=writer_process, args=(out_queue, num_worker,
-        outtsv_file_tmp))
+        outtsv_file))
     writer.daemon = True
     writer.start()
     
@@ -723,7 +724,6 @@ def tsvdet_iter(caffenet, caffemodel, in_rows, key_idx,img_idx, pixel_mean,
     writer.join()
     logging.info('writer finished')
 
-    os.rename(outtsv_file_tmp, outtsv_file)
     #caffe.print_perf(count)
 
     return count
