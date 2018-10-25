@@ -131,23 +131,31 @@ namespace CVUHRS
                 maxConsensus = numJudgements;
                 minConsensus = (int)Math.Ceiling(numJudgements * consensusThreshold);
             }
-            try
+
+            const int retryIntervalSec = 5;
+            const int numMaxTries = 50;
+            var count = 0;
+            bool isSuccess = false;
+            while (!isSuccess && count++ < numMaxTries)
             {
-                using (Stream reader = new FileStream(
-                UHRSServiceClientSetup.CheckFileForIllegalCharacters(taskFilePath), FileMode.Open))
+                try
                 {
-                    taskId = Streaming.SubmitPlainTask(false, true, false, false, -1, 1.0, numJudgements, null, 1000,
-                        false, taskGroupId, taskName, true, minConsensus, maxConsensus,
-                        PlainTaskUploadType.Normal, null, false, 0.0, reader);
-                    Console.WriteLine($"Uploaded task {taskId}: {taskName}");
+                    using (Stream reader = new FileStream(UHRSServiceClientSetup.CheckFileForIllegalCharacters(taskFilePath), FileMode.Open))
+                    {
+                        taskId = Streaming.SubmitPlainTask(false, true, false, false, -1, 1.0, numJudgements, null, 1000,
+                            false, taskGroupId, taskName, true, minConsensus, maxConsensus,
+                            PlainTaskUploadType.Normal, null, false, 0.0, reader);
+                        Console.WriteLine($"Uploaded task {taskId}: {taskName}");
+                    }
+                    return true;
                 }
-                return true;
+                catch (Exception e)
+                {
+                    Console.WriteLine($"Exception: {e.Message}");
+                    Thread.Sleep(1000 * retryIntervalSec);
+                }
             }
-            catch (Exception e)
-            {
-                Console.WriteLine($"Exception: {e.Message}");
-                taskId = -1;
-            }
+            taskId = -1;
             return false;
         }
 
