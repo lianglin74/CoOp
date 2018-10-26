@@ -1,4 +1,3 @@
-#!/usr/bin/python
 # coding:utf8
 import os
 import base64
@@ -10,7 +9,16 @@ import shutil
 import argparse
 import os.path as op
 
-def read_result(inResultTsvFilename, dictThreshold, MinConf=0.5):
+def read_result(inResultTsvFilename, dictThreshold, displayname = None):
+    
+    dictDisplayName = {}
+    if displayname != None:
+        with open(displayname, 'r') as f:
+            lines = f.readlines()
+            for line in lines:
+                cols = [x.strip() for x in line.split('\t')]
+                dictDisplayName[cols[0]] = cols[1]
+
     dictResult = {}
     with open(inResultTsvFilename, 'r') as f_in_tsv:
         lines = f_in_tsv.readlines()
@@ -21,18 +29,13 @@ def read_result(inResultTsvFilename, dictThreshold, MinConf=0.5):
             labels = []
             raw_labels = json.loads(cols[1])
 
-            if inResultTsvFilename.find("google") != -1:
-                labels = raw_labels
+            if displayname != None:
+                for item in raw_labels:
+                    if item["class"] in dictDisplayName:
+                        item["class"] = dictDisplayName[item["class"]]
+                    labels.append(item)
             else:
-                if dictThreshold != None:
-                    for item in raw_labels:
-                        if item["class"] in dictThreshold:
-                            if item["conf"] >= dictThreshold[item["class"]]:
-                                if item["conf"] >= MinConf:
-                                    labels.append(item)
-                else:
-                    labels = raw_labels
-
+                labels = raw_labels
             dictResult[img_id] = labels
     return dictResult
 
@@ -54,12 +57,11 @@ def build_side_by_side_compare(
         inRightResultTsvFilename,
         inImageTsvFilename,
         outTsvFilename,
-        inLeftThresholdFilename,
-        inRightThresholdFilename,
-        inLeftLabel,
-        inRightLabel,
-        inLeftMinConf,
-        inRightMinConf):
+        inLeftThresholdFilename=None,
+        inRightThresholdFilename=None,
+        inLeftLabel="left",
+        inRightLabel="right",
+        leftDisplay = None):
 
     dictLeftThreshold = {}
     if inLeftThresholdFilename != None:
@@ -69,8 +71,8 @@ def build_side_by_side_compare(
     if inRightThresholdFilename != None:
         dictRightThreshold = read_threshold(inRightThresholdFilename)
 
-    dictLeftResult = read_result(inLeftResultTsvFilename, dictLeftThreshold, inLeftMinConf)
-    dictRightResult = read_result(inRightResultTsvFilename, dictRightThreshold,inRightMinConf)
+    dictLeftResult = read_result(inLeftResultTsvFilename, dictLeftThreshold, leftDisplay)
+    dictRightResult = read_result(inRightResultTsvFilename, dictRightThreshold)
 
     print 'Start to write compare result . . .'
     f_out_tsv = open(outTsvFilename, 'w')
@@ -83,36 +85,32 @@ def build_side_by_side_compare(
             img_id = cols[0]
             if img_id in dictLeftResult:
                 f_out_tsv.write("{}\t{}\t{}\n".format(
-                    img_id+"_"+inLeftLabel, json.dumps(dictLeftResult[img_id]), cols[-1]))
+                    str(cnt)+"_"+inLeftLabel, json.dumps(dictLeftResult[img_id]), cols[-1]))
                 if img_id in dictRightResult:
                     f_out_tsv.write("{}\t{}\t{}\n".format(
-                        img_id+"_"+inRightLabel, json.dumps(dictRightResult[img_id]), cols[-1]))
+                        str(cnt)+"_"+inRightLabel, json.dumps(dictRightResult[img_id]), cols[-1]))
                 else:
                     f_out_tsv.write("{}\t{}\t{}\n".format(
-                        img_id+"_Missed", [], cols[-1]))
+                        str(cnt)+"_Missed", [], cols[-1]))
             line = f_in_tsv.readline()
-
             cnt = cnt + 1
-            if cnt%100 == 0:
-                sys.stdout.write('#')
-                sys.stdout.flush()
-
-    print ('{}'.format(cnt))
+            if cnt % 100 == 0:
+                print cnt
 
     f_out_tsv.close()
+    print 'Total lines=' + str(cnt)
+    print 'Finished building compare result.'
+
 
 def parse_args():
     """Parse input arguments."""
     parser = argparse.ArgumentParser(description='Object Detection comparision')
-    parser.add_argument('--left_tsv', required=True, type=str, help='left result tsv file')
-    parser.add_argument('--right_tsv', required=True, help='right result tsv file')
-    parser.add_argument('--image_tsv', required=True, help='image tsv file')
-    parser.add_argument('--folder_out', required=True,  help="output folder name")
-    parser.add_argument('--target_tsv', required=False, default='test.tsv', help="target tsv file name")
+    parser.add_argument('--left_tsv', required=True, type=str, help='left result tsv')
+    parser.add_argument('--right_tsv', required=True, help='right result tsv')
+    parser.add_argument('--image_tsv', required=True, help='image tsv')
+    parser.add_argument('--target_tsv', required=False, default='test.tsv', help="target tsv")
     parser.add_argument('--left_threshold', required=False, default=None, help="left side threshold filename")
     parser.add_argument('--right_threshold', required=False, default=None, help="right side threshold filename")
-    parser.add_argument('--left_min_conf', required=False,  default=0.5, help="left side min confidence")
-    parser.add_argument('--right_min_conf', required=False,  default=0.5, help="right side min confidence")
     parser.add_argument('--left_tag', required=False, default='', help="left side tag")
     parser.add_argument('--right_tag', required=False, default='', help="right side tag")
     
@@ -122,13 +120,20 @@ def parse_args():
 if __name__ == '__main__':
     args = parse_args()
 
+    # build_side_by_side_compare('./data/Compare_V14.2_vs_Google_Instagram1K/instagram.v14.2.tsv',
+    #     './data/Compare_V13.1_vs_Google_Instagram1K/instagram.google.tsv',
+    #     './data/Top100Instagram-GUID/test.tsv',
+    #     './data/Compare_V14.2_vs_Google_Instagram1K/test.tsv',
+    #     None,
+    #     None,
+    #     'MSFT_v14.2',
+    #     'Google')
+
     build_side_by_side_compare(args.left_tsv,
         args.right_tsv,
         args.image_tsv,
-        op.join(args.folder_out, args.target_tsv),
+        args.target_tsv,
         args.left_threshold,
         args.right_threshold,
         args.left_tag,
-        args.right_tag,
-        args.left_min_conf,
-        args.right_min_conf)
+        args.right_tag)

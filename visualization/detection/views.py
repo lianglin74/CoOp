@@ -58,6 +58,9 @@ from process_tsv import visualize_predict
 from process_tsv import visualize_predict_no_draw
 from process_tsv import get_class_count
 from process_tsv import visualize_box_no_draw
+from process_tsv import populate_dataset_details
+from qd_common import write_to_yaml_file, load_from_yaml_file
+from build_compare import build_side_by_side_compare
 import copy
 
 init_logging()
@@ -630,7 +633,7 @@ def view_image_compare_test(request, data, split, version, label, start_id, min_
 
     return render(request, 'detection/images_compare_test.html', context)
 
-def view_image_compare(request, data, split, version, label, start_id, min_conf=None):
+def view_image_compare(request, data, split, version, label, start_id, min_conf_left, min_conf_right):
     '''
     use js to render the box in the client side
     '''
@@ -653,16 +656,13 @@ def view_image_compare(request, data, split, version, label, start_id, min_conf=
 
     # black_list.append('person')
 
-    thresholdFilename = './data/{}/threshold.tsv'.format(data)
-    dict_threshold = {}
-    if os.path.isfile(thresholdFilename):
-        with open(thresholdFilename, 'r') as f:
-            lines = f.readlines()
-            lines = [line.strip('\n') for line in lines]
+    # print black_list
 
-            for line in lines:
-                cols = [x.strip() for x in line.split('\t')]
-                dict_threshold[cols[0]] = float(cols[1])
+    thresholdFilename = './data/{}/threshold_left.tsv'.format(data)
+    dict_threshold_left = read_threshold(thresholdFilename)
+
+    thresholdFilename = './data/{}/threshold_right.tsv'.format(data)
+    dict_threshold_right = read_threshold(thresholdFilename)
 
     black_list_set = set(black_list)
 
@@ -680,14 +680,37 @@ def view_image_compare(request, data, split, version, label, start_id, min_conf=
         for item in gt:
             if item['class'].lower() not in black_list_set:
                 if i % 2 == 1:
-                    gt1.append(item)
-                else:
-                    if min_conf == None:
-                        if item['conf'] >= 0.5:
-                            gt1.append(item)
+                    if item['class'] in dict_threshold_left:
+                        if item['conf']>=dict_threshold_left[item['class']]:
+                            if min_conf_right == None:
+                                if item['conf'] >= 0.5:
+                                    gt1.append(item)
+                            else:
+                                if item['conf'] >= min_conf_right:
+                                    gt1.append(item)
                     else:
-                        if item['conf'] >= min_conf:
-                            gt1.append(item)
+                        if min_conf_right == None:
+                            if item['conf'] >= 0.5:
+                                gt1.append(item)
+                        else:
+                            if item['conf'] >= min_conf_right:
+                                gt1.append(item)
+                else:
+                    if item['class'] in dict_threshold_right:
+                        if item['conf']>=dict_threshold_right[item['class']]:
+                            if min_conf_left == None:
+                                if item['conf'] >= 0.5:
+                                    gt1.append(item)
+                            else:
+                                if item['conf'] >= min_conf_left:
+                                    gt1.append(item)
+                    else:
+                        if min_conf_left == None:
+                            if item['conf'] >= 0.5:
+                                gt1.append(item)
+                        else:
+                            if item['conf'] >= min_conf_left:
+                                gt1.append(item)
 
         all_type_to_rects.append({'gt': gt1})
 
@@ -704,6 +727,7 @@ def view_image_compare(request, data, split, version, label, start_id, min_conf=
     next_link = next_link + '?' + \
         '&'.join(['{}={}'.format(k, kwargs[k]) for k in kwargs])
 
+    # all_type_to_rects = []
     context = {'all_type_to_rects': json.dumps(all_type_to_rects),
                'target_label': label,
                'all_url': json.dumps(all_url),
@@ -911,22 +935,111 @@ def view_compare_test(request):
     return result
 
 
+def findVersion(longversion):
+    pos0 = longversion.find(".")
+    pos1 = longversion.rfind(".")
+
+    return longversion[pos0+1:pos1]
+
+
+def get_compare_data_info(name=None):
+    if name is None:
+        predictConfig = './data/compare/config.yaml'
+        configs = load_from_yaml_file(predictConfig)
+        configs_insta = configs['Instagram']
+        configs_insta_bl = configs_insta['baselines']
+
+        configs_mit1k = configs['MIT1K']
+        configs_mit_bl = configs_mit1k['baselines']
+        
+        # files = [f for f in os.listdir(dbPath) if op.isfile(op.join(dbPath, f))]
+        results = []
+        for bl1 in configs_mit_bl:
+            if (bl1['name'].find("google"))>=0:
+                for bl2 in configs_mit_bl:
+                    if (bl2['name'].find("google"))<0:
+                        if "conf_threshold" in bl2:
+                            min_conf = bl2["conf_threshold"]
+                        else:
+                            min_conf = 0
+                        compare_name = "MIT1K_"+bl2['name'] + "_vs_" + bl1['name']
+                        results.append({"name": compare_name, "min_conf": min_conf })
+
+        for bl1 in configs_insta_bl:
+            if (bl1['name'].find("google"))>=0:
+                for bl2 in configs_insta_bl:
+                    if (bl2['name'].find("google"))<0:
+                        if "conf_threshold" in bl2:
+                            min_conf = bl2["conf_threshold"]
+                        else:
+                            min_conf = 0
+                        compare_name = "Instagram_"+bl2['name'] + "_vs_" + bl1['name']
+                        results.append({"name": compare_name, "min_conf": min_conf })
+        return results
+    else:
+        dataset = TSVDataset(name)
+        if not op.isfile(dataset.get_labelmap_file()):
+            return []
+        global_labelmap = None
+        labels = dataset.load_labelmap()
+        valid_split_versions = []
+        splits = ['train', 'trainval', 'test']
+        for split in splits:
+            v = 0
+            while True:
+                if not dataset.has(split, 'label', v):
+                    break
+                labelmap = []
+                label_count_rows = dataset.iter_data(split, 'inverted.label.count', v)
+                label_count = [(r[0], int(r[1])) for r in label_count_rows]
+                label_count = sorted(label_count, key=lambda x: x[1])
+                valid_split_versions.append((split, v, [(i, l, c) for i, (l, c) in
+                    enumerate(label_count)]))
+                v = v + 1
+        name_splits_labels = [(name, valid_split_versions)]
+        return name_splits_labels
+
+
+def parse_compare_data(data):
+    
+    items = [x.strip() for x in data.split('_')]
+
+    # print "items"
+    # print items
+
+    dataSource = items[0]
+    leftLabel = items[1]
+    rightLabel = items[3]
+
+    os.chdir(get_qd_root())
+    predictConfig = './data/compare/config.yaml'
+    configs = load_from_yaml_file(predictConfig)
+
+    configs_data = configs[dataSource]
+    configs_data_bl = configs_data['baselines']
+    thresholdFile = None
+    displayFile = None
+    for bl in configs_data_bl:
+        if bl['name'] == leftLabel:
+            leftFile = bl['result']
+            if 'threshold' in bl:
+                thresholdFile = bl['threshold']
+            if 'display' in bl:
+                displayFile = bl['display']
+        if bl['name'] == rightLabel:
+            rightFile = bl['result']
+  
+    return leftFile, rightFile, dataSource+".tsv", leftLabel, rightLabel, thresholdFile, displayFile
+
 def view_compare(request):
+    import shutil
     if request.GET.get('data', '') == '':
         curr_dir = os.curdir
         os.chdir(get_qd_root())
-        # name_splits_labels = get_all_data_info()
-        names = get_all_data_info2()
+        results = get_compare_data_info()
         os.chdir(curr_dir)
-        context = {'names': names}
-        return render(request, 'detection/data_list_compare.html', context)
-    elif request.GET.get('split', '') == '' and request.GET.get('label', '') == '':
-        curr_dir = os.curdir
-        os.chdir(get_qd_root())
-        name_splits_labels = get_all_data_info2(request.GET['data'])
-        os.chdir(curr_dir)
-        context = {'name_splits_label_counts': name_splits_labels}
-        return render(request, 'detection/image_overview_compare.html', context)
+        context = {'results': results}
+        return render(request, 'detection/compare_list_result.html', context)
     else:
         data = request.GET.get('data')
         split = request.GET.get('split')
@@ -937,17 +1050,57 @@ def view_compare(request):
             version = None
         version = int(version) if type(version) is str or \
             type(version) is unicode else version
+
         label = request.GET.get('label')
         start_id = request.GET.get('start_id')
 
-        min_conf = request.GET.get('min_conf')
-        if min_conf == None:
-            min_conf = None
-        else:
-            min_conf = float(min_conf)
+        min_conf_left = request.GET.get('min_conf_left')
+        if min_conf_left != None:
+            min_conf_left = float(min_conf_left)
+        
+        min_conf_right = request.GET.get('min_conf_right')
+        if min_conf_right != None:
+            min_conf_right = float(min_conf_right)
+        
+        # if data isn't exist
+        dataPath = "./data/" + data
+        os.chdir(get_qd_root())
+
+        print "dataPath:", dataPath
+
+        if not op.isdir(dataPath):
+            os.mkdir(dataPath, 0755)
+ 
+            leftFile, rightFile, imageFile, leftLabel, rightLabel, leftThreshold, leftDisplay = parse_compare_data(data)
+
+            leftFile = "./data/compare/" + leftFile
+            rightFile = "./data/compare/" + rightFile
+            imageFile = "./data/compare/" + imageFile
+
+            if leftThreshold != None:
+                leftThreshold = "./data/compare/" + leftThreshold
+            
+            if leftDisplay != None:
+                leftDisplay = "./data/compare/" + leftDisplay
+            
+            print leftFile, rightFile, imageFile, leftLabel, rightLabel
+
+            build_side_by_side_compare(leftFile,
+                rightFile,
+                imageFile,
+                dataPath +"/test.tsv",
+                leftThreshold,
+                None,
+                leftLabel,
+                rightLabel,
+                leftDisplay)
+
+            shutil.copy2("./data/compare/blacklist.txt", "./data/"+data)
+
+            populate_dataset_details(data)
 
         result = view_image_compare(
-            request, data, split, version, label, start_id, min_conf)
+            request, data, split, version, label, start_id, min_conf_left, min_conf_right)
 
         return result
 
