@@ -21,9 +21,9 @@ parser.add_argument('--gt', default='./groundtruth/config.yaml', type=str,
                     default is ./groundtruth/config.yaml''')
 parser.add_argument('--iou_threshold', default=0.5, type=float,
                     help='IoU threshold for bounding boxes, default is 0.5')
-parser.add_argument('--conf_threshold', default=0.4, type=float,
+parser.add_argument('--conf_threshold', default=0.5, type=float,
                     help='''confidence threshold for prediction results,
-                    default is 0.4''')
+                    default is 0.5''')
 parser.add_argument('--displayname', default='', type=str,
                     help='path to display name file')
 parser.add_argument('--task', default='./tasks/', type=str,

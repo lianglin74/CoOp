@@ -302,3 +302,26 @@ def populate_pred(infile, outfile):
                         count_add += 1
             fout.write("{}\t{}\n".format(cols[0], json.dumps(bboxes + to_add)))
     print("added {} bboxes".format(count_add))
+
+
+def tune_threshold(gt, result, iou_threshold, target_prec, target_class):
+    target_class = target_class.lower()
+    scores = []
+    num_correct = 0
+    for imgkey in result:
+        for bbox in result[imgkey]:
+            if bbox["class"].lower() == target_class:
+                if search_bbox_in_list(bbox, gt[imgkey], iou_threshold) >= 0:
+                    scores.append((1, bbox["conf"]))
+                    num_correct += 1
+                else:
+                    scores.append((0, bbox["conf"]))
+    scores = sorted(scores, key=lambda t:t[1])
+    cur_correct = float(num_correct)
+    num_total = len(scores)
+    for idx, (truth, score) in enumerate(scores):
+        prec = cur_correct / (num_total-idx)
+        if prec >= target_prec:
+            return score, prec, cur_correct / num_correct
+        cur_correct -= truth
+    return 1.0, 0.0, 0.0
