@@ -160,6 +160,8 @@ def draw_pr_curve(gt_root, dataset_name, dataset, iou_threshold,
         else:
             chosen_threshold = start_from_conf
         baseline_info["conf_threshold"] = start_from_conf
+        if "threshold" in baseline_info:
+            del baseline_info["threshold"]
         result = load_result(gt_root, baseline_info)
         y_score_gt = []
         for imgkey, bboxes in result.items():
