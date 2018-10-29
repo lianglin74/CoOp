@@ -31,6 +31,36 @@ import shutil
 import argparse
 
 
+def calculate_correlation_between_terms(iter1, iter2):
+    label_to_num1 = {}
+    label_to_num2 = {}
+    ll_to_num = {}
+
+    for (k1, str_rects1), (k2, str_rects2) in zip(iter1, iter2):
+        assert k1 == k2, 'keys should be aligned ({} != {})'.format(k1, k2)
+        rects1 = json.loads(str_rects1)
+        rects2 = json.loads(str_rects2)
+        for r in rects1:
+            c = r['class']
+            label_to_num1[c] = label_to_num1.get(c, 0) + 1
+        for r in rects2:
+            c = r['class']
+            label_to_num2[c] = label_to_num2.get(c, 0) + 1
+        for r1 in rects1:
+            for r2 in rects2:
+                i = calculate_iou(r1['rect'], r2['rect'])
+                if i > 0.01:
+                    k = (r1['class'], r2['class'])
+                    ll_to_num[k] = ll_to_num.get(k, 0) + i
+    ll_correlation = [(ll[0], ll[1], 1. * ll_to_num[ll] / (label_to_num1[ll[0]]
+        + label_to_num2[ll[1]] - ll_to_num[ll])) 
+        for ll in ll_to_num]
+    ll_correlation = [(left, right, c) for left, right, c in ll_correlation 
+            if left.lower() != right.lower()]
+    ll_correlation = sorted(ll_correlation, key=lambda x: -x[2])
+
+    return ll_correlation
+
 def print_as_html(table, html_output):
     from jinja2 import Environment, FileSystemLoader
     j2_env = Environment(loader=FileSystemLoader('./'), trim_blocks=True)

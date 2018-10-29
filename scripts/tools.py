@@ -21,6 +21,16 @@ from yolotrain import yolotrain_main
 from process_tsv import convert_pred_to_dataset_label
 from qd_common import print_as_html
 from qd_common import yolo_new_to_old
+from tsv_io import tsv_reader, tsv_writer
+
+
+def calculate_correlation_between_terms_by_files(file_name1, file_name2,
+        out_file):
+    iter1 = tsv_reader(file_name1)
+    iter2 = tsv_reader(file_name2)
+    from qd_common import calculate_correlation_between_terms
+    ll_correlation = calculate_correlation_between_terms(iter1, iter2)
+    tsv_writer(ll_correlation, out_file)
 
 def convert_full_gpu_yolo_to_non_full_gpu_yolo(full_expid):
     c = CaffeWrapper(full_expid=full_expid, load_parameter=True)
