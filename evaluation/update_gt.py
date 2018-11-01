@@ -2,9 +2,10 @@ import argparse
 import os
 
 from analyze_task import analyze_verify_box_task
-from eval_utils import merge_gt, process_prediction_to_verify
+from eval_utils import merge_gt, process_prediction_to_verify, tune_threshold_for_target, add_config_baseline
 from generate_task import generate_verify_box_task
 from uhrs import UhrsTaskManager
+from utils import write_to_file
 import _init_paths
 from qd_common import init_logging
 
@@ -26,6 +27,9 @@ parser.add_argument('--conf_threshold', default=0.5, type=float,
                     default is 0.5''')
 parser.add_argument('--displayname', default='', type=str,
                     help='path to display name file')
+parser.add_argument('--labelmap', default='', type=str,
+                    help='''path to labelmap file, only classes included in the labelmap
+                    will be evaluated. Default is None, all classes will be evaluated''')
 parser.add_argument('--task', default='./tasks/', type=str,
                     help='''path to working directory, used for uploading,
                     downloading, logging, etc''')
@@ -33,6 +37,10 @@ parser.add_argument('--honeypot', default='./honeypot/voc20_easy_gt.txt',
                     help='''path to the honey pot label file, each line is a
                     json dict of a positive ground truth label, including keys:
                     objects_to_find, image_url, bboxes''')
+parser.add_argument('--add_baseline', action="store_true",
+                    help='add the verified result to baselines')
+parser.add_argument('--tune_threshold', default='', type=str,
+                    help='''path to TSV file of classes(col 0) and target thresholds(col 1)''')
 
 
 def list_files_in_dir(dirpath):
@@ -48,7 +56,7 @@ def ensure_dir_empty(dirpath):
             raise Exception("{} is not empty".format(dirpath))
 
 
-def main(args):
+def update_gt(args):
     task_hitapp = "verify_box_group"
     source = args.source
     hp_file = args.honeypot
@@ -65,12 +73,14 @@ def main(args):
     for dataset in args.dataset:
         files_to_verify.append({
             "dataset": dataset, "source": source,
-            "result": "{}.{}.tsv".format(dataset, source),
+            "result": "{}.{}.tsv".format(dataset.lower(), source),
             "display": args.displayname,
             "conf_threshold": args.conf_threshold
         })
-    process_prediction_to_verify(args.gt, args.res_folder, files_to_verify,
-                                 label_file, args.iou_threshold)
+    num_to_verify = process_prediction_to_verify(args.gt, args.res_folder, files_to_verify,
+                            label_file, args.iou_threshold, 0.97, include_labelmap=args.labelmap)
+    if num_to_verify == 0:
+        return
 
     ensure_dir_empty(task_upload_dir)
     generate_verify_box_task(label_file, hp_file,
@@ -100,6 +110,31 @@ def main(args):
             break
 
     merge_gt(args.gt, [res_file], args.iou_threshold)
+
+
+def main(args):
+    update_gt(args)
+
+    if args.tune_threshold:
+        thres_dict = {}
+        for dataset in args.dataset:
+            res_file = os.path.join(args.res_folder, "{}.{}.tsv".format(dataset.lower(), args.source))
+            tmp = tune_threshold_for_target(args.gt, dataset, res_file, args.iou_threshold, args.tune_threshold)
+            # choose the max threshold
+            for label in tmp:
+                if label not in thres_dict or thres_dict[label] < tmp[label]:
+                    thres_dict[label] = tmp[label]
+        outfile = os.path.join(os.path.split(args.gt)[0], "threshold.{}.tsv".format(args.source))
+        write_to_file([[k, thres_dict[k]] for k in thres_dict], outfile)
+
+    if args.add_baseline:
+        for dataset in args.dataset:
+            fdict = {"result": os.path.join(args.res_folder, "{}.{}.tsv".format(dataset.lower(), args.source))}
+            thres_file = os.path.join(os.path.split(args.gt)[0], "threshold.{}.tsv".format(args.source))
+            if os.path.isfile(thres_file):
+                fdict["threshold"] = thres_file
+            add_config_baseline(args.gt, dataset, args.source, fdict)
+
 
 if __name__ == "__main__":
     init_logging()

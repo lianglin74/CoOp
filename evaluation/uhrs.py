@@ -138,6 +138,8 @@ class UhrsTaskManager():
             return 91381
         elif task_hitapp == "test":
             return 88209
+        elif task_hitapp == "internal_verify_box":
+            return 111012
         else:
             raise Exception("Unknown task: {}".format(task_hitapp))
 

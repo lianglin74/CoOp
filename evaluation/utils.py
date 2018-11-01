@@ -8,7 +8,7 @@ import os
 def read_from_file(filepath, sep='\t', check_num_cols=None):
     with open(filepath, 'r') as fin:
         for line in fin:
-            cols = line.rstrip('\n').split(sep)
+            cols = line.strip().split(sep)
             if check_num_cols and len(cols) != check_num_cols:
                 raise Exception("expect {} columns, but get {}"
                                 .format(check_num_cols, str(cols)))
@@ -42,6 +42,22 @@ def search_bbox_in_list(new_bbox, existing_list, iou_threshold):
                 and calculate_iou(new_bbox, cur_bbox) > iou_threshold:
             return idx
     return -1
+
+
+def get_max_iou_idx(new_bbox, bbox_list):
+    """Gets the indices of the bboxes in bbox_list with max IoU
+    """
+    max_iou = 0
+    max_indices = []
+    for idx, cur_bbox in enumerate(bbox_list):
+        if new_bbox["class"].lower() == cur_bbox["class"].lower():
+            cur_iou = calculate_iou(new_bbox, cur_bbox)
+            if cur_iou > max_iou:
+                max_iou = cur_iou
+                max_indices = [idx]
+            elif cur_iou == max_iou:
+                max_indices.append(idx)
+    return max_indices, max_iou
 
 
 def calculate_iou(bbox1, bbox2):

@@ -135,8 +135,8 @@ namespace CVUHRS
             const int retryIntervalSec = 5;
             const int numMaxTries = 50;
             var count = 0;
-            bool isSuccess = false;
-            while (!isSuccess && count++ < numMaxTries)
+            Microsoft.Search.UHRS.Client.ManagementReference.SimpleTask task = null;
+            while (count++ < numMaxTries)
             {
                 try
                 {
@@ -145,9 +145,19 @@ namespace CVUHRS
                         taskId = Streaming.SubmitPlainTask(false, true, false, false, -1, 1.0, numJudgements, null, 1000,
                             false, taskGroupId, taskName, true, minConsensus, maxConsensus,
                             PlainTaskUploadType.Normal, null, false, 0.0, reader);
-                        Console.WriteLine($"Uploaded task {taskId}: {taskName}");
                     }
-                    return true;
+                    do
+                    {
+                        Thread.Sleep(1000);
+                        task = UHRSServiceClientSetup.GetManagement().GetTask(taskGroupId, taskId);
+                    } while (task.TaskLoadingStatus >= 0 && task.TaskLoadingStatus != 2);
+
+                    // If < 0 then errored, if 2 then success
+                    if (task.TaskLoadingStatus == 2)
+                    {
+                        Console.WriteLine($"Uploaded task {taskId}: {taskName}");
+                        return true;
+                    }
                 }
                 catch (Exception e)
                 {

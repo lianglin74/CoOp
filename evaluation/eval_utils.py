@@ -3,12 +3,93 @@ import copy
 import json
 import logging
 import os
+from shutil import copyfile
 import yaml
 
 import _init_paths
 from process_tsv import get_img_url
 from utils import read_from_file, write_to_file
-from utils import search_bbox_in_list, is_valid_bbox
+from utils import search_bbox_in_list, is_valid_bbox, get_max_iou_idx
+
+
+class DetectionFile(object):
+    def __init__(self, predict_file, key_col_idx=0, bbox_col_idx=1, min_conf=0):
+        self.tsv_file = predict_file
+        self.key_col_idx = key_col_idx
+        self.bbox_col_idx = bbox_col_idx
+        self.conf_threshold = min_conf
+
+        self._fp = None
+        self._keyidx = None
+
+    def __iter__(self):
+        self._ensure_keyidx_loaded()
+        for key in self._keyidx:
+            yield key
+
+    def __contains__(self, key):
+        self._ensure_keyidx_loaded()
+        return key in self._keyidx
+
+    def __getitem__(self, key):
+        self._ensure_keyidx_loaded()
+        if key not in self._keyidx:
+            return []
+        self._fp.seek(self._keyidx[key])
+        cols = self._fp.readline().strip().split('\t')
+        bboxes = json.loads(cols[self.bbox_col_idx])
+        return _thresholding_detection(
+                    bboxes, thres_dict=None, display_dict=None, obj_threshold=0,
+                    conf_threshold=self.conf_threshold, blacklist=None)
+
+    def _ensure_keyidx_loaded(self):
+        self._ensure_tsv_opened()
+        if self._keyidx is None:
+            self._keyidx = {}
+            fpos = 0
+            fsize = os.fstat(self._fp.fileno()).st_size
+            while fpos != fsize:
+                key = self._fp.readline().strip().split('\t')[self.key_col_idx]
+                self._keyidx[key] = fpos
+                fpos = self._fp.tell()
+
+    def _ensure_tsv_opened(self):
+        if self._fp is None:
+            self._fp = open(self.tsv_file, 'rb')
+
+
+class GroundTruthConfig(object):
+    def __init__(self, config_file, check_format=False):
+        self.config_file = config_file
+        self._load_config()
+        if check_format:
+            check_config(config_file)
+        self.rootpath = os.path.split(self.config_file)[0]
+
+    def datasets(self):
+        return self.config.keys()
+
+    def baselines(self, dataset):
+        return [b["name"] for b in self.config[dataset]["baselines"]]
+
+    def gt_file(self, dataset, filtered=False):
+        gt_type = "filtered" if filtered else "original"
+        fpath = self.config[dataset]["groundtruth"][gt_type]
+        return os.path.join(self.rootpath, fpath)
+
+    def baseline_file(self, dataset, name):
+        fpath = self._baseline_info(dataset, name)["result"]
+        return os.path.join(self.rootpath, fpath)
+
+    def _baseline_info(self, dataset, name):
+        for b in self.config[dataset]["baselines"]:
+            if b["name"] == name:
+                return b
+        raise Exception("unknown baseline: {} in {}".format(name, dataset))
+
+    def _load_config(self):
+        with open(self.config_file, 'r') as fp:
+            self.config = yaml.load(fp)
 
 
 def parse_config_info(rootpath, config):
@@ -92,12 +173,12 @@ def load_result(rootpath, config):
         threshold_dict = None
     if config["display"]:
         display_dict = {p[0]: p[1] for p in read_from_file(
-            config["display"], check_num_cols=2)}
+            config["display"])}
     else:
         display_dict = None
     if config["blacklist"]:
         blacklist = set(l[0].lower() for l in read_from_file(
-            config["blacklist"], check_num_cols=1))
+            config["blacklist"]))
     else:
         blacklist = None
     for cols in read_from_file(config["result"]):
@@ -117,7 +198,7 @@ def _thresholding_detection(bbox_list, thres_dict, display_dict,
     for b in bbox_list:
         if "obj" in b and b["obj"] < obj_threshold:
             continue
-        if b["conf"] < conf_threshold:
+        if "conf" in b and b["conf"] < conf_threshold:
             continue
         term = b["class"]
         if blacklist and term.lower() in blacklist:
@@ -201,7 +282,8 @@ def filter_gt(gt_config_file, bbox_iou, blacklist=None,
 
 
 def process_prediction_to_verify(gt_config_file, rootpath, file_info_list,
-                                 outfile, bbox_matching_iou):
+                                 outfile, pos_iou_threshold, neg_iou_threshold,
+                                 baseline_conf=0.5, include_labelmap=None):
     '''
     Processes prediction results for human verification
     Args:
@@ -214,41 +296,78 @@ def process_prediction_to_verify(gt_config_file, rootpath, file_info_list,
             conf_threhold: optional, float, default is 0
             display: optional, tsv file of term, display name
         outfile: tsv file with datasetname_key, bboxes, image_url
+        pos_iou_threshold: IoU with a ground truth to be treated as correct
+        neg_iou_threshold: IoU with a verified wrong bbox to be treated as wrong
+        baseline_conf: the verified confidence score in baselines,
+            i.e., if it is 0.5, all bboxes with conf>=0.5 were verified
     '''
+    include_classes = None
+    if include_labelmap:
+        include_classes = set(l[0].lower() for l in read_from_file(include_labelmap))
     # load existing ground truth labels
     all_gt, _ = _load_all_gt(gt_config_file)
+    with open(gt_config_file, 'r') as fp:
+        gt_cfg = yaml.load(fp)
+    gt_root = os.path.split(gt_config_file)[0]
 
     num_bbox_to_submit = 0
+    num_bbox_pos = 0
+    num_bbox_neg = 0
     num_bbox_total = 0
     output_data = []
     for fileinfo in file_info_list:
+        # load prediction results
         dataset = fileinfo["dataset"]
         source = fileinfo["source"]
-        if dataset not in all_gt:
+        if dataset not in gt_cfg:
             raise Exception("unknow dataset: {}".format(dataset))
         result = load_result(rootpath, fileinfo)
         logging.info("load prediction results from: {}"
                      .format(fileinfo["result"]))
+
+        # load ground truth and verified baselines
+        gt_tsv = DetectionFile(os.path.join(gt_root, gt_cfg[dataset]['groundtruth']["original"]))
+        baselines_tsv = []
+        if gt_cfg[dataset]["baselines"]:
+            for baseline in gt_cfg[dataset]["baselines"]:
+                baselines_tsv.append(DetectionFile(os.path.join(gt_root, baseline["result"]), min_conf=baseline_conf))
+
         for imgkey, bboxes in result.items():
-            num_bbox_total += len(bboxes)
             new_bboxes = []
             for b in bboxes:
+                if include_classes and b["class"].lower() not in include_classes:
+                    continue
                 if not is_valid_bbox(b):
                     logging.error("invalid bbox: {}".format(str(b)))
                     continue
-                # if prediction is not in ground truth, submit to verify
-                if search_bbox_in_list(b, all_gt[dataset][imgkey],
-                                       bbox_matching_iou) < 0:
-                    new_bboxes.append(b)
+
+                num_bbox_total += 1
+                # if prediction is in ground truth, continue
+                if search_bbox_in_list(b, gt_tsv[imgkey], pos_iou_threshold) >= 0:
+                    num_bbox_pos += 1
+                    continue
+                # if prediction is in verified in baselines, continue
+                is_verified = False
+                for base_tsv in baselines_tsv:
+                    if search_bbox_in_list(b, base_tsv[imgkey], neg_iou_threshold) >= 0:
+                        is_verified = True
+                        break
+                if is_verified:
+                    num_bbox_neg += 1
+                    continue
+
+                new_bboxes.append(b)
             if len(new_bboxes) > 0:
                 num_bbox_to_submit += len(new_bboxes)
                 image_url = get_img_url(imgkey)
                 output_data.append(['_'.join([dataset, source, imgkey]),
                                     json.dumps(new_bboxes), image_url])
 
-    write_to_file(output_data, outfile)
-    logging.info("#total bbox: {}, #to submit: {}, file: {}"
-                 .format(num_bbox_total, num_bbox_to_submit, outfile))
+    if output_data:
+        write_to_file(output_data, outfile)
+    logging.info("#total bbox: {}, #verified correct: {}, #verified wrong: {}, #to submit: {}, file: {}"
+                 .format(num_bbox_total, num_bbox_pos, num_bbox_neg, num_bbox_to_submit, outfile))
+    return num_bbox_to_submit
 
 
 def merge_gt(gt_config_file, res_files, bbox_matching_iou):
@@ -304,24 +423,108 @@ def populate_pred(infile, outfile):
     print("added {} bboxes".format(count_add))
 
 
-def tune_threshold(gt, result, iou_threshold, target_prec, target_class):
+def tune_threshold_for_target(gt_config_file, dataset, res_file, iou_threshold, prec_file):
+    """
+    prec_file: TSV file of class, target precision
+    Returns: threshold dict of label: threshold
+    """
+    gt_config = GroundTruthConfig(gt_config_file)
+    gt_file = gt_config.gt_file(dataset)
+    gt = DetectionFile(gt_file)
+    res = DetectionFile(res_file)
+    thres_dict = {}
+    for cols in read_from_file(prec_file):
+        thres, prec, recall = _tune_threshold_helper(gt, res, iou_threshold, float(cols[1]), cols[0])
+        thres_dict[cols[0]] = thres
+    return thres_dict
+
+
+def _tune_threshold_helper(gt, result, iou_threshold, target_prec, target_class):
+    """
+    gt: key -> a list of bbox
+    result: key -> a list of bbox
+    """
     target_class = target_class.lower()
     scores = []
     num_correct = 0
-    for imgkey in result:
-        for bbox in result[imgkey]:
-            if bbox["class"].lower() == target_class:
-                if search_bbox_in_list(bbox, gt[imgkey], iou_threshold) >= 0:
-                    scores.append((1, bbox["conf"]))
-                    num_correct += 1
-                else:
-                    scores.append((0, bbox["conf"]))
+    num_gt = 0
+    for imgkey in gt:
+        gt_bboxes = [b for b in gt[imgkey] if b["class"].lower() == target_class]
+        num_gt += len(gt_bboxes)
+        if imgkey not in result:
+            continue
+        pred_bboxes = [b for b in result[imgkey] if b["class"].lower() == target_class]
+        visited = set()
+        for b in pred_bboxes:
+            idx_list, max_iou = get_max_iou_idx(b, gt_bboxes)
+            if max_iou < iou_threshold or all([idx in visited for idx in idx_list]):
+                scores.append((0, b["conf"]))
+            else:
+                for idx in idx_list:
+                    if idx not in visited:
+                        visited.add(idx)
+                        break
+                scores.append((1, b["conf"]))
+
     scores = sorted(scores, key=lambda t:t[1])
-    cur_correct = float(num_correct)
-    num_total = len(scores)
+    cur_correct = float(sum([p[0] for p in scores]))
+    num_pred = len(scores)
     for idx, (truth, score) in enumerate(scores):
-        prec = cur_correct / (num_total-idx)
+        prec = cur_correct / (num_pred-idx)
         if prec >= target_prec:
-            return score, prec, cur_correct / num_correct
+            return score, prec, cur_correct / num_gt
         cur_correct -= truth
     return 1.0, 0.0, 0.0
+
+
+def check_config(config_file):
+    """
+    Check if the config file structure is valid
+    """
+    root = os.path.split(config_file)[0]
+    with open(config_file) as fp:
+        config = yaml.load(fp)
+
+    for d in config:
+        models = [os.path.join(root, it["result"]) for it in config[d]["baselines"]]
+        models = [DetectionFile(f) for f in models]
+
+        gts = [os.path.join(root, it) for it in config[d]["groundtruth"].values()]
+        gts = [DetectionFile(f) for f in gts]
+
+        all_keys = set()
+        for i, gt in enumerate(gts):
+            if i == 0:
+                for key in gt:
+                    assert(key not in all_keys)
+                    all_keys.add(key)
+            else:
+                for key in gt:
+                    assert(key in all_keys)
+
+        for m in models:
+            for key in m:
+                assert(key in all_keys)
+
+
+def add_config_baseline(gt_config_file, dataset, baseline_name, filepath_dict, min_conf=0.5):
+    config = GroundTruthConfig(gt_config_file)
+    assert(dataset in config.datasets())
+    assert("result" in filepath_dict)
+    baseline = {"name": baseline_name, "conf_threshold": min_conf}
+    for f_type in filepath_dict:
+        fpath = filepath_dict[f_type]
+        froot, fname = os.path.split(fpath)
+        if froot != config.rootpath:
+            copyfile(fpath, os.path.join(config.rootpath, fname))
+        baseline[f_type] = fname
+    if "display" not in baseline:
+        baseline["display"] = "displayname.v10.3.tsv"
+    new_config_dict = config.config
+    new_config_dict[dataset]["baselines"].append(baseline)
+
+    # write new config file
+    with open(gt_config_file+".tmp", 'w') as outfile:
+        yaml.dump(new_config_dict, outfile, default_flow_style=False)
+    os.remove(gt_config_file)
+    os.rename(gt_config_file+".tmp", gt_config_file)

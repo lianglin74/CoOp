@@ -34,6 +34,8 @@ parser.add_argument('--result', default='', type=str,
                     help='path to latest checkpoint (default: none)')
 parser.add_argument('--result_conf', default=0.0, type=float,
                     help='confidence threshold for result, default is 0')
+parser.add_argument('--filter_gt', action='store_true',
+                    help='choose if the ground truth should be filtered by given baselines')
 
 
 def eval_result(gt, result, iou_threshold):
@@ -83,7 +85,7 @@ def eval_result_per_class(gt, result, iou_threshold):
 
 
 def eval_dataset(gt_root, dataset_name, dataset, iou_threshold,
-                 use_filtered_gt=True):
+                 use_filtered_gt=False):
     """Prints the table summarizing evaluation results on the dataset.
     Writes per-class evaluation results to directory gt_root/per_class_pr
 
@@ -154,6 +156,8 @@ def draw_pr_curve(gt_root, dataset_name, dataset, iou_threshold,
 
     fig, ax = plt.subplots()
     for baseline_info in dataset['baselines']:
+        if "deprecated" in baseline_info:
+            continue
         # the chosen conf threshold to present final prediction
         if "conf_threshold" in baseline_info:
             chosen_threshold = baseline_info["conf_threshold"]
@@ -216,7 +220,7 @@ def main(args):
             if args.blacklist:
                 for config in dataset["baselines"]:
                     config["blacklist"] = args.blacklist
-            eval_dataset(gt_root, dataset_name, dataset, args.iou_threshold)
+            eval_dataset(gt_root, dataset_name, dataset, args.iou_threshold, use_filtered_gt=args.filter_gt)
             draw_pr_curve(gt_root, dataset_name, dataset, args.iou_threshold)
 
 
@@ -231,5 +235,6 @@ def parse_args():
 if __name__ == '__main__':
     init_logging()
     args = parse_args()
-    filter_gt(args.gt, args.iou_threshold, args.blacklist)
+    if args.filter_gt:
+        filter_gt(args.gt, args.iou_threshold, args.blacklist)
     main(args)

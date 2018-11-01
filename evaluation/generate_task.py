@@ -1,12 +1,17 @@
+import base64
 import collections
 import copy
+import cv2
 import json
 import logging
 import numpy as np
 import os
 import uuid
 
-from utils import read_from_file, write_to_file, escape_json_obj
+from utils import read_from_file, write_to_file, escape_json_obj, calculate_bbox_area
+import _init_paths
+from process_tsv import get_img_url
+from tsv_io import TSVFile
 
 
 class HoneyPotGenerator(object):
@@ -126,6 +131,9 @@ def generate_verify_box_task(label_file, gt_file, outbase,
         image_url = parts[2]
         for bbox in bbox_list:
             term = bbox['class']
+            if key.startswith("brand") and not term.endswith("logo"):
+                term = bbox['class'] + " logo"
+
             if term_description_map and term in term_description_map:
                 term = term_description_map[term]
             term_count[term] += 1
@@ -158,3 +166,53 @@ def generate_verify_box_task(label_file, gt_file, outbase,
     logging.info("write to {} files: {}"
                  .format(len(outfiles), ", ".join(outfiles)))
     return outfiles
+
+
+def generate_honeypot(imgfiles, labelfiles, outfile=None, easy_area_thres=0.2, key_prefix=None):
+    """ Load ground truth data from specified dataset, split, version.
+        The bbox is considered easy for human to verify if:
+        bbox_area / image_area > easy_area_thres
+    """
+    hp_data = []
+    num_total_bboxes = 0
+    num_easy_bboxes = 0
+    for imgfile, labelfile in zip(imgfiles, labelfiles):
+        imgtsv = TSVFile(imgfile)
+        labeltsv = TSVFile(labelfile)
+        assert(imgtsv.num_rows() == labeltsv.num_rows())
+
+        for i in range(imgtsv.num_rows()):
+            key, _, coded_image = imgtsv.seek(i)
+            lkey, coded_rects = labeltsv.seek(i)
+            assert(key == lkey)
+            img = base64.b64decode(coded_image)
+            npimg = np.fromstring(img, dtype=np.uint8)
+            source = cv2.imdecode(npimg, 1)
+            h, w, c = source.shape
+            bboxes = json.loads(coded_rects)
+            num_total_bboxes += len(bboxes)
+            if key_prefix and not key.startswith(key_prefix):
+                key = key_prefix + key
+            image_url = get_img_url(key)
+            for bbox in bboxes:
+                bbox["rect"] = [np.clip(bbox["rect"][0], 0, w), np.clip(bbox["rect"][1], 0, h),
+                                np.clip(bbox["rect"][2], 0, w), np.clip(bbox["rect"][3], 0, h)]
+                bbox_area = calculate_bbox_area(bbox)
+                if float(bbox_area) / (h*w) > easy_area_thres:
+                    num_easy_bboxes += 1
+                    term = bbox["class"]
+                    if key_prefix and key_prefix.startswith("brand"):
+                        term = bbox["class"] + " logo"
+                    hp_data.append(
+                        {"image_key": key, "image_url": image_url,
+                            "objects_to_find": term,
+                            "bboxes": [bbox]})
+
+    print("#total bboxes: {:d}\t#easy bboxes:{:d}".format(num_total_bboxes,
+                                                          num_easy_bboxes))
+    if outfile:
+        with open(outfile, 'w') as fout:
+            for d in hp_data:
+                fout.write(json.dumps(d))
+                fout.write('\n')
+    return hp_data
