@@ -1,5 +1,10 @@
-from itertools import izip
+try:
+    from itertools import izip as zip
+except:
+    # if it comes here, it is python3 
+    pass
 from process_image import show_images
+import re
 import shutil
 import glob
 import yaml
@@ -118,6 +123,9 @@ def ensure_inject_expid(full_expid):
     from qd_common import load_solver
     solver_prototxt = op.join('output', full_expid,
         'solver.prototxt')
+    if not op.isfile(solver_prototxt):
+        logging.info('ignore since {} does not exist'.format(solver_prototxt))
+        return
     solver_param = load_solver(solver_prototxt)
     model_param = '{0}_iter_{1}.caffemodel'.format(
             solver_param.snapshot_prefix, solver_param.max_iter)

@@ -30,6 +30,38 @@ import cv2
 import shutil
 import argparse
 
+def scrape_bing(query_term, depth):
+    '''
+    e.g. scrape_bing('elder person', 300)
+    '''
+    import requests
+    import xml.etree.ElementTree as ET
+    format_str = \
+            'http://www.bing.com/images/search?q={}&form=MONITR&qs=n&format=pbxml&first={}&count={}&fdpriority=premium&mkt=en-us'
+    start = 0
+    all_url = []
+    while True:
+        count = min(depth - start, 150)
+        if count <= 0:
+            break
+        query_str = format_str.format(query_term, start, count)
+        start = start + count
+        logging.info(query_str)
+        r = requests.get(query_str, allow_redirects=True)
+        content = r.content
+        #content = urllib2.urlopen(query_str).read()
+        root = ET.fromstring(content)
+        for t in root.iter('k_AnswerDataKifResponse'):
+            results = json.loads(t.text)['results']
+            for r in results:
+                rl = {k.lower() : r[k] for k in r}
+                media_url = rl.get('mediaurl', '')
+                url = rl.get('url', '')
+                title = rl.get('title', '')
+                all_url.append(media_url)
+            break
+    return all_url
+
 
 def calculate_correlation_between_terms(iter1, iter2):
     label_to_num1 = {}
@@ -61,6 +93,15 @@ def calculate_correlation_between_terms(iter1, iter2):
 
     return ll_correlation
 
+def json_dump(obj):
+    # order the keys so that each operation is deterministic though it might be
+    # slower
+    return json.dumps(obj, sort_keys=True)
+
+def set_if_not_exist(d, key, value):
+    if key not in d:
+        d[key] = value
+
 def print_as_html(table, html_output):
     from jinja2 import Environment, FileSystemLoader
     j2_env = Environment(loader=FileSystemLoader('./'), trim_blocks=True)
@@ -80,6 +121,8 @@ def parse_general_args():
             type=str)
     parser.add_argument('-p', '--param', help='parameter string, yaml format',
             type=str)
+    parser.add_argument('-bp', '--base64_param', help='base64 encoded yaml format',
+            type=str)
     args = parser.parse_args()
     kwargs =  {}
     if args.config_file:
@@ -88,6 +131,17 @@ def parse_general_args():
         for k in configs:
             kwargs[k] = configs[k]
     from qd_common import  load_from_yaml_str
+    if args.base64_param:
+        configs = load_from_yaml_str(base64.b64decode(args.base64_param))
+        for k in configs:
+            if k not in kwargs:
+                kwargs[k] = configs[k]
+            elif kwargs[k] == configs[k]:
+                continue
+            else:
+                logging.info('overwriting {} to {} for {}'.format(kwargs[k], 
+                    configs[k], k))
+                kwargs[k] = configs[k]
     if args.param:
         configs = load_from_yaml_str(args.param)
         for k in configs:
@@ -100,6 +154,7 @@ def parse_general_args():
                     configs[k], k))
                 kwargs[k] = configs[k]
     return kwargs
+
 class ProgressBar(object):
     def __init__(self, maxval):
         assert maxval > 0
@@ -117,6 +172,7 @@ class ProgressBar(object):
         self.pbar.update(i)
 
 def concat_files(ins, out):
+    ensure_directory(op.dirname(out))
     out_tmp = out + '.tmp'
     with open(out_tmp, 'wb') as fp_out:
         for f in ins:
@@ -222,6 +278,11 @@ def get_all_tree_data():
         if op.isfile(op.join('data', name, 'root_enriched.yaml'))]
 
 def parse_test_data(predict_file):
+    # 'model_iter_368408.caffemodel.Tax1300V14.1_OpenImageV4_448Test_with_bb.train.maintainRatio.OutTreePath.TreeThreshold0.1.ClsIndependentNMS.predict'
+    pattern = 'model_iter_[0-9]*\.caffemodel\.(.*)\.(train|trainval|test)\..*\.predict'
+    match_result = re.match(pattern, predict_file)
+    if match_result and len(match_result.groups()) == 2:
+        return match_result.groups()
     parts = predict_file.split('.')
     idx_caffemodel = [i for i, p in enumerate(parts) if 'caffemodel' in p]
     if len(idx_caffemodel) == 1:
@@ -327,14 +388,24 @@ def yolo_new_to_old(new_proto, new_model, old_model):
     assert op.isfile(new_proto)
     assert op.isfile(new_model)
 
-    ensure_directory(op.dirname(new_model))
+    ensure_directory(op.dirname(old_model))
 
     # infer the number of anchors and the number of classes
     proto = load_net(new_proto)
     target_layers = [l for l in proto.layer if l.type == 'RegionTarget']
-    assert len(target_layers) == 1
-    target_layer = target_layers[0]
-    biases_length = len(target_layer.region_target_param.biases)
+    if len(target_layers) == 1:
+        target_layer = target_layers[0]
+        biases_length = len(target_layer.region_target_param.biases)
+    else:
+        assert len(target_layers) == 0
+        target_layers = [l for l in proto.layer if l.type == 'YoloBBs']
+        assert len(target_layers) == 1
+        target_layer = target_layers[0]
+        biases_length = len(target_layer.yolobbs_param.biases)
+    
+    # if it is tree-based structure, we need to re-organize the classification
+    # layout
+    yolo_tree = any(l for l in proto.layer if 'SoftmaxTree' in l.type)
 
     num_anchor = biases_length / 2
     assert num_anchor * 2 == biases_length
@@ -367,8 +438,12 @@ def yolo_new_to_old(new_proto, new_model, old_model):
             w = new_p[i + 2 * num_anchor, :]
             h = new_p[i + 3 * num_anchor, :]
             o = new_p[i + 4 * num_anchor, :]
-            new_cls_start = i * num_classes + 5 * num_anchor
-            cls = new_p[new_cls_start : (new_cls_start + num_classes), :]
+            if not yolo_tree:
+                new_cls_start = i * num_classes + 5 * num_anchor
+                cls = new_p[new_cls_start : (new_cls_start + num_classes), :]
+            else:
+                new_cls_start = i + 5 * num_anchor
+                cls = new_p[new_cls_start::num_anchor, :]
 
             old_p[0 + i * (5 + num_classes), :] = x
             old_p[1 + i * (5 + num_classes), :] = y
@@ -1155,6 +1230,10 @@ def unicode_representer(dumper, uni):
     node = yaml.ScalarNode(tag=u'tag:yaml.org,2002:str', value=uni)
     return node
 
+def dump_to_yaml_str(context):
+    return yaml.dump(context, default_flow_style=False,
+            encoding='utf-8', allow_unicode=True)
+    
 def write_to_yaml_file(context, file_name):
     ensure_directory(op.dirname(file_name))
     with open(file_name, 'w') as fp:

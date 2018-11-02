@@ -2,7 +2,11 @@ from pprint import pformat
 import random
 import json
 import xml.etree.ElementTree as ET
-import cPickle as pkl
+try:
+    import cPickle as pkl
+except:
+    # python3 
+    import pickle as pkl
 from collections import OrderedDict
 import cv2
 import yaml
@@ -13,7 +17,11 @@ import nltk
 from nltk.corpus import wordnet as wn
 from qd_common import write_to_file, read_to_buffer
 from qd_common import init_logging, ensure_directory
-import Queue
+try:
+    import Queue
+except:
+    # this is python 3
+    import queue as Queue
 import os
 import os.path as op
 import glob
@@ -26,7 +34,11 @@ from tsv_io import tsv_shuffle_reader
 import base64
 from process_image import draw_bb, show_image, save_image
 import re
-from itertools import izip
+try:
+    from itertools import izip as zip
+except:
+    # if it comes here, it is python3 
+    pass
 import numpy as np
 
 def is_noffset(label):
@@ -484,7 +496,7 @@ class LabelToSynset(object):
                             break
                 if not matched:
                     matched_parent[i] = False
-            result = [r for r, m in izip(result, matched_parent) if m]
+            result = [r for r, m in zip(result, matched_parent) if m]
             if len(result) == 1:
                 logging.info('successfully disambiguate {} based on the parent {}'.format(
                     label, [ps.name() for ps in parent_synsets]))
