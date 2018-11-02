@@ -30,6 +30,42 @@ import cv2
 import shutil
 import argparse
 
+def url_to_str(url):
+    import urllib2
+    try:
+        fp = urllib2.urlopen(url, timeout=10)
+        buf = fp.read()
+        real_url = fp.geturl()
+        if real_url != url and (not real_url.startswith('https') or
+                real_url.replace('https', 'http') != url):
+            logging.info('new url = {}; old = {}'.format(fp.geturl(), url))
+            # the image gets redirected, which means the image is not available
+            return None
+        return buf
+    except urllib2.HTTPError as err:
+        logging.error("url: {}; error code {}; message: {}".format(
+            url, err.code, err.msg))
+        return None
+    except:
+        import traceback
+        logging.error("url: {}; unknown {}".format(
+            url, traceback.format_exc()))
+        return None
+
+def str_to_image(buf):
+    image = np.asarray(bytearray(buf), dtype='uint8')
+    im = cv2.imdecode(image, cv2.IMREAD_COLOR)
+    return im
+
+def url_to_image(url):
+    buf = url_to_str(url)
+    if buf is None:
+        return None
+    else:
+        image = np.asarray(bytearray(buf), dtype='uint8')
+        return cv2.imdecode(image, cv2.IMREAD_COLOR)
+
+
 def scrape_bing(query_term, depth):
     '''
     e.g. scrape_bing('elder person', 300)
