@@ -2260,7 +2260,8 @@ def collect_label(row, stat, **kwargs):
 
 class TSVDatasetSource(TSVDataset):
     def __init__(self, name, root=None, version=-1, 
-            valid_splits=['train', 'trainval', 'test']):
+            valid_splits=['train', 'trainval', 'test'], cleaness=10,
+            use_all=False):
         super(TSVDatasetSource, self).__init__(name)
         self._noffset_count = {}
         self._type = None
@@ -2274,6 +2275,8 @@ class TSVDatasetSource(TSVDataset):
         self._type_to_split_label_idx = None
         self._version = version
         self._valid_splits = valid_splits
+        self._use_all = use_all
+        self.cleaness = cleaness
 
     def populate_info(self, root):
         self._ensure_initialized()
@@ -2303,26 +2306,9 @@ class TSVDatasetSource(TSVDataset):
         if self._initialized:
             return
         populate_dataset_details(self.name)
-        splits = self._valid_splits 
         types = ['with_bb', 'no_bb']
-        # check the type of the dataset
-        #for split in splits:
-            #label_tsv = self.get_data(split, 'label', version=-1)
-            #if not op.isfile(label_tsv):
-                #continue
-            #for row in tsv_reader(label_tsv):
-                #rects = json.loads(row[1])
-                #if any(np.sum(r['rect']) > 1 for r in rects):
-                    #self._type = 'with_bb'
-                #else:
-                    #self._type = 'no_bb'
-                #break
-        #assert self._type is not None, "{} is bad".format(self.name)
-        #logging.info('identify {} as {}'.format(self.name, self._type))
-        
-        # list of <split, label, idx>
         self._type_split_label_idx = []
-        for split in splits:
+        for split in self._valid_splits:
             logging.info('loading the inverted file: {}-{}'.format(self.name,
                 split))
             if not op.isfile(self.get_data(split, 'label', 
@@ -2349,6 +2335,9 @@ class TSVDatasetSource(TSVDataset):
             datasetlabel_to_count = {l: len(datasetlabel_to_split_idx[l]) for l in
                     datasetlabel_to_split_idx}
             self._type_to_datasetlabel_to_count[t] = datasetlabel_to_count
+
+        self._split_to_num_image = {split: self.num_rows(split) for split in
+                self._valid_splits if self.has(split)}
 
         self.update_label_mapper()
         self._initialized = True
@@ -2489,22 +2478,17 @@ class TSVDatasetSource(TSVDataset):
                 for rootlabel in targetlabels:
                     result.extend([(rootlabel, split, idx) for split, idx in
                         split_idxes])
+        if self._use_all:
+            split_to_rootlabel_idx = list_to_dict(result, 1)
+            for s in split_to_rootlabel_idx:
+                rootlabel_idxes = split_to_rootlabel_idx[s]
+                idx_to_rootlabel = list_to_dict(rootlabel_idxes, 1)
+                num_image = self._split_to_num_image[s]
+                idxes = set(range(num_image)).difference(set(idx_to_rootlabel.keys()))
+                for i in idxes:
+                    # for these images, the root label is hard-coded as None
+                    result.append((None, s, i))
         return result
-
-    def gen_tsv_rows(self, root, label_type):
-        selected_info = self.select_tsv_rows(root, label_type)
-        mapper = self._sourcelabel_to_targetlabels
-        for split, idx in selected_info:
-            data_tsv = TSVFile(self.get_data(split))
-            for i in idx:
-                data_row = data_tsv.seek(i)
-                rects = json.loads(data_row[1])
-                convert_one_label(rects, mapper)
-                assert len(rects) > 0
-                data_row[1] = json.dumps(rects)
-                yield data_row
-        return
-
 
 def initialize_images_count(root):
     for node in root.iter_search_nodes():
@@ -2596,7 +2580,6 @@ def convert_label(label_tsv, idx, label_mapper, with_bb):
                         # keep this for logging
                         r2['class_from'] = rect['class']
                     rects2.append(r2)
-        assert len(rects2) > 0
         row[1] = rects2
         result[i] = row
     return result
@@ -2938,7 +2921,41 @@ def split_train_test(ldtsi, num_test):
                 in dsi[curr_num_test:]])
     return train_ldtsi, test_ldtsi
 
+def regularize_data_sources(data_infos):
+    result = []
+    default_splits = ['train', 'trainval', 'test']
+    for data_info in data_infos:
+        if type(data_info) is str:
+            r = {'name': data_info, 
+                    'cleaness': 10, 
+                    'valid_splits': default_splits,
+                    'use_all': False}
+            result.append(r)
+        elif type(data_info) is tuple or type(data_info) is list:
+            assert len(data_info) > 0
+            r = {'name': data_info[0], 
+                    'cleaness': data_info[1] if len(data_info) > 1 else 10,
+                    'valid_splits': data_info[2] if len(data_info) > 2 else
+                                default_splits,
+                    'use_all': data_info[3] if len(data_info) > 3 else False,
+                    }
+            assert len(data_info) < 5
+            result.append(r)
+        elif type(data_info) is dict:
+            r = {}
+            r['name'] = data_info['data']
+            r['cleaness'] = data_info.get('cleaness', 10)
+            r['valid_splits'] = data_info.get('valid_splits', default_splits)
+            r['use_all'] = data_info.get('use_all', False)
+            result.append(r)
+        else:
+            raise Exception('unkwown data_info = {}'.format(data_info))
+    return result
+
 def parse_data_clean_splits(data_infos):
+    '''
+    use regularize_data_sources
+    '''
     datas, cleaness, all_valid_splits = [], [], []
     default_splits = ['train', 'trainval', 'test']
     for data_info in data_infos:
@@ -2995,12 +3012,6 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
     logging.info('building {}'.format(dataset_name))
     all_tax = load_all_tax(taxonomy_folder)
     tax = merge_all_tax(all_tax)
-    if 'term_data_source_matching_folder' in kwargs:
-        all_matching_tax = load_all_tax(kwargs['term_data_source_matching_folder'])
-        attach_properties([n for t in all_matching_tax 
-                             for n in t.iter_search_nodes() 
-                                if n != t],
-                          tax.root)
     tax.update()
     initialize_images_count(tax.root)
     mapper = LabelToSynset()
@@ -3016,18 +3027,13 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
             'ambigous_noffsets.yaml')
     output_ambigous_noffsets(tax.root, ambigous_noffset_file)
     
-    data_sources = []
+    data_infos = regularize_data_sources(kwargs['datas'])
     
-    datas = kwargs['datas']
-    datas, cleaness, all_valid_splits = parse_data_clean_splits(kwargs['datas'])
-    
-    logging.info('extract the images from: {}'.format(','.join(datas)))
+    logging.info('extract the images from: {}'.format(pformat(data_infos)))
     
     label_version = kwargs.get('version', -1)
-    for d, c, valid_splits in izip(datas, cleaness, all_valid_splits):
-        dataset = TSVDatasetSource(d, tax.root, label_version, valid_splits)
-        dataset.cleaness = c
-        data_sources.append(dataset)
+    data_sources = [TSVDatasetSource(root=tax.root, version=label_version, **d) 
+            for d in data_infos]
     
     for s in data_sources:
         s.populate_info(tax.root)
@@ -3090,7 +3096,6 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
     # the image could be in the list twice
     ldtsi = list(set(ldtsi))
 
-    # split into train val
     num_test = kwargs.get('num_test', 50)
 
     # for each label, let's duplicate the image or remove the image
@@ -3099,21 +3104,26 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
             if 'max_image_extract_for_train' in n.features and n.__getattribute__('max_image_extract_for_train') > default_max_image
             else default_max_image
         for n in tax.root.iter_search_nodes() if n != tax.root}
+    label_to_max_image[None] = 10000000000
     min_image = kwargs.get('min_image_per_label', 200)
     
     logging.info('keep a small image pool to split')
+    label_to_max_augmented_images = {l: label_to_max_image[l]
+            * 3 for l in label_to_max_image}
     # reduce the computing cost
-    ldtsi, extra_dtsi = remove_or_duplicate(ldtsi, 0, {l: label_to_max_image[l]
-            * 3 for l in label_to_max_image})
+    ldtsi, extra_dtsi = remove_or_duplicate(ldtsi, 0,
+            label_to_max_augmented_images)
     assert len(extra_dtsi) == 0
     
     logging.info('select the best test image')
     if num_test == 0:
         test_ldtsi = []
     else:
-        # generate the test set from teh best data source
-        test_ldtsi, extra_dtsi = remove_or_duplicate(ldtsi, 0, {l: num_test for l in
-            label_to_max_image})
+        # generate the test set from the best data source
+        label_to_max_images_for_test = {l: num_test for l in
+            label_to_max_image}
+        test_ldtsi, extra_dtsi = remove_or_duplicate(ldtsi, 0,
+                label_to_max_images_for_test)
         assert len(extra_dtsi) == 0
     
     logging.info('removing test images from image pool')
@@ -3149,7 +3159,7 @@ def delift_one_image(rects, tax):
     for curr_r in rects:
         curr_label = curr_r['class']
         ious = [calculate_iou(r['rect'], curr_r['rect']) for r in rects2]
-        same_place_rects = [r for i, r in izip(ious, rects2) if i > 0.9]
+        same_place_rects = [r for i, r in zip(ious, rects2) if i > 0.9]
         # if current label is one of parent of the same_place rects, ignore it
         ignore = False
         for same_place_r in same_place_rects:
@@ -3191,6 +3201,9 @@ def populate_output_num_images(ldtX, suffix, root):
     label_to_node = {n.name: n for n in root.iter_search_nodes() if n != root}
     targetlabel_to_dX = list_to_dict(ldtX, 0)
     for targetlabel in targetlabel_to_dX:
+        if not targetlabel:
+            # it means background images 
+            continue
         dtX = targetlabel_to_dX[targetlabel]
         dataset_to_X = list_to_dict(dtX, 0)
         for dataset in dataset_to_X:
@@ -3314,6 +3327,44 @@ def get_data_sources(public_only=False, version=None):
                     ('imagenet22k_448', 7),
                     ('4000_Full_setClean', 7),
             ]
+        elif version == 'exclude_golden_use_voc_coco_all':
+            return [
+                    {
+                        'data': 'coco2017', 
+                        'valid_splits': ['train', 'trainval'],
+                        'cleaness': 10,
+                        'use_all': True,
+                    },
+                    {
+                        'data': 'voc0712', 
+                        'valid_splits': ['train', 'trainval'],
+                        'cleaness': 10,
+                        'use_all': True,
+                    },
+                    {
+                        'data': 'OpenImageV4_448', 
+                        'valid_splits': ['train', 'trainval'],
+                        'cleaness': 9
+                    },
+                    ('Naturalist', 9),
+                    ('elder', 9),
+                    ('imagenet200Diff', 9),
+                    ('open_images_clean_1', 8),
+                    ('open_images_clean_2', 8),
+                    ('open_images_clean_3', 8),
+                    ('imagenet1kLocClean', 8),
+                    ('imagenet3k_448Clean', 8),
+                    ('VisualGenomeClean', 8),
+                    ('brand1048Clean', 7),
+                    ('mturk700_url_as_keyClean', 7),
+                    ('crawl_office_v1', 7),
+                    ('crawl_office_v2', 7),
+                    ('Materialist', 7),
+                    ('MSLogoClean', 7),
+                    ('clothingClean', 7),
+                    ('imagenet22k_448', 6),
+                    ('4000_Full_setClean', 6),
+            ]
         else:
             raise ValueError('Unknown version = {}'.format(version))
     if not public_only:
@@ -3418,8 +3469,11 @@ def find_same_rects(target, rects, iou=0.95):
 
 def rect_in_rects(target, rects, iou=0.95):
     same_class_rects = [r for r in rects if r['class'] == target['class']]
-    return any(r for r in same_class_rects if 
-        calculate_iou(target['rect'], r['rect']) > iou)
+    if 'rect' not in target:
+        return len(same_class_rects) > 0
+    else:
+        return any(r for r in same_class_rects if 'rect' in r and 
+            calculate_iou(target['rect'], r['rect']) > iou)
 
 def load_key_rects(iter_data):
     result = []
