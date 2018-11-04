@@ -572,7 +572,7 @@ class VisualizationDatabaseByMongoDB():
         logging.info(len(image_info))
         if len(image_info) > 0:
             logging.info(pformat(image_info[0]))
-        image_info = [{'key': x['_id']['key'], 
+        image_info = [{'key': x['key'], 
             'url': x.get('url', ''), 
             'gt': x.get('gt', []), 
             'pred': x.get('pred', [])} for x in image_info]
@@ -675,11 +675,13 @@ class VisualizationDatabaseByMongoDB():
 
     def query_predict_precision(self, full_expid, pred_file, class_name, threshold, start_id, max_item):
         rank, start_id = self._get_positive_start(start_id, max_item)
-        pipeline = [
-                {'$match': {'full_expid': full_expid,
+        filter_pred = {'full_expid': full_expid,
                             'pred_file': pred_file,
-                            'class': class_name,
-                            'conf': {'$gte': threshold}}},
+                            'conf': {'$gte': threshold}}
+        if class_name != 'None' and class_name:
+            filter_pred['class'] = class_name
+        pipeline = [
+                {'$match': filter_pred},
                 {'$group': {'_id': {'data': '$data',
                                     'split': '$split',
                                     'key': '$key'}, 
@@ -736,6 +738,8 @@ class VisualizationDatabaseByMongoDB():
                     'as': 'gt',
                     }}
                 ]
+
+        logging.info(pformat(pipeline))
         image_info = list(self._pred.aggregate(pipeline))
         image_info = [{'key': x['_id']['key'], 
             'url': x['url'], 
@@ -757,7 +761,6 @@ class VisualizationDatabaseByMongoDB():
             url_match.append({'$eq': ['$split', split]})
         if label is not None:
             match_pairs['class'] = label
-            gt_match.append({'$eq': ['$class', label]})
         if version is not None:
             match_pairs['version'] = {'$lte': version}
             gt_match.append({'$lte': ['$version', version]})
@@ -796,6 +799,7 @@ class VisualizationDatabaseByMongoDB():
                     {'$addFields': {'url': '$url.url'}},
                     ]
 
+        logging.info(pformat(pipeline))
         image_info = list(self._gt.aggregate(pipeline))
         logging.info(len(image_info))
         image_info = [{'key': x['_id']['key'], 
