@@ -156,18 +156,29 @@ def ensure_inject_decorate(func):
         for n, v in zip(argnames, args):
             assert n not in query
             query[n] = v
-        result = task.update_one(filter=query,
-                                update={'$setOnInsert': query},
-                                upsert=True)
-        if result.matched_count == 0:
-            task.update_one(filter=query,
-                    update={'$set': {'status': 'started', 
-                                     'create_time': datetime.now()}})
-            func(*args, **kwargs)
-            task.update_many(filter=query, 
-                    update={'$set': {'status': 'done'}})
-        else:
-            logging.info('ignore to inject')
+        while True:
+            result = task.update_one(filter=query,
+                                    update={'$setOnInsert': query},
+                                    upsert=True)
+            if result.matched_count == 0:
+                task.update_one(filter=query,
+                        update={'$set': {'status': 'started', 
+                                         'create_time': datetime.now()}})
+                func(*args, **kwargs)
+                task.update_many(filter=query, 
+                        update={'$set': {'status': 'done'}})
+                return True
+            else:
+                assert result.matched_count == 1
+                existing_entries = list(task.find(query))
+                if any(e for e in existing_entries if e['status'] == 'done'):
+                    logging.info('ignore to inject since it is done: \n{}'.format(query))
+                    break
+                else:
+                    logging.info('waiting to finish \n{}'.format(
+                        pformat(existing_entries)))
+                    time.sleep(10)
+                # return False if not done
     return func_wrapper
 
 @ensure_inject_decorate
@@ -184,14 +195,23 @@ def ensure_upload_image_to_blob(data, split):
             op.isfile(dataset.get_data(split + 'X')):
         logging.info('ignore to upload images for composite dataset')
         return
-    for key, _, str_im in tqdm(dataset.iter_data(split)):
-        key = parse_combine(key)[-1]
-        clean_name = _map_img_key_to_name(key)
-        s.upload_stream(StringIO(base64.b64decode(str_im)), 
-                clean_name)
+    def gen_rows():
+        for key, _, str_im in tqdm(dataset.iter_data(split)):
+            key = parse_combine(key)[-1]
+            clean_name = _map_img_key_to_name2(key)
+            url = s.upload_stream(StringIO(base64.b64decode(str_im)), 
+                    clean_name)
+            yield key, url
+    dataset.write_data(gen_rows(), split, 'key.url')
 
-def inject_image(data, split):
+@ensure_inject_decorate
+def ensure_inject_image(data, split):
+    from pymongo.errors import BulkWriteError
+
     dataset = TSVDataset(data)
+    if not dataset.has(data, split):
+        return
+
     client = MongoClient()
     db = client['qd']
     images = db['image']
@@ -207,11 +227,22 @@ def inject_image(data, split):
     from cloud_storage import CloudStorage
     all_data = []
     
-    datas = [d for d, _ in get_data_sources()]
-    
     logging.info('injecting {} - {}'.format(data, split))
-    for i, (key, label_str) in tqdm(enumerate(dataset.iter_data(split, 'label'))):
-        url = get_img_url(parse_combine(key)[-1])
+    injected = set()
+    key_to_hw = None
+    if dataset.has(split, 'hw'):
+        key_to_hw = {key: [int(x) for x in hw.split(' ')] for key, hw in
+                dataset.iter_data(split, 'hw')}
+    assert dataset.has(split, 'key.url')
+    key_to_url = {key: url for key, url in dataset.iter_data(split, 'key.url')}
+    logging.info('injecting image for {} - {}'.format(data, split))
+    for i, (key, _) in tqdm(enumerate(dataset.iter_data(split,
+        'label'))):
+        if key in injected:
+            continue
+        else:
+            injected.add(key)
+        url = key_to_url[key] 
         doc = {'data': data,
                 'split': split,
                 'key': key,
@@ -219,51 +250,29 @@ def inject_image(data, split):
                 'url': url,
                 'create_time': datetime.now(),
                 }
+        if key_to_hw:
+            doc['height'], doc['width'] = key_to_hw[key]
         all_data.append(doc)
-    
-    for i, (key, hw) in enumerate(dataset.iter_data(split, 'hw')):
-        h, w = [int(_) for _ in hw.split(' ')]
-        assert all_data[i]['key'] == key
-        all_data[i]['height'] = h
-        all_data[i]['width'] = w
-        
-    logging.info(len(all_data))
+        if len(all_data) > 1000:
+            images.insert_many(all_data)
+            all_data = []
     if len(all_data) > 0:
         images.insert_many(all_data)
+        all_data = []
 
 def get_mongodb_client():
     return MongoClient()
 
+@ensure_inject_decorate
 def ensure_update_pred_with_correctness(data, split,
         full_expid, predict_file):
     ensure_inject_gt(data, split)
     ensure_inject_pred(full_expid, predict_file, data, split)
 
-    client = MongoClient()
-    db = client['qd']
-    task = db['task']
-    result = task.find_one(filter={'task_type': 'inject_update_pred_with_correctness',
-        'data': data, 'split': split, 
-        'full_expid': full_expid, 
-        'predict_file': predict_file})
-    if result is None or result['status'] == 'started':
-        if result is None:
-            task.insert_one({'task_type': 'inject_update_pred_with_correctness',
-                'data': data, 
-                'split': split, 
-                'full_expid': full_expid,
-                'predict_file': predict_file,
-                'status': 'started', 
-                'create_time': datetime.now()})
-        update_pred_with_correctness(data, split,
-            full_expid,
-            predict_file)
-        task.update_many(filter={'task_type': 'inject_update_pred_with_correctness',
-            'data': data, 
-            'split': split, 
-            'full_expid': full_expid,
-            'predict_file': predict_file},
-            update={'$set': {'status': 'done'}})
+    update_pred_with_correctness(data, split,
+        full_expid,
+        predict_file)
+
 
 def update_pred_with_correctness(test_data, test_split,
         full_expid,
@@ -329,20 +338,23 @@ def update_pred_with_correctness(test_data, test_split,
         curr_gt = row['gt_box']
         curr_pred = sorted(curr_pred, key=lambda x: -x['conf'])
         for p in curr_pred:
-            matched = [g for g in curr_gt if not g.get('used', False)
-                    and calculate_iou(g['rect'], p['rect']) > 0.3]
+            matched = [g for g in curr_gt if 
+                    not g.get('used', False) and 
+                    ('rect' not in p or 
+                        not p['rect'] or
+                        'rect' not in g or 
+                        not g['rect'] or 
+                        calculate_iou(g['rect'], p['rect']) > 0.3)]
             if len(matched) == 0:
                 all_wrong_box.append(p['pred_box_id'])
             else:
                 all_correct_box.append(p['pred_box_id'])
                 matched[0]['used'] = True
         if len(all_correct_box) > 1000:
-            logging.info('updating {} correct boxes'.format(len(all_correct_box)))
             _pred.update_many({'_id': {'$in': all_correct_box}}, 
                     {'$set': {'correct': 1}})
             all_correct_box = []
         if len(all_wrong_box) > 1000:
-            logging.info('updating {} wrong boxes'.format(len(all_wrong_box)))
             _pred.update_many({'_id': {'$in': all_wrong_box}}, 
                     {'$set': {'correct': 0}})
             all_wrong_box = []
@@ -356,7 +368,11 @@ def update_pred_with_correctness(test_data, test_split,
         all_wrong_box = []
 
 def ensure_inject_expid_pred(full_expid, predict_file):
-    data, split = parse_test_data(predict_file)
+    try:
+        data, split = parse_test_data(predict_file)
+    except:
+        logging.info('ignore to inject {} - {}'.format(full_expid, predict_file))
+        return
     ensure_upload_image_to_blob(data, split)
     ensure_inject_image(data, split)
     ensure_inject_gt(data, split)
@@ -367,41 +383,18 @@ def ensure_inject_expid_pred(full_expid, predict_file):
     ensure_update_pred_with_correctness(data, split,
         full_expid, predict_file)
 
-def ensure_inject_pred(full_expid, predict_file, data, split):
-    client = MongoClient()
-    db = client['qd']
-    task = db['task']
-    result = task.find_one(filter={'task_type': 'inject_pred',
-        'data': data, 
-        'split': split, 
-        'full_expid': full_expid,
-        'predict_file': predict_file})
-    if result is None or result['status'] == 'started':
-        if result is None:
-            task.insert_one({'task_type': 'inject_pred',
-                'data': data, 
-                'split': split, 
-                'full_expid': full_expid,
-                'predict_file': predict_file,
-                'status': 'started', 
-                'create_time': datetime.now()})
-        inject_pred(full_expid, predict_file, data, split)
-        task.update_many(filter={'task_type': 'inject_pred',
-            'data': data, 
-            'split': split, 
-            'full_expid': full_expid,
-            'predict_file': predict_file}, 
-            update={'$set': {'status': 'done'}})
-
-def inject_pred(full_expid, pred_file, test_data, test_split):
+@ensure_inject_decorate
+def ensure_inject_pred(full_expid, pred_file, test_data, test_split):
     client = MongoClient()
     db = client['qd']
     pred_collection = db['predict_result']
     logging.info('cleaning {} - {}'.format(full_expid, pred_file))
     pred_collection.delete_many({'full_expid': full_expid, 'pred_file': pred_file})
+    pred_file = op.join('output', full_expid, 'snapshot', pred_file)
     all_rect = []
-    for key, label_str in tqdm(tsv_reader(op.join('output', full_expid, 'snapshot', pred_file))):
+    for key, label_str in tqdm(tsv_reader(pred_file)):
         rects = json.loads(label_str)
+        rects = [r for r in rects if r['conf'] > 0.05]
         for i, r in enumerate(rects):
             r['full_expid'] = full_expid
             r['pred_file'] = op.basename(pred_file)
@@ -409,31 +402,11 @@ def inject_pred(full_expid, pred_file, test_data, test_split):
             r['split'] = test_split
             r['key'] = key
         all_rect.extend(rects)
-        if len(all_rect) > 1000:
+        if len(all_rect) > 10000:
             pred_collection.insert_many(all_rect)
             all_rect = []
     if len(all_rect) > 0:
         pred_collection.insert_many(all_rect)
-
-
-def ensure_inject_image(data, split):
-    client = MongoClient()
-    db = client['qd']
-    task = db['task']
-    result = task.find_one(filter={'task_type': 'inject_image',
-        'data': data, 'split': split})
-    if result is None or result['status'] == 'started':
-        if result is None:
-            task.insert_one({'task_type': 'inject_image',
-                'data': data, 
-                'split': split, 
-                'status': 'started', 
-                'create_time': datetime.now()})
-        inject_image(data, split)
-        task.update_many(filter={'task_type': 'inject_image',
-            'data': data, 
-            'split': split}, update={'$set': {'status': 'done'}})
-
 
 def ensure_inject_gt(data, split):
     client = MongoClient()
@@ -477,6 +450,20 @@ def ensure_inject_gt(data, split):
             else:
                 # it is done or it is started by anohter process. let's skip
                 # this version
+                assert result.matched_count == 1
+                while True:
+                    existing_entries = list(task.find(query))
+                    if any(e for e in existing_entries if e['status'] == 'done'):
+                        logging.info('ignore to inject since it is done: \n{}'.format(query))
+                        break
+                    elif len(existing_entries) == 0:
+                        logging.info('we will do it')
+                        version = version - 1
+                        break
+                    else:
+                        logging.info('waiting to finish \n{}'.format(
+                            pformat(existing_entries)))
+                        time.sleep(10)
                 set_previous_key_rects = False
             version = version + 1
 
@@ -499,7 +486,9 @@ def inject_gt_version(data, split, version, previous_key_to_rects):
             r['data'] = data
             r['split'] = split
             r['key'] = key
-            r['action_target_id'] = hash_sha1([data, split, key, r['class'], r['rect']])
+            # for tagging dataset, tehre is no rect
+            r['action_target_id'] = hash_sha1([data, split, key, r['class'],
+                r.get('rect', [])])
             r['version'] = version
         if version == 0:
             assert key not in previous_key_to_rects
@@ -518,7 +507,8 @@ def inject_gt_version(data, split, version, previous_key_to_rects):
                 r['data'] = data
                 r['split'] = split
                 r['key'] = key
-                r['action_target_id'] = hash_sha1([data, split, key, r['class'], r['rect']])
+                r['action_target_id'] = hash_sha1([data, split, key,
+                    r['class'], r.get('rect', [])])
                 r['version'] = version
                 r['action_type'] = 'remove'
                 r['contribution'] = -1
@@ -529,7 +519,8 @@ def inject_gt_version(data, split, version, previous_key_to_rects):
                 r['data'] = data
                 r['split'] = split
                 r['key'] = key
-                r['action_target_id'] = hash_sha1([data, split, key, r['class'], r['rect']])
+                r['action_target_id'] = hash_sha1([data, split, key,
+                    r['class'], r.get('rect', [])])
                 r['version'] = version
                 r['action_type'] = 'add'
                 r['contribution'] = 1
@@ -538,7 +529,6 @@ def inject_gt_version(data, split, version, previous_key_to_rects):
             all_rect.extend(current_not_in_previous)
         previous_key_to_rects[key] = rects
         if len(all_rect) > 10000:
-            logging.info('inserting {} - {} - {}'.format(data, split, version))
             db_insert_many(gt, all_rect)
             all_rect = []
 
@@ -1201,7 +1191,7 @@ def tsv_details(row_hw, row_label, num_rows):
     label_count = {}
     sizes = []
     logging.info('tsv details...')
-    for r_hw, r_label in tqdm(izip(row_hw, row_label), total=num_rows):
+    for r_hw, r_label in tqdm(zip(row_hw, row_label), total=num_rows):
         if r_label[1] == 'd':
             # this is the deleted label
             rects = []
@@ -1372,7 +1362,7 @@ def populate_dataset_details(data, check_image_details=False):
             label_tsv = dataset.get_data(split, 'label', version=0)
             if not op.isfile(label_tsv):
                 continue
-            for row in tsv_reader(label_tsv):
+            for row in tqdm(tsv_reader(label_tsv)):
                 try:
                     labelmap.extend(set([rect['class'] for rect in
                         json.loads(row[1])]))
@@ -1574,7 +1564,7 @@ def populate_num_images_composite(dataset):
         return
     tax = Taxonomy(load_from_yaml_file(src_tree_file))
     for split in splits:
-        for suffix, d in izip(suffixes, datasets):
+        for suffix, d in zip(suffixes, datasets):
             if not d.has(split, 'inverted.label.count'):
                 continue
             label_to_count_with_bb = {label: int(count) for label, count in d.iter_data(split,
@@ -1769,7 +1759,7 @@ def gen_tsv_from_labeling(input_folder, output_folder):
 def try_json_parse(s):
     try:
         return json.loads(s)
-    except ValueError, e:
+    except ValueError:
         return s
 
 def visualize_predict_no_draw(full_expid, predict_file, label, start_id, threshold):
@@ -1827,7 +1817,7 @@ def visualize_predict_no_draw(full_expid, predict_file, label, start_id, thresho
         pred_tsv = TSVFile(pred_full_path)
         rows_in_pred = (pred_tsv.seek(i) for i in target_idx_in_pred)
         target_aps = []
-        for row_in_gt, row_in_pred in izip(rows_in_gt, rows_in_pred):
+        for row_in_gt, row_in_pred in zip(rows_in_gt, rows_in_pred):
             assert row_in_gt[0] == row_in_pred[0]
             assert len(row_in_gt) == 2
             assert len(row_in_pred) == 2
@@ -1923,7 +1913,7 @@ def visualize_predict(full_expid, predict_file, label, start_id, threshold):
         pred_tsv = TSVFile(pred_full_path)
         rows_in_pred = (pred_tsv.seek(i) for i in target_idx_in_pred)
         target_aps = []
-        for row_in_gt, row_in_pred in izip(rows_in_gt, rows_in_pred):
+        for row_in_gt, row_in_pred in zip(rows_in_gt, rows_in_pred):
             assert row_in_gt[0] == row_in_pred[0]
             assert len(row_in_gt) == 2
             assert len(row_in_pred) == 2
@@ -2017,7 +2007,7 @@ def visualize_box_no_draw(data, split, version, label, start_id, color_map={}):
     rows_image = dataset.iter_data(split, filter_idx=idx[start_id:])
     rows_label = dataset.iter_data(split, 'label', version=version,
             filter_idx=idx[start_id:])
-    for row_image, row_label in izip(rows_image, rows_label):
+    for row_image, row_label in zip(rows_image, rows_label):
         key = row_image[0]
         assert key == row_label[0]
         assert len(row_image) == 3
@@ -2086,7 +2076,7 @@ def visualize_box(data, split, version, label, start_id, color_map={}):
     rows_image = dataset.iter_data(split, filter_idx=idx[start_id:])
     rows_label = dataset.iter_data(split, 'label', version=version,
             filter_idx=idx[start_id:])
-    for row_image, row_label in izip(rows_image, rows_label):
+    for row_image, row_label in zip(rows_image, rows_label):
         key = row_image[0]
         assert key == row_label[0]
         assert len(row_image) == 3
@@ -2196,7 +2186,7 @@ def visualize_tsv(tsv_image, tsv_label, out_folder=None, label_idx=1):
     assert out_folder == None or not op.exists(out_folder)
     source_folder = op.dirname(tsv_image)
     num_image = 0
-    for row_image, row_label in izip(rows_image, rows_label):
+    for row_image, row_label in zip(rows_image, rows_label):
         assert row_image[0] == row_label[0]
         im = img_from_base64(row_image[-1])
         labels = try_json_parse(row_label[label_idx])
@@ -2268,17 +2258,7 @@ def collect_label(row, stat, **kwargs):
 
     stat.append((is_remove, labels))
 
-class DatasetSource(object):
-    def __init__(self):
-        pass
-
-    def populate_info(self, root):
-        pass
-
-    def gen_tsv_rows(self, root):
-        pass
-
-class TSVDatasetSource(TSVDataset, DatasetSource):
+class TSVDatasetSource(TSVDataset):
     def __init__(self, name, root=None, version=-1, 
             valid_splits=['train', 'trainval', 'test']):
         super(TSVDatasetSource, self).__init__(name)
