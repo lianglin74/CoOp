@@ -22,7 +22,65 @@ from process_tsv import convert_pred_to_dataset_label
 from qd_common import print_as_html
 from qd_common import yolo_new_to_old
 from tsv_io import tsv_reader, tsv_writer
+from qd_common import img_from_base64
+import simplejson as json
+import cv2
+from qd_common import encoded_from_img
+from qd_common import json_dump
+from tqdm import tqdm
 
+        
+def resize_dataset(data, short=480, out_data=None):
+    dataset = TSVDataset(data)
+    if out_data is None:
+        out_data = data + '_{}'.format(short)
+    ndataset = TSVDataset(out_data)
+    for split in ['train', 'test', 'trainval']:
+        if not dataset.has(split):
+            continue
+        if ndataset.has(split):
+            continue
+        rows = dataset.iter_data(split)
+        num_rows = dataset.num_rows(split)
+        num_task = 512
+        num_row_each = (num_rows + num_task - 1) / num_task
+        all_task = []
+        for i in range(num_task):
+            start_idx = i * num_row_each
+            end_idx = start_idx + num_row_each
+            end_idx = min(end_idx, num_rows)
+            if end_idx > start_idx:
+                all_task.append(range(start_idx, end_idx))
+        def gen_rows(filter_idx):
+            rows = dataset.iter_data(split, filter_idx=filter_idx)
+            out_file = ndataset.get_data(split) + \
+                '_{}.tsv'.format(filter_idx[0])
+            def gen_rows2():
+                logging.info('loading images')
+                for row in tqdm(rows):
+                    im = img_from_base64(row[-1])
+                    if im is None or im.size == 0:
+                        logging.info('the image is empty: {}'.format(im[0]))
+                    elif min(im.shape[0:2]) > short:
+                        ratio = 1. * short / min(im.shape[:2])
+                        dsize = (int(im.shape[1] * ratio), int(im.shape[0] * ratio))
+                        rects = json.loads(row[1])
+                        for rect in rects:
+                            if 'rect' in rect and not all(r == 0 for r in rect['rect']):
+                                rect['rect'] = map(lambda x: x * ratio, rect['rect'])
+                        im2 = cv2.resize(im, dsize)
+                        yield row[0], json_dump(rects), encoded_from_img(im2)
+                    else:
+                        yield row
+            tsv_writer(gen_rows2(), out_file)
+        from qd_common import parallel_map
+        parallel_map(gen_rows, all_task)
+        all_files = [ndataset.get_data(split) + '_{}.tsv'.format(t[0])
+            for t in all_task]
+        logging.info('concating')
+        concat_files(all_files, ndataset.get_data(split))
+        for f in all_files:
+            os.remove(f)
 
 def calculate_correlation_between_terms_by_files(file_name1, file_name2,
         out_file):

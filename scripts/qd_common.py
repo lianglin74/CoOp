@@ -30,6 +30,19 @@ import cv2
 import shutil
 import argparse
 
+
+def parallel_map(func, all_task, isDebug=False):
+    if not isDebug:
+        from pathos.multiprocessing import ProcessingPool as Pool
+        num_worker = 16
+        m = Pool(num_worker)
+        return m.map(func, all_task)
+    else:
+        result = []
+        for t in all_task:
+            result.append(func(t))
+        return result
+
 def url_to_str(url):
     import urllib2
     try:

@@ -307,13 +307,7 @@ class TSVDataset(object):
             return len(load_list_file(self.get_shuffle_file(split)))
 
     def iter_data(self, split, t=None, version=None, 
-            unique=False, filter_idx=None, progress=False):
-        if progress:
-            if filter_idx is None:
-                num_rows = self.num_rows(split, version)
-            else:
-                num_rows = len(filter_idx)
-            pbar = progressbar.ProgressBar(maxval=num_rows).start()
+            unique=False, filter_idx=None):
         splitX = split + 'X'
         if not op.isfile(self.get_data(split, t, version)) and \
                 op.isfile(self.get_data(splitX, t, version)):
@@ -328,8 +322,6 @@ class TSVDataset(object):
                         yield row
                         if unique:
                             returned.add(row[0])
-                    if progress:
-                        pbar.update(i)
             else:
                 rows_data = self.iter_composite(split, None, version,
                         filter_idx)
@@ -346,8 +338,6 @@ class TSVDataset(object):
                         yield r_data
                         if unique:
                             returned.add(r_data[0])
-                    if progress:
-                        pbar.update(i)
         else:
             fname = self.get_data(split, t, version)
             if not op.isfile(fname):
@@ -357,17 +347,11 @@ class TSVDataset(object):
                 for i, row in enumerate(tsv_reader(self.get_data(
                     split, t, version))):
                     yield row
-                    if progress:
-                        pbar.update(i)
             else:
                 fname = self.get_data(split, t, version)
                 tsv = self._retrieve_tsv(fname)
                 for i in tqdm(filter_idx):
                     yield tsv.seek(i)
-                #for _i, i in enumerate(filter_idx):
-                    #yield tsv.seek(i)
-                    #if progress:
-                        #pbar.update(_i)
 
     def _retrieve_tsv(self, fname):
         if fname in self._fname_to_tsv:
