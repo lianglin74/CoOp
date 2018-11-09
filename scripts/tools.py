@@ -47,6 +47,7 @@ def visualize_fp_fn_result(key_fp_fn_pred_gt_result, data, out_folder):
 
         total = total + len(false_pos)
 
+        from process_image import draw_bb, save_image
         draw_bb(im_false_pos, [r['rect'] for r in false_pos], [r['class'] for r in
             false_pos])
 
