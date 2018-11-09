@@ -1,5 +1,8 @@
 from shutil import copyfile
-import cPickle as pkl
+try:
+    import cPickle as pkl
+except:
+    import pickle as pkl
 import base64
 import argparse
 import cv2
@@ -7,8 +10,10 @@ from pprint import pformat
 from datetime import datetime
 import _init_paths
 import os
-import gen_prototxt
-import caffe
+try:
+    import caffe
+except:
+    pass
 import re
 import quickcaffe.modelzoo as mzoo
 from caffe.proto import caffe_pb2
@@ -81,6 +86,7 @@ from qd_common import get_mpi_local_rank, get_mpi_local_size
 from qd_common import concat_files
 from yoloinit import data_dependent_init_ncc2
 from yoloinit import data_dependent_init_ncc1
+from qd_common import set_if_not_exist
 
 def yolo_predict(**iparam):
     '''
@@ -88,11 +94,12 @@ def yolo_predict(**iparam):
     '''
     full_expid = iparam['full_expid']
     param = copy.deepcopy(iparam)
-
-    param['class_specific_nms'] = False
-    param['load_parameter'] = True
+    
     param['full_expid'] = full_expid
-    param['test_input_sizes'] = [416]
+    param['load_parameter'] = True
+
+    set_if_not_exist(param, 'class_specific_nms', False)
+    set_if_not_exist(param, 'test_input_sizes', [416])
 
     logging.info(pformat(param))
     c = CaffeWrapper(**param)

@@ -173,6 +173,25 @@ This repo is for the algorithm development for IRIS object detection. The curren
        ```
        Replace the_path_to_taxonomy by the path of the taxonomy folder
 
+## Predict
+1. How to run a model against a data split
+   1. Prepare
+      1. Each model has a folder, e.g. 'voc20_darknet19_A'. We call it
+         full_expid
+      2. We use test_data and test_split to identify the test data. test_data
+         is the folder name under data/. test_split is the data name. The file
+         name should be like '{}/{}.tsv'.format(test_data, test_split). It is
+         also feasible if it is a composite data split.
+   2. Command line
+      ```
+      python scripts/tools.py -p "{'type': 'yolo_predict', \
+            'full_expid': prepared_full_expid_name, \
+            'test_data': prepared_test_data_name, \
+            'test_split': prepared_test_split_name, \
+            'gpus': [0,1,2,3]}"
+      ```
+      The output will be under 'output/{}/snapshot/'.format(full_expid)
+
 ## Visualization
 1. Visualize the data under data/ and the model prediction result under output/
    1. go to the folder of visualization
