@@ -46,7 +46,6 @@ def visualize_fp_fn_result(key_fp_fn_pred_gt_result, data, out_folder):
         im_false_pos = np.copy(im)
 
         total = total + len(false_pos)
-        continue
 
         draw_bb(im_false_pos, [r['rect'] for r in false_pos], [r['class'] for r in
             false_pos])
