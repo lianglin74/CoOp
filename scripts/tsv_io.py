@@ -60,6 +60,17 @@ class TSVDataset(object):
         data_root = os.path.join(proj_root, 'data', name)
         self._data_root = op.relpath(data_root)
         self._fname_to_tsv = {}
+
+        self._split_to_key_to_idx = {}
+
+    def seek_by_key(self, key, split, t=None, version=None):
+        if split in self._split_to_key_to_idx:
+            key_to_idx = self._split_to_key_to_idx[split]
+        else:
+            key_to_idx = {k: i for i, k in enumerate(self.load_keys(split))}
+            self._split_to_key_to_idx[split] = key_to_idx
+        idx = key_to_idx[key]
+        return next(self.iter_data(split, t, version, filter_idx=[idx]))
     
     def load_labelmap(self):
         return load_list_file(self.get_labelmap_file())

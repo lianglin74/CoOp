@@ -28,6 +28,47 @@ import cv2
 from qd_common import encoded_from_img
 from qd_common import json_dump
 from tqdm import tqdm
+import numpy as np
+
+def visualize_fp_fn_result(key_fp_fn_pred_gt_result, data, out_folder):
+    dataset = TSVDataset(data)
+    total = 0
+    for key, str_false_pos, str_false_neg, str_pred, str_gt in \
+        tqdm(tsv_reader(key_fp_fn_pred_gt_result)):
+
+        key1, _, str_im = dataset.seek_by_key(key, 'test')
+        im = img_from_base64(str_im)
+        assert key == key1
+        pred = json.loads(str_pred)
+        gt = json.loads(str_gt)
+
+        false_pos = json.loads(str_false_pos)
+        im_false_pos = np.copy(im)
+
+        total = total + len(false_pos)
+        continue
+
+        draw_bb(im_false_pos, [r['rect'] for r in false_pos], [r['class'] for r in
+            false_pos])
+
+        im_false_neg = np.copy(im)
+        false_neg = json.loads(str_false_neg)
+        draw_bb(im_false_neg, [r['rect'] for r in false_neg], [r['class'] for r in
+            false_neg])
+
+        x1 = np.concatenate((im_false_pos, im_false_neg), 1)
+
+        im_pred = np.copy(im)
+        draw_bb(im_pred, [r['rect'] for r in pred], [r['class'] for r in pred])
+
+        im_gt = np.copy(im)
+        draw_bb(im_gt, [r['rect'] for r in gt], [r['class'] for r in gt])
+        x2 = np.concatenate((im_pred, im_gt), 1)
+
+        x = np.concatenate((x1, x2), 0)
+        save_image(x, op.join(out_folder,
+            data, key + '.jpg' if not key.endswith('.jpg') else key))
+    logging.info(total)
 
         
 def resize_dataset(data, short=480, out_data=None):
