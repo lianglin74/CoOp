@@ -209,7 +209,7 @@ def ensure_inject_image(data, split):
     from pymongo.errors import BulkWriteError
 
     dataset = TSVDataset(data)
-    if not dataset.has(data, split):
+    if not dataset.has(split):
         return
 
     client = MongoClient()
@@ -1391,7 +1391,11 @@ def populate_dataset_details(data, check_image_details=False):
         if need_update:
             logging.info('updating {}'.format(dataset.get_labelmap_file()))
             write_to_file('\n'.join(labelmap), dataset.get_labelmap_file())
-
+    
+    if not op.isfile(dataset.get_pos_labelmap_file()):
+        ls = dataset.load_labelmap()
+        write_to_file('\n'.join([l for l in ls if not l.startswith('-')]),
+                dataset.get_pos_labelmap_file())
 
     # generate the rows with duplicate keys
     for split in splits: 
@@ -2281,6 +2285,9 @@ class TSVDatasetSource(TSVDataset):
         self._valid_splits = valid_splits
         self._use_all = use_all
         self.cleaness = cleaness
+        # currently, it is true by default. OD has no such data sources, but
+        # tag has (openimage5m).
+        self.use_negative_label = True
 
     def populate_info(self, root):
         self._ensure_initialized()
@@ -2355,8 +2362,10 @@ class TSVDatasetSource(TSVDataset):
             if self.has(split, 'labelmap', self._version):
                 for row in self.iter_data(split, 'labelmap', self._version):
                     labelmap.append(row[0])
-        labelmap = list(set(labelmap))
+        # if it has a prefix of -, it means it has no that tag.
+        labelmap = [l for l in labelmap if not l.startswith('-')]
         hash_labelmap = set(labelmap)
+        labelmap = list(hash_labelmap)
 
         tree_noffsets = {}
         for node in root.iter_search_nodes():
@@ -2432,6 +2441,11 @@ class TSVDatasetSource(TSVDataset):
                             continue
                         sourcelabel_targetlabel.append((l, t))
                         #result[l] = t 
+        if self.use_negative_label:
+            # we just add the mapping here. no need to check if -s is in the
+            # source label list
+            sourcelabel_targetlabel.extend([('-' + s, '-' + t) for s, t in
+                sourcelabel_targetlabel])
 
         self._sourcelabel_to_targetlabels = list_to_dict_unique(sourcelabel_targetlabel,
                 0)
@@ -2564,9 +2578,9 @@ def convert_label(label_tsv, idx, label_mapper, with_bb):
         assert len(row) == 2
         rects = json.loads(row[1])
         if with_bb:
-            rects = [r for r in rects if any(x != 0 for x in r['rect'])]
+            rects = [r for r in rects if 'rect' in r and any(x != 0 for x in r['rect'])]
         else:
-            rects = [r for r in rects if all(x == 0 for x in r['rect'])]
+            rects = [r for r in rects if 'rect' not in r or all(x == 0 for x in r['rect'])]
         if result is None:
             # don't use this, because all list will be shared
             #result = [len(row) * ['d']] * tsv.num_rows()
@@ -3108,6 +3122,10 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
             if 'max_image_extract_for_train' in n.features and n.__getattribute__('max_image_extract_for_train') > default_max_image
             else default_max_image
         for n in tax.root.iter_search_nodes() if n != tax.root}
+    # negative images constraint
+    labels = label_to_max_image.keys()
+    for l in labels:
+        label_to_max_image['-' + l] = label_to_max_image[l]
     label_to_max_image[None] = 10000000000
     min_image = kwargs.get('min_image_per_label', 200)
     
@@ -3161,9 +3179,17 @@ def delift_one_image(rects, tax):
     # is man, we should remove the person label
     rects2 = []
     for curr_r in rects:
+        if curr_r['class'].startswith('-'):
+            # if it is a background, we do nothing here. In the future, we
+            # might change this logic
+            rects2.append(curr_r)
+            continue
         curr_label = curr_r['class']
-        ious = [calculate_iou(r['rect'], curr_r['rect']) for r in rects2]
-        same_place_rects = [r for i, r in zip(ious, rects2) if i > 0.9]
+        if 'rect' not in curr_r:
+            same_place_rects = rects2
+        else:
+            ious = [calculate_iou(r['rect'], curr_r['rect']) for r in rects2]
+            same_place_rects = [r for i, r in zip(ious, rects2) if i > 0.9]
         # if current label is one of parent of the same_place rects, ignore it
         ignore = False
         for same_place_r in same_place_rects:
@@ -3186,6 +3212,9 @@ def delift_one_image(rects, tax):
 def lift_one_image(rects, tax):
     rects2 = []
     for curr_r in rects:
+        if curr_r['class'].startswith('-'):
+            rects2.append(curr_r)
+            continue
         label = curr_r['class']
         all_label = tax.name_to_ancestors[label]
         all_label.add(label)
@@ -3205,6 +3234,10 @@ def populate_output_num_images(ldtX, suffix, root):
     label_to_node = {n.name: n for n in root.iter_search_nodes() if n != root}
     targetlabel_to_dX = list_to_dict(ldtX, 0)
     for targetlabel in targetlabel_to_dX:
+        if not targetlabel or targetlabel.startswith('-'):
+            # currently, we ignore this background case. In the future, we
+            # might change this logic
+            continue
         if not targetlabel:
             # it means background images 
             continue
@@ -3421,13 +3454,32 @@ def get_data_sources(public_only=False, version=None):
             ]
 
 
+def get_img_url2(img_key):
+    # don't use get_image_url
+    clean_name = _map_img_key_to_name2(img_key)
+    url = _get_url_from_name(clean_name)
+    return url
 
 def get_img_url(img_key):
+    # use version 2
     clean_name = _map_img_key_to_name(img_key)
     url = _get_url_from_name(clean_name)
     return url
 
+def _map_img_key_to_name2(key):
+    assert len(key) > 0
+    ext = '.jpg'
+    pattern = '^([0-9]|[a-z]|[A-Z]|\.|_)*$'
+    if not re.match(pattern, key):
+        key = hash_sha1(key)
+    key = key.lower()
+    if key.endswith(ext):
+        return key
+    else:
+        return key + ext 
+
 def _map_img_key_to_name(key):
+    # use version 2
     _EXT = ".jpg"
     if key.startswith("brand"):
         return "brand" + str(hash(key)) + _EXT

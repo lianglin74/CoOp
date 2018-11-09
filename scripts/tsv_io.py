@@ -39,6 +39,12 @@ class TSVFile(object):
         pos = self._lineidx[idx]
         self._fp.seek(pos)
         return [s.strip() for s in self._fp.readline().split('\t')]
+
+    def __getitem__(self, index):
+        return self.seek(index)
+
+    def __len__(self):
+        return self.num_rows()
     
     def _ensure_lineidx_loaded(self):
         if self._lineidx is None:
@@ -75,11 +81,17 @@ class TSVDataset(object):
     def load_labelmap(self):
         return load_list_file(self.get_labelmap_file())
 
+    def load_pos_labelmap(self):
+        return load_list_file(self.get_pos_labelmap_file())
+
     def get_tree_file(self):
         return op.join(self._data_root, 'tree.txt')
 
     def get_labelmap_file(self):
         return op.join(self._data_root, 'labelmap.txt')
+
+    def get_pos_labelmap_file(self):
+        return op.join(self._data_root, 'labelmap.pos.txt')
 
     def get_train_shuffle_file(self):
         return self.get_shuffle_file('train') 
@@ -92,7 +104,7 @@ class TSVDataset(object):
 
     def load_key_to_idx(self, split):
         result = {}
-        for i, row in enumerate(tsv_reader(self.get_data(split, 'label'))):
+        for i, row in enumerate(self.iter_data(split, 'label')):
             key = row[0]
             assert key not in result
             result[key] = i
@@ -318,7 +330,13 @@ class TSVDataset(object):
             return len(load_list_file(self.get_shuffle_file(split)))
 
     def iter_data(self, split, t=None, version=None, 
-            unique=False, filter_idx=None):
+            unique=False, filter_idx=None, progress=False):
+        if progress:
+            if filter_idx is None:
+                num_rows = self.num_rows(split, version)
+            else:
+                num_rows = len(filter_idx)
+            pbar = progressbar.ProgressBar(maxval=num_rows).start()
         splitX = split + 'X'
         if not op.isfile(self.get_data(split, t, version)) and \
                 op.isfile(self.get_data(splitX, t, version)):
@@ -333,6 +351,8 @@ class TSVDataset(object):
                         yield row
                         if unique:
                             returned.add(row[0])
+                    if progress:
+                        pbar.update(i)
             else:
                 rows_data = self.iter_composite(split, None, version,
                         filter_idx)
@@ -349,6 +369,8 @@ class TSVDataset(object):
                         yield r_data
                         if unique:
                             returned.add(r_data[0])
+                    if progress:
+                        pbar.update(i)
         else:
             fname = self.get_data(split, t, version)
             if not op.isfile(fname):
@@ -358,6 +380,8 @@ class TSVDataset(object):
                 for i, row in enumerate(tsv_reader(self.get_data(
                     split, t, version))):
                     yield row
+                    if progress:
+                        pbar.update(i)
             else:
                 fname = self.get_data(split, t, version)
                 tsv = self._retrieve_tsv(fname)
@@ -419,10 +443,10 @@ def tsv_writer(values, tsv_file_name, sep='\t'):
     os.rename(tsv_file_name_tmp, tsv_file_name)
     os.rename(tsv_lineidx_file_tmp, tsv_lineidx_file)
 
-def tsv_reader(tsv_file_name):
+def tsv_reader(tsv_file_name, sep='\t'):
     with open(tsv_file_name, 'r') as fp:
         for i, line in enumerate(fp):
-            yield [x.strip() for x in line.split('\t')]
+            yield [x.strip() for x in line.split(sep)]
 
 def csv_reader(tsv_file_name):
     with open(tsv_file_name, 'r') as fp:
@@ -514,9 +538,9 @@ def create_inverted_list(rows):
             # detection dataset
             curr_unique_labels = set([l['class'] for l in labels])
             curr_unique_with_bb_labels = set([l['class'] for l in labels 
-                if any(x != 0 for x in l['rect'])])
+                if 'rect' in l and any(x != 0 for x in l['rect'])])
             curr_unique_no_bb_labels = set([l['class'] for l in labels 
-                if all(x == 0 for x in l['rect'])])
+                if 'rect' not in l or all(x == 0 for x in l['rect'])])
         else:
             assert type(labels) is int
             curr_unique_labels = [str(labels)]

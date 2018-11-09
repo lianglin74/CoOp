@@ -328,7 +328,7 @@ def get_all_tree_data():
 
 def parse_test_data(predict_file):
     # 'model_iter_368408.caffemodel.Tax1300V14.1_OpenImageV4_448Test_with_bb.train.maintainRatio.OutTreePath.TreeThreshold0.1.ClsIndependentNMS.predict'
-    pattern = 'model_iter_[0-9]*\.caffemodel\.(.*)\.(train|trainval|test)\..*\.predict'
+    pattern = 'model_iter_[0-9]*[e]*\.(?:caffemodel|pth\.tar)\.(.*)\.(train|trainval|test).*\.predict'
     match_result = re.match(pattern, predict_file)
     if match_result and len(match_result.groups()) == 2:
         return match_result.groups()
@@ -733,7 +733,10 @@ def setup_yaml():
     """ https://stackoverflow.com/a/8661021 """
     represent_dict_order = lambda self, data:  self.represent_mapping('tag:yaml.org,2002:map', data.items())
     yaml.add_representer(OrderedDict, represent_dict_order)    
-    yaml.add_representer(unicode, unicode_representer)
+    try:
+        yaml.add_representer(unicode, unicode_representer)
+    except NameError:
+        logging.info('python 3 env')
 
 def init_logging():
     np.seterr(divide = "raise", over="warn", under="warn",  invalid="raise")
@@ -1620,4 +1623,14 @@ def test_correct_caffe_file_path():
         assert len(s1_h.data) == len(s2_h.data)
         for s1_d, s2_d in zip(s1_h.data, s2_h.data):
             assert s1_d == s2_d
+
+if __name__ == '__main__':
+    init_logging()
+
+    kwargs = parse_general_args()
+    from pprint import pformat
+    logging.info('param:\n{}'.format(pformat(kwargs)))
+    function_name = kwargs['type']
+    del kwargs['type']
+    locals()[function_name](**kwargs)
 

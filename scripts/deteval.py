@@ -30,12 +30,20 @@ def load_truths_iter(rows):
         except: 
             logging.info('invalid grouth truth: {}'.format(cols[0]))
             continue
+        if type(rects) is int:
+            label = str(rects)
+            if label not in retdict:
+                retdict[label] = dict()
+            if key not in retdict[label]:
+                retdict[label][key] = []
+            retdict[label][key] += [(0, None)]
+            continue
         for rect in rects:
             label = rect['class'].strip();
             if label not in retdict:
                 retdict[label]=dict();
             if key not in retdict[label]:
-                retdict[label][key]=[];
+                retdict[label][key] = []
             # groundtruth coords are 0-based. +1
             bbox = [ x+1 for x in rect['rect'] ];
             retdict[label][key]+=[(rect['diff'] if 'diff' in rect else 0,bbox)];
@@ -95,8 +103,11 @@ def load_dets(filein):
     '''
     retdict = dict();
     with open(filein, "r") as tsvin:
-        bar = FileProgressingbar(tsvin, 'load-dets')
-        for line in tsvin:
+        # the file.tell() is disabled by the next function and the
+        # FileProgressBar here is not supported in python3.
+        #bar = FileProgressingbar(tsvin, 'load-dets')
+        from tqdm import tqdm
+        for line in tqdm(tsvin):
             cols = [x.strip() for x in line.split("\t")]
             if len(cols)<2:
                 continue;
@@ -112,7 +123,7 @@ def load_dets(filein):
                 if label not in retdict:
                     retdict[label]=[]
                 retdict[label] += [ (key,rect['conf'],bbox)]
-            bar.update()
+            #bar.update()
     for label in retdict:
         retdict[label] = sorted(retdict[label], key=lambda x:-x[1])
     return retdict;
@@ -205,7 +216,7 @@ def load_baseline(baselinefolder) :
 
 def _eval(truths, detresults, ovthresh, confs=None, label_to_keys=None):
     if confs is None:
-        confs = [0.3,0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+        confs = [0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.98]
     #calculate metrics
     y_scores = []
     y_trues = []
@@ -374,8 +385,10 @@ def print_reports(reports, precths, report_file_table):
             table +=[data]
         fields = list(range(len(data)));
         align = [('^', '<')] + [('^', '^')]*len(data)
-        note = ('Results on %s objects (%d)'% (key, mv_report[mv_report.keys()[0]]['npos']))
-        print note
+        # mv_report.keys() does not return a list in python3. Thus, we have to
+        # convert it to a list first
+        note = ('Results on %s objects (%d)'% (key,
+            mv_report[list(mv_report.keys())[0]]['npos']))
         write_tablemd(sys.stdout, table,fields,headings,align)
         fp.write(note + '\n')
         write_tablemd(fp, table,fields,headings,align)

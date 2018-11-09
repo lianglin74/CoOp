@@ -16,9 +16,11 @@ def put_text(im, text, bottomleft=(0,100),
             thickness=font_thickness)
     return cv2.getTextSize(text, font, font_scale, font_thickness)[0]
 
-def show_net_input(data, label):
+def show_net_input(data, label, max_image_to_show=None):
     all_image = network_input_to_image(data, [104, 117, 123])
     num_image = label.shape[0]
+    if max_image_to_show:
+        num_image = min(max_image_to_show, num_image)
     num_rect = label.shape[1] / 5
     im_height = all_image[0].shape[0]
     im_width = all_image[0].shape[1]
@@ -131,8 +133,8 @@ def show_images(all_image, num_rows, num_cols):
     _, ax = plt.subplots(num_rows, num_cols)
     ax = ax.reshape((num_rows, num_cols))
     k = 0
-    for i in xrange(num_rows):
-        for j in xrange(num_cols):
+    for i in range(num_rows):
+        for j in range(num_cols):
             if k >= len(all_image):
                 break
             ax[i, j].imshow(cv2.cvtColor(all_image[k],
