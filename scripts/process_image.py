@@ -45,13 +45,19 @@ def show_net_input(data, label, max_image_to_show=None):
 def draw_bb(im, all_rect, all_label, 
         probs=None, 
         color=None,
-        font_scale=0.5, 
-        font_thickness=1,
-        rect_thickness=2,
+        #font_scale=0.5, 
+        #font_thickness=1,
+        #rect_thickness=2,
         draw_label=True):
     '''
     all_rect: x0, y0, x1, y1
     '''
+    ref = sum(im.shape[:2]) / 2
+
+    font_scale = ref / 500.
+    font_thickness = max(ref / 250, 1)
+    rect_thickness = max(ref / 250, 1)
+
     dist_label = set(all_label)
     if color is None:
         color = {}
