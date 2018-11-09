@@ -2,21 +2,28 @@ import json
 import os
 import uuid
 
-from eval_utils import DetectionFile, GroundTruthConfig
+from eval_utils import DetectionFile, GroundTruthConfig, _thresholding_detection
 from generate_task import write_task_file, pack_task_with_honey_pot
 from uhrs import UhrsTaskManager
 from utils import read_from_file, write_to_file, get_max_iou_idx
 import _init_paths
 from process_tsv import get_img_url
 
-def get_wrong_pred(pred_file, gt_file, labelmap, outfile=None, min_conf=0.5, iou=0.5):
-    target_classes = set(cols[0].lower() for cols in read_from_file(labelmap))
+
+def get_wrong_pred(pred_file, gt_file, labelmap=None, outfile=None, min_conf=0.5, iou=0.5):
+    if labelmap:
+        target_classes = set(cols[0].lower() for cols in read_from_file(labelmap))
+    else:
+        target_classes = None
     pred = DetectionFile(pred_file, min_conf=min_conf)
     gt = DetectionFile(gt_file)
     all_wrong_pred = []  # imgkey, pred_bboxes, gt_bboxes
+    num_gt, num_pred, num_false_pos, num_missing = 0, 0, 0, 0
     for imgkey in pred:
-        pred_bboxes = [b for b in pred[imgkey] if b["conf"]>=iou and b["class"].lower() in target_classes]
-        gt_bboxes = [b for b in gt[imgkey] if b["class"].lower() in target_classes]
+        pred_bboxes = _thresholding_detection(pred[imgkey], thres_dict=None, display_dict=None, obj_threshold=0,
+                            conf_threshold=min_conf, blacklist=None, labelmap=target_classes)
+        gt_bboxes = _thresholding_detection(gt[imgkey], thres_dict=None, display_dict=None, obj_threshold=0,
+                            conf_threshold=0, blacklist=None, labelmap=target_classes)
         visited = set()
         false_pos = []
         missing = []
@@ -35,9 +42,17 @@ def get_wrong_pred(pred_file, gt_file, labelmap, outfile=None, min_conf=0.5, iou
             for i in range(len(gt_bboxes)):
                 if i not in visited:
                     missing.append(gt_bboxes[i])
+
+        num_gt += len(gt_bboxes)
+        num_pred += len(pred_bboxes)
+        num_false_pos += len(false_pos)
+        num_missing += len(missing)
         if len(false_pos)>0 or len(missing)>0:
             all_wrong_pred.append([imgkey, json.dumps(false_pos), json.dumps(missing), json.dumps(pred_bboxes), json.dumps(gt_bboxes)])
 
+    print("#gt: {}, #pred: {}, #correct: {}, precision: {}, recall: {}".format(
+            num_gt, num_pred, num_pred-num_false_pos,
+            float(num_pred-num_false_pos)/num_pred, float(num_pred-num_false_pos)/num_gt))
     if all_wrong_pred and outfile:
         write_to_file(all_wrong_pred, outfile)
     return all_wrong_pred

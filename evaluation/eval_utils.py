@@ -192,8 +192,8 @@ def load_result(rootpath, config):
     return result
 
 
-def _thresholding_detection(bbox_list, thres_dict, display_dict,
-                            obj_threshold, conf_threshold, blacklist):
+def _thresholding_detection(bbox_list, thres_dict, display_dict, obj_threshold,
+                            conf_threshold, blacklist, labelmap=None):
     res = []
     for b in bbox_list:
         if "obj" in b and b["obj"] < obj_threshold:
@@ -202,6 +202,8 @@ def _thresholding_detection(bbox_list, thres_dict, display_dict,
             continue
         term = b["class"]
         if blacklist and term.lower() in blacklist:
+            continue
+        if labelmap and term.lower() not in labelmap:
             continue
         if thres_dict and term in thres_dict and b["conf"] < thres_dict[term]:
             continue
