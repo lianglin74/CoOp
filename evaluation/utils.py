@@ -2,6 +2,7 @@ from __future__ import absolute_import
 from __future__ import division
 
 import json
+import numpy as np
 import os
 
 
@@ -58,6 +59,24 @@ def get_max_iou_idx(new_bbox, bbox_list):
             elif cur_iou == max_iou:
                 max_indices.append(idx)
     return max_indices, max_iou
+
+
+def get_bbox_matching_map(list1, list2, iou_threshold):
+    """
+    Returns the matching map from list1 to list2.
+    i.e., list1[i] matches list2[res[i]] if res[i] is not None
+    """
+    res = [None] * len(list1)
+    visited = set()  # visited idx in list2
+    for idx1, bbox1 in enumerate(list1):
+        indices2, max_iou = get_max_iou_idx(bbox1, list2)
+        if max_iou <= iou_threshold:
+            continue
+        for idx2 in indices2:
+            if idx2 not in visited:
+                res[idx1] = idx2
+                visited.add(idx2)
+    return res
 
 
 def calculate_iou(bbox1, bbox2):

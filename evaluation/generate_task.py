@@ -10,7 +10,7 @@ import uuid
 
 from utils import read_from_file, write_to_file, escape_json_obj, calculate_bbox_area
 import _init_paths
-from process_tsv import get_img_url
+from process_tsv import get_img_url2
 from tsv_io import TSVFile
 
 
@@ -100,10 +100,10 @@ def generate_verify_box_task(label_file, gt_file, outbase,
     """
     Params:
         label_file: tsv file containing labels to be verified,
-            columns: image_key, json list of bboxes, image_url
+            columns: image_info, json list of bboxes, image_url
         gt_file: txt file containing ground truth labels, used to
             create honey pot, each line is a json dict
-            {"image_key": ..., "image_url": ...,
+            {"image_info": ..., "image_url": ...,
             "objects_to_find": ..., "bboxes":...}
         outfile: one column of "input_content", used to submit
             UHRS/MTurk tasks
@@ -126,18 +126,17 @@ def generate_verify_box_task(label_file, gt_file, outbase,
     term_count = collections.defaultdict(int)
     task_data = []
     for parts in read_from_file(label_file, sep='\t', check_num_cols=3):
-        key = parts[0]
+        dataset = parts[0]
         bbox_list = json.loads(parts[1])
         image_url = parts[2]
         for bbox in bbox_list:
             term = bbox['class']
-            if key.startswith("brand") and not term.endswith("logo"):
-                term = bbox['class'] + " logo"
-
             if term_description_map and term in term_description_map:
                 term = term_description_map[term]
+            if (dataset.startswith("brand") or dataset.startswith("logo")) and not term.endswith("logo"):
+                term = bbox['class'] + " logo"
             term_count[term] += 1
-            task_data.append({"uuid": str(uuid.uuid4()), "image_key": key,
+            task_data.append({"uuid": str(uuid.uuid4()), "image_info": dataset,
                               "image_url": image_url,
                               "objects_to_find": term, "bboxes": [bbox]})
 
@@ -168,7 +167,7 @@ def generate_verify_box_task(label_file, gt_file, outbase,
     return outfiles
 
 
-def generate_honeypot(imgfiles, labelfiles, outfile=None, easy_area_thres=0.2, key_prefix=None):
+def generate_honeypot(dataset_name, imgfiles, labelfiles, outfile=None, easy_area_thres=0.2):
     """ Load ground truth data from specified dataset, split, version.
         The bbox is considered easy for human to verify if:
         bbox_area / image_area > easy_area_thres
@@ -191,9 +190,7 @@ def generate_honeypot(imgfiles, labelfiles, outfile=None, easy_area_thres=0.2, k
             h, w, c = source.shape
             bboxes = json.loads(coded_rects)
             num_total_bboxes += len(bboxes)
-            if key_prefix and not key.startswith(key_prefix):
-                key = key_prefix + key
-            image_url = get_img_url(key)
+            image_url = get_img_url2(key)
             for bbox in bboxes:
                 bbox["rect"] = [np.clip(bbox["rect"][0], 0, w), np.clip(bbox["rect"][1], 0, h),
                                 np.clip(bbox["rect"][2], 0, w), np.clip(bbox["rect"][3], 0, h)]
@@ -201,10 +198,10 @@ def generate_honeypot(imgfiles, labelfiles, outfile=None, easy_area_thres=0.2, k
                 if float(bbox_area) / (h*w) > easy_area_thres:
                     num_easy_bboxes += 1
                     term = bbox["class"]
-                    if key_prefix and key_prefix.startswith("brand"):
+                    if dataset_name.startswith("brand") or dataset_name.startswith("logo"):
                         term = bbox["class"] + " logo"
                     hp_data.append(
-                        {"image_key": key, "image_url": image_url,
+                        {"image_info": dataset_name, "image_url": image_url,
                             "objects_to_find": term,
                             "bboxes": [bbox]})
 

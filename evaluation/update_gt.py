@@ -109,7 +109,7 @@ def update_gt(args):
         else:
             break
 
-    merge_gt(args.gt, [res_file], args.iou_threshold)
+    merge_gt(args.gt, [res_file], 0.8)
 
 
 def main(args):

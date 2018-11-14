@@ -7,9 +7,9 @@ from shutil import copyfile
 import yaml
 
 import _init_paths
-from process_tsv import get_img_url
+from process_tsv import get_img_url2
 from utils import read_from_file, write_to_file
-from utils import search_bbox_in_list, is_valid_bbox, get_max_iou_idx
+from utils import search_bbox_in_list, is_valid_bbox, get_max_iou_idx, get_bbox_matching_map
 
 
 class DetectionFile(object):
@@ -70,7 +70,11 @@ class GroundTruthConfig(object):
         return self.config.keys()
 
     def baselines(self, dataset):
-        return [b["name"] for b in self.config[dataset]["baselines"]]
+        res = []
+        if self.config[dataset].get("baselines", None):
+            for b in self.config[dataset]["baselines"]:
+                res.append(b["name"])
+        return res
 
     def gt_file(self, dataset, filtered=False):
         gt_type = "filtered" if filtered else "original"
@@ -307,10 +311,7 @@ def process_prediction_to_verify(gt_config_file, rootpath, file_info_list,
     if include_labelmap:
         include_classes = set(l[0].lower() for l in read_from_file(include_labelmap))
     # load existing ground truth labels
-    all_gt, _ = _load_all_gt(gt_config_file)
-    with open(gt_config_file, 'r') as fp:
-        gt_cfg = yaml.load(fp)
-    gt_root = os.path.split(gt_config_file)[0]
+    gt_cfg = GroundTruthConfig(gt_config_file)
 
     num_bbox_to_submit = 0
     num_bbox_pos = 0
@@ -321,49 +322,56 @@ def process_prediction_to_verify(gt_config_file, rootpath, file_info_list,
         # load prediction results
         dataset = fileinfo["dataset"]
         source = fileinfo["source"]
-        if dataset not in gt_cfg:
+        if dataset not in gt_cfg.datasets():
             raise Exception("unknow dataset: {}".format(dataset))
         result = load_result(rootpath, fileinfo)
         logging.info("load prediction results from: {}"
                      .format(fileinfo["result"]))
 
         # load ground truth and verified baselines
-        gt_tsv = DetectionFile(os.path.join(gt_root, gt_cfg[dataset]['groundtruth']["original"]))
+        gt_tsv = DetectionFile(gt_cfg.gt_file(dataset))
         baselines_tsv = []
-        if gt_cfg[dataset]["baselines"]:
-            for baseline in gt_cfg[dataset]["baselines"]:
-                baselines_tsv.append(DetectionFile(os.path.join(gt_root, baseline["result"]), min_conf=baseline_conf))
+        for baseline in gt_cfg.baselines(dataset):
+            baselines_tsv.append(DetectionFile(gt_cfg.baseline_file(dataset, baseline), min_conf=baseline_conf))
 
-        for imgkey, bboxes in result.items():
-            new_bboxes = []
-            for b in bboxes:
+        for imgkey in result:
+            # get result bboxes
+            bboxes = []
+            for b in result[imgkey]:
                 if include_classes and b["class"].lower() not in include_classes:
                     continue
                 if not is_valid_bbox(b):
                     logging.error("invalid bbox: {}".format(str(b)))
                     continue
+                bboxes.append(b)
+            num_bbox_total += len(bboxes)
 
-                num_bbox_total += 1
-                # if prediction is in ground truth, continue
-                if search_bbox_in_list(b, gt_tsv[imgkey], pos_iou_threshold) >= 0:
-                    num_bbox_pos += 1
+            verified = set()
+            # if prediction is in ground truth, it is verified as correct
+            idx_map = get_bbox_matching_map(bboxes, gt_tsv[imgkey], pos_iou_threshold)
+            verified.update([idx for idx in range(len(bboxes)) if idx_map[idx]])
+            num_pos_cur = len(verified)
+            num_bbox_pos += num_pos_cur
+
+            # if prediction is in baseline but not in gt, it is verified as wrong
+            for idx in range(len(bboxes)):
+                if idx in verified:
                     continue
-                # if prediction is in verified in baselines, continue
-                is_verified = False
                 for base_tsv in baselines_tsv:
-                    if search_bbox_in_list(b, base_tsv[imgkey], neg_iou_threshold) >= 0:
-                        is_verified = True
+                    if search_bbox_in_list(bboxes[idx], base_tsv[imgkey], neg_iou_threshold) >= 0:
+                        verified.add(idx)
                         break
-                if is_verified:
-                    num_bbox_neg += 1
-                    continue
+            num_bbox_neg += len(verified) - num_pos_cur
 
-                new_bboxes.append(b)
-            if len(new_bboxes) > 0:
+            if len(verified) < len(bboxes):
+                new_bboxes = []
+                for idx in range(len(bboxes)):
+                    if idx not in verified:
+                        new_bboxes.append(bboxes[idx])
+
                 num_bbox_to_submit += len(new_bboxes)
-                image_url = get_img_url(imgkey)
-                output_data.append(['_'.join([dataset, source, imgkey]),
-                                    json.dumps(new_bboxes), image_url])
+                image_url = get_img_url2(imgkey)
+                output_data.append([dataset, json.dumps(new_bboxes), image_url])
 
     if output_data:
         write_to_file(output_data, outfile)
@@ -379,6 +387,8 @@ def merge_gt(gt_config_file, res_files, bbox_matching_iou):
     # load old ground truth labels
     all_gt, gt_files = _load_all_gt(gt_config_file)
 
+    url_key_map = {get_img_url2(k): k for d in all_gt for k in all_gt[d]}
+
     # merge new results into ground truth
     added_count = collections.defaultdict(int)
     for res_file in res_files:
@@ -387,7 +397,8 @@ def merge_gt(gt_config_file, res_files, bbox_matching_iou):
             # consensus yes
             if int(parts[0]) == 1:
                 for task in json.loads(parts[1]):
-                    dataset, source, imgkey = task["image_key"].split('_', 2)
+                    dataset = task["image_info"]
+                    imgkey = url_key_map[task["image_url"]]
                     existing_bboxes = all_gt[dataset][imgkey]
                     for new_bbox in task["bboxes"]:
                         if search_bbox_in_list(new_bbox, existing_bboxes,
