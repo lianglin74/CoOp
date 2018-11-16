@@ -198,6 +198,9 @@ def parse_args():
     parser.add_argument('-p', '--precth', required=False, type=float, nargs='+', default=[0.8,0.9,0.95], help="get precision, recall, threshold above given precision threshold")
     parser.add_argument('-ms', '--multiscale', default=False, action='store_true', help='Flag to enable report metrics on small, medium, large object, default: False')
     parser.add_argument('-c', '--classap', required=False, type=float,  help='the per class precision on given IOU')
+    parser.add_argument('-r', '--report_file', required=True, type=str,
+            help='the report file')
+
     
     args = parser.parse_args()
     return args
