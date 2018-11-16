@@ -45,7 +45,10 @@ def load_truths_iter(rows):
             if key not in retdict[label]:
                 retdict[label][key] = []
             # groundtruth coords are 0-based. +1
-            bbox = [ x+1 for x in rect['rect'] ];
+            if 'rect' in rect:
+                bbox = [ x+1 for x in rect['rect'] ]
+            else:
+                bbox = None
             retdict[label][key]+=[(rect['diff'] if 'diff' in rect else 0,bbox)];
     return retdict;
 
