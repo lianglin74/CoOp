@@ -495,6 +495,7 @@ def deteval(truth='', dets='', vocdets='', name='',
     '''
     use deteval_iter if possible, which is more general
     '''
+    from tsv_io import tsv_reader
     return deteval_iter(tsv_reader(truth),
             dets, vocdets, name, precth, multiscale, ovthresh,
             classap, baselinefolder, **kwargs)
