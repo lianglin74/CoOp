@@ -1,13 +1,13 @@
 import argparse
 import os
 
-from analyze_task import analyze_verify_box_task
-from eval_utils import merge_gt, process_prediction_to_verify, tune_threshold_for_target, add_config_baseline
-from generate_task import generate_verify_box_task
-from uhrs import UhrsTaskManager
-from utils import write_to_file
 import _init_paths
-from qd_common import init_logging
+from evaluation.analyze_task import analyze_verify_box_task
+from evaluation.eval_utils import merge_gt, process_prediction_to_verify, tune_threshold_for_target, add_config_baseline
+from evaluation.generate_task import generate_verify_box_task
+from evaluation.uhrs import UhrsTaskManager
+from evaluation.utils import write_to_file, list_files_in_dir, ensure_dir_empty
+from scripts.qd_common import init_logging
 
 parser = argparse.ArgumentParser(description='Update ground truth for new detection')
 parser.add_argument('source', type=str,
@@ -41,19 +41,6 @@ parser.add_argument('--add_baseline', action="store_true",
                     help='add the verified result to baselines')
 parser.add_argument('--tune_threshold', default='', type=str,
                     help='''path to TSV file of classes(col 0) and target thresholds(col 1)''')
-
-
-def list_files_in_dir(dirpath):
-    return [os.path.join(dirpath, f) for f in os.listdir(dirpath)
-            if os.path.isfile(os.path.join(dirpath, f))]
-
-
-def ensure_dir_empty(dirpath):
-    if not os.path.exists(dirpath):
-        os.mkdir(dirpath)
-    else:
-        if len(os.listdir(dirpath)) > 0:
-            raise Exception("{} is not empty".format(dirpath))
 
 
 def update_gt(args):

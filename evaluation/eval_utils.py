@@ -7,9 +7,9 @@ from shutil import copyfile
 import yaml
 
 import _init_paths
-from process_tsv import get_img_url2
-from utils import read_from_file, write_to_file
-from utils import search_bbox_in_list, is_valid_bbox, get_max_iou_idx, get_bbox_matching_map
+from scripts.process_tsv import get_img_url2
+from evaluation.utils import read_from_file, write_to_file
+from evaluation.utils import search_bbox_in_list, is_valid_bbox, get_max_iou_idx, get_bbox_matching_map
 
 
 class DetectionFile(object):
@@ -397,7 +397,12 @@ def merge_gt(gt_config_file, res_files, bbox_matching_iou):
             # consensus yes
             if int(parts[0]) == 1:
                 for task in json.loads(parts[1]):
-                    dataset = task["image_info"]
+                    if "image_info" in task:
+                        dataset = task["image_info"]
+                    elif "image_key" in task:
+                        dataset = task["image_key"].split('_', 1)[0]
+                    else:
+                        dataset = None
                     imgkey = url_key_map[task["image_url"]]
                     existing_bboxes = all_gt[dataset][imgkey]
                     for new_bbox in task["bboxes"]:

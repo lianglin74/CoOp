@@ -6,6 +6,19 @@ import numpy as np
 import os
 
 
+def list_files_in_dir(dirpath):
+    return [os.path.join(dirpath, f) for f in os.listdir(dirpath)
+            if os.path.isfile(os.path.join(dirpath, f))]
+
+
+def ensure_dir_empty(dirpath):
+    if not os.path.exists(dirpath):
+        os.mkdir(dirpath)
+    else:
+        if len(os.listdir(dirpath)) > 0:
+            raise Exception("{} is not empty".format(dirpath))
+
+
 def read_from_file(filepath, sep='\t', check_num_cols=None):
     with open(filepath, 'r') as fin:
         for line in fin:

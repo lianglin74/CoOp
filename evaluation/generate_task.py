@@ -8,10 +8,10 @@ import numpy as np
 import os
 import uuid
 
-from utils import read_from_file, write_to_file, escape_json_obj, calculate_bbox_area
 import _init_paths
-from process_tsv import get_img_url2
-from tsv_io import TSVFile
+from evaluation.utils import read_from_file, write_to_file, escape_json_obj, calculate_bbox_area
+from scripts.process_tsv import get_img_url2
+from scripts.tsv_io import TSVFile
 
 
 class HoneyPotGenerator(object):
@@ -68,8 +68,11 @@ def pack_task_with_honey_pot(task_data, hp_data, hp_type, num_tasks_per_hit,
     num_total_task = len(task_data)
     num_total_hp = len(hp_data)
     class_candidates = set(d["objects_to_find"] for d in task_data)
-    hp_gen = HoneyPotGenerator(hp_data, hp_type, hp_neg_prob=hp_neg_prob,
-                               class_candidates=class_candidates)
+    if num_hp_per_hit > 0:
+        hp_gen = HoneyPotGenerator(hp_data, hp_type, hp_neg_prob=hp_neg_prob,
+                                   class_candidates=class_candidates)
+    else:
+        hp_gen = None
     for start in np.arange(0, num_total_task, num_tasks_per_hit):
         end = min(start + num_tasks_per_hit, num_total_task)
         line = task_data[start: end]
@@ -141,9 +144,13 @@ def generate_verify_box_task(label_file, gt_file, outbase,
                               "objects_to_find": term, "bboxes": [bbox]})
 
     # load gt data to create honey pot
-    logging.info("load honey pot from {}".format(gt_file))
-    gt_data = [json.loads(l[0])
-               for l in read_from_file(gt_file, check_num_cols=1)]
+    if gt_file:
+        logging.info("load honey pot from {}".format(gt_file))
+        gt_data = [json.loads(l[0])
+                   for l in read_from_file(gt_file, check_num_cols=1)]
+    else:
+        logging.info("no honey pot")
+        gt_data = []
 
     # merge task and honey pot data
     output_data = pack_task_with_honey_pot(task_data, gt_data, "gt",

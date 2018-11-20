@@ -2,12 +2,14 @@ import json
 import os
 import uuid
 
-from eval_utils import DetectionFile, GroundTruthConfig, _thresholding_detection
-from generate_task import write_task_file, pack_task_with_honey_pot
-from uhrs import UhrsTaskManager
-from utils import read_from_file, write_to_file, get_max_iou_idx
 import _init_paths
-from process_tsv import get_img_url
+from evaluation.eval_utils import DetectionFile, GroundTruthConfig, _thresholding_detection, merge_gt
+from evaluation.generate_task import generate_verify_box_task
+from evaluation.analyze_task import analyze_verify_box_task
+from evaluation.uhrs import UhrsTaskManager
+from evaluation.utils import read_from_file, write_to_file, get_max_iou_idx, list_files_in_dir
+from scripts.process_tsv import get_img_url2
+from scripts.qd_common import init_logging, ensure_directory
 
 
 def get_wrong_pred(pred_file, gt_file, labelmap=None, outfile=None, min_conf=0.5, iou=0.5):
@@ -58,10 +60,24 @@ def get_wrong_pred(pred_file, gt_file, labelmap=None, outfile=None, min_conf=0.5
     return all_wrong_pred
 
 
-def manual_check(gt_config_file, source_name, labelmap, dirpath, min_conf=0.5, iou=0.5):
+def manual_check(source_name, gt_config_file, labelmap, dirpath, min_conf=0.5, iou=0.5):
     """
     Manually check false positive prediction via UHRS UI
     """
+    # prepare working directory
+    ensure_directory(dirpath)
+
+    task_hitapp = "internal_verify_box"
+    task_id_name_log = os.path.join(dirpath, 'task_id_name_log')
+    upload_dir = os.path.join(dirpath, 'upload')
+    ensure_directory(upload_dir)
+    download_dir = os.path.join(dirpath, 'download')
+    ensure_directory(download_dir)
+    res_file = os.path.join(dirpath, "eval_result.tsv")
+    if os.path.isfile(task_id_name_log):
+        os.remove(task_id_name_log)
+
+    # filter data that need to be verified
     config = GroundTruthConfig(gt_config_file)
     task_data = []
     for dataset in config.datasets():
@@ -70,27 +86,27 @@ def manual_check(gt_config_file, source_name, labelmap, dirpath, min_conf=0.5, i
         wrong_pred = get_wrong_pred(pred_file, gt_file, labelmap, min_conf=min_conf, iou=iou)
         for it in wrong_pred:
             key = it[0]
-            image_url = get_img_url(key)
-            key = '_'.join([dataset, source_name, key])
-            bboxes = json.loads(it[1])
-            for bbox in bboxes:
-                task_data.append({"uuid": str(uuid.uuid4()), "image_key": key,
-                                  "image_url": image_url,
-                                  "objects_to_find": bbox["class"], "bboxes": [bbox]})
-    outdata = []
-    start = 0
-    while start < len(task_data):
-        end = min(start + 20, len(task_data))
-        outdata.append(task_data[start:end])
-        start = end
+            image_url = get_img_url2(key)
+            bboxes = json.loads(it[1])  # false positive
+            task_data.append([dataset, json.dumps(bboxes), image_url])
 
-    task_hitapp = "internal_verify_box"
-    task_id_name_log = os.path.join(dirpath, 'task_id_name_log')
-    if os.path.isfile(task_id_name_log):
-        os.remove(task_id_name_log)
+    task_label_file = os.path.join(dirpath, "eval_labels.tsv")
+    write_to_file(task_data, task_label_file)
+    fname = "manual_check_{}".format(source_name)
+    generate_verify_box_task(task_label_file, None,
+                             outbase=os.path.join(upload_dir, fname),
+                             num_tasks_per_hit=20, num_hp_per_hit=0)
+
     uhrs_client = UhrsTaskManager(task_id_name_log)
-    upload_dir = os.path.join(dirpath, 'upload')
-    filename = "manual_false_pos_{}".format(source_name)
-    write_task_file(outdata, os.path.join(upload_dir, filename))
     uhrs_client.upload_tasks_from_folder(task_hitapp, upload_dir,
-                                         prefix=filename, num_judges=1)
+                                         prefix=fname, num_judges=1)
+
+    uhrs_client.wait_until_task_finish(task_hitapp)
+    uhrs_client.download_tasks_to_folder(task_hitapp, download_dir)
+    download_files = list_files_in_dir(download_dir)
+
+    analyze_verify_box_task(
+            download_files, "uhrs", res_file, outfile_rejudge=None,
+            worker_quality_file=None, min_num_judges_per_hit=1)
+
+    merge_gt(gt_config_file, [res_file], 0.8)

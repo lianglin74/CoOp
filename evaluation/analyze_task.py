@@ -5,9 +5,9 @@ import numpy as np
 import os
 import pandas as pd
 
-from generate_task import pack_task_with_honey_pot, write_task_file
-from uhrs import UhrsTaskManager
-from utils import load_escaped_json, write_to_file
+from evaluation.generate_task import pack_task_with_honey_pot, write_task_file
+from evaluation.uhrs import UhrsTaskManager
+from evaluation.utils import load_escaped_json, write_to_file
 
 
 def analyze_verify_box_task(result_files, result_file_type, outfile_res,
@@ -191,7 +191,7 @@ def analyze_worker_quality(df_records, worker_quality_file=None, min_num_hp=5,
                  .format(min_num_hp, accuracy_threshold, neg_threshold))
     logging.info('#bad workers: {:d} ({:.2f}%), #abandoned labels: {:d} ({:.2f}%)'
                  .format(len(bad_worker_ids),
-                         float(len(bad_worker_ids))/len(all_workers)*100,
+                         float(len(bad_worker_ids))/len(all_workers)*100 if all_workers else 0,
                          results_to_throw_away,
                          float(results_to_throw_away)/len(df_records)*100))
     if plot:
