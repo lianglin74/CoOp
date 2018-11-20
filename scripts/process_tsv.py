@@ -2506,6 +2506,13 @@ class TSVDatasetSource(TSVDataset):
                 for i in idxes:
                     # for these images, the root label is hard-coded as None
                     result.append((None, s, i))
+            for s in self._valid_splits:
+                if s in split_to_rootlabel_idx:
+                    continue
+                if s not in self._split_to_num_image:
+                    continue
+                result.extend([(None, s, i) for i in
+                    range(self._split_to_num_image[s])])
         return result
 
 def initialize_images_count(root):
@@ -2633,7 +2640,69 @@ def node_should_have_images(root, th, fname):
     else:
         write_to_yaml_file(few_training, fname)
 
+def clean_dataset2(source_dataset_name, dest_dataset_name):
+    source_dataset = TSVDataset(source_dataset_name)
+    dest_dataset = TSVDataset(dest_dataset_name)
+    splits = ['train', 'trainval', 'test']
+    for split in splits:
+        src_tsv = source_dataset.get_data(split)
+        if op.isfile(src_tsv):
+            dest_tsv = dest_dataset.get_data(split)
+            def gen_rows():
+                rows = tsv_reader(src_tsv)
+                num_removed_images = 0
+                num_removed_rects = 0
+                for i, row in enumerate(tqdm(rows)):
+                    if (i % 1000) == 0:
+                        logging.info('{} - #removedImages={};#removedRects={}'.format(
+                            i, num_removed_images, num_removed_rects))
+                    im = img_from_base64(row[-1])
+                    if im is None:
+                        num_removed_images = num_removed_images + 1
+                        continue
+                    height, width = im.shape[:2]
+                    rects = json.loads(row[1])
+                    invalid = False
+                    to_remove = []
+                    for rect in rects:
+                        r = rect['rect']
+                        if all(s == 0 for s in r):
+                            continue
+                        changed = False
+                        origin = copy.deepcopy(rect)
+                        for j in range(4):
+                            if r[j] < 0:
+                                r[j] = 0
+                                changed = True
+                        for j in range(2):
+                            if r[2 * j] >= width -1:
+                                changed = True
+                                r[2 * j] = width - 1
+                            if [2 * j + 1] >= height - 1:
+                                changed = True
+                                r[2 * j + 1] = height - 1
+                        if changed:
+                            rect['changed_from_rect'] = origin
+                        cx, cy = (r[0] + r[2]) / 2., (r[1] + r[3]) / 2.
+                        w, h = r[2] - r[0], r[3] - r[1]
+                        if cx < 0 or cy < 0 or cx >= width or \
+                                cy >= height or w <= 1 or h <= 1 or \
+                                w >= width or h >= height:
+                            to_remove.append(rect)
+                    if len(to_remove) > 0:
+                        num_removed_rects = num_removed_rects + len(to_remove)
+                    for rect in to_remove:
+                        rects.remove(rect)
+                    if len(to_remove) > 0:
+                        yield row[0], json.dumps(rects), row[2]
+                    else:
+                        yield row
+            tsv_writer(gen_rows(), dest_tsv)
+
 def clean_dataset(source_dataset_name, dest_dataset_name):
+    '''
+    use version 2
+    '''
     source_dataset = TSVDataset(source_dataset_name)
     dest_dataset = TSVDataset(dest_dataset_name)
     splits = ['train', 'trainval', 'test']
@@ -3220,14 +3289,20 @@ def lift_one_image(rects, tax):
         all_label.add(label)
         for l in all_label:
             same_label_rects = [r for r in rects2 if r['class'] == l]
-            ious = [calculate_iou(r['rect'], curr_r['rect']) for r in
-                same_label_rects]
-            if len(ious) > 0 and max(ious) > 0.9:
-                continue
+            if 'rect' in curr_r:
+                ious = [calculate_iou(r['rect'], curr_r['rect']) for r in
+                    same_label_rects if 'rect' in r]
+                if len(ious) > 0 and max(ious) > 0.9:
+                    continue
+                else:
+                    r = copy.deepcopy(curr_r)
+                    r['class'] = l
+                    rects2.append(r)
             else:
-                r = copy.deepcopy(curr_r)
-                r['class'] = l
-                rects2.append(r)
+                if len(same_label_rects) == 0:
+                    r = copy.deepcopy(curr_r)
+                    r['class'] = l
+                    rects2.append(r)
     return rects2
 
 def populate_output_num_images(ldtX, suffix, root):
@@ -3469,7 +3544,7 @@ def get_img_url(img_key):
 def _map_img_key_to_name2(key):
     assert len(key) > 0
     ext = '.jpg'
-    pattern = '^([0-9]|[a-z]|[A-Z]|\.|_)*$'
+    pattern = '^([0-9]|-|[a-z]|[A-Z]|\.|_)*$'
     if not re.match(pattern, key):
         key = hash_sha1(key)
     key = key.lower()
