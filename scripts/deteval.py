@@ -229,6 +229,7 @@ def _eval(truths, detresults, ovthresh, confs=None, label_to_keys=None):
     npos = 0
     class_thresh = dict()
     apdict = dict()
+    class_prec_recall_th = {}
     for label in sorted(truths.keys()):
         if label not in detresults:
             apdict[label] = 0
@@ -244,7 +245,10 @@ def _eval(truths, detresults, ovthresh, confs=None, label_to_keys=None):
         (c_y_scores, c_y_trues, c_npos) = evaluate_(c_detects, c_truths, ovthresh)
         if confs and np.sum(c_y_trues):
             precision, recall, thresholds = metrics.precision_recall_curve(c_y_trues, c_y_scores)
+            class_prec_recall_th[label] = [[float(p) for p in precision], 
+                    [float(r) for r in recall], [float(t) for t in thresholds]]
             for conf in confs:
+                # precision is in ascending order
                 indices, = np.where((precision > conf) & (recall > 0.0))
                 if len(indices) == 0:
                     continue
@@ -283,6 +287,7 @@ def _eval(truths, detresults, ovthresh, confs=None, label_to_keys=None):
     return {
         'class_ap': apdict,
         'class_thresh': class_thresh,
+        'class_prec_recall_th': class_prec_recall_th,
         'map': map,
         'precision': precision,
         'recall': recall,
@@ -442,6 +447,21 @@ def lift_truths(truths, label_tree):
                         r[imid] = rects
     return result
 
+def has_negative_labels(truths):
+    return any(l for l in truths if l.startswith('-'))
+
+def remove_negative_labels(truths):
+    neg_labels = [l for l in truths if l.startswith('-')]
+    label_to_keys = {}
+    for l in truths:
+        pos_l = l if not l.startswith('-') else l[1:]
+        if pos_l not in label_to_keys:
+            label_to_keys[pos_l] = []
+        label_to_keys[pos_l].extend(truths[l].keys())
+    for l in neg_labels:
+        del truths[l]
+    return label_to_keys
+
 def deteval_iter(truth_iter, dets='', vocdets='', name='', 
         precth=[0.8,0.9,0.95], multiscale=False, ovthresh=[0.3,0.4,0.5],
         classap=None, baselinefolder=None, report_file=None,
@@ -474,6 +494,9 @@ def deteval_iter(truth_iter, dets='', vocdets='', name='',
         assert False, "argument dets/vocdets is missing!"
         
     truths = load_truths_iter(truth_iter);
+    if has_negative_labels(truths):
+        assert label_to_keys is None
+        label_to_keys = remove_negative_labels(truths)
 
     #brief report on different object size
     reports = get_report(truths, detresults, ovthresh, multiscale,
