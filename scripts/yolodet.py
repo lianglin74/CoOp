@@ -1,6 +1,9 @@
 #!python2
 from process_image import draw_bb, show_image
-import cPickle as pkl
+try:
+    import cPickle as pkl
+except:
+    import pickle as pkl
 import os.path as op
 import time
 import logging
@@ -8,7 +11,7 @@ import _init_paths
 # import sys
 # sys.path.insert(0, r'd:\github\caffe-msrccs\pythond')
 import numpy as np
-import caffe, os, sys, cv2
+import os, sys, cv2
 import argparse
 import numpy as np
 import base64
@@ -556,6 +559,7 @@ def pick_blob_result(caffe_net, suffix):
 
 def detprocess(caffenet, caffemodel, pixel_mean, scale, cmap, gpu, key_idx, img_idx,
         in_queue, out_queue, **kwargs):
+    import caffe
     if gpu >= 0:
         caffe.set_device(gpu)
         caffe.set_mode_gpu()
@@ -650,7 +654,8 @@ def tsvdet_iter(caffenet, caffemodel, in_rows, key_idx,img_idx, pixel_mean,
     def reader_process(in_rows, in_queue, num_worker, img_idx):
         last_print_time = 0
         count = 0
-        for cols in in_rows:
+        from tqdm import tqdm
+        for cols in tqdm(in_rows):
             if len(cols) > img_idx:
                 if in_queue.full():
                     if time.time() - last_print_time > 10:

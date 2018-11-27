@@ -29,6 +29,64 @@ import base64
 import cv2
 import shutil
 import argparse
+import subprocess as sp
+
+
+def ensure_copy_file(src, dest):
+    ensure_directory(op.dirname(dest))
+    if not op.isfile(dest):
+        tmp = dest + '.tmp'
+        # we use rsync because it could output the progress
+        cmd_run('rsync {} {} --progress'.format(src, tmp).split(' '))
+        os.rename(tmp, dest)
+
+def cmd_run(list_cmd, return_output=False, env=None,
+        working_dir=None,
+        stdin=sp.PIPE,
+        shell=False):
+    logging.info('start to cmd run: {}'.format(' '.join(map(str, list_cmd))))
+    # if we dont' set stdin as sp.PIPE, it will complain the stdin is not a tty
+    # device. Maybe, the reson is it is inside another process. 
+    # if stdout=sp.PIPE, it will not print the result in the screen
+    e = os.environ.copy()
+    if 'SSH_AUTH_SOCK' in e:
+        del e['SSH_AUTH_SOCK']
+    if working_dir:
+        ensure_directory(working_dir)
+    if env:
+        for k in env:
+            e[k] = env[k]
+    if not return_output:
+        #if env is None:
+            #p = sp.Popen(list_cmd, stdin=sp.PIPE, cwd=working_dir)
+        #else:
+        if shell:
+            p = sp.Popen(' '.join(list_cmd), 
+                    stdin=stdin, 
+                    env=e, 
+                    cwd=working_dir,
+                    shell=True)
+        else:
+            p = sp.Popen(list_cmd, 
+                    stdin=sp.PIPE, 
+                    env=e, 
+                    cwd=working_dir)
+        message = p.communicate()
+        if p.returncode != 0:
+            raise ValueError(message)
+    else:
+        if shell:
+            message = sp.check_output(' '.join(list_cmd), 
+                    env=e,
+                    cwd=working_dir,
+                    shell=True)
+        else:
+            message = sp.check_output(list_cmd,
+                    env=e,
+                    cwd=working_dir)
+    
+    logging.info('finished the cmd run')
+    return message
 
 
 def parallel_map(func, all_task, isDebug=False):
@@ -426,6 +484,79 @@ def generate_lineidx(filein, idxout):
             tsvin.readline()
             fpos = tsvin.tell();
 
+def drop_second_batch_in_bn(net):
+    assert net.layer[0].type == 'TsvBoxData'
+    assert net.layer[1].type == 'TsvBoxData'
+    slice_batch_layers = [l for l in net.layer if l.name == 'slice_batch']
+    assert len(slice_batch_layers) == 1
+    slice_batch_layer = slice_batch_layers[0]
+    slice_point = slice_batch_layer.slice_param.slice_point[0]
+
+    for i, l in enumerate(net.layer):
+        if l.type == 'BatchNorm':
+            top_name = l.top[0]
+            top_name2 = top_name + '_n'
+            l.top[0] = top_name2
+            for m in net.layer[i + 1:]:
+                for j, b in enumerate(m.bottom):
+                    if b == top_name:
+                        m.bottom[j] = top_name2
+                for j, t in enumerate(m.top):
+                    if t == top_name:
+                        m.top[j] = top_name2
+
+    all_origin_layer = []
+    for l in net.layer:
+        all_origin_layer.append(l)
+    all_layer = []
+    for l in all_origin_layer:
+        if l.type != 'BatchNorm':
+            all_layer.append(l)
+            continue
+        bn_input = l.bottom[0]
+        bn_output = l.top[0]
+
+        slice_layer = net.layer.add()
+        slice_layer.name = l.name + '/slice'
+        slice_layer.type = 'Slice'
+        slice_layer.bottom.append(bn_input)
+        slice_layer.top.append(l.name + '/slice0')
+        slice_layer.top.append(l.name + '/slice1')
+        slice_layer.slice_param.axis = 0
+        slice_layer.slice_param.slice_point.append(slice_point)
+        all_layer.append(slice_layer)
+
+        l.bottom.remove(l.bottom[0])
+        l.bottom.append(l.name + '/slice0')
+        l.top.remove(l.top[0])
+        l.top.append(l.name + '/slice0')
+        all_layer.append(l)
+        
+        fix_bn_layer = net.layer.add()
+        fix_bn_layer.name = l.name + '/bn1'
+        fix_bn_layer.bottom.append(l.name + '/slice1')
+        fix_bn_layer.top.append(l.name + '/slice1')
+        fix_bn_layer.type = 'BatchNorm'
+        for _ in range(3):
+            p = fix_bn_layer.param.add()
+            p.lr_mult = 0
+            p.decay_mult = 0
+        fix_bn_layer.batch_norm_param.use_global_stats = True
+        all_layer.append(fix_bn_layer)
+
+        cat_layer = net.layer.add()
+        cat_layer.name = l.name + '/concat'
+        cat_layer.type = 'Concat'
+        cat_layer.bottom.append(l.name + '/slice0')
+        cat_layer.bottom.append(l.name + '/slice1')
+        cat_layer.top.append(bn_output)
+        cat_layer.concat_param.axis = 0
+        all_layer.append(cat_layer)
+
+    while len(net.layer) > 0:
+        net.layer.remove(net.layer[0])
+    net.layer.extend(all_layer)
+
 def fix_net_bn_layers(net, num_bn_fix):
     for l in net.layer:
         if l.type == 'BatchNorm':
@@ -753,7 +884,14 @@ def ensure_directory(path):
         return
     if path != None and len(path) > 0:
         if not os.path.exists(path) and not op.islink(path):
-            os.makedirs(path)
+            try:
+                os.makedirs(path)
+            except OSError as e:
+                if e.errno == errno.EEXIST and os.path.isdir(folder_location):
+                    # another process has done makedir
+                    pass
+                else:
+                    raise
 
 def parse_pattern(pattern, s):
     result = re.search(pattern, s)
@@ -1555,6 +1693,8 @@ def solve(proto, snapshot, weights, gpus, timing, uid, rank, extract_blob,
         blob_queue.put(solver.net.blobs[extract_blob].data)
 
 def worth_create(base_file_name, derived_file_name):
+    if not op.isfile(base_file_name):
+        return False
     if os.path.isfile(derived_file_name) and \
             os.path.getmtime(derived_file_name) > os.path.getmtime(base_file_name):
         return False
@@ -1593,8 +1733,11 @@ class FileProgressingbar:
     def update(self):
         self.pbar.update(self.fileobj.tell())
 
-def encoded_from_img(im):
-    x = cv2.imencode('.jpg', im)[1]
+def encoded_from_img(im, quality=None):
+    if quality:
+        x = cv2.imencode('.jpg', im, (cv2.IMWRITE_JPEG_QUALITY, quality))[1]
+    else:
+        x = cv2.imencode('.jpg', im)[1]
     return base64.b64encode(x)
 
 def img_from_base64(imagestring):
@@ -1628,7 +1771,6 @@ def test_correct_caffe_file_path():
 
 if __name__ == '__main__':
     init_logging()
-
     kwargs = parse_general_args()
     from pprint import pformat
     logging.info('param:\n{}'.format(pformat(kwargs)))

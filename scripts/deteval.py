@@ -45,7 +45,7 @@ def load_truths_iter(rows, region_only=False):
             if region_only:
                 label = ENTITY_LABEL
             else:
-                label = rect['class'].strip();
+                label = rect['class'].strip().lower();
             if label not in retdict:
                 retdict[label]=dict();
             if key not in retdict[label]:
@@ -126,7 +126,7 @@ def load_dets(filein, region_only=False):
                 if region_only:
                     label = ENTITY_LABEL
                 else:
-                    label = rect['class'].strip();
+                    label = rect['class'].strip().lower();
                 if label == BACKGROUND_LABEL:
                     continue
                 if 'rect' in rect:

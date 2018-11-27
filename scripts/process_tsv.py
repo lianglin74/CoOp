@@ -181,6 +181,31 @@ def ensure_inject_decorate(func):
                 # return False if not done
     return func_wrapper
 
+def ensure_composite_key_url(data, split):
+    dataset = TSVDataset(data)
+    if not dataset.has(split):
+        logging.info('data tsv does not exist')
+        return
+    if dataset.has(split, 'key.url'):
+        logging.info('it exists')
+        return
+    data_to_dataset = {}
+    uploaded_key_url = set()
+    def gen_rows():
+        for key, _ in dataset.iter_data(split, 'label'):
+            c_data, c_split, c_key = parse_combine(key)
+            if c_data in data_to_dataset:
+                c_dataset = data_to_dataset[c_data]
+            else:
+                c_dataset = TSVDataset(c_data)
+                data_to_dataset[c_data] = c_dataset
+            if (c_data, c_split) not in uploaded_key_url:
+                ensure_upload_image_to_blob(c_data, c_split)
+                uploaded_key_url.add((c_data, c_split))
+            _, url = c_dataset.seek_by_key(c_key, c_split, 'key.url')
+            yield key, url
+    dataset.write_data(gen_rows(), split, 'key.url')
+
 @ensure_inject_decorate
 def ensure_upload_image_to_blob(data, split):
     from cloud_storage import CloudStorage
@@ -193,6 +218,7 @@ def ensure_upload_image_to_blob(data, split):
     logging.info('{} - {}'.format(data, split))
     if not op.isfile(dataset.get_data(split)) and \
             op.isfile(dataset.get_data(split + 'X')):
+        ensure_composite_key_url(data, split)
         logging.info('ignore to upload images for composite dataset')
         return
     def gen_rows():
@@ -2269,7 +2295,7 @@ def collect_label(row, stat, **kwargs):
 class TSVDatasetSource(TSVDataset):
     def __init__(self, name, root=None, version=-1, 
             valid_splits=['train', 'trainval', 'test'], cleaness=10,
-            use_all=False):
+            use_all=False, use_negative_label=False):
         super(TSVDatasetSource, self).__init__(name)
         self._noffset_count = {}
         self._type = None
@@ -2285,9 +2311,7 @@ class TSVDatasetSource(TSVDataset):
         self._valid_splits = valid_splits
         self._use_all = use_all
         self.cleaness = cleaness
-        # currently, it is true by default. OD has no such data sources, but
-        # tag has (openimage5m).
-        self.use_negative_label = True
+        self.use_negative_label = use_negative_label 
 
     def populate_info(self, root):
         self._ensure_initialized()
@@ -3174,8 +3198,8 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
     logging.info('collecting all candidate images')
     for label_type in out_dataset:
         for dataset in data_sources:
-            split_idxes = dataset.select_tsv_rows(label_type)
-            for rootlabel, split, idx in split_idxes:
+            targetlabel_split_idxes = dataset.select_tsv_rows(label_type)
+            for rootlabel, split, idx in targetlabel_split_idxes:
                 ldtsi.append((rootlabel, dataset, label_type, split, idx))
     # we need to remove the duplicates. the duplicates could come from such
     # cases: for example, we have Laptop and laptop in the image. Both of the
@@ -3189,8 +3213,7 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
     default_max_image = kwargs.get('max_image_per_label', 1000)
     label_to_max_image = {n.name: n.__getattribute__('max_image_extract_for_train') 
             if 'max_image_extract_for_train' in n.features and n.__getattribute__('max_image_extract_for_train') > default_max_image
-            else default_max_image
-        for n in tax.root.iter_search_nodes() if n != tax.root}
+            else default_max_image for n in tax.root.iter_search_nodes() if n != tax.root}
     # negative images constraint
     labels = label_to_max_image.keys()
     for l in labels:
@@ -3199,8 +3222,7 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
     min_image = kwargs.get('min_image_per_label', 200)
     
     logging.info('keep a small image pool to split')
-    label_to_max_augmented_images = {l: label_to_max_image[l]
-            * 3 for l in label_to_max_image}
+    label_to_max_augmented_images = {l: label_to_max_image[l] * 3 for l in label_to_max_image}
     # reduce the computing cost
     ldtsi, extra_dtsi = remove_or_duplicate(ldtsi, 0,
             label_to_max_augmented_images)
@@ -3573,7 +3595,7 @@ def _get_url_from_name(name):
 def parse_combine(key):
     splits = ['_train_', '_trainval_', '_test_']
     for split in splits:
-        if split  in key:
+        if split in key:
             data_key = key.split(split)
             return data_key[0], split[1:-1], data_key[1]
     return None, None, key

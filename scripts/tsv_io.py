@@ -23,11 +23,14 @@ import progressbar
 from tqdm import tqdm
 
 class TSVFile(object):
-    def __init__(self, tsv_file):
+    def __init__(self, tsv_file, cache_policy=None):
         self.tsv_file = tsv_file
         self.lineidx = op.splitext(tsv_file)[0] + '.lineidx' 
         self._fp = None
         self._lineidx = None
+        self.cache_policy= cache_policy
+        
+        self._cache()
     
     def num_rows(self):
         self._ensure_lineidx_loaded()
@@ -53,10 +56,58 @@ class TSVFile(object):
             with open(self.lineidx, 'r') as fp:
                 self._lineidx = [int(i.strip()) for i in fp.readlines()]
 
+    def _cache(self):
+        if self.cache_policy == 'memory':
+            # make sure the tsv is opened here. don't put it in seek. If we put
+            # it in the first call of seek(), it is loading all the content
+            # there. With multi-workers in pytorch, each worker has to read all
+            # the files and cache it to memory. If we load it here in the main
+            # thread, it won't copy it to each worker
+            logging.info('caching {} to memory'.format(self.tsv_file))
+            try:
+                import cStringIO as StringIO 
+            except:
+                # python 3
+                from io import StringIO
+            result = StringIO.StringIO()
+            total = op.getsize(self.tsv_file)
+            import psutil
+            avail = psutil.virtual_memory().available 
+            if avail < total:
+                logging.info('not enough memory to cache {} < {}. fall back'.format(
+                    avail, total))
+            else:
+                pbar = tqdm(total=total/1024./1024.)
+                while True:
+                    x = self._fp.read(1024*1024*100)
+                    if len(x) == 0:
+                        break
+                    pbar.update(len(x) / 1024./1024.)
+                    result.write(x)
+                self._fp = result
+
+        elif self.cache_policy == 'tmp':
+            tmp_tsvfile = op.join('/tmp', self.tsv_file)
+            tmp_lineidx = op.join('/tmp', self.lineidx)
+            ensure_directory(op.dirname(tmp_tsvfile))
+            
+            from qd_common import ensure_copy_file
+            ensure_copy_file(self.tsv_file, tmp_tsvfile)
+            ensure_copy_file(self.lineidx, tmp_lineidx)
+
+            self.tsv_file = tmp_tsvfile
+            self.lineidx = tmp_lineidx
+            # do not run the following. Supposedly, this function is called in
+            # init function. If we use multiprocess, the file handler will be
+            # duplicated and thus the seek will have some race condition if we
+            # have the following.
+            #self._fp = open(self.tsv_file, 'r')
+        elif self.cache_policy is not None:
+            raise ValueError('unkwown cache policy {}'.format(self.cache_policy))
+
     def _ensure_tsv_opened(self):
         if self._fp is None:
             self._fp = open(self.tsv_file, 'r')
-
 
 class TSVDataset(object):
     def __init__(self, name):
@@ -385,8 +436,13 @@ class TSVDataset(object):
             else:
                 fname = self.get_data(split, t, version)
                 tsv = self._retrieve_tsv(fname)
-                for i in tqdm(filter_idx):
-                    yield tsv.seek(i)
+                if progress:
+                    for i in tqdm(filter_idx):
+                        yield tsv.seek(i)
+                else:
+                    for i in filter_idx:
+                        yield tsv.seek(i)
+
 
     def _retrieve_tsv(self, fname):
         if fname in self._fname_to_tsv:
@@ -407,16 +463,21 @@ class TSVDataset(object):
         assert t is not None
         v = self.get_latest_version(split, t)
         is_equal = True
-        for origin_row, new_row in zip(self.iter_data(split, t, v), rows):
-            if len(origin_row) != len(new_row):
-                is_equal = False
-                break
-            for o, n in zip(origin_row, new_row):
-                if o != n: 
+        if self.has(split, t, v):
+            for origin_row, new_row in zip(self.iter_data(split, t, v), rows):
+                if len(origin_row) != len(new_row):
                     is_equal = False
                     break
-            if not is_equal:
-                break
+                for o, n in zip(origin_row, new_row):
+                    if o != n: 
+                        is_equal = False
+                        break
+                if not is_equal:
+                    break
+        else:
+            assert v == 0
+            v = -1
+            is_equal = False
         if not is_equal:
             logging.info('creating {} for {}'.format(v + 1, self.name))
             if generate_info:

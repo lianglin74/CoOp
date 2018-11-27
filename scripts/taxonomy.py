@@ -303,9 +303,12 @@ def load_label_parent(label_tree_file):
     return label_idx, label_parentidx, labels 
 
 def dump_tree(root, feature_name=None, for_train=False):
+    # we use ordereddict to keep teh way how to add. We add the name at the
+    # very end so that the result is first with property and then with the
+    # name, which might have children
     result = OrderedDict()
     if feature_name is None:
-        for f in root.features:
+        for f in sorted(root.features):
             if f in ['support', 'name', 'dist', 'synset']:
                 continue
             result[f] = root.__getattribute__(f)
@@ -711,7 +714,7 @@ def gen_image_gt_by_noffset(noffset, annotation_root, image_root):
         yield xml_basename, image_file_name, gt, height, width
 
 def load_all_tax(tax_folder):
-    print tax_folder
+    logging.info(tax_folder)
     all_yaml = glob.glob(op.join(tax_folder, '*.yaml'))
     all_tax = []
     for y in all_yaml:
