@@ -1,7 +1,7 @@
 import _init_paths
 import ruamel.yaml as yaml
 from collections import OrderedDict
-import progressbar 
+import progressbar
 import json
 import sys
 import os
@@ -79,7 +79,7 @@ def url_to_image(url):
         return cv2.imdecode(image, cv2.IMREAD_COLOR)
 
 
-def scrape_bing(query_term, depth):
+def scrape_bing(query_term, depth, trans_bg=False):
     '''
     e.g. scrape_bing('elder person', 300)
     '''
@@ -94,6 +94,8 @@ def scrape_bing(query_term, depth):
         if count <= 0:
             break
         query_str = format_str.format(query_term, start, count)
+        if trans_bg:
+            query_str += "&&qft=+filterui:photo-transparent"
         start = start + count
         logging.info(query_str)
         r = requests.get(query_str, allow_redirects=True)
@@ -134,9 +136,9 @@ def calculate_correlation_between_terms(iter1, iter2):
                     k = (r1['class'], r2['class'])
                     ll_to_num[k] = ll_to_num.get(k, 0) + i
     ll_correlation = [(ll[0], ll[1], 1. * ll_to_num[ll] / (label_to_num1[ll[0]]
-        + label_to_num2[ll[1]] - ll_to_num[ll])) 
+        + label_to_num2[ll[1]] - ll_to_num[ll]))
         for ll in ll_to_num]
-    ll_correlation = [(left, right, c) for left, right, c in ll_correlation 
+    ll_correlation = [(left, right, c) for left, right, c in ll_correlation
             if left.lower() != right.lower()]
     ll_correlation = sorted(ll_correlation, key=lambda x: -x[2])
 
@@ -188,7 +190,7 @@ def parse_general_args():
             elif kwargs[k] == configs[k]:
                 continue
             else:
-                logging.info('overwriting {} to {} for {}'.format(kwargs[k], 
+                logging.info('overwriting {} to {} for {}'.format(kwargs[k],
                     configs[k], k))
                 kwargs[k] = configs[k]
     if args.param:
@@ -199,7 +201,7 @@ def parse_general_args():
             elif kwargs[k] == configs[k]:
                 continue
             else:
-                logging.info('overwriting {} to {} for {}'.format(kwargs[k], 
+                logging.info('overwriting {} to {} for {}'.format(kwargs[k],
                     configs[k], k))
                 kwargs[k] = configs[k]
     return kwargs
@@ -208,7 +210,7 @@ class ProgressBar(object):
     def __init__(self, maxval):
         assert maxval > 0
         self.maxval = maxval
-    
+
     def __enter__(self):
         self.pbar = progressbar.ProgressBar(maxval=self.maxval).start()
         return self
@@ -254,7 +256,7 @@ def calculate_ap_by_true_list(corrects, total):
     precision = (1. * np.cumsum(corrects)) / np.arange(1, 1 + len(corrects))
     if np.sum(corrects) == 0:
         return 0
-    return np.sum(precision * corrects) / total 
+    return np.sum(precision * corrects) / total
 
 def calculate_image_ap(predicts, gts):
     '''
@@ -323,7 +325,7 @@ def readable_confusion_entry(entry):
 
 def get_all_tree_data():
     names = sorted(os.listdir('./data'))
-    return [name for name in names 
+    return [name for name in names
         if op.isfile(op.join('data', name, 'root_enriched.yaml'))]
 
 def parse_test_data(predict_file):
@@ -451,14 +453,14 @@ def yolo_new_to_old(new_proto, new_model, old_model):
         assert len(target_layers) == 1
         target_layer = target_layers[0]
         biases_length = len(target_layer.yolobbs_param.biases)
-    
+
     # if it is tree-based structure, we need to re-organize the classification
     # layout
     yolo_tree = any(l for l in proto.layer if 'SoftmaxTree' in l.type)
 
     num_anchor = biases_length / 2
     assert num_anchor * 2 == biases_length
-    
+
     last_conv_layers = [l for l in proto.layer if l.name == 'last_conv']
     assert len(last_conv_layers) == 1
     last_conv_layer = last_conv_layers[0]
@@ -502,7 +504,7 @@ def yolo_new_to_old(new_proto, new_model, old_model):
             old_cls_start = 5 + i * (5 + num_classes)
             old_p[old_cls_start: (old_cls_start + num_classes),
                     :] = cls
-    
+
     for new_p, old_p in zip(all_new, all_old):
         new_p[...] = old_p
 
@@ -566,7 +568,7 @@ def yolo_old_to_new(old_proto, old_model, new_model):
             new_p[i + 4 * num_anchor, :] = o
             new_cls_start = i * num_classes + 5 * num_anchor
             new_p[new_cls_start : (new_cls_start + num_classes), :] = cls
-    
+
     for old_p, new_p in izip(all_old, all_new):
         old_p[...] = new_p
 
@@ -595,16 +597,16 @@ def visualize_net(net):
     for key in net.params:
         for i, b in enumerate(net.params[key]):
             param_diff.append(np.mean(np.abs(b.diff)) + delta)
-    
+
     xs = range(len(net.blobs))
     plt.gcf().clear()
     plt.subplot(2, 1, 1)
-    
+
     plt.semilogy(xs, data_values, 'r-o')
     plt.semilogy(xs, diff_values, 'b-*')
     plt.xticks(xs, net.blobs.keys(), rotation='vertical')
     plt.grid()
-    
+
     plt.subplot(2, 1, 2)
     xs = range(len(param_keys))
     plt.semilogy(xs, param_data, 'r-o')
@@ -644,7 +646,7 @@ def calculate_macc(prototxt):
     net = caffe.Net(prototxt, caffe.TEST)
     net_proto = load_net(prototxt)
     macc = []
-    ignore_layers = ['BatchNorm', 'Scale', 'ReLU', 'Softmax', 
+    ignore_layers = ['BatchNorm', 'Scale', 'ReLU', 'Softmax',
             'Pooling', 'Eltwise', 'Shift', 'Concat']
     for layer in net_proto.layer:
         if layer.type == 'Convolution':
@@ -716,7 +718,7 @@ def calculate_iou(rect0, rect1):
     a0 = (rect0[2] - rect0[0]) * (rect0[3] - rect0[1])
     if a0 == 0 and a1 == 0 and i == 0:
         return 1.
-    return 1. * i / (a0 + a1 - i) 
+    return 1. * i / (a0 + a1 - i)
 
 def process_run(func, *args, **kwargs):
     def internal_func(queue):
@@ -732,7 +734,7 @@ def process_run(func, *args, **kwargs):
 def setup_yaml():
     """ https://stackoverflow.com/a/8661021 """
     represent_dict_order = lambda self, data:  self.represent_mapping('tag:yaml.org,2002:map', data.items())
-    yaml.add_representer(OrderedDict, represent_dict_order)    
+    yaml.add_representer(OrderedDict, represent_dict_order)
     try:
         yaml.add_representer(unicode, unicode_representer)
     except NameError:
@@ -761,7 +763,7 @@ def parse_pattern(pattern, s):
 
 def parse_yolo_log(log_file):
     pattern = 'loss_xy: ([0-9, .]*); loss_wh: ([0-9, .]*); '
-    pattern = pattern + 'loss_objness: ([0-9, .]*); loss_class: ([0-9, .]*)' 
+    pattern = pattern + 'loss_objness: ([0-9, .]*); loss_class: ([0-9, .]*)'
 
     base_log_lines = read_lines(log_file)
     xys = []
@@ -859,7 +861,7 @@ def construct_model(solver, test_proto_file, is_last=True, iteration=None):
     if is_last:
         last_model = '{0}_iter_{1}.caffemodel'.format(
                 solver_param.snapshot_prefix, solver_param.max_iter)
-        return Model(test_proto_file, solver_param.train_net, 
+        return Model(test_proto_file, solver_param.train_net,
                 last_model, mean_value, scale,
                 solver_param.max_iter)
     elif iteration:
@@ -985,13 +987,13 @@ def update_kernel_active2(net, **kwargs):
     kernel_active = kwargs['kernel_active']
     kernel_active_skip = kwargs.get('kernel_active_skip', 0)
     kernel_active_type = kwargs.get('kernel_active_type', 'SEQ')
-    shrink_group_if_group_e_out = kwargs.get('shrink_group_if_group_e_out', 
+    shrink_group_if_group_e_out = kwargs.get('shrink_group_if_group_e_out',
             False)
     logging.info('type: {}'.format(kernel_active_type))
     c = 0
     skipped = 0
     logging.info('{}-{}'.format(kernel_active, kernel_active_skip));
-    layers = [] 
+    layers = []
     bottom_map = {}
     for l in net.layer:
         if l.type == 'Convolution':
@@ -1178,7 +1180,7 @@ def add_yolo_low_shot_regularizer(net, low_shot_label_idx):
     p.decay_mult = 1
     param_layer.parameter_param.shape.dim.append(param_dim1)
     param_layer.parameter_param.shape.dim.append(param_dim2)
-    
+
     # add the regularizer layer
     reg_layer = net.layer.add()
     reg_layer.type = 'Python'
@@ -1188,7 +1190,7 @@ def add_yolo_low_shot_regularizer(net, low_shot_label_idx):
     reg_layer.loss_weight.append(1)
     reg_layer.python_param.module = 'equal_norm_loss'
     reg_layer.python_param.layer = 'YoloAlignNormToBaseLossLayer'
-    reg_param = {'num_classes': num_classes, 
+    reg_param = {'num_classes': num_classes,
             'low_shot_label_idx': low_shot_label_idx,
             'num_anchor': num_anchor}
     reg_layer.python_param.param_str = json.dumps(reg_param)
@@ -1244,7 +1246,7 @@ def parse_training_time(log_file):
     for line in log.split('\n'):
         m = re.match('.*Iteration.*iter\/s, ([0-9\.]*)s\/([0-9]*) iters.*', line)
         if m:
-            r = m.groups() 
+            r = m.groups()
             time_cost = float(r[0])
             iters = float(r[1])
             all_iters.append(iters)
@@ -1285,7 +1287,7 @@ def unicode_representer(dumper, uni):
 def dump_to_yaml_str(context):
     return yaml.dump(context, default_flow_style=False,
             encoding='utf-8', allow_unicode=True)
-    
+
 def write_to_yaml_file(context, file_name):
     ensure_directory(op.dirname(file_name))
     with open(file_name, 'w') as fp:
@@ -1569,7 +1571,7 @@ def default_data_path(dataset):
     proj_root = os.path.dirname(os.path.dirname(os.path.realpath(__file__)));
     result = {}
     data_root = os.path.join(proj_root, 'data', dataset)
-    result['data_root'] = data_root 
+    result['data_root'] = data_root
     result['source'] = os.path.join(data_root, 'train.tsv')
     result['trainval'] = op.join(data_root, 'trainval.tsv')
     result['test_source'] = os.path.join(data_root, 'test.tsv')

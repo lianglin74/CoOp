@@ -15,7 +15,10 @@ import logging
 import copy
 from tsv_io import tsv_writer
 
-def load_truths_iter(rows):
+ENTITY_LABEL = "__entity"
+BACKGROUND_LABEL = "__background"
+
+def load_truths_iter(rows, region_only=False):
     logging.info('loading gt')
     '''
     Return: dict [class][image id] => bboxes
@@ -27,7 +30,7 @@ def load_truths_iter(rows):
         key = cols[0]
         try:
             rects = json.loads(cols[1]) if cols[1]!='' else [];
-        except: 
+        except:
             logging.info('invalid grouth truth: {}'.format(cols[0]))
             continue
         if type(rects) is int:
@@ -39,7 +42,10 @@ def load_truths_iter(rows):
             retdict[label][key] += [(0, None)]
             continue
         for rect in rects:
-            label = rect['class'].strip();
+            if region_only:
+                label = ENTITY_LABEL
+            else:
+                label = rect['class'].strip();
             if label not in retdict:
                 retdict[label]=dict();
             if key not in retdict[label]:
@@ -66,7 +72,7 @@ def load_truths(filein):
             key = cols[0]
             try:
                 rects = json.loads(cols[1]) if cols[1]!='' else [];
-            except: 
+            except:
                 logging.info('invalid grouth truth: {}'.format(cols[0]))
                 continue
             for rect in rects:
@@ -79,7 +85,7 @@ def load_truths(filein):
                 bbox = [ x+1 for x in rect['rect'] ];
                 retdict[label][key]+=[(rect['diff'] if 'diff' in rect else 0,bbox)];
     return retdict;
-    
+
 def load_voc_dets(folderin):
     searchedfile = glob.glob(folderin+'/*.txt')
     assert (len(searchedfile)>0), "0 file matched by %s!"%(model_pattern)
@@ -98,9 +104,9 @@ def load_voc_dets(folderin):
                 clist += [(key, conf, rect)];
         retdict[cname]= sorted(clist, key=lambda x:-x[1]);
     return retdict;
-    
+
 #load the detection results, organized by classes
-def load_dets(filein):
+def load_dets(filein, region_only=False):
     '''
     Return: dict [class] => list of (image id, conf, bbox), in ascending order of conf
     '''
@@ -117,7 +123,12 @@ def load_dets(filein):
             key = cols[0]
             rects = json.loads(cols[1]);
             for rect in rects:
-                label = rect['class'].strip();
+                if region_only:
+                    label = ENTITY_LABEL
+                else:
+                    label = rect['class'].strip();
+                if label == BACKGROUND_LABEL:
+                    continue
                 if 'rect' in rect:
                     # coords +1 as we did for load_truths
                     bbox = [ x+1 for x in rect['rect'] ];
@@ -148,7 +159,7 @@ def IoU(rc1, rc2):
 def evaluate_(c_detects, c_truths, ovthresh):
     '''
     For each detection in a class, check whether it hits a ground truth box or not
-    Return: (a list of confs, a list of hit or miss, number of ground truth boxes) 
+    Return: (a list of confs, a list of hit or miss, number of ground truth boxes)
     '''
     #calculate npos
     npos = 0;
@@ -188,7 +199,7 @@ def splitpath (filepath) :
     (dir,fname) = os.path.split(filepath);
     (basename,ext) = os.path.splitext(fname);
     return (dir,basename,ext);
-    
+
 def parse_args():
     """Parse input arguments."""
     parser = argparse.ArgumentParser(description='Object Detection evaluation')
@@ -204,17 +215,17 @@ def parse_args():
     parser.add_argument('-r', '--report_file', required=True, type=str,
             help='the report file')
 
-    
+
     args = parser.parse_args()
     return args
 
 def load_baseline(baselinefolder) :
     file_pattern = baselinefolder+"/*.report";
-    baseline_files = glob.glob(file_pattern)    
+    baseline_files = glob.glob(file_pattern)
     baseline_files = sorted(baseline_files);
     retdict = dict();
     for file in baseline_files:
-        (truth_dir, expname, ext) = splitpath(file); 
+        (truth_dir, expname, ext) = splitpath(file);
         with open(file,"r") as fin:
             report_metrics = json.load(fin);
             retdict[expname] = report_metrics;
@@ -240,12 +251,12 @@ def _eval(truths, detresults, ovthresh, confs=None, label_to_keys=None):
             valid_keys = label_to_keys.get(label, [])
             c_truths = {key: c_truths[key] for key in c_truths if key in
                 valid_keys}
-            c_detects = [(key, conf, bbox) for key, conf, bbox in c_detects 
+            c_detects = [(key, conf, bbox) for key, conf, bbox in c_detects
                     if key in valid_keys]
         (c_y_scores, c_y_trues, c_npos) = evaluate_(c_detects, c_truths, ovthresh)
         if confs and np.sum(c_y_trues):
             precision, recall, thresholds = metrics.precision_recall_curve(c_y_trues, c_y_scores)
-            class_prec_recall_th[label] = [[float(p) for p in precision], 
+            class_prec_recall_th[label] = [[float(p) for p in precision],
                     [float(r) for r in recall], [float(t) for t in thresholds]]
             for conf in confs:
                 # precision is in ascending order
@@ -283,7 +294,7 @@ def _eval(truths, detresults, ovthresh, confs=None, label_to_keys=None):
         thresholds += [thresholds[-1]];
     #plot the PR-curve, and compare with baseline results
     recall *= coverage_ratio;
-    recall = list(recall);    
+    recall = list(recall);
     return {
         'class_ap': apdict,
         'class_thresh': class_thresh,
@@ -300,7 +311,7 @@ def eval(truthsfile, detsfile, ovthresh):
     truths = load_truths(truthsfile);
     detresults = load_dets(detsfile);
     return _eval(truths, detresults, ovthresh);
-    
+
 def get_pr(report, thresh):
     idx = np.where(np.array(report['precision'])>thresh);
     if len(idx) == 0:
@@ -311,11 +322,11 @@ def get_pr(report, thresh):
     maxid = np.argmax(np.array(recall_));
     maxid = idx[0][maxid]
     return report['thresholds'][maxid], report['precision'][maxid], report['recall'][maxid]
-'''    
+'''
 def print_pr(report, thresh):
     th,prec,rec = get_pr(report, thresh)
     print("\t%9.6f\t%9.6f\t%9.6f"%(th,prec,rec));
-    
+
 
 def drawfigs(report, baselines, exp_name,report_fig):
     #plot the PR-curve, and compare with baseline results
@@ -323,7 +334,7 @@ def drawfigs(report, baselines, exp_name,report_fig):
     plt.plot(report['recall'], report['precision'], lw=2, label='%s (ap=%0.3g)' % (exp_name,report['map']))
     for exp in baselines:
         precision = np.array(baselines[exp]['precision']);
-        recall = np.array(baselines[exp]['recall']) 
+        recall = np.array(baselines[exp]['recall'])
         plt.plot(recall, precision, lw=2, label='%s (ap=%.3g)'%(exp,baselines[exp]['map']));
 
     plt.xlim([0.0, 1.0])
@@ -333,12 +344,12 @@ def drawfigs(report, baselines, exp_name,report_fig):
     plt.title('Object detection PR Curve on %s dataset'%dataset_name)
     plt.legend(loc="lower right")
     fig.savefig(report_fig,dpi=fig.dpi)
-'''    
+'''
 def  gen_truthslist(truths):
     truths_small = dict()
     truths_medium = dict()
     truths_large = dict()
-    
+
     for label in truths:
         if label not in truths_small:
             truths_small[label] =dict();
@@ -366,14 +377,14 @@ def  gen_truthslist(truths):
             truths_small[label][key] = crects_small;
             truths_medium[label][key] = crects_medium;
             truths_large[label][key] = crects_large;
-    return {'small':truths_small, 'medium':truths_medium, 'large':truths_large, 'overall':truths};  
+    return {'small':truths_small, 'medium':truths_medium, 'large':truths_large, 'overall':truths};
 
 def get_report (truths, dets, ovths, msreport, label_to_keys=None):
     truths_list = gen_truthslist(truths) if msreport==True else {'overall':truths};
     reports = dict();
     for part in truths_list:
         reports[part] = dict()
-        for ov_th in ovths:    
+        for ov_th in ovths:
             reports[part][ov_th] = _eval(truths_list[part], dets, ov_th,
                     label_to_keys=label_to_keys);
     return reports;   #return the overal reports
@@ -404,7 +415,7 @@ def print_reports(reports, precths, report_file_table):
         fp.write(note + '\n')
         write_tablemd(fp, table,fields,headings,align)
     fp.close()
-   
+
 def lift_detects(detresults, label_tree):
     result = {}
     for label in detresults:
@@ -462,7 +473,7 @@ def remove_negative_labels(truths):
         del truths[l]
     return label_to_keys
 
-def deteval_iter(truth_iter, dets='', vocdets='', name='', 
+def deteval_iter(truth_iter, dets='', vocdets='', name='',
         precth=[0.8,0.9,0.95], multiscale=False, ovthresh=[0.3,0.4,0.5],
         classap=None, baselinefolder=None, report_file=None,
         label_to_keys=None, **kwargs):
@@ -487,13 +498,13 @@ def deteval_iter(truth_iter, dets='', vocdets='', name='',
         return report_file
 
     if dets!='' :
-        detresults = load_dets(detsfile);
+        detresults = load_dets(detsfile, kwargs.get("region_only", False));
     elif vocdets!='':
         detresults = load_voc_dets(vocdets);
     else:
         assert False, "argument dets/vocdets is missing!"
-        
-    truths = load_truths_iter(truth_iter);
+
+    truths = load_truths_iter(truth_iter, kwargs.get("region_only", False));
     if has_negative_labels(truths):
         assert label_to_keys is None
         label_to_keys = remove_negative_labels(truths)
@@ -502,20 +513,20 @@ def deteval_iter(truth_iter, dets='', vocdets='', name='',
     reports = get_report(truths, detresults, ovthresh, multiscale,
             label_to_keys=label_to_keys)
     # detail report with p-r curve
-    
+
     with open(report_file,"w") as fout:
         fout.write(json.dumps(reports,indent=4, sort_keys=True));
-    
+
     print_reports(reports, precth, report_file + '.table')
-    
+
     if classap is not None and classap in ovthresh:
         caplist = sorted(reports['overall'][classap]['class_ap'].items(), key=lambda x:-x[1])
         for pair in caplist:
             print('%s\t%.4g'%pair)
 
     return report_file
-    
-def deteval(truth='', dets='', vocdets='', name='', 
+
+def deteval(truth='', dets='', vocdets='', name='',
         precth=[0.8,0.9,0.95], multiscale=True, ovthresh=[0.3,0.4,0.5],
         classap=None, baselinefolder=None, **kwargs):
     '''

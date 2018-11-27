@@ -45,7 +45,7 @@ class DetectionFile(object):
     def _ensure_keyidx_loaded(self):
         self._ensure_tsv_opened()
         if self._keyidx is None:
-            self._keyidx = {}
+            self._keyidx = collections.OrderedDict()
             fpos = 0
             fsize = os.fstat(self._fp.fileno()).st_size
             while fpos != fsize:

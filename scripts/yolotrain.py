@@ -94,7 +94,7 @@ def yolo_predict(**iparam):
     '''
     full_expid = iparam['full_expid']
     param = copy.deepcopy(iparam)
-    
+
     param['full_expid'] = full_expid
     param['load_parameter'] = True
 
@@ -106,7 +106,7 @@ def yolo_predict(**iparam):
     m = c.best_model()
     predict_result = c.predict(m)
     eval_file = c.evaluate(m, predict_result)
-    return eval_file
+    return predict_result, eval_file
 
 def num_non_empty_lines(file_name):
     with open(file_name) as fp:
@@ -140,9 +140,9 @@ def create_shuffle_for_init(data):
             all_idx.append(idxes[i % len(idxes)])
             result.append(shuffles[idxes[i % len(idxes)]])
     tsv_writer(result, out_file)
-    
+
     label_to_num = {}
-    for i, row in enumerate(dataset.iter_composite('train', 'label', 
+    for i, row in enumerate(dataset.iter_composite('train', 'label',
             version=-1,
             filter_idx=all_idx)):
         if (i % 1000) == 0:
@@ -155,13 +155,13 @@ def create_shuffle_for_init(data):
     label_num = [(l, label_to_num[l]) for l in label_to_num]
     label_num = sorted(label_num, key=lambda x: x[1])
     logging.info(pformat(label_num))
-            
 
-def data_dependent_init_tree(pre_trained_full_expid, 
+
+def data_dependent_init_tree(pre_trained_full_expid,
         target_full_expid, t='ncc2'):
     target_exp = CaffeWrapper(full_expid=target_full_expid,
             load_parameter=True)
-    pre_exp = CaffeWrapper(full_expid=pre_trained_full_expid, 
+    pre_exp = CaffeWrapper(full_expid=pre_trained_full_expid,
             load_parameter=True)
 
     pretrained_proto = pre_exp._path_env['train_proto_file']
@@ -191,7 +191,7 @@ def data_dependent_init_tree(pre_trained_full_expid,
             num_class = len(load_list_file(tree_file))
     assert found
     write_to_file(str(net), init_target_proto)
-    
+
     assert t == 'ncc2' or t == 'ncc1'
 
     out_fname = op.join(op.dirname(target_proto), 'snapshot',
@@ -217,13 +217,13 @@ class ProtoGenerator(object):
 
     def generate_prototxt(self, train_net_file, test_net_file, solver_file):
         base_model_with_depth, num_classes = self._base_model_with_depth, self._num_classes
-    
+
         net = self._gen_net(deploy=False)
         write_to_file(net, train_net_file)
-    
+
         net = self._gen_net(deploy=True)
         write_to_file(net, test_net_file)
-    
+
         solver = self._gen_solver(train_net_file)
         write_to_file(solver, solver_file)
 
@@ -237,10 +237,10 @@ class ProtoGenerator(object):
         model_parts = re.findall(r'\d+|\D+', base_model_with_depth)
         model_name = model_parts[0].lower()
         model_depth = -1 if len(model_parts) == 1 else int(model_parts[1])
-        
+
         det = self._create_model(detmodel)
         model = self._create_model(model_name)
-        
+
         n = caffe.NetSpec()
         if not deploy:
             det.add_input_data(n, num_classes, **kwargs)
@@ -281,7 +281,7 @@ class ProtoGenerator(object):
                         '"im_info"', 1, im_info2)
         proto_str = ''.join(layers)
         proto_str = proto_str.replace("\\'", "'")
-        
+
         prefix = detmodel
 
         proto_str = 'name: "{}-{}"\n{}'.format(prefix, base_model_with_depth, proto_str)
@@ -296,7 +296,7 @@ class ProtoGenerator(object):
                         self._kwargs.get('kernel_active_skip', 0))
 
         if self._kwargs.get('crop_type', None):
-            update_crop_type(net, self._kwargs['crop_type'], 
+            update_crop_type(net, self._kwargs['crop_type'],
                     self._kwargs.get('inception_crop_kl', None))
         if self._kwargs.get('channels_factor', 1) != 1:
             update_conv_channels(net, self._kwargs['channels_factor'],
@@ -310,7 +310,7 @@ class ProtoGenerator(object):
             add_yolo_angular_loss_regularizer(net, **self._kwargs)
             self._kwargs['layer_wise_reduce'] = False
         if self._kwargs.get('no_bias', False):
-            from qd_common import set_no_bias 
+            from qd_common import set_no_bias
             set_no_bias(net, self._kwargs['no_bias'])
         if not deploy and len(self._kwargs.get('last_fixed_param', '')) > 0:
             from qd_common import fix_net_parameters
@@ -320,9 +320,9 @@ class ProtoGenerator(object):
             fix_net_bn_layers(net, self._kwargs['num_bn_fix'])
 
         proto_str = str(net)
-        
+
         return proto_str
-    
+
     def _gen_solver(self, train_net_file):
         kwargs = self._kwargs
         train_net_dir = os.path.dirname(train_net_file)
@@ -352,11 +352,11 @@ class ProtoGenerator(object):
         else:
             stageiter_dist = kwargs.get('stageiter_dist', 'origin')
             if stageiter_dist == 'origin':
-                stageiter = map(lambda x:int(x*max_iters/10000), 
+                stageiter = map(lambda x:int(x*max_iters/10000),
                         [100,5000,9000,10000])
             else:
                 assert stageiter_dist == 'compact'
-                stageiter = map(lambda x:int(x*max_iters/7000), 
+                stageiter = map(lambda x:int(x*max_iters/7000),
                         [100,5000,6000,7000])
 
 
@@ -367,13 +367,13 @@ class ProtoGenerator(object):
             extra_param['burn_in_power'] = kwargs['burn_in_power']
 
         lr_policy = kwargs.get('lr_policy', 'multifixed')
-        
+
         if 'snapshot' in kwargs:
             snapshot = kwargs['snapshot']
         else:
             snapshot = max(int(num_train_images / 100), 500)
         solver_param = {
-                'train_net': op.relpath(train_net_file), 
+                'train_net': op.relpath(train_net_file),
                 'lr_policy': lr_policy,
                 'gamma': 0.1,
                 'display': kwargs.get('display', 100),
@@ -419,13 +419,13 @@ class ProtoGenerator(object):
             return mzoo.ZFNet(add_last_pooling_layer=False)
         elif model_name == 'zfb':
             return mzoo.ZFBNet(add_last_pooling_layer=False)
-        elif model_name == 'vgg': 
+        elif model_name == 'vgg':
             return mzoo.VGG(add_last_pooling_layer=False)
         elif model_name == 'resnet':
             return mzoo.ResNet(add_last_pooling_layer=False)
-        elif model_name == 'darknet': 
+        elif model_name == 'darknet':
             return mzoo.DarkNet(add_last_pooling_layer=False)
-        elif model_name == 'squeezenet': 
+        elif model_name == 'squeezenet':
             return mzoo.SqueezeNet(add_last_pooling_layer=False)
         elif model_name == 'fasterrcnn':
             return mzoo.FasterRCNN()
@@ -497,7 +497,7 @@ def predict_one_yolo_view(im, full_expid, predict_file):
 
 class CaffeWrapper(object):
     def __init__(self, load_parameter=False, **kwargs):
-        self._kwargs = {} 
+        self._kwargs = {}
         if load_parameter:
             full_expid = kwargs['full_expid']
             self._output = op.join('output', full_expid)
@@ -506,14 +506,14 @@ class CaffeWrapper(object):
             yaml_files = glob.glob(yaml_pattern)
             if len(yaml_files) > 0:
                 def parse_time(f):
-                    m = re.search('.*parameters_(.*)\.yaml', f) 
+                    m = re.search('.*parameters_(.*)\.yaml', f)
                     t = datetime.strptime(m.group(1), '%Y_%m_%d_%H_%M_%S')
                     return t
                 times = [parse_time(f) for f in yaml_files]
                 fts = [(f, t) for f, t in izip(yaml_files, times)]
                 fts.sort(key=lambda x: x[1], reverse=True)
                 yaml_file = fts[0][0]
-            else: 
+            else:
                 yaml_file = op.join(self._output, 'parameters.yaml')
             logging.info('using {}'.format(yaml_file))
             param = load_from_yaml_file(yaml_file)
@@ -524,7 +524,7 @@ class CaffeWrapper(object):
                 del self._kwargs['force_predict']
         # note if load_parameter is true, the self._kwargs has been initialized
         # by some parameters. Thus, don't overwrite it simply
-        for k in kwargs: 
+        for k in kwargs:
             self._kwargs[k] = copy.deepcopy(kwargs[k])
 
         self._data = self._kwargs['data']
@@ -563,8 +563,8 @@ class CaffeWrapper(object):
 
         self._test_version = self._kwargs.get('test_version', 0)
 
-        self._train_data_info = dynamic_process_tsv(source_dataset, 
-                    self._path_env['output_data_root'], 
+        self._train_data_info = dynamic_process_tsv(source_dataset,
+                    self._path_env['output_data_root'],
                     **self._kwargs)
 
     def demo(self, source_image_tsv=None, m=None):
@@ -634,7 +634,7 @@ class CaffeWrapper(object):
             s = self.get_iter_acc()
             self._display(s)
             if not is_unfinished and finished_time:
-                break 
+                break
             logging.info('sleeping')
             time.sleep(5)
 
@@ -648,10 +648,10 @@ class CaffeWrapper(object):
 
         r = load_from_yaml_file(result_file)
         return r
-        
+
     def gpu_test_time(self):
         str_s = '_'.join(map(str, self._kwargs.get('test_input_sizes', [416])))
-        result_file = op.join(self._path_env['output'], 
+        result_file = op.join(self._path_env['output'],
                 'gpu_test_time_{}.yaml'.format(str_s))
         if not op.isfile(result_file):
             gpus = self._gpus()
@@ -676,16 +676,16 @@ class CaffeWrapper(object):
         model = construct_model(self._path_env['solver'],
                 self._path_env['test_proto_file'],
                 is_last=True)
-        
+
         if op.isfile(model.model_param):
-            net = caffe.Net(str(model.test_proto_file), 
+            net = caffe.Net(str(model.test_proto_file),
                     str(model.model_param), caffe.TEST)
         else:
             net = caffe.Net(str(model.test_proto_file), caffe.TEST)
 
         logging.info('gpu:{}->result_file:{}'.format(gpu, result_file))
 
-        cols = self._test_dataset.iter_data(self._test_split) 
+        cols = self._test_dataset.iter_data(self._test_split)
 
         ims = []
         for i, col in enumerate(cols):
@@ -713,7 +713,7 @@ class CaffeWrapper(object):
 
         avg_time = (end_time - start_time) / len(ims)
         import socket
-        write_to_yaml_file({'all_stat': all_stat, 
+        write_to_yaml_file({'all_stat': all_stat,
             'host_name': socket.gethostname(),
             'avg_time': avg_time},
                 result_file)
@@ -726,7 +726,7 @@ class CaffeWrapper(object):
                 not op.isfile(self._path_env['test_proto_file']):
             return False
 
-        model = construct_model(self._path_env['solver'], 
+        model = construct_model(self._path_env['solver'],
                 self._path_env['test_proto_file'])
         train_proto = self._path_env['train_proto_file']
         finished = os.path.isfile(model.test_proto_file) \
@@ -741,13 +741,13 @@ class CaffeWrapper(object):
         # save teh following two fields for saving only
         self._kwargs['data']  = data
         self._kwargs['net'] = net
-        write_to_yaml_file(self._kwargs, op.join(path_env['output'], 
+        write_to_yaml_file(self._kwargs, op.join(path_env['output'],
             'parameters_{}.yaml'.format(datetime.now().strftime('%Y_%m_%d_%H_%M_%S'))))
 
         if not kwargs.get('skip_genprototxt', False):
             source_dataset = TSVDataset(self._data)
-            data_info = self._train_data_info 
-            sources = data_info['sources'] 
+            data_info = self._train_data_info
+            sources = data_info['sources']
             source_labels = data_info['source_labels']
             source_shuffles = data_info['source_shuffles']
             data_batch_weights = data_info['data_batch_weights']
@@ -761,20 +761,20 @@ class CaffeWrapper(object):
                 num_train_images = sum([TSVFile(s).num_rows() for s in
                         source_shuffles])
             else:
-                num_train_images = sum([TSVFile(s).num_rows() 
+                num_train_images = sum([TSVFile(s).num_rows()
                     for ss in sources
                     for s in ss])
 
-            p = ProtoGenerator(parse_basemodel_with_depth(net), num_classes, 
-                    sources=sources, 
+            p = ProtoGenerator(parse_basemodel_with_depth(net), num_classes,
+                    sources=sources,
                     labelmap=labelmaps,
-                    source_labels=source_labels, 
+                    source_labels=source_labels,
                     source_shuffles=source_shuffles,
                     data_batch_weights=data_batch_weights,
                     num_train_images=num_train_images,
                     tree_files=tree_files,
                     **kwargs)
-            p.generate_prototxt(path_env['train_proto_file'], 
+            p.generate_prototxt(path_env['train_proto_file'],
                     path_env['test_proto_file'], path_env['solver'])
 
         #self._ensure_macc_calculated()
@@ -800,7 +800,7 @@ class CaffeWrapper(object):
             old_full_expid = init_from['full_expid']
             new_full_expid = self._full_expid
             assert self._kwargs.get('yolo_tree'), 'only tree-based is implemented'
-            base_model = data_dependent_init_tree(old_full_expid, 
+            base_model = data_dependent_init_tree(old_full_expid,
                 new_full_expid, t=init_from['type'])
             # evaluate the accuracy
             m = self.best_model()
@@ -816,7 +816,7 @@ class CaffeWrapper(object):
         raise ValueError()
         if init_from['type'] == 'min_l2':
             init_model_path = op.join(self._output, 'init.caffemodel')
-            base_c = CaffeWrapper(net=init_from['net'], 
+            base_c = CaffeWrapper(net=init_from['net'],
                     data=init_from['data'], expid=init_from['expid'])
             base_best_model = base_c.best_model()
             from model_initialization import min_l2_init
@@ -838,15 +838,15 @@ class CaffeWrapper(object):
             dest = 'snapshot/model_iter_0.caffemodel'
             ensure_directory(op.dirname(dest))
             copyfile(init_model_path, dest)
-            model = construct_model(self._path_env['solver'], 
+            model = construct_model(self._path_env['solver'],
                     self._path_env['test_proto_file'], is_last=True)
-            model.model_param = dest 
+            model.model_param = dest
             predict_result = self.predict(model)
             self.evaluate(model, predict_result)
         return init_model_path
 
     def _ensure_macc_calculated(self):
-        model = construct_model(self._path_env['solver'], 
+        model = construct_model(self._path_env['solver'],
                 self._path_env['test_proto_file'], is_last=True)
         test_proto = self._get_test_proto_file(model)
         network_input_size = self._kwargs.get('test_input_sizes', [416])[0]
@@ -892,7 +892,7 @@ class CaffeWrapper(object):
 
         surgery = surgery or len(blame) != 0 or extract_target or fix_xy or fix_wh \
                 or 'conf_debug' in extract_features or need_label
-        
+
         #nms_type = self._kwargs.get('nms_type',
                 #caffe.proto.caffe_pb2.RegionPredictionParameter.Standard)
         if 'class_specific_nms' in self._kwargs and not yolo_tree:
@@ -922,7 +922,7 @@ class CaffeWrapper(object):
                             #self._kwargs['gaussian_nms_sigma'])
             if 'class_specific_nms' in self._kwargs and not yolo_tree:
                 l.region_output_param.class_specific_nms = self._kwargs['class_specific_nms']
-                out_file = '{}_clasSpecificNMS{}'.format(out_file, 
+                out_file = '{}_clasSpecificNMS{}'.format(out_file,
                         self._kwargs['class_specific_nms'])
             if 'yolo_test_thresh' in self._kwargs:
                 if l.type == 'RegionOutput':
@@ -954,7 +954,7 @@ class CaffeWrapper(object):
                 l.region_output_param.fix_wh_output = True
             if len(blame) > 0:
                 out_file = out_file + '.blame{}'.format(blame)
-            if extract_target: 
+            if extract_target:
                 out_file = out_file + '.extracttarget'
             if fix_xy:
                 out_file = out_file + '.fixXY'
@@ -988,13 +988,13 @@ class CaffeWrapper(object):
                 tree_th = self._kwargs['softmax_tree_prediction_threshold']
                 out_file = '{}.TreePredTh{}'.format(out_file, tree_th)
                 adjust_tree_prediction_threshold(n, tree_th)
-                
+
             write_to_file(str(n), out_file)
             test_proto_file = out_file
-        
+
         logging.info('test proto file: {}'.format(test_proto_file))
         return test_proto_file
-    
+
     def _evaluate_loss_per_cls(self, model, predict_result):
         loss_layer = load_net(model.train_proto_file).layer[-1]
         assert loss_layer.type == 'RegionLoss'
@@ -1019,7 +1019,7 @@ class CaffeWrapper(object):
         plt.tight_layout()
         fig.savefig(tree_loss_file + '.png')
         plt.close(fig)
-    
+
     def extract_loss(self, model):
         pass
 
@@ -1043,8 +1043,8 @@ class CaffeWrapper(object):
         num_iter = num_images / (len(self._gpus()) * batch_size)
         logging.info('num iter: {}'.format(num_iter))
         assert len(data_layer.top) == 2
-        data_layer.top[0] = 'data' 
-        data_layer.top[1] = 'label' 
+        data_layer.top[0] = 'data'
+        data_layer.top[1] = 'label'
         net.layer.extend([data_layer])
         net.layer.extend(test_net.layer[: (len(test_net.layer) - 1)])
         loss_layer = train_net.layer[-1]
@@ -1063,13 +1063,13 @@ class CaffeWrapper(object):
         write_to_file(str(net), net_file)
 
         solver_param = {
-                'train_net': net_file, 
+                'train_net': net_file,
                 'lr_policy': 'step',
                 'gamma': 0.1,
-                'display': 100, 
+                'display': 100,
                 'momentum': 0,
-                'weight_decay': 1, 
-                'snapshot': 1000000, 
+                'weight_decay': 1,
+                'snapshot': 1000000,
                 'snapshot_prefix': op.join(self._output, 'snapshot', 'debug'),
                 'base_lr': 0,
                 'stepsize': 10000,
@@ -1078,7 +1078,7 @@ class CaffeWrapper(object):
         solver_file = op.join(self._output,
                 'evaluate_loss_per_cls_solver.prototxt')
         write_to_file(str(solver), solver_file)
-        
+
         # debug to display the network input image
         #caffe.set_mode_gpu()
         #solver = caffe.SGDSolver(solver_file)
@@ -1120,18 +1120,18 @@ class CaffeWrapper(object):
         if os.path.isfile(outtsv_file) and not self._kwargs.get('force_predict',
                 False) and os.path.getmtime(outtsv_file) > os.path.getmtime(model_param):
             logging.info('skip to predict (exist): {}'.format(outtsv_file))
-            return outtsv_file 
-        
+            return outtsv_file
+
         mpi_rank = get_mpi_rank()
         mpi_size = get_mpi_size()
         if mpi_rank == 0 and mpi_size == 1:
-            tsvdet_iter(test_proto_file, 
-                    model_param, 
+            tsvdet_iter(test_proto_file,
+                    model_param,
                     self._test_dataset.iter_data(self._test_split, unique=True,
                         progress=True),
-                    colkey, 
-                    colimg, 
-                    mean_value, 
+                    colkey,
+                    colimg,
+                    mean_value,
                     scale,
                     outtsv_file,
                     # do not use self._labelmap since it is one labelmap
@@ -1154,21 +1154,21 @@ class CaffeWrapper(object):
             end_idx = min(num_test_images, end_idx)
             if end_idx <= start_idx:
                 return
-            logging.info('start_idx = {}; end_idx = {}'.format(start_idx, 
+            logging.info('start_idx = {}; end_idx = {}'.format(start_idx,
                 end_idx))
             filter_idx = range(start_idx, end_idx)
             curr_outtsv_file = outtsv_file + '_{}_{}.tsv'.format(mpi_rank,
                     mpi_size)
             if not os.path.isfile(curr_outtsv_file) or self._kwargs.get('force_predict',
                     False) or os.path.getmtime(curr_outtsv_file) < os.path.getmtime(model_param):
-                tsvdet_iter(test_proto_file, 
-                        model_param, 
+                tsvdet_iter(test_proto_file,
+                        model_param,
                         self._test_dataset.iter_data(self._test_split, unique=True,
                             progress=True,
                             filter_idx=filter_idx),
-                        colkey, 
-                        colimg, 
-                        mean_value, 
+                        colkey,
+                        colimg,
+                        mean_value,
                         scale,
                         curr_outtsv_file,
                         # do not use self._labelmap since it is one labelmap
@@ -1240,19 +1240,19 @@ class CaffeWrapper(object):
                 t_target_ys[t].append(float(curr_target_y))
                 t_pred_xs[t].append(float(curr_pred_x))
                 t_pred_ys[t].append(float(curr_pred_y))
-                
+
                 n = int(target[r, 6, 0])
                 check_best_iou(biases, gt_w * 13, gt_h * 13, n)
 
         evaluate_result = predict_result + '.eval'
-        x = {'t_target_xs': t_target_xs, 
-            't_target_ys': t_target_ys, 
-            't_pred_xs': t_pred_xs, 
+        x = {'t_target_xs': t_target_xs,
+            't_target_ys': t_target_ys,
+            't_pred_xs': t_pred_xs,
             't_pred_ys': t_pred_ys}
         data = json.dumps(x)
         write_to_file(data, evaluate_result)
 
-        evaluate_result = evaluate_result + '.simple' 
+        evaluate_result = evaluate_result + '.simple'
         result = {}
         for key in t_target_xs.keys():
             result[key] = {}
@@ -1280,7 +1280,7 @@ class CaffeWrapper(object):
             assert len(row) == 3
             label = pkl.loads(base64.b64decode(row[1]))
             conf_debug = pkl.loads(base64.b64decode(row[2]))
-    
+
     def _evaluate_features(self, model, predict_result):
         if self._detmodel != 'yolo':
             return
@@ -1372,7 +1372,7 @@ class CaffeWrapper(object):
                         s[size_type][thresh]['class_ap'] = \
                                 result[size_type][thresh]['class_ap']
                 write_to_file(json.dumps(s, indent=4, sort_keys=True), simple_file)
-            
+
             simple_file = '{}.prec{}.threshold.tsv'.format(eval_file, 0.5)
             if worth_create(eval_file, simple_file):
                 if result is None:
@@ -1480,7 +1480,7 @@ class CaffeWrapper(object):
 
     def _param_dist_file(self, model):
         return model.model_param + '.param'
-    
+
     def _perf_file(self, model):
         if self._detmodel != 'classification':
             report_file = op.splitext(self._predict_file(model))[0] + '.report'
@@ -1494,7 +1494,7 @@ class CaffeWrapper(object):
             return report_file
         else:
             return self._predict_file(model) + '.report'
-    
+
     def best_model_perf(self):
         solver = self._path_env['solver']
         test_proto_file = self._path_env['test_proto_file']
@@ -1504,7 +1504,7 @@ class CaffeWrapper(object):
         with open(eval_result, 'r') as fp:
             perf = json.loads(fp.read())
 
-        return perf 
+        return perf
 
     def best_model(self, is_last=True):
         solver = self._path_env['solver']
@@ -1531,7 +1531,7 @@ class CaffeWrapper(object):
         cost = cost[n : len(cost) - n]
         cost = np.asarray(cost)
         return np.mean(cost), np.sqrt(np.var(cost)), display
-    
+
     def get_iter_acc(self):
         solver, test_proto_file = self._path_env['solver'], self._path_env['test_proto_file']
         if not os.path.exists(solver) or \
@@ -1545,8 +1545,8 @@ class CaffeWrapper(object):
         all_model = sorted(all_model, key=lambda x: x.model_iter)
         all_ready_model = [m for m in all_model if os.path.isfile(m.model_param)]
         valid = [(m, self._perf_file(m)) for m in all_ready_model if
-                        os.path.isfile(self._perf_file(m))] 
-        
+                        os.path.isfile(self._perf_file(m))]
+
         ious = None
         xs, ys = [], []
         for v in valid:
@@ -1611,10 +1611,10 @@ class CaffeWrapper(object):
                 elapsed_time = time.time() - start_time
                 if elapsed_time > 60 * 60 * 4:
                     logging.info('finished the {} predicts; {} left'.format(
-                        len(sub_tasks_param1), 
+                        len(sub_tasks_param1),
                         len(all_ready_model) - len(sub_tasks_param1)))
                     break
-        
+
         # the standard multiprocessing does not support the member function of
         # a class, but pathos' supports
         from pathos.multiprocessing import ProcessingPool as Pool
@@ -1664,7 +1664,7 @@ class CaffeWrapper(object):
 
         if len(xs) > 0:
             out_file = os.path.join(
-                self._path_env['output'], 
+                self._path_env['output'],
                 'map_{}.png'.format(self._test_data))
             logging.info('create {}'.format(out_file))
             if op.isfile(out_file):
@@ -1676,10 +1676,10 @@ class CaffeWrapper(object):
     def _get_log_files(self):
         return [file_name for file_name in glob.glob(os.path.join(self._path_env['output'],
             '*_*')) if not file_name.endswith('png')]
-    
+
     def plot_loss(self):
         xy = {}
-        log_files = self._get_log_files() 
+        log_files = self._get_log_files()
         worth_run = False
         for file_name in log_files:
             png_file = os.path.splitext(file_name)[0] + '.png'
@@ -1722,7 +1722,7 @@ class CaffeWrapper(object):
         else:
             pretrained_model = None
 
-        gpus = self._gpus() 
+        gpus = self._gpus()
         restore_snapshot_iter = self._kwargs.get('restore_snapshot_iter', None)
         restore_snapshot = None
         if restore_snapshot_iter != None:
@@ -1754,8 +1754,8 @@ class CaffeWrapper(object):
             elif pretrained_model:
                 solver.net.copy_from(str(pretrained_model),
                         ignore_shape_mismatch=True)
-            
-            # visualize how the parameters are changed during the trainining. 
+
+            # visualize how the parameters are changed during the trainining.
             #visualize_train(solver)
             while True:
                 solver.step(50)
@@ -1800,12 +1800,12 @@ def setup_paths(basenet, dataset, expid):
 def default_paths(net, data, expid):
     path_env = setup_paths(net, data, expid)
 
-    output_path = path_env['output'] 
+    output_path = path_env['output']
 
     train_file_base = 'train.prototxt'
     test_file_base = 'test.prototxt'
     solver_file_base = 'solver.prototxt'
-    
+
     data_path = default_data_path(data)
     for key in data_path:
         path_env[key] = data_path[key]
@@ -1815,7 +1815,7 @@ def default_paths(net, data, expid):
     path_env['solver'] = os.path.join(output_path, solver_file_base)
     path_env['output_root'] = os.path.dirname(path_env['output'])
     path_env['output_data_root'] = op.join(path_env['output_root'], 'data')
-    path_env['output_data'] = os.path.join(path_env['output_root'], 'data', 
+    path_env['output_data'] = os.path.join(path_env['output_root'], 'data',
             data)
 
     path_env['labelmap'] = os.path.join(path_env['data'], 'labelmap.txt')
@@ -1835,7 +1835,7 @@ def yolo_tree_train(**ikwargs):
     assert 'taxonomy_folder' in ikwargs
     kwargs = copy.deepcopy(ikwargs)
     build_taxonomy_impl(**kwargs)
-    
+
     assert 'yolo_tree' not in kwargs or kwargs['yolo_tree']
     kwargs['yolo_tree'] = True
     kwargs['class_specific_nms'] = False
@@ -1873,13 +1873,13 @@ def yolo_tree_train(**ikwargs):
         c.monitor_train()
         assert c._is_train_finished()
         model = c.train()
-    
+
     no_bb_data = '{}_no_bb'.format(kwargs['data'])
     # train it with no_bb as well
     if TSVDataset(no_bb_data).get_num_train_image() == 0:
         logging.info('there is no training image for image-level label')
         return
-    
+
     if 'test_data' not in ikwargs:
         curr_task = copy.deepcopy(kwargs)
         curr_task['ovthresh'] = [-1]
@@ -1916,7 +1916,7 @@ def yolo_tree_train(**ikwargs):
     else:
         c.monitor_train()
         assert c._is_train_finished()
-    
+
     kwargs['ovthresh'] = [-1]
     if 'test_data' not in ikwargs:
         kwargs['test_data'] = no_bb_data
@@ -1946,12 +1946,12 @@ def yolotrain(data, net, **kwargs):
 
 def get_confusion_matrix(data, net, test_data, expid, threshold=0.2, **kwargs):
     logging.info('deprecated: use get_confusion_matrix_by_predict_file')
-    c = CaffeWrapper(data=data, net=net, 
+    c = CaffeWrapper(data=data, net=net,
             test_data=test_data,
             yolo_test_maintain_ratio = True,
             expid=expid,
             **kwargs)
-    
+
     # load predicted results
     model = c.best_model()
     predict_file = c._predict_file(model)
@@ -1966,13 +1966,13 @@ def get_confusion_matrix(data, net, test_data, expid, threshold=0.2, **kwargs):
     # calculate the confusion matrix
     confusion_pred_gt = {}
     confusion_gt_pred = {}
-    update_confusion_matrix(predicts, gts, threshold, 
-            confusion_pred_gt, 
+    update_confusion_matrix(predicts, gts, threshold,
+            confusion_pred_gt,
             confusion_gt_pred)
 
-    return {'predicts': predicts, 
-            'gts': gts, 
-            'confusion_pred_gt': confusion_pred_gt, 
+    return {'predicts': predicts,
+            'gts': gts,
+            'confusion_pred_gt': confusion_pred_gt,
             'confusion_gt_pred': confusion_gt_pred,
             'label_to_idx': label_to_idx}
 
@@ -1987,33 +1987,33 @@ def parse_args():
             help='only darknet19 is not supported', default='darknet19')
     parser.add_argument('-dm', '--detmodel', required=False, type=str,
             help='detection model', default='yolo')
-    parser.add_argument('-t', '--iters', dest='max_iters',  help='number of iterations to train', 
+    parser.add_argument('-t', '--iters', dest='max_iters',  help='number of iterations to train',
             default=10000, required=False, type=str)
     parser.add_argument('-d', '--data', help='the name of the dataset',
             required=False)
     parser.add_argument('-e', '--expid', help='the experiment id',
             required=False)
-    parser.add_argument('-ft', '--force_train', 
+    parser.add_argument('-ft', '--force_train',
             default=False,
-            action='store_true', 
-            help='train the model even if the model is there', 
+            action='store_true',
+            help='train the model even if the model is there',
             required=False)
     parser.add_argument('-no-ar', '--no-add_reorg', dest='add_reorg',
             action='store_false',
             default=True,
             required=False,
             help='if the reorg layer should be added')
-    parser.add_argument('-nc', '--num_extra_convs', 
+    parser.add_argument('-nc', '--num_extra_convs',
             default=[3],
             type=int,
             nargs='+',
             help='the number of extra conv layers')
-    parser.add_argument('-eb', '--effective_batch_size', 
+    parser.add_argument('-eb', '--effective_batch_size',
             default=64,
             type=int,
             help='effective batch size')
     parser.add_argument('-sg', '--skip_genprototxt', default=False,
-            action='store_true', 
+            action='store_true',
             help='skip the proto file generation')
     parser.add_argument('-st', '--skip_train',
             default=False,
@@ -2039,24 +2039,24 @@ def parse_args():
             type=lambda s: [float(x) for x in s.split(',')],
             required=False)
     parser.add_argument('-fg', '--yolo_full_gpu', default=False,
-            action='store_true', 
+            action='store_true',
             help='full gpu')
     parser.add_argument('-ma', '--yolo_test_maintain_ratio', default=False,
-            action='store_true', 
+            action='store_true',
             help='maintain the aspect ratio')
     parser.add_argument('-fp', '--force_predict', default=False,
-            action='store_true', 
+            action='store_true',
             help='force to predict even if the predict file exists')
     parser.add_argument('-ti', '--test_input_sizes', default=[416],
-            nargs='+', type=int, 
+            nargs='+', type=int,
             help='test input sizes')
-    parser.add_argument('-tf', '--taxonomy_folder', 
+    parser.add_argument('-tf', '--taxonomy_folder',
             default=argparse.SUPPRESS,
             type=str,
             help='taxonomy folder when -yt is specified')
-    parser.add_argument('-snbv', '--yolo_softmax_norm_by_valid', 
+    parser.add_argument('-snbv', '--yolo_softmax_norm_by_valid',
             default=False,
-            action='store_true', 
+            action='store_true',
             help='normalize the softmax loss by VALID')
     parser.add_argument('-monitor', '--monitor_train_only',
             default=False,
@@ -2068,7 +2068,7 @@ def parse_args():
     # as -1, but there is no snapshot in the output folder, we will try to use
     # the --basemodel as the initial weights. If the --basemodel is not
     # specified, we will try to use the model in models/${net}.caffemodel as
-    # the initial model. 
+    # the initial model.
     # Thus, it is ok to copy the pre-trained model to the
     # folder of models and rename it properly, and then specify the net
     # accordingly. However, this approach couples together how the network is
@@ -2082,7 +2082,7 @@ def parse_args():
     parser.add_argument('-rsi', '--restore_snapshot_iter',
             type=int,
             help='The iteration of the model used to restore the training. -1 for the last one')
-    parser.add_argument('-bm', '--basemodel', 
+    parser.add_argument('-bm', '--basemodel',
             default=argparse.SUPPRESS,
             type=str,
             help='The pre-trained (weight) model path')

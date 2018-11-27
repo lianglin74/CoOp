@@ -12,6 +12,22 @@ from scripts.process_tsv import get_img_url2
 from scripts.qd_common import init_logging, ensure_directory
 
 
+def align_detection(ref_file, pred_file, outfile=None, min_conf=0.0):
+    """
+    Aligns detection imgkeys with gt for visualization
+    """
+    pred = DetectionFile(pred_file)
+    if not outfile:
+        outfile = pred_file.rsplit('.', 1)[0] + ".aligned.tsv"
+    outdata = []
+    for cols in tsv_reader(ref_file):
+        k = cols[0]
+        bbox = pred[k] if k in pred else []
+        bbox = [b for b in bbox if "conf" not in b or b["conf"]>=min_conf]
+        outdata.append([k, json.dumps(bbox)])
+    tsv_writer(outdata, outfile)
+
+
 def get_wrong_pred(pred_file, gt_file, labelmap=None, outfile=None, min_conf=0.5, iou=0.5):
     if labelmap:
         target_classes = set(cols[0].lower() for cols in read_from_file(labelmap))
@@ -110,3 +126,4 @@ def manual_check(source_name, gt_config_file, labelmap, dirpath, min_conf=0.5, i
             worker_quality_file=None, min_num_judges_per_hit=1)
 
     merge_gt(gt_config_file, [res_file], 0.8)
+
