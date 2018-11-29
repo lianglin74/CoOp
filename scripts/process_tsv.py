@@ -1,7 +1,7 @@
 try:
     from itertools import izip as zip
 except:
-    # if it comes here, it is python3 
+    # if it comes here, it is python3
     pass
 from process_image import show_images
 import re
@@ -78,7 +78,7 @@ import pymongo
 from datetime import datetime
 import inspect
 
-def convert_pred_to_dataset_label(full_expid, predict_file, 
+def convert_pred_to_dataset_label(full_expid, predict_file,
         th_file, min_value):
     pred_file = op.join('output',
             full_expid,
@@ -105,11 +105,11 @@ def convert_pred_to_dataset_label(full_expid, predict_file,
     def gen_rows():
         for key, rects in gt_key_rects:
             pred_rects = pred_key_to_rects.get(key, [])
-            pred_rects = [r for r in pred_rects 
+            pred_rects = [r for r in pred_rects
                     if r['conf'] >= per_cat_th.get(r['class'], 0)]
             yield key, json.dumps(pred_rects)
-    info = [('full_expid', full_expid), 
-            ('predict_file', pred_file), 
+    info = [('full_expid', full_expid),
+            ('predict_file', pred_file),
             ('th_file', th_file),
             ('min_value', min_value)]
     dataset.update_data(gen_rows(), split, 'label',
@@ -162,10 +162,10 @@ def ensure_inject_decorate(func):
                                     upsert=True)
             if result.matched_count == 0:
                 task.update_one(filter=query,
-                        update={'$set': {'status': 'started', 
+                        update={'$set': {'status': 'started',
                                          'create_time': datetime.now()}})
                 func(*args, **kwargs)
-                task.update_many(filter=query, 
+                task.update_many(filter=query,
                         update={'$set': {'status': 'done'}})
                 return True
             else:
@@ -225,7 +225,7 @@ def ensure_upload_image_to_blob(data, split):
         for key, _, str_im in tqdm(dataset.iter_data(split)):
             key = parse_combine(key)[-1]
             clean_name = _map_img_key_to_name2(key)
-            url = s.upload_stream(StringIO(base64.b64decode(str_im)), 
+            url = s.upload_stream(StringIO(base64.b64decode(str_im)),
                     clean_name)
             yield key, url
     dataset.write_data(gen_rows(), split, 'key.url')
@@ -252,7 +252,7 @@ def ensure_inject_image(data, split):
     from process_tsv import ImageTypeParser
     from cloud_storage import CloudStorage
     all_data = []
-    
+
     logging.info('injecting {} - {}'.format(data, split))
     injected = set()
     key_to_hw = None
@@ -268,7 +268,7 @@ def ensure_inject_image(data, split):
             continue
         else:
             injected.add(key)
-        url = key_to_url[key] 
+        url = key_to_url[key]
         doc = {'data': data,
                 'split': split,
                 'key': key,
@@ -310,7 +310,7 @@ def update_pred_with_correctness(test_data, test_split,
     _pred = db['predict_result']
 
     # get the latest version of the gt
-    pipeline = [{'$match': {'data': test_data, 
+    pipeline = [{'$match': {'data': test_data,
                             'split': test_split,
                             'version': {'$lte': 0}}},
                 {'$group': {'_id': {'data': '$data',
@@ -321,7 +321,7 @@ def update_pred_with_correctness(test_data, test_split,
                             'class': {'$first': '$class'},
                             'rect': {'$first': '$rect'}}},
                 {'$match': {'contribution': {'$gte': 1}}}, # if it is 0, it means we removed the box
-                {'$addFields': {'data': '$_id.data', 
+                {'$addFields': {'data': '$_id.data',
                                 'split': '$_id.split',
                                 'key': '$_id.key'}},
                 ]
@@ -336,25 +336,25 @@ def update_pred_with_correctness(test_data, test_split,
                              'rect': {'$first': '$rect'}}},
                  {'$match': {'contribution': {'$gte': 1}}},
                 ]
-    
+
     # get the target prediction bounding boxes
     pipeline = [{'$match': {'full_expid': full_expid,
                             'pred_file': predict_file}},
                 {'$group': {'_id': {'data': '$data',
-                                   'split': '$split', 
-                                   'key': '$key', 
+                                   'split': '$split',
+                                   'key': '$key',
                                    'class': '$class'},
                            'pred_box': {'$push': {'rect': '$rect',
                                                   'conf': '$conf',
                                                   'pred_box_id': '$_id'}}}},
                 {'$lookup': {'from': 'ground_truth',
-                             'let': {'target_data': '$_id.data', 
+                             'let': {'target_data': '$_id.data',
                                      'target_split': '$_id.split',
-                                     'target_key': '$_id.key', 
+                                     'target_key': '$_id.key',
                                      'target_class': '$_id.class'},
                              'pipeline': get_query_pipeline('target_data',
-                                                            'target_split', 
-                                                            'target_key', 
+                                                            'target_split',
+                                                            'target_key',
                                                             'target_class'),
                              'as': 'gt_box'}},
             ]
@@ -364,12 +364,12 @@ def update_pred_with_correctness(test_data, test_split,
         curr_gt = row['gt_box']
         curr_pred = sorted(curr_pred, key=lambda x: -x['conf'])
         for p in curr_pred:
-            matched = [g for g in curr_gt if 
-                    not g.get('used', False) and 
-                    ('rect' not in p or 
+            matched = [g for g in curr_gt if
+                    not g.get('used', False) and
+                    ('rect' not in p or
                         not p['rect'] or
-                        'rect' not in g or 
-                        not g['rect'] or 
+                        'rect' not in g or
+                        not g['rect'] or
                         calculate_iou(g['rect'], p['rect']) > 0.3)]
             if len(matched) == 0:
                 all_wrong_box.append(p['pred_box_id'])
@@ -377,19 +377,19 @@ def update_pred_with_correctness(test_data, test_split,
                 all_correct_box.append(p['pred_box_id'])
                 matched[0]['used'] = True
         if len(all_correct_box) > 1000:
-            _pred.update_many({'_id': {'$in': all_correct_box}}, 
+            _pred.update_many({'_id': {'$in': all_correct_box}},
                     {'$set': {'correct': 1}})
             all_correct_box = []
         if len(all_wrong_box) > 1000:
-            _pred.update_many({'_id': {'$in': all_wrong_box}}, 
+            _pred.update_many({'_id': {'$in': all_wrong_box}},
                     {'$set': {'correct': 0}})
             all_wrong_box = []
     if len(all_correct_box) > 0:
-        _pred.update_many({'_id': {'$in': all_correct_box}}, 
+        _pred.update_many({'_id': {'$in': all_correct_box}},
                 {'$set': {'correct': 1}})
         all_correct_box = []
     if len(all_wrong_box) > 0:
-        _pred.update_many({'_id': {'$in': all_wrong_box}}, 
+        _pred.update_many({'_id': {'$in': all_wrong_box}},
                 {'$set': {'correct': 0}})
         all_wrong_box = []
 
@@ -404,7 +404,7 @@ def ensure_inject_expid_pred(full_expid, predict_file):
     ensure_inject_gt(data, split)
     ensure_inject_pred(full_expid,
             predict_file,
-            data, 
+            data,
             split)
     ensure_update_pred_with_correctness(data, split,
         full_expid, predict_file)
@@ -447,8 +447,8 @@ def ensure_inject_gt(data, split):
         set_previous_key_rects = False
         while dataset.has(split, 'label', version=version):
             query = {'task_type': 'inject_gt',
-                                    'data': data, 
-                                    'split': split, 
+                                    'data': data,
+                                    'split': split,
                                     'version': version}
             result = task.update_one(filter=query,
                                     update={'$setOnInsert': query},
@@ -458,7 +458,7 @@ def ensure_inject_gt(data, split):
                     split, version))
                 # no process is working on inserting current version
                 task.update_one(filter=query,
-                        update={'$set': {'status': 'started', 
+                        update={'$set': {'status': 'started',
                                          'create_time': datetime.now()}})
                 if not set_previous_key_rects:
                     if version == 0:
@@ -470,7 +470,7 @@ def ensure_inject_gt(data, split):
                     set_previous_key_rects = True
                 inject_gt_version(data, split, version, previous_key_to_rects)
                 task.update_many(filter={'task_type': 'inject_gt',
-                    'data': data, 
+                    'data': data,
                     'split': split,
                     'version': version}, update={'$set': {'status': 'done'}})
             else:
@@ -527,7 +527,7 @@ def inject_gt_version(data, split, version, previous_key_to_rects):
             previous_rects = previous_key_to_rects[key]
             previous_not_in_current = copy.deepcopy([r for r in previous_rects if
                     not rect_in_rects(r, rects, iou=0.99)])
-            current_not_in_previous = copy.deepcopy([r for r in rects if 
+            current_not_in_previous = copy.deepcopy([r for r in rects if
                     not rect_in_rects(r, previous_rects, iou=0.99)])
             for r in previous_not_in_current:
                 r['data'] = data
@@ -598,9 +598,9 @@ class VisualizationDatabaseByMongoDB():
         logging.info(len(image_info))
         if len(image_info) > 0:
             logging.info(pformat(image_info[0]))
-        image_info = [{'key': x['key'], 
-            'url': x.get('url', ''), 
-            'gt': x.get('gt', []), 
+        image_info = [{'key': x['key'],
+            'url': x.get('url', ''),
+            'gt': x.get('gt', []),
             'pred': x.get('pred', [])} for x in image_info]
         return image_info
 
@@ -629,17 +629,17 @@ class VisualizationDatabaseByMongoDB():
                                 'contribution': {'$sum': '$contribution'},
                                 'num_target_label': {'$sum': 1}}},
                     {'$match': {'contribution': {'$gte': 1}}},
-                    {'$group': {'_id': {'key': '$_id.key'}, 
+                    {'$group': {'_id': {'key': '$_id.key'},
                                 'num_contribution': {'$sum': 1}}},
                     ## add the number of correct predicted
-                    {'$lookup': {   
-                        'from': 'predict_result', 
+                    {'$lookup': {
+                        'from': 'predict_result',
                         'let': {'key': '$_id.key'},
                         'pipeline': [{'$match': {'full_expid': full_expid,
                                                  'pred_file': pred_file,
                                                  'class': class_name,
                                                  'conf': {'$gte': threshold}}},
-                                     {'$group': {'_id': {'key': '$key'}, 
+                                     {'$group': {'_id': {'key': '$key'},
                                                  'correct': {'$sum': '$correct'}}},
                                       {'$match': {'$expr': {'$and': [{'$eq': ['$_id.key', '$$key']}]}}},
                                       ],
@@ -651,8 +651,8 @@ class VisualizationDatabaseByMongoDB():
                     {'$skip': start_id},
                     {'$limit': max_item},
                     # add the field of url
-                    {'$lookup': {   
-                        'from': 'image', 
+                    {'$lookup': {
+                        'from': 'image',
                         'let': {'key': '$_id.key'},
                         'pipeline': [{'$match': {'$expr': {'$and': [{'$eq': ['$data', data]},
                                                                     {'$eq': ['$split', split]},
@@ -663,8 +663,8 @@ class VisualizationDatabaseByMongoDB():
                     {'$addFields': {'url': {'$arrayElemAt': ['$url', 0]}}},
                     {'$addFields': {'url': '$url.url'}},
                     ## add the field of pred
-                    {'$lookup': {   
-                        'from': 'predict_result', 
+                    {'$lookup': {
+                        'from': 'predict_result',
                         'let': {'key': '$_id.key'},
                         'pipeline': [{'$match': {'$expr': {'$and': [{'$eq': ['$full_expid', full_expid]},
                                                                     {'$eq': ['$pred_file', pred_file]},
@@ -693,9 +693,9 @@ class VisualizationDatabaseByMongoDB():
                     ]
         image_info = list(self._gt.aggregate(pipeline))
         logging.info(len(image_info))
-        image_info = [{'key': x['_id']['key'], 
-            'url': x['url'], 
-            'gt': x['gt'], 
+        image_info = [{'key': x['_id']['key'],
+            'url': x['url'],
+            'gt': x['gt'],
             'pred': x['pred']} for x in image_info]
         return image_info
 
@@ -710,7 +710,7 @@ class VisualizationDatabaseByMongoDB():
                 {'$match': filter_pred},
                 {'$group': {'_id': {'data': '$data',
                                     'split': '$split',
-                                    'key': '$key'}, 
+                                    'key': '$key'},
                             'correct': {'$sum': '$correct'},
                             'total': {'$sum': 1}}},
                 {'$addFields': {'precision': {'$divide': ['$correct', '$total']}}},
@@ -718,9 +718,9 @@ class VisualizationDatabaseByMongoDB():
                 {'$skip': start_id},
                 {'$limit': max_item},
                 # add the field of url
-                {'$lookup': {   
-                    'from': 'image', 
-                    'let': {'data': '$_id.data', 
+                {'$lookup': {
+                    'from': 'image',
+                    'let': {'data': '$_id.data',
                             'split': '$_id.split',
                             'key': '$_id.key'},
                     'pipeline': [{'$match': {'$expr': {'$and': [{'$eq': ['$data', '$$data']},
@@ -732,9 +732,9 @@ class VisualizationDatabaseByMongoDB():
                 {'$unwind': '$url'},
                 {'$addFields': {'url': '$url.url'}},
                 ## add the field of pred
-                {'$lookup': {   
-                    'from': 'predict_result', 
-                    'let': {'data': '$_id.data', 
+                {'$lookup': {
+                    'from': 'predict_result',
+                    'let': {'data': '$_id.data',
                             'split': '$_id.split',
                             'key': '$_id.key'},
                     'pipeline': [{'$match': {'$expr': {'$and': [{'$eq': ['$full_expid', full_expid]},
@@ -748,7 +748,7 @@ class VisualizationDatabaseByMongoDB():
                 ## add the gt field
                 {'$lookup': {
                     'from': 'ground_truth',
-                    'let': {'data': '$_id.data', 
+                    'let': {'data': '$_id.data',
                             'split': '$_id.split',
                             'key': '$_id.key'},
                     'pipeline': [{'$match': {'$expr': {'$and': [{'$eq': ['$data', '$$data']},
@@ -767,15 +767,15 @@ class VisualizationDatabaseByMongoDB():
 
         logging.info(pformat(pipeline))
         image_info = list(self._pred.aggregate(pipeline))
-        image_info = [{'key': x['_id']['key'], 
-            'url': x['url'], 
-            'gt': x['gt'], 
+        image_info = [{'key': x['_id']['key'],
+            'url': x['url'],
+            'gt': x['gt'],
             'pred': x['pred']} for x in image_info]
         return image_info
 
     def query_ground_truth(self, data, split, version, label, start_id, max_item):
         rank, start_id = self._get_positive_start(start_id, max_item)
-        
+
         match_pairs = {'data': data}
         gt_match = []
         gt_match.append({'$eq': ['$data', data]})
@@ -814,8 +814,8 @@ class VisualizationDatabaseByMongoDB():
                         'as': 'gt',
                         }},
                     # add url
-                    {'$lookup': {   
-                        'from': 'image', 
+                    {'$lookup': {
+                        'from': 'image',
                         'let': {'key': '$_id.key'},
                         'pipeline': [{'$match': {'$expr': {'$and': url_match}}},
                                      {'$project': {'url': True, '_id': 0}}],
@@ -828,8 +828,8 @@ class VisualizationDatabaseByMongoDB():
         logging.info(pformat(pipeline))
         image_info = list(self._gt.aggregate(pipeline))
         logging.info(len(image_info))
-        image_info = [{'key': x['_id']['key'], 
-            'url': x['url'], 
+        image_info = [{'key': x['_id']['key'],
+            'url': x['url'],
             'gt': x['gt']} for x in image_info]
         return image_info
 
@@ -858,7 +858,7 @@ def update_yolo_test_proto(input_test, test_data, map_file, output_test):
             for noffset in test_noffsets:
                 test_map_id.append(noffset_idx[noffset])
             write_to_file('\n'.join(map(str, test_map_id)), map_file)
-            l.region_output_param.map = map_file 
+            l.region_output_param.map = map_file
             l.region_output_param.thresh = 0.005
     assert len(test_noffsets) == len(test_map_id)
     write_to_file(str(net), output_test)
@@ -922,9 +922,9 @@ def get_node_info(data, node, colors, all_data):
             'ap',
             'images_with_bb',
             'images_no_bb',
-            'noffset', 
+            'noffset',
             'sub_group',
-            'cum_images_with_bb', 
+            'cum_images_with_bb',
             'cum_images_no_bb']
     for key in node.features:
         if any(x == key for x in ignore_keys):
@@ -954,8 +954,8 @@ def get_node_info(data, node, colors, all_data):
 
 def gen_html_tree_view(data, full_expid=None,
         predict_file=None):
-    colors=['rgb(0,0,0)', 
-                'rgb(255,0,0)', 
+    colors=['rgb(0,0,0)',
+                'rgb(255,0,0)',
                 'rgb(0,0,255)']
     dataset = TSVDataset(data)
     all_data = os.listdir('./data')
@@ -966,13 +966,13 @@ def gen_html_tree_view(data, full_expid=None,
     tax = Taxonomy(config_tax)
     if full_expid is not None and \
             predict_file is not None:
-        map_file = op.join('output',full_expid, 'snapshot', 
+        map_file = op.join('output',full_expid, 'snapshot',
                 op.splitext(predict_file)[0] + '.report.class_ap.json')
         if op.isfile(map_file):
             class_ap = json.loads(read_to_buffer(map_file))
             class_ap = class_ap['overall']['0.3']['class_ap']
             for node in tax.root.iter_search_nodes():
-                node.add_feature('ap', 
+                node.add_feature('ap',
                         class_ap.get(node.name, -1))
 
     def gen_html_tree_view_rec(root):
@@ -1001,7 +1001,7 @@ def gen_html_tree_view(data, full_expid=None,
 
 
 def gt_predict_images(predicts, gts, test_data, target_images, label, start_id, threshold,
-        label_to_idx, image_aps, test_data_split='test'): 
+        label_to_idx, image_aps, test_data_split='test'):
     test_dataset = TSVDataset(test_data)
     test_tsv = TSVFile(test_dataset.get_data(test_data_split))
     for i in xrange(start_id, len(target_images)):
@@ -1020,16 +1020,16 @@ def gt_predict_images(predicts, gts, test_data, target_images, label, start_id, 
         im_pred = np.copy(origin)
         rects = [p for p in predicts[key] if p['conf'] > threshold]
         draw_bb(im_pred, [r['rect'] for r in rects],
-                [r['class'] for r in rects], 
+                [r['class'] for r in rects],
                 [r['conf'] for r in rects])
         im_pred_target = np.copy(origin)
         rects = [p for p in rects if p['class'] == label]
         draw_bb(im_pred_target, [r['rect'] for r in rects],
-                [r['class'] for r in rects], 
+                [r['class'] for r in rects],
                 [r['conf'] for r in rects])
         yield key, origin, im_gt_target, im_pred_target, im_gt, im_pred, image_aps[i][1]
 
-def get_confusion_matrix_by_predict_file_label(full_expid, 
+def get_confusion_matrix_by_predict_file_label(full_expid,
         predict_file, label, threshold):
     '''
     get confusion matrix for specific label
@@ -1097,11 +1097,11 @@ def get_confusion_matrix_by_predict_file_label(full_expid,
         # load data from the inverted index
     logging.info('done loading {}'.format(predict_file))
 
-    return {'predicts': predicts, 
-            'gts': gts, 
+    return {'predicts': predicts,
+            'gts': gts,
             'label_to_idx': label_to_idx}
 
-def get_confusion_matrix_by_predict_file(full_expid, 
+def get_confusion_matrix_by_predict_file(full_expid,
         predict_file, threshold):
     '''
     get confusion matrix for all classes
@@ -1126,13 +1126,13 @@ def get_confusion_matrix_by_predict_file(full_expid,
     # calculate the confusion matrix
     confusion_pred_gt = {}
     confusion_gt_pred = {}
-    update_confusion_matrix(predicts, gts, threshold, 
-            confusion_pred_gt, 
+    update_confusion_matrix(predicts, gts, threshold,
+            confusion_pred_gt,
             confusion_gt_pred)
 
-    return {'predicts': predicts, 
-            'gts': gts, 
-            'confusion_pred_gt': confusion_pred_gt, 
+    return {'predicts': predicts,
+            'gts': gts,
+            'confusion_pred_gt': confusion_pred_gt,
             'confusion_gt_pred': confusion_gt_pred,
             'label_to_idx': label_to_idx}
 
@@ -1143,8 +1143,8 @@ def inc_one_dic_dic(dic, c1, c2):
         dic[c1][c2] = 0
     dic[c1][c2] = dic[c1][c2] + 1
 
-def update_confusion_matrix(predicts, gts, threshold, 
-            confusion_pred_gt, 
+def update_confusion_matrix(predicts, gts, threshold,
+            confusion_pred_gt,
             confusion_gt_pred):
     for key in predicts:
         curr_pred = [p for p in predicts[key] if p['conf'] > threshold]
@@ -1172,10 +1172,10 @@ def update_confusion_matrix(predicts, gts, threshold,
             predict_class = p['class']
             gt_class = curr_gt[j]['class']
             if ious[i, j] > 0.3:
-                inc_one_dic_dic(confusion_pred_gt, 
+                inc_one_dic_dic(confusion_pred_gt,
                         predict_class, gt_class)
             else:
-                inc_one_dic_dic(confusion_pred_gt, 
+                inc_one_dic_dic(confusion_pred_gt,
                         predict_class, 'None')
         pred_idx = np.argmax(ious, axis=0)
         for j, g in enumerate(curr_gt):
@@ -1235,6 +1235,9 @@ def tsv_details(row_hw, row_label, num_rows):
             # special tags, which is annoying
             curr_labels = set(normalize_to_str(rect['class']) for rect in rects)
             for rect in rects:
+                if "rect" not in rect:
+                    # it is image-level annotation
+                    continue
                 r = rect['rect']
                 if all(x == 0 for x in r):
                     # it is image-level annotation
@@ -1245,7 +1248,7 @@ def tsv_details(row_hw, row_label, num_rows):
                 #assert cx >= 0 and cx < width \
                         #and cy >= 0 and cy < height
                 if rw < 1 or rh < 1:
-                    logging.warn('rw or rh too small: {} - {}'.format(r_label[0], 
+                    logging.warn('rw or rh too small: {} - {}'.format(r_label[0],
                         ','.join(map(str, r))))
         else:
             # this is classification dataset
@@ -1262,13 +1265,13 @@ def tsv_details(row_hw, row_label, num_rows):
     max_size = sizes[np.argmax(size_counts)]
     min_size = map(float, min_size)
     max_size = map(float, max_size)
-    mean_size = (np.mean([s[0] for s in sizes]), 
+    mean_size = (np.mean([s[0] for s in sizes]),
             np.mean([s[1] for s in sizes]))
     mean_size = map(float, mean_size)
-    
-    return {'label_count': label_count, 
-            'min_image_size': min_size, 
-            'max_image_size': max_size, 
+
+    return {'label_count': label_count,
+            'min_image_size': min_size,
+            'max_image_size': max_size,
             'mean_image_size': mean_size}
 
 
@@ -1291,7 +1294,7 @@ def detect_duplicate_key(tsv, duplicate_tsv):
                 yield key, ','.join(map(str, idxs))
     tsv_writer(gen_rows(), duplicate_tsv)
     return TSVFile(duplicate_tsv).num_rows()
-            
+
 def populate_all_dataset_details():
     all_data = os.listdir('data/')
     for data in all_data:
@@ -1329,14 +1332,14 @@ def populate_dataset_details(data, check_image_details=False):
                 logging.info('generating hw')
                 rows = dataset.iter_data(split, progress=True)
                 dataset.write_data(((row[0], ' '.join(map(str,
-                    img_from_base64(row[-1]).shape[:2]))) for 
+                    img_from_base64(row[-1]).shape[:2]))) for
                     row in rows), split, 'hw')
             else:
                 from pathos.multiprocessing import ProcessingPool as Pool
                 num_worker = 128
                 num_tasks = num_worker * 3
                 num_images = dataset.num_rows(split)
-                num_image_per_worker = (num_images + num_tasks - 1) /num_tasks 
+                num_image_per_worker = (num_images + num_tasks - 1) /num_tasks
                 assert num_image_per_worker > 0
                 all_idx = []
                 for i in range(num_tasks):
@@ -1354,7 +1357,7 @@ def populate_dataset_details(data, check_image_details=False):
                     rows = dataset.iter_data(split, progress=True,
                             filter_idx=filter_idx)
                     return [(row[0], ' '.join(map(str,
-                        img_from_base64(row[-1]).shape[:2]))) 
+                        img_from_base64(row[-1]).shape[:2])))
                         for row in rows]
                 all_result = m.map(get_hw, all_idx)
                 x = []
@@ -1417,19 +1420,19 @@ def populate_dataset_details(data, check_image_details=False):
         if need_update:
             logging.info('updating {}'.format(dataset.get_labelmap_file()))
             write_to_file('\n'.join(labelmap), dataset.get_labelmap_file())
-    
+
     if not op.isfile(dataset.get_pos_labelmap_file()):
         ls = dataset.load_labelmap()
         write_to_file('\n'.join([l for l in ls if not l.startswith('-')]),
                 dataset.get_pos_labelmap_file())
 
     # generate the rows with duplicate keys
-    for split in splits: 
+    for split in splits:
         label_tsv = dataset.get_data(split, 'label')
         duplicate_tsv = dataset.get_data(split, 'key_duplicate')
         if op.isfile(label_tsv) and not op.isfile(duplicate_tsv):
             num_duplicate = detect_duplicate_key(label_tsv, duplicate_tsv)
-    
+
     # generate lineidx if it is not generated
     for split in splits:
         lineidx = dataset.get_lineidx(split)
@@ -1447,7 +1450,7 @@ def populate_dataset_details(data, check_image_details=False):
             if not dataset.has(split, 'labelmap', v) or \
                 dataset.last_update_time(split, 'labelmap', v) < dataset.last_update_time(split, 'label', v):
                 curr_labelmap = set()
-                update_labelmap(dataset.iter_data(split, 'label', v), 
+                update_labelmap(dataset.iter_data(split, 'label', v),
                         dataset.num_rows(split),
                         curr_labelmap)
                 curr_labelmap = sorted(list(curr_labelmap))
@@ -1465,17 +1468,17 @@ def populate_dataset_details(data, check_image_details=False):
                         curr_labelmap.append(row[0])
                 def gen_inverted_rows(inv):
                     for label in inv:
-                        assert label in curr_labelmap 
+                        assert label in curr_labelmap
                     for label in curr_labelmap:
                         i = inv[label] if label in inv else []
                         yield label, ' '.join(map(str, i))
                 inverted, inverted_with_bb, inverted_no_bb = create_inverted_list(
                         dataset.iter_data(split, 'label', v))
-                dataset.write_data(gen_inverted_rows(inverted), 
+                dataset.write_data(gen_inverted_rows(inverted),
                         split, 'inverted.label', v)
-                dataset.write_data(gen_inverted_rows(inverted_with_bb), 
+                dataset.write_data(gen_inverted_rows(inverted_with_bb),
                         split, 'inverted.label.with_bb', v)
-                dataset.write_data(gen_inverted_rows(inverted_no_bb), 
+                dataset.write_data(gen_inverted_rows(inverted_no_bb),
                         split, 'inverted.label.no_bb', v)
             v = v + 1
     # check if the number of rows from the label tsv are equal to the number of rows in image tsv
@@ -1549,11 +1552,11 @@ def populate_dataset_details(data, check_image_details=False):
             else:
                 break
             v = v + 1
-    
+
     if op.isfile(dataset.get_data('trainX')):
-        # composite dataset. 
+        # composite dataset.
         create_index_composite_dataset(dataset)
-    
+
     populate_num_images_composite(dataset)
 
     add_node_to_ancestors(dataset)
@@ -1577,7 +1580,7 @@ def populate_all_label_counts(dataset):
 
 def add_node_to_ancestors(dataset):
     tree_file = op.join(dataset._data_root, 'root.yaml')
-    out_file = op.join(dataset._data_root, 'treenode_to_ancestors.tsv') 
+    out_file = op.join(dataset._data_root, 'treenode_to_ancestors.tsv')
     if op.isfile(tree_file) and worth_create(tree_file, out_file):
         tax = Taxonomy(load_from_yaml_file(tree_file))
         tax.update()
@@ -1612,7 +1615,7 @@ def populate_num_images_composite(dataset):
     write_to_yaml_file(tax.dump(), dest_tree_file)
 
 def create_index_composite_dataset(dataset):
-    fname_numImagesPerSource = op.join(dataset._data_root, 
+    fname_numImagesPerSource = op.join(dataset._data_root,
             'trainX.numImagesPerSource.tsv')
     if op.isfile(fname_numImagesPerSource):
         return
@@ -1628,7 +1631,7 @@ def create_index_composite_dataset(dataset):
     all_idxSource_idxRow = []
     for idx_source, idx_row in rows:
         all_idxSource_idxRow.append((int(idx_source), int(idx_row)))
-    # note, the data may be duplicated. 
+    # note, the data may be duplicated.
     all_idxSource_idxRow = list(set(all_idxSource_idxRow))
 
     idxSource_to_idxRows = list_to_dict(all_idxSource_idxRow, 0)
@@ -1675,8 +1678,8 @@ def create_index_composite_dataset(dataset):
                 len(sourceLabel_to_destLabels))
         source_includedSourceLabels[idxSource][1].extend(
                 sourceLabel_to_destLabels.keys())
-    
-    tsv_writer([(n, str(i)) for (n, i) in source_numSourceLabels], 
+
+    tsv_writer([(n, str(i)) for (n, i) in source_numSourceLabels],
             op.join(dataset._data_root, 'trainX.numCategoriesPerSource.tsv'))
 
     # save teh list of included labels
@@ -1691,14 +1694,14 @@ def create_index_composite_dataset(dataset):
                 set(sourceDataset_to_includedSourceLabels[source_dataset_name])
 
     tsv_writer([(n, ','.join(v)) for (n, v) in
-        sourceDataset_to_includedSourceLabels.iteritems()], op.join(dataset._data_root, 
+        sourceDataset_to_includedSourceLabels.iteritems()], op.join(dataset._data_root,
             'trainX.includeCategoriesPerSourceDataset.tsv'))
 
     tsv_writer([(n, get_nick_name(noffset_to_synset(s)) if is_noffset(s) else
-        s) for (n, v) in sourceDataset_to_includedSourceLabels.iteritems() 
-          for s in v], op.join(dataset._data_root, 
+        s) for (n, v) in sourceDataset_to_includedSourceLabels.iteritems()
+          for s in v], op.join(dataset._data_root,
             'trainX.includeCategoriesPerSourceDatasetReadable.tsv'))
-    
+
     #sourceDataset_to_excludeSourceLabels = {}
     ## find out the excluded label list
     #for source_dataset_name in sourceDataset_to_includedSourceLabels:
@@ -1711,11 +1714,11 @@ def create_index_composite_dataset(dataset):
         #sourceDataset_to_excludeSourceLabels[source_dataset_name] = full_label_names
 
     #tsv_writer([(n, ','.join(v)) for (n, v) in
-        #sourceDataset_to_excludeSourceLabels.iteritems()], op.join(dataset._data_root, 
+        #sourceDataset_to_excludeSourceLabels.iteritems()], op.join(dataset._data_root,
             #'trainX.excludeCategoriesPerSourceDataset.tsv'))
 
     #tsv_writer([(n, get_nick_name(noffset_to_synset(s)) if is_noffset(s) else
-        #s) for (n, v) in sourceDataset_to_excludeSourceLabels.iteritems() for s in v], 
+        #s) for (n, v) in sourceDataset_to_excludeSourceLabels.iteritems() for s in v],
         #op.join(dataset._data_root, 'trainX.excludeCategoriesPerSourceDatasetReadable.tsv'))
 
 class TSVTransformer(object):
@@ -1730,9 +1733,9 @@ class TSVTransformer(object):
         rows = tsv_reader(source_tsv)
         x = [self._over_row_processor(row) for row in rows]
 
-        logging.info('total rows = {}; total_processed = {}'.format(self._total_rows, 
+        logging.info('total rows = {}; total_processed = {}'.format(self._total_rows,
                 len(x)))
-        
+
     def Process(self, source_tsv, dst_tsv, row_processor):
         '''
         row_processor: a function whose input should be a list of tsv cols and
@@ -1758,7 +1761,7 @@ def randomize_tsv_file(tsv_file):
     shuffle_file = prefix + '.shuffle'
     if os.path.exists(shuffle_file):
         return shuffle_file
-    idx_file = prefix + '.lineidx' 
+    idx_file = prefix + '.lineidx'
     with open(idx_file, 'r') as fp:
         num = len([line for line in fp.readlines() if len(line.strip()) > 0])
     np.random.seed(777)
@@ -1806,7 +1809,7 @@ def visualize_predict_no_draw(full_expid, predict_file, label, start_id, thresho
             threshold)
     pred_sorted_cache_path = '{}.key_idxGT_idxPred_ap.th{}.{}.tsv'.format(
             pred_full_path, threshold, label)
-    
+
     test_dataset = TSVDataset(test_data)
     if not op.isfile(pred_sorted_cache_path):
         if not op.isfile(pred_key_path) or \
@@ -1859,7 +1862,7 @@ def visualize_predict_no_draw(full_expid, predict_file, label, start_id, thresho
             rects_pred = json.loads(row_in_pred[1])
             rects_gt = [r for r in rects_gt if r['class'] == label]
             rects_pred = [r for r in rects_pred if r['class'] == label]
-            ap = calculate_image_ap([r['rect'] for r in rects_gt], 
+            ap = calculate_image_ap([r['rect'] for r in rects_gt],
                     [r['rect'] for r in rects_pred])
             target_aps.append(ap)
         key_idxGT_idxPred_aps = zip(target_keys, target_idx_in_gt,
@@ -1867,7 +1870,7 @@ def visualize_predict_no_draw(full_expid, predict_file, label, start_id, thresho
         key_idxGT_idxPred_aps = sorted(key_idxGT_idxPred_aps, key=lambda x:
                 x[-1])
         tsv_writer(key_idxGT_idxPred_aps, pred_sorted_cache_path)
-    
+
     tsv = TSVFile(pred_sorted_cache_path)
     total_num = tsv.num_rows()
     if total_num == 0:
@@ -1902,7 +1905,7 @@ def visualize_predict(full_expid, predict_file, label, start_id, threshold):
             threshold)
     pred_sorted_cache_path = '{}.key_idxGT_idxPred_ap.th{}.{}.tsv'.format(
             pred_full_path, threshold, label)
-    
+
     test_dataset = TSVDataset(test_data)
     if not op.isfile(pred_sorted_cache_path):
         if not op.isfile(pred_key_path) or \
@@ -1955,7 +1958,7 @@ def visualize_predict(full_expid, predict_file, label, start_id, threshold):
             rects_pred = json.loads(row_in_pred[1])
             rects_gt = [r for r in rects_gt if r['class'] == label]
             rects_pred = [r for r in rects_pred if r['class'] == label]
-            ap = calculate_image_ap([r['rect'] for r in rects_gt], 
+            ap = calculate_image_ap([r['rect'] for r in rects_gt],
                     [r['rect'] for r in rects_pred])
             target_aps.append(ap)
         key_idxGT_idxPred_aps = zip(target_keys, target_idx_in_gt,
@@ -1963,7 +1966,7 @@ def visualize_predict(full_expid, predict_file, label, start_id, threshold):
         key_idxGT_idxPred_aps = sorted(key_idxGT_idxPred_aps, key=lambda x:
                 x[-1])
         tsv_writer(key_idxGT_idxPred_aps, pred_sorted_cache_path)
-    
+
     tsv = TSVFile(pred_sorted_cache_path)
     total_num = tsv.num_rows()
     if total_num == 0:
@@ -2130,7 +2133,7 @@ def visualize_box(data, split, version, label, start_id, color_map={}):
                     label_class = rect['class']
                     rect = rect['rect']
                     all_class.append(label_class)
-                    if not (rect[0] == 0 and rect[1] == 0 
+                    if not (rect[0] == 0 and rect[1] == 0
                             and rect[2] == 0 and rect[3] == 0):
                         all_rect.append(rect)
                     else:
@@ -2143,7 +2146,7 @@ def visualize_box(data, split, version, label, start_id, color_map={}):
             all_rect, all_class = get_rect_class(target_rects)
             im_label = np.copy(origin)
             draw_bb(im_label, all_rect, all_class)
-            yield new_name, origin, im_label, im, pformat(target_rects) 
+            yield new_name, origin, im_label, im, pformat(target_rects)
         else:
             yield new_name, origin, im, im, ''
 
@@ -2198,7 +2201,7 @@ def visualize_tsv2(data, split, label):
                     label_class = label['class']
                     rect = label['rect']
                     all_class.append(label_class)
-                    if not (rect[0] == 0 and rect[1] == 0 
+                    if not (rect[0] == 0 and rect[1] == 0
                             and rect[2] == 0 and rect[3] == 0):
                         all_rect.append(rect)
                     else:
@@ -2233,7 +2236,7 @@ def visualize_tsv(tsv_image, tsv_label, out_folder=None, label_idx=1):
                 label_class = label['class']
                 rect = label['rect']
                 all_class.append(label_class)
-                if not (rect[0] == 0 and rect[1] == 0 
+                if not (rect[0] == 0 and rect[1] == 0
                         and rect[2] == 0 and rect[3] == 0):
                     all_rect.append(rect)
                 else:
@@ -2241,7 +2244,7 @@ def visualize_tsv(tsv_image, tsv_label, out_folder=None, label_idx=1):
             new_name = row_image[0].replace('/', '_').replace(':', '')
             draw_bb(im, all_rect, all_class)
             if out_folder:
-                fname = os.path.join(out_folder, 
+                fname = os.path.join(out_folder,
                         '_'.join(set(c.replace(' ', '_') for c in all_class)),
                         new_name +'.png')
         else:
@@ -2293,7 +2296,7 @@ def collect_label(row, stat, **kwargs):
     stat.append((is_remove, labels))
 
 class TSVDatasetSource(TSVDataset):
-    def __init__(self, name, root=None, version=-1, 
+    def __init__(self, name, root=None, version=-1,
             valid_splits=['train', 'trainval', 'test'], cleaness=10,
             use_all=False, use_negative_label=False):
         super(TSVDatasetSource, self).__init__(name)
@@ -2323,7 +2326,7 @@ class TSVDatasetSource(TSVDataset):
                 sourcelabels = self._targetlabel_to_sourcelabels[node.name]
                 node.add_feature(self.name, ','.join(sourcelabels))
                 if any(is_noffset(l) for l in sourcelabels):
-                    node.add_feature(self.name + '_readable', 
+                    node.add_feature(self.name + '_readable',
                             ','.join(get_nick_name(noffset_to_synset(l)) if
                                 is_noffset(l) else l for l in sourcelabels))
                 total = 0
@@ -2346,11 +2349,11 @@ class TSVDatasetSource(TSVDataset):
         for split in self._valid_splits:
             logging.info('loading the inverted file: {}-{}'.format(self.name,
                 split))
-            if not op.isfile(self.get_data(split, 'label', 
+            if not op.isfile(self.get_data(split, 'label',
                     version=self._version)):
                 continue
             for t in types:
-                rows = self.iter_data(split, 'inverted.label.{}'.format(t), 
+                rows = self.iter_data(split, 'inverted.label.{}'.format(t),
                         version=self._version)
                 inverted = {r[0]: (map(int, r[1].split(' ')) if len(r[1]) > 0
                     else []) for r in rows}
@@ -2435,8 +2438,8 @@ class TSVDatasetSource(TSVDataset):
                         name_to_targetlabels[t] = set()
                     name_to_targetlabels[t].add(node.name)
 
-        sourcelabel_targetlabel = [] 
-        if len(invalid_list) != 0: 
+        sourcelabel_targetlabel = []
+        if len(invalid_list) != 0:
             logging.warn('invalid white list information: {}'.format(pformat(invalid_list)))
 
         #result = {}
@@ -2464,7 +2467,7 @@ class TSVDatasetSource(TSVDataset):
                             # noffset to do the autmatic matching
                             continue
                         sourcelabel_targetlabel.append((l, t))
-                        #result[l] = t 
+                        #result[l] = t
         if self.use_negative_label:
             # we just add the mapping here. no need to check if -s is in the
             # source label list
@@ -2475,7 +2478,7 @@ class TSVDatasetSource(TSVDataset):
                 0)
         self._targetlabel_to_sourcelabels = list_to_dict_unique(sourcelabel_targetlabel,
                 1)
-        
+
         name_to_node = None
         for sourcelabel in self._sourcelabel_to_targetlabels:
             targetlabels = self._sourcelabel_to_targetlabels[sourcelabel]
@@ -2511,7 +2514,7 @@ class TSVDatasetSource(TSVDataset):
         if label_type not in self._type_to_split_label_idx:
             return []
         split_label_idx = self._type_to_split_label_idx[label_type]
-        datasetlabel_to_splitidx = list_to_dict(split_label_idx, 1) 
+        datasetlabel_to_splitidx = list_to_dict(split_label_idx, 1)
         result = []
         for datasetlabel in datasetlabel_to_splitidx:
             if datasetlabel in self._sourcelabel_to_targetlabels:
@@ -2594,7 +2597,7 @@ def convert_one_label(rects, label_mapper):
             for t in label_mapper[rect['class']]:
                 r2 = copy.deepcopy(rect)
                 assert type(t) is str or type(t) is unicode
-                r2['class'] = t 
+                r2['class'] = t
                 rects2.append(r2)
     rects[:] = []
     rects.extend(rects2)
@@ -2624,7 +2627,7 @@ def convert_label(label_tsv, idx, label_mapper, with_bb):
             if rect['class'] in label_mapper:
                 for t in label_mapper[rect['class']]:
                     r2 = copy.deepcopy(rect)
-                    r2['class'] = t 
+                    r2['class'] = t
                     if rect['class'] != t:
                         # keep this for logging
                         r2['class_from'] = rect['class']
@@ -2635,7 +2638,7 @@ def convert_label(label_tsv, idx, label_mapper, with_bb):
 
 def create_info_for_ambigous_noffset(name, noffsets):
     definitions = [str(noffset_to_synset(n).definition()) for n in noffsets]
-    de = [{'noffset': n, 
+    de = [{'noffset': n,
           'definition': d.replace("`", '').replace("'", ''),
           'nick_name': str(get_nick_name(noffset_to_synset(n)))}
             for n, d in zip(noffsets, definitions)]
@@ -2650,7 +2653,7 @@ def node_should_have_images(root, th, fname):
     few_training = []
     for node in root.iter_search_nodes():
         if node.cum_images_no_bb + node.cum_images_with_bb < th:
-            few_training.append({'name': node.name, 
+            few_training.append({'name': node.name,
                 'cum_images_no_bb': node.cum_images_no_bb,
                 'cum_images_with_bb': node.cum_images_with_bb,
                 'parent list': [p.name for p in node.get_ancestors()[:-1]]})
@@ -2824,7 +2827,7 @@ def parallel_map_to_array(func, all_task, num_worker=128):
         result.extend(s)
     return result
 
-def create_trainX(train_ldtsi, extra_dtsi, tax, out_dataset, 
+def create_trainX(train_ldtsi, extra_dtsi, tax, out_dataset,
         version=-1, lift_train=False):
     t_to_ldsi = list_to_dict(train_ldtsi, 2)
     extra_t_to_ldsi = list_to_dict(extra_dtsi, 1)
@@ -2856,7 +2859,7 @@ def create_trainX(train_ldtsi, extra_dtsi, tax, out_dataset,
                 out_split = 'train{}'.format(k)
                 train_ldtsik.extend([(l, dataset, label_type, split, i,
                     k) for l, i in li])
-                extra_dtsik.extend([(dataset, label_type, split, i, k) 
+                extra_dtsik.extend([(dataset, label_type, split, i, k)
                     for l, i in extra_li])
                 k = k + 1
                 dest = out_dataset[label_type].get_data(
@@ -2866,7 +2869,7 @@ def create_trainX(train_ldtsi, extra_dtsi, tax, out_dataset,
                     dataset.name, split))
                 source_origin_label = dataset.get_data(split,
                     'label', version=version)
-                
+
                 converted_label = convert_label(source_origin_label,
                         idx, dataset._sourcelabel_to_targetlabels,
                         with_bb=with_bb)
@@ -2886,7 +2889,7 @@ def create_trainX(train_ldtsi, extra_dtsi, tax, out_dataset,
                 sources_label.append(label_file)
         write_to_file('\n'.join(sources),
                 out_dataset[label_type].get_data('trainX'))
-        write_to_file('\n'.join(sources_label), 
+        write_to_file('\n'.join(sources_label),
                 out_dataset[label_type].get_data('trainX', 'label'))
         write_to_file('\n'.join(sources_origin_label),
                 out_dataset[label_type].get_data('trainX', 'origin.label'))
@@ -2949,7 +2952,7 @@ def create_testX(test_ldtsi, tax, out_dataset, version):
                 k = k + 1
         write_to_file('\n'.join(sources),
                 out_dataset[label_type].get_data('testX'))
-        write_to_file('\n'.join(sources_label), 
+        write_to_file('\n'.join(sources_label),
                 out_dataset[label_type].get_data('testX', 'label'))
         write_to_file('\n'.join(sources_origin_label),
                 out_dataset[label_type].get_data('testX', 'origin.label'))
@@ -3006,7 +3009,7 @@ def remove_test_in_train(train_ldtsi, test_ldtsi):
     set_train_ldtsi = set(train_ldtsi)
     #assert len(set_train_ldtsi) == len(train_ldtsi)
     set_test_dtsi = set((d, t, s, i) for l, d, t, s, i in test_ldtsi)
-    result = [(l, d, t, s, i) for l, d, t, s, i in train_ldtsi 
+    result = [(l, d, t, s, i) for l, d, t, s, i in train_ldtsi
             if (d, t, s, i) not in set_test_dtsi]
     logging.info('after len(train_ldtsi) = {}'.format(len(result)))
     return result
@@ -3014,7 +3017,7 @@ def remove_test_in_train(train_ldtsi, test_ldtsi):
 def split_train_test(ldtsi, num_test):
     # group by label_type
     t_to_ldsi = list_to_dict(ldtsi, 2)
-    train_ldtsi = [] 
+    train_ldtsi = []
     test_ldtsi = []
     for label_type in sorted(t_to_ldsi.keys()):
         ldsi= t_to_ldsi[label_type]
@@ -3028,7 +3031,7 @@ def split_train_test(ldtsi, num_test):
             random.shuffle(dsi)
             test_ldtsi.extend([(rootlabel, d, label_type, s, i) for d, s, i
                 in dsi[:curr_num_test]])
-            train_ldtsi.extend([(rootlabel, d, label_type, s, i) for d, s, i 
+            train_ldtsi.extend([(rootlabel, d, label_type, s, i) for d, s, i
                 in dsi[curr_num_test:]])
     return train_ldtsi, test_ldtsi
 
@@ -3037,14 +3040,14 @@ def regularize_data_sources(data_infos):
     default_splits = ['train', 'trainval', 'test']
     for data_info in data_infos:
         if type(data_info) is str:
-            r = {'name': data_info, 
-                    'cleaness': 10, 
+            r = {'name': data_info,
+                    'cleaness': 10,
                     'valid_splits': default_splits,
                     'use_all': False}
             result.append(r)
         elif type(data_info) is tuple or type(data_info) is list:
             assert len(data_info) > 0
-            r = {'name': data_info[0], 
+            r = {'name': data_info[0],
                     'cleaness': data_info[1] if len(data_info) > 1 else 10,
                     'valid_splits': data_info[2] if len(data_info) > 2 else
                                 default_splits,
@@ -3112,7 +3115,7 @@ def attach_properties(src_nodes, dst_tree):
 
 def build_taxonomy_impl(taxonomy_folder, **kwargs):
     random.seed(777)
-    dataset_name = kwargs.get('data', 
+    dataset_name = kwargs.get('data',
             op.basename(taxonomy_folder))
     overall_dataset = TSVDataset(dataset_name)
     if op.isfile(overall_dataset.get_labelmap_file()):
@@ -3137,15 +3140,15 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
     ambigous_noffset_file = op.join(overall_dataset._data_root,
             'ambigous_noffsets.yaml')
     output_ambigous_noffsets(tax.root, ambigous_noffset_file)
-    
+
     data_infos = regularize_data_sources(kwargs['datas'])
-    
+
     logging.info('extract the images from: {}'.format(pformat(data_infos)))
-    
+
     label_version = kwargs.get('version', -1)
-    data_sources = [TSVDatasetSource(root=tax.root, version=label_version, **d) 
+    data_sources = [TSVDatasetSource(root=tax.root, version=label_version, **d)
             for d in data_infos]
-    
+
     for s in data_sources:
         s.populate_info(tax.root)
 
@@ -3153,8 +3156,8 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
 
     labels, child_parent_sgs = child_parent_print_tree2(tax.root, 'name')
 
-    label_map_file = overall_dataset.get_labelmap_file() 
-    write_to_file('\n'.join(map(lambda l: l.encode('utf-8'), labels)), 
+    label_map_file = overall_dataset.get_labelmap_file()
+    write_to_file('\n'.join(map(lambda l: l.encode('utf-8'), labels)),
             label_map_file)
     # save the parameter
     write_to_yaml_file((taxonomy_folder, kwargs), op.join(overall_dataset._data_root,
@@ -3189,7 +3192,7 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
         ensure_directory(op.dirname(target_file))
         shutil.copy(tree_file, target_file)
 
-    node_should_have_images(tax.root, 200, 
+    node_should_have_images(tax.root, 200,
             op.join(overall_dataset._data_root, 'labels_with_few_images.yaml'))
 
     # get the information of all train val
@@ -3211,7 +3214,7 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
 
     # for each label, let's duplicate the image or remove the image
     default_max_image = kwargs.get('max_image_per_label', 1000)
-    label_to_max_image = {n.name: n.__getattribute__('max_image_extract_for_train') 
+    label_to_max_image = {n.name: n.__getattribute__('max_image_extract_for_train')
             if 'max_image_extract_for_train' in n.features and n.__getattribute__('max_image_extract_for_train') > default_max_image
             else default_max_image for n in tax.root.iter_search_nodes() if n != tax.root}
     # negative images constraint
@@ -3220,14 +3223,14 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
         label_to_max_image['-' + l] = label_to_max_image[l]
     label_to_max_image[None] = 10000000000
     min_image = kwargs.get('min_image_per_label', 200)
-    
+
     logging.info('keep a small image pool to split')
     label_to_max_augmented_images = {l: label_to_max_image[l] * 3 for l in label_to_max_image}
     # reduce the computing cost
     ldtsi, extra_dtsi = remove_or_duplicate(ldtsi, 0,
             label_to_max_augmented_images)
     assert len(extra_dtsi) == 0
-    
+
     logging.info('select the best test image')
     if num_test == 0:
         test_ldtsi = []
@@ -3238,16 +3241,16 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
         test_ldtsi, extra_dtsi = remove_or_duplicate(ldtsi, 0,
                 label_to_max_images_for_test)
         assert len(extra_dtsi) == 0
-    
+
     logging.info('removing test images from image pool')
     train_ldtsi = remove_test_in_train(ldtsi, test_ldtsi)
-    
+
     logging.info('select the final training images')
     train_ldtsi, extra_dtsi = remove_or_duplicate(train_ldtsi, min_image,
             label_to_max_image)
 
     logging.info('creating the train data')
-    create_trainX(train_ldtsi, extra_dtsi, tax, out_dataset, 
+    create_trainX(train_ldtsi, extra_dtsi, tax, out_dataset,
             version=label_version, lift_train=kwargs.get('lift_train', False))
 
     populate_output_num_images(test_ldtsi, 'toTest', tax.root)
@@ -3336,7 +3339,7 @@ def populate_output_num_images(ldtX, suffix, root):
             # might change this logic
             continue
         if not targetlabel:
-            # it means background images 
+            # it means background images
             continue
         dtX = targetlabel_to_dX[targetlabel]
         dataset_to_X = list_to_dict(dtX, 0)
@@ -3428,17 +3431,17 @@ def get_data_sources(public_only=False, version=None):
         if version=='exclude_golden_test':
             return [
                     {
-                        'data': 'coco2017', 
+                        'data': 'coco2017',
                         'valid_splits': ['train', 'trainval'],
                         'cleaness': 10
                     },
                     {
-                        'data': 'voc0712', 
+                        'data': 'voc0712',
                         'valid_splits': ['train', 'trainval'],
                         'cleaness': 10
                     },
                     {
-                        'data': 'OpenImageV4_448', 
+                        'data': 'OpenImageV4_448',
                         'valid_splits': ['train', 'trainval'],
                         'cleaness': 10
                     },
@@ -3464,19 +3467,19 @@ def get_data_sources(public_only=False, version=None):
         elif version == 'exclude_golden_use_voc_coco_all':
             return [
                     {
-                        'data': 'coco2017', 
+                        'data': 'coco2017',
                         'valid_splits': ['train', 'trainval'],
                         'cleaness': 10,
                         'use_all': True,
                     },
                     {
-                        'data': 'voc0712', 
+                        'data': 'voc0712',
                         'valid_splits': ['train', 'trainval'],
                         'cleaness': 10,
                         'use_all': True,
                     },
                     {
-                        'data': 'OpenImageV4_448', 
+                        'data': 'OpenImageV4_448',
                         'valid_splits': ['train', 'trainval'],
                         'cleaness': 9
                     },
@@ -3504,7 +3507,7 @@ def get_data_sources(public_only=False, version=None):
     if not public_only:
         return [
             ('coco2017', 10),
-            ('voc0712', 10), 
+            ('voc0712', 10),
             ('Naturalist', 10),
             ('elder', 10),
             ('imagenet200Diff', 10),
@@ -3528,7 +3531,7 @@ def get_data_sources(public_only=False, version=None):
     else:
         return [
             ('coco2017', 10),
-            ('voc0712', 10), 
+            ('voc0712', 10),
             ('Naturalist', 10),
             ('elder', 10),
             ('imagenet200Diff', 10),
@@ -3573,7 +3576,7 @@ def _map_img_key_to_name2(key):
     if key.endswith(ext):
         return key
     else:
-        return key + ext 
+        return key + ext
 
 def _map_img_key_to_name(key):
     # use version 2
@@ -3612,12 +3615,12 @@ def convert_to_uhrs_with_url(data):
                 _, _, key = parse_combine(key)
                 row.append(get_img_url(key))
                 yield row
-        dataset.write_data(gen_rows(), split, 
+        dataset.write_data(gen_rows(), split,
                 'url', version=v)
 
 def find_same_rects(target, rects, iou=0.95):
     same_class_rects = [r for r in rects if r['class'] == target['class']]
-    return [r for r in same_class_rects if 
+    return [r for r in same_class_rects if
         calculate_iou(target['rect'], r['rect']) > iou]
 
 def rect_in_rects(target, rects, iou=0.95):
@@ -3625,7 +3628,7 @@ def rect_in_rects(target, rects, iou=0.95):
     if 'rect' not in target:
         return len(same_class_rects) > 0
     else:
-        return any(r for r in same_class_rects if 'rect' in r and 
+        return any(r for r in same_class_rects if 'rect' in r and
             calculate_iou(target['rect'], r['rect']) > iou)
 
 def load_key_rects(iter_data):
@@ -3653,7 +3656,7 @@ def convert_uhrs_result_back_to_sources(in_tsv, debug=True, tree_file=None):
 
     logging.info('#yes={}; #no={}; #un={}; #yes/(#yes+#no+#un)={}'.format(
         num_yes, num_no, num_un, 1.*num_yes/(num_yes+num_no+num_un)))
-    
+
     if tree_file:
         tax = Taxonomy(load_from_yaml_file(tree_file))
         mapper = LabelToSynset()
@@ -3661,9 +3664,9 @@ def convert_uhrs_result_back_to_sources(in_tsv, debug=True, tree_file=None):
 
     datas = get_data_sources()
     datas = [data for data, _ in datas]
-    datasplitkey_rects3 = [[parse_combine(key), rects3] 
+    datasplitkey_rects3 = [[parse_combine(key), rects3]
             for key, rects3 in key_rects3]
-    data_split_key_rects3 = [(data, split, key, rects3) 
+    data_split_key_rects3 = [(data, split, key, rects3)
             for (data, split, key), rects3 in datasplitkey_rects3]
 
     data_to_split_key_rects3 = list_to_dict(data_split_key_rects3, 0)
@@ -3753,7 +3756,7 @@ def convert_uhrs_result_back_to_sources(in_tsv, debug=True, tree_file=None):
                             logging.info(pformat(yes_rects))
                             logging.info(pformat(no_rects))
                             show_images([old_im, new_im, yes_im, no_im], 2, 2)
-    
+
             assert not source_dataset.has(split, 'label', v + 1)
             if not is_equal:
                 source_dataset.write_data(((key, json.dumps(rects)) for key, rects in source_key_rects),
@@ -3762,7 +3765,7 @@ def convert_uhrs_result_back_to_sources(in_tsv, debug=True, tree_file=None):
                 meta['num_added_rects'] = num_added
                 meta['num_removed_rects'] = num_removed
                 meta['total_number_images'] = len(source_key_rects)
-    
+
                 meta['avg_added_rects'] = 1. * num_added / meta['total_number_images']
                 meta['avg_removed_rects'] = 1. * num_removed / meta['total_number_images']
                 write_to_yaml_file(meta, meta_file)
@@ -3840,28 +3843,28 @@ def parse_args():
             type=str, required=False)
     parser.add_argument('-o', '--output', help='output',
             type=str, required=False)
-    parser.add_argument('-d', '--datas', 
+    parser.add_argument('-d', '--datas',
             default=argparse.SUPPRESS,
             nargs='*',
             help='which data are used for taxonomy_to_tsv',
-            type=str, 
+            type=str,
             required=False)
-    parser.add_argument('-da', '--data', 
+    parser.add_argument('-da', '--data',
             default=argparse.SUPPRESS,
             help='the dataset name under data/',
-            type=str, 
+            type=str,
             required=False)
-    parser.add_argument('-fe', '--full_expid', 
+    parser.add_argument('-fe', '--full_expid',
             default=argparse.SUPPRESS,
-            type=str, 
+            type=str,
             required=False)
-    parser.add_argument('-maxi', '--max_image_per_label', 
+    parser.add_argument('-maxi', '--max_image_per_label',
             default=argparse.SUPPRESS,
-            type=int, 
+            type=int,
             required=False)
-    parser.add_argument('-mini', '--min_image_per_label', 
+    parser.add_argument('-mini', '--min_image_per_label',
             default=argparse.SUPPRESS,
-            type=int, 
+            type=int,
             required=False)
     return parser.parse_args()
 
