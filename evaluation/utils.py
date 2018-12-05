@@ -52,9 +52,12 @@ def search_bbox_in_list(new_bbox, existing_list, iou_threshold):
         if not exist, return -1
     """
     for idx, cur_bbox in enumerate(existing_list):
-        if new_bbox["class"].lower() == cur_bbox["class"].lower() \
-                and calculate_iou(new_bbox, cur_bbox) > iou_threshold:
-            return idx
+        if new_bbox["class"].lower() == cur_bbox["class"].lower():
+            if iou_threshold == 0:
+                return idx
+            else:
+                if calculate_iou(new_bbox, cur_bbox) > iou_threshold:
+                    return idx
     return -1
 
 
@@ -76,19 +79,28 @@ def get_max_iou_idx(new_bbox, bbox_list):
 
 def get_bbox_matching_map(list1, list2, iou_threshold):
     """
-    Returns the matching map from list1 to list2.
+    Returns the matching map from list1 to list2. List is a list of bboxes
     i.e., list1[i] matches list2[res[i]] if res[i] is not None
     """
     res = [None] * len(list1)
-    visited = set()  # visited idx in list2
-    for idx1, bbox1 in enumerate(list1):
-        indices2, max_iou = get_max_iou_idx(bbox1, list2)
-        if max_iou <= iou_threshold:
-            continue
-        for idx2 in indices2:
-            if idx2 not in visited:
-                res[idx1] = idx2
-                visited.add(idx2)
+
+    if iou_threshold == 0:
+        # class only
+        for idx1, bbox1 in enumerate(list1):
+            for idx2, bbox2 in enumerate(list2):
+                if bbox1["class"] == bbox2["class"]:
+                    res[idx1] = idx2
+    else:
+        # class + rect
+        visited = set()  # visited idx in list2
+        for idx1, bbox1 in enumerate(list1):
+            indices2, max_iou = get_max_iou_idx(bbox1, list2)
+            if max_iou < iou_threshold:
+                continue
+            for idx2 in indices2:
+                if idx2 not in visited:
+                    res[idx1] = idx2
+                    visited.add(idx2)
     return res
 
 

@@ -1,27 +1,27 @@
 import argparse
+import logging
 import os
 
 import _init_paths
 from evaluation.analyze_task import analyze_verify_box_task
 from evaluation.eval_utils import merge_gt, process_prediction_to_verify, tune_threshold_for_target, add_config_baseline
-from evaluation.generate_task import generate_verify_box_task
+from evaluation.generate_task import generate_task_files
 from evaluation.uhrs import UhrsTaskManager
 from evaluation.utils import write_to_file, list_files_in_dir, ensure_dir_empty
 from scripts.qd_common import init_logging
 
 parser = argparse.ArgumentParser(description='Update ground truth for new detection')
 parser.add_argument('source', type=str,
-                    help='the detection source name')
-parser.add_argument('res_folder', type=str,
-                    help='''path to the prediciton reulsts folder, result files
-                    should be named as [dataset].[source].tsv''')
+                    help='the baseline name to be verified')
+parser.add_argument('task', choices=['VerifyImage', 'VerifyBox'],
+                    help='choose from VerifyBox (for detection results) and VerifyImage (for tagging results)')
 parser.add_argument('--dataset', default=["MIT1K", "Instagram"], nargs='+',
                     help='datasets to be evaluated, default is MIT1K and Instagram')
-parser.add_argument('--gt', default='./groundtruth/config.yaml', type=str,
-                    help='''path to yaml config file in the ground truth folder,
-                    default is ./groundtruth/config.yaml''')
+parser.add_argument('--config', default='./groundtruth/config.yaml', type=str,
+                    help='''path to yaml config file of dataset ground truth and baselines,
+                    default is ./prediction/config.yaml''')
 parser.add_argument('--iou_threshold', default=0.5, type=float,
-                    help='IoU threshold for bounding boxes, default is 0.5')
+                    help='IoU threshold for bounding boxes matching, default is 0.5')
 parser.add_argument('--conf_threshold', default=0.5, type=float,
                     help='''confidence threshold for prediction results,
                     default is 0.5''')
@@ -30,7 +30,7 @@ parser.add_argument('--displayname', default='', type=str,
 parser.add_argument('--labelmap', default='', type=str,
                     help='''path to labelmap file, only classes included in the labelmap
                     will be evaluated. Default is None, all classes will be evaluated''')
-parser.add_argument('--task', default='./tasks/', type=str,
+parser.add_argument('--taskdir', default='./tasks/', type=str,
                     help='''path to working directory, used for uploading,
                     downloading, logging, etc''')
 parser.add_argument('--honeypot', default='./honeypot/voc20_easy_gt.txt',
@@ -44,59 +44,57 @@ parser.add_argument('--tune_threshold', default='', type=str,
 
 
 def update_gt(args):
+    NEG_IOU = 0.95  # IoU threshold with wrong box to be treated as wrong
+    MERGE_IOU = 0.8   # IoU threshold to merge into existing ground truth
+
     task_hitapp = "verify_box_group"
     source = args.source
     hp_file = args.honeypot
-    task_dir = os.path.join(args.task, source)
-    label_file = os.path.join(task_dir, "eval_label.tsv")
-    task_upload_dir = os.path.join(task_dir, "upload")
-    task_download_dir = os.path.join(task_dir, "download")
-    task_id_name_log = os.path.join(task_dir, "task_id_name_log")
+    task_type = args.task
 
-    uhrs_client = UhrsTaskManager(task_id_name_log)
+    for dataset_name in args.dataset:
+        task_dir = os.path.join(args.taskdir, source, dataset_name)
+        label_file = os.path.join(task_dir, "eval_label.tsv")
+        res_file = os.path.join(task_dir, "eval_result.tsv")
+        task_upload_dir = os.path.join(task_dir, "upload")
+        task_download_dir = os.path.join(task_dir, "download")
+        task_id_name_log = os.path.join(task_dir, "task_id_name_log")
 
-    ensure_dir_empty(task_dir)
-    files_to_verify = []
-    for dataset in args.dataset:
-        files_to_verify.append({
-            "dataset": dataset, "source": source,
-            "result": "{}.{}.tsv".format(dataset.lower(), source),
-            "display": args.displayname,
-            "conf_threshold": args.conf_threshold
-        })
-    num_to_verify = process_prediction_to_verify(args.gt, args.res_folder, files_to_verify,
-                            label_file, args.iou_threshold, 0.97, include_labelmap=args.labelmap)
-    if num_to_verify == 0:
-        return
+        uhrs_client = UhrsTaskManager(task_id_name_log)
+        ensure_dir_empty(task_dir)
+        logging.info("Updating for dataset: {}".format(dataset_name))
+        num_to_verify = process_prediction_to_verify(args.config, dataset_name, source, task_type,
+                                    label_file, args.iou_threshold, NEG_IOU,
+                                    include_labelmap=args.labelmap)
+        if num_to_verify == 0:
+            continue
+        ensure_dir_empty(task_upload_dir)
+        generate_task_files(task_type, label_file, hp_file,
+                            os.path.join(task_upload_dir, source))
+        uhrs_client.upload_tasks_from_folder(task_hitapp, task_upload_dir,
+                                             prefix=source)
+        ensure_dir_empty(task_download_dir)
 
-    ensure_dir_empty(task_upload_dir)
-    generate_verify_box_task(label_file, hp_file,
-                             os.path.join(task_upload_dir, source))
-    uhrs_client.upload_tasks_from_folder(task_hitapp, task_upload_dir,
-                                         prefix=source)
-    ensure_dir_empty(task_download_dir)
+        round_count = 0
+        while True:
+            round_count += 1
+            uhrs_client.wait_until_task_finish(task_hitapp)
+            uhrs_client.download_tasks_to_folder(task_hitapp, task_download_dir)
+            download_files = list_files_in_dir(task_download_dir)
+            rejudge_filename = "rejudge_{}.tsv".format(round_count)
+            num_rejudge = analyze_verify_box_task(
+                download_files, "uhrs", res_file,
+                os.path.join(task_upload_dir, rejudge_filename),
+                os.path.join(task_dir, 'all_workers.tsv'))
+            if num_rejudge > 5 and round_count < 8:
+                uhrs_client.upload_tasks_from_folder(
+                    task_hitapp, task_upload_dir, prefix=rejudge_filename,
+                    num_judges=1)
+            else:
+                break
 
-    res_file = os.path.join(task_dir, "eval_result.tsv")
-
-    round_count = 0
-    while True:
-        round_count += 1
-        uhrs_client.wait_until_task_finish(task_hitapp)
-        uhrs_client.download_tasks_to_folder(task_hitapp, task_download_dir)
-        download_files = list_files_in_dir(task_download_dir)
-        rejudge_filename = "rejudge_{}.tsv".format(round_count)
-        num_rejudge = analyze_verify_box_task(
-            download_files, "uhrs", res_file,
-            os.path.join(task_upload_dir, rejudge_filename),
-            os.path.join(task_dir, 'all_workers.tsv'))
-        if num_rejudge > 5 and round_count < 8:
-            uhrs_client.upload_tasks_from_folder(
-                task_hitapp, task_upload_dir, prefix=rejudge_filename,
-                num_judges=1)
-        else:
-            break
-
-    merge_gt(args.gt, [res_file], 0.8)
+        merge_iou = 0 if task_type=="VerifyImage" else MERGE_IOU
+        merge_gt(dataset_name, args.config, [res_file], merge_iou)
 
 
 def main(args):

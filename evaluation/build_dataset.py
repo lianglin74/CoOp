@@ -2,7 +2,6 @@ import collections
 import json
 import os
 
-import _init_paths
 from evaluation.eval_utils import DetectionFile
 from scripts.process_tsv import populate_dataset_details
 from scripts.qd_common import load_from_yaml_file
@@ -18,8 +17,8 @@ def sample_from_dataset(in_dataset_name, insplit, out_dataset_name, outsplit,
     Class names will be mapped according to tax_tree_file, classes not in taxonomy
     will not appear in the new dataset.
     """
-    data_root = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
-    out_data_root = os.path.join(data_root, "data", out_dataset_name)
+    dataset = TSVDataset(in_dataset_name)
+    out_data_root = os.path.join(os.path.split(dataset._data_root)[0], out_dataset_name)
     if os.path.exists(out_data_root):
         raise Exception("{} already exists".format(out_data_root))
     os.mkdir(out_data_root)

@@ -2,7 +2,6 @@ import json
 import os
 import uuid
 
-import _init_paths
 from evaluation.eval_utils import DetectionFile, GroundTruthConfig, _thresholding_detection, merge_gt
 from evaluation.generate_task import generate_verify_box_task
 from evaluation.analyze_task import analyze_verify_box_task
@@ -10,6 +9,7 @@ from evaluation.uhrs import UhrsTaskManager
 from evaluation.utils import read_from_file, write_to_file, get_max_iou_idx, list_files_in_dir
 from scripts.process_tsv import get_img_url2
 from scripts.qd_common import init_logging, ensure_directory
+from scripts.tsv_io import tsv_reader, tsv_writer
 
 
 def align_detection(ref_file, pred_file, outfile=None, min_conf=0.0):

@@ -12,28 +12,23 @@ import pandas as pd
 import yaml
 
 import _init_paths
-from eval_utils import filter_gt, load_gt, load_result
-from qd_common import init_logging
-from utils import search_bbox_in_list
+from evaluation.eval_utils import filter_gt, load_gt, load_result, GroundTruthConfig, DetectionFile
+from scripts.qd_common import init_logging
+from evaluation.utils import search_bbox_in_list
 
 
 parser = argparse.ArgumentParser(
     description='Human evaluation for object detection')
-parser.add_argument('--gt', default='./groundtruth/config.yaml', type=str,
-                    help='''path to yaml config file in the ground truth folder,
+parser.add_argument('--config', default='./groundtruth/config.yaml', type=str,
+                    help='''path to yaml config file of ground truth and predictions,
                     default is ./groundtruth/config.yaml''')
 parser.add_argument('--blacklist', default='', type=str,
                     help='''blacklist filename, blocking categories you don't
                     want to evaluate here''')
-parser.add_argument('--set', default='', type=str,
-                    help='''dataset name to be evaluated on, default is MIT1K
-                    and Instagram''')
+parser.add_argument('--set', default=None, nargs='+',
+                    help='datasets to be evaluated, default is all the dataset in config')
 parser.add_argument('--iou_threshold', default=0.5, type=float,
                     help='IoU threshold for bounding boxes, default is 0.5')
-parser.add_argument('--result', default='', type=str,
-                    help='path to latest checkpoint (default: none)')
-parser.add_argument('--result_conf', default=0.0, type=float,
-                    help='confidence threshold for result, default is 0')
 parser.add_argument('--filter_gt', action='store_true',
                     help='choose if the ground truth should be filtered by given baselines')
 
@@ -49,15 +44,20 @@ def eval_result(gt, result, iou_threshold):
     Returns:
         Tuple of statistics
     """
-    num_gt_bboxes = sum([len(bboxes) for _, bboxes in gt.items()])
-    num_result_bboxes = sum([len(bboxes) for _, bboxes in result.items()])
-
+    num_gt_bboxes = 0
+    num_result_bboxes = 0
     num_correct_bboxes = 0
     categories = set()
-    for imgkey, bboxes in result.items():
-        for b in bboxes:
+    for imgkey in gt:
+        gt_bboxes = gt[imgkey]
+        num_gt_bboxes += len(gt_bboxes)
+        if imgkey not in result:
+            continue
+        res_bboxes = result[imgkey]
+        num_result_bboxes += len(res_bboxes)
+        for b in res_bboxes:
             categories.add(b["class"].lower())
-            if search_bbox_in_list(b, gt[imgkey], iou_threshold) >= 0:
+            if search_bbox_in_list(b, gt_bboxes, iou_threshold) >= 0:
                 num_correct_bboxes += 1
 
     precision = float(num_correct_bboxes) / num_result_bboxes * 100
@@ -76,23 +76,23 @@ def eval_result_per_class(gt, result, iou_threshold):
     """
     num_result_bboxes_per_class = collections.defaultdict(int)
     num_correct_bboxes_per_class = collections.defaultdict(int)
-    for imgkey, bboxes in result.items():
-        for b in bboxes:
+    for imgkey in result:
+        for b in result[imgkey]:
+            gt_bboxes = gt[imgkey]
             num_result_bboxes_per_class[b["class"].lower()] += 1
-            if search_bbox_in_list(b, gt[imgkey], iou_threshold) >= 0:
+            if search_bbox_in_list(b, gt_bboxes, iou_threshold) >= 0:
                 num_correct_bboxes_per_class[b["class"].lower()] += 1
     return num_result_bboxes_per_class, num_correct_bboxes_per_class
 
 
-def eval_dataset(gt_root, dataset_name, dataset, iou_threshold,
-                 use_filtered_gt=False):
+def eval_dataset(gt_config_file, dataset_name, iou_threshold,
+                 use_filtered_gt=False, blacklist=None):
     """Prints the table summarizing evaluation results on the dataset.
     Writes per-class evaluation results to directory gt_root/per_class_pr
 
     Args:
-        gt_root: dirctory path
+        gt_config_file: yaml file
         dataset_name: str of dataset name
-        dataset: dict of config information for the dataset
         iou_threshold: IoU threshold for bboxes
         use_filtered_gt: indicate whether ground truth labels should only
             include detection output under current thresholding settings
@@ -101,29 +101,31 @@ def eval_dataset(gt_root, dataset_name, dataset, iou_threshold,
           .format(dataset_name, '#_gt_bboxes', '#_result_bboxes',
                   '#_correct_bboxes', 'prec', 'recall', iou_threshold,
                   '#_result_categories'))
-
-    if use_filtered_gt:
-        gt_file = dataset['groundtruth']["filtered"]
-    else:
-        gt_file = dataset['groundtruth']["original"]
-    gt_file = os.path.join(gt_root, gt_file)
-    gt = load_gt(gt_file)
+    gt_cfg = GroundTruthConfig(gt_config_file)
+    gt_file = gt_cfg.gt_file(dataset_name, filtered=use_filtered_gt)
+    gt_tsv = DetectionFile(gt_file, blacklist=blacklist)
+    gt = {}
+    for imgkey in gt_tsv:
+        gt[imgkey] = [b for b in gt_tsv[imgkey] if "rect" in b]
     num_gt_per_class = collections.defaultdict(int)
-    for _, bboxes in gt.items():
-        for b in bboxes:
+    for imgkey in gt:
+        for b in gt[imgkey]:
             num_gt_per_class[b["class"].lower()] += 1
     df_per_class = pd.DataFrame({"category": [c for c in num_gt_per_class]})
     df_per_class["#gt"] = pd.Series([num_gt_per_class[c]
                                     for c in df_per_class["category"]])
 
     # evaluate all baselines
-    for baseline_info in dataset['baselines']:
-        result = load_result(gt_root, baseline_info)
+    for baseline in gt_cfg.baselines(dataset_name):
+        base_file = gt_cfg.baseline_file(dataset_name, baseline)
+        base_info = gt_cfg.baseline_info(dataset_name, baseline)
+        base_info["blacklist"] = blacklist
+        result = DetectionFile(base_file, **base_info)
         num_gt_bboxes, num_result_bboxes, num_correct_bboxes, \
             precision, recall, num_unique_categories = eval_result(
                                                     gt, result, iou_threshold)
         print('|{:15}\t|{:10}\t|{:10}\t|{:10}\t|{:10.2f}\t|{:10.2f}\t|{:10}|'
-              .format(baseline_info["name"], num_gt_bboxes, num_result_bboxes,
+              .format(baseline, num_gt_bboxes, num_result_bboxes,
                       num_correct_bboxes, precision, recall,
                       num_unique_categories))
 
@@ -136,26 +138,36 @@ def eval_dataset(gt_root, dataset_name, dataset, iou_threshold,
             else:
                 pr.append([float(num_cor_per_class[c]) / num_res_per_class[c],
                            float(num_cor_per_class[c]) / num_gt_per_class[c]])
-        col_name = baseline_info["name"] + " precision (recall)"
+        col_name = baseline + " precision (recall)"
         df_per_class[col_name] = pd.Series(["{:.2f} ({:.2f})".format(
                                             p * 100, r * 100)
                                             for p, r in pr])
     df_per_class = df_per_class.sort_values(by="#gt", ascending=False)
-    df_per_class.to_csv(os.path.join(gt_root,
-                        "stats/" + dataset_name + "_category_pr.tsv"),
+    gt_root = os.path.split(gt_config_file)[0]
+    stats_dir = os.path.join(gt_root, "stats")
+    if not os.path.exists(stats_dir):
+        os.mkdir(stats_dir)
+    df_per_class.to_csv(os.path.join(stats_dir,
+                        "{}_category_pr.tsv".format(dataset_name)),
                         sep='\t', index=False)
 
 
-def draw_pr_curve(gt_root, dataset_name, dataset, iou_threshold,
-                  start_from_conf=0.3):
+def draw_pr_curve(gt_config_file, dataset_name, iou_threshold,
+                  start_from_conf=0.3, blacklist=None):
     """Draws precision recall curve for all models on the dataset
     """
-    gt_file = os.path.join(gt_root, dataset['groundtruth']["original"])
-    gt = load_gt(gt_file)
-    num_gt = sum(len(v) for k, v in gt.items())
+    gt_cfg = GroundTruthConfig(gt_config_file)
+    gt_file = gt_cfg.gt_file(dataset_name)
+    gt_tsv = DetectionFile(gt_file, blacklist=blacklist)
+    gt = {}
+    num_gt = 0
+    for imgkey in gt_tsv:
+        gt[imgkey] = [b for b in gt_tsv[imgkey] if "rect" in b]
+        num_gt += len(gt[imgkey])
 
     fig, ax = plt.subplots()
-    for baseline_info in dataset['baselines']:
+    for baseline in gt_cfg.baselines(dataset_name):
+        baseline_info = gt_cfg.baseline_info(dataset_name, baseline)
         if "deprecated" in baseline_info:
             continue
         # the chosen conf threshold to present final prediction
@@ -166,10 +178,11 @@ def draw_pr_curve(gt_root, dataset_name, dataset, iou_threshold,
         baseline_info["conf_threshold"] = start_from_conf
         if "threshold" in baseline_info:
             del baseline_info["threshold"]
-        result = load_result(gt_root, baseline_info)
+        baseline_info["blacklist"] = blacklist
+        result = DetectionFile(baseline_info["result"], **baseline_info)
         y_score_gt = []
-        for imgkey, bboxes in result.items():
-            for b in bboxes:
+        for imgkey in result:
+            for b in result[imgkey]:
                 if search_bbox_in_list(b, gt[imgkey], iou_threshold) >= 0:
                     y_score_gt.append((b["conf"], 1))
                 else:
@@ -202,33 +215,26 @@ def draw_pr_curve(gt_root, dataset_name, dataset, iou_threshold,
     plt.xticks([])
     plt.ylabel("Precision")
     plt.title(dataset_name)
+    gt_root = os.path.split(gt_config_file)[0]
     fig.savefig(os.path.join(gt_root, dataset_name + "_pr_curve.png"))
 
 
 def main(args):
-    gt_root = os.path.split(args.gt)[0]
-    with open(args.gt, 'r') as fp:
-        gt_cfg = yaml.load(fp)
-
-    for dataset_name, dataset in gt_cfg.items():
-        if len(args.set) == 0 or args.set.lower() == dataset_name.lower():
-            if args.result:
-                # if new result is given, add to existing models
-                dataset["baselines"].append(
-                    {"name": "new result", "result": args.result,
-                     "conf_threshold": args.result_conf})
-            if args.blacklist:
-                for config in dataset["baselines"]:
-                    config["blacklist"] = args.blacklist
-            eval_dataset(gt_root, dataset_name, dataset, args.iou_threshold, use_filtered_gt=args.filter_gt)
-            draw_pr_curve(gt_root, dataset_name, dataset, args.iou_threshold)
+    dataset_list = args.set
+    if dataset_list is None:
+        gt_cfg = GroundTruthConfig(args.config)
+        dataset_list = gt_cfg.datasets()
+    for dataset_name in dataset_list:
+        eval_dataset(args.config, dataset_name, args.iou_threshold, use_filtered_gt=args.filter_gt,
+                     blacklist=args.blacklist)
+        draw_pr_curve(args.config, dataset_name, args.iou_threshold, blacklist=args.blacklist)
 
 
 def parse_args():
     args = parser.parse_args()
     if isinstance(args, dict):
         args = argparse.Namespace()
-    if not args.gt.endswith('yaml'):
+    if not args.config.endswith('yaml'):
         raise Exception("Please specify the config yaml file.")
     return args
 
@@ -236,5 +242,5 @@ if __name__ == '__main__':
     init_logging()
     args = parse_args()
     if args.filter_gt:
-        filter_gt(args.gt, args.iou_threshold, args.blacklist)
+        filter_gt(args.config, args.iou_threshold, args.blacklist)
     main(args)

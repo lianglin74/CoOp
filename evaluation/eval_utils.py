@@ -6,21 +6,34 @@ import os
 from shutil import copyfile
 import yaml
 
-import _init_paths
+from scripts.tsv_io import TSVDataset
 from scripts.process_tsv import get_img_url2
 from evaluation.utils import read_from_file, write_to_file
 from evaluation.utils import search_bbox_in_list, is_valid_bbox, get_max_iou_idx, get_bbox_matching_map
 
 
 class DetectionFile(object):
-    def __init__(self, predict_file, key_col_idx=0, bbox_col_idx=1, min_conf=0):
+    def __init__(self, predict_file, key_col_idx=0, bbox_col_idx=1, conf_threshold=0,
+                 threshold=None, display=None, obj_threshold=0, blacklist=None, **kwargs):
         self.tsv_file = predict_file
         self.key_col_idx = key_col_idx
         self.bbox_col_idx = bbox_col_idx
-        self.conf_threshold = min_conf
 
         self._fp = None
         self._keyidx = None
+
+        self._threshold_dict = None
+        self._display_dict = None
+        self._blacklist = None
+        self._obj_threshold = obj_threshold
+        self._conf_threshold = conf_threshold
+
+        if threshold:
+            self._threshold_dict = {p[0]: float(p[1]) for p in read_from_file(threshold)}
+        if display:
+            self._display_dict = {p[0]: p[1] for p in read_from_file(display)}
+        if blacklist:
+            self._blacklist = set(l[0].lower() for l in read_from_file(blacklist))
 
     def __iter__(self):
         self._ensure_keyidx_loaded()
@@ -39,8 +52,9 @@ class DetectionFile(object):
         cols = self._fp.readline().strip().split('\t')
         bboxes = json.loads(cols[self.bbox_col_idx])
         return _thresholding_detection(
-                    bboxes, thres_dict=None, display_dict=None, obj_threshold=0,
-                    conf_threshold=self.conf_threshold, blacklist=None)
+                    bboxes, thres_dict=self._threshold_dict, display_dict=self._display_dict,
+                    obj_threshold=self._obj_threshold, conf_threshold=self._conf_threshold,
+                    blacklist=self._blacklist)
 
     def _ensure_keyidx_loaded(self):
         self._ensure_tsv_opened()
@@ -64,7 +78,7 @@ class GroundTruthConfig(object):
         self._load_config()
         if check_format:
             check_config(config_file)
-        self.rootpath = os.path.split(self.config_file)[0]
+        self.rootpath = os.path.split(os.path.realpath(self.config_file))[0]
 
     def datasets(self):
         return self.config.keys()
@@ -76,19 +90,33 @@ class GroundTruthConfig(object):
                 res.append(b["name"])
         return res
 
+    def gt_dataset(self, dataset):
+        gt = self.config[dataset]["groundtruth"]["original"]
+        if not isinstance(gt, dict):
+            raise Exception("{} is not a valid dataset".format(dataset))
+        tsv_dataset = TSVDataset(gt["dataset"])
+        # HACK to access dataset on Windows
+        if os.name == "nt":
+            tsv_dataset._data_root = os.path.join("//vigdgx02/raid_data/", gt["dataset"])
+        return tsv_dataset, gt["split"]
+
     def gt_file(self, dataset, filtered=False):
         gt_type = "filtered" if filtered else "original"
-        fpath = self.config[dataset]["groundtruth"][gt_type]
-        return os.path.join(self.rootpath, fpath)
+        gt = self.config[dataset]["groundtruth"][gt_type]
+        if isinstance(gt, dict):
+            tsv_dataset, split = self.gt_dataset(dataset)
+            fpath = tsv_dataset.get_data(split, 'label', version=-1)
+            return os.path.realpath(fpath)
+        else:
+            return os.path.join(self.rootpath, gt)
 
     def baseline_file(self, dataset, name):
-        fpath = self._baseline_info(dataset, name)["result"]
-        return os.path.join(self.rootpath, fpath)
+        return self.baseline_info(dataset, name)["result"]
 
-    def _baseline_info(self, dataset, name):
-        for b in self.config[dataset]["baselines"]:
-            if b["name"] == name:
-                return b
+    def baseline_info(self, dataset, name):
+        for baseline in self.config[dataset]["baselines"]:
+            if baseline["name"] == name:
+                return parse_config_info(self.rootpath, baseline)
         raise Exception("unknown baseline: {} in {}".format(name, dataset))
 
     def _load_config(self):
@@ -102,7 +130,7 @@ def parse_config_info(rootpath, config):
     Args:
         rootpath: path to the directory storing files used in config info
         config: a dict containing config setting used to filter the detection
-            result, the keys in the dict are:
+            result. The file path can be relative or absolute. Keys in the dict are:
             result: required, result file name. The first column is image key,
                 the second column is json list of bboxes.
             threshold: optional, tsv file with per-class thresholds. The first
@@ -119,32 +147,26 @@ def parse_config_info(rootpath, config):
     Returns:
         config dict with absolute path, default values filled
     """
+    def get_path(p):
+        if os.path.isabs(p):
+            return p
+        else:
+            return os.path.join(rootpath, p)
     if "result" not in config:
         raise Exception("can not find result file in config")
     if not os.path.isfile(config["result"]):
-        config["result"] = os.path.join(rootpath, config["result"])
-    if "threshold" in config and config["threshold"]:
+        config["result"] = get_path(config["result"])
+    if "threshold" in config:
         if not os.path.isfile(config["threshold"]):
-            config["threshold"] = os.path.join(rootpath, config["threshold"])
-    else:
-        config["threshold"] = None
+            config["threshold"] = get_path(config["threshold"])
 
-    if "display" in config and config["display"]:
+    if "display" in config:
         if not os.path.isfile(config["display"]):
-            config["display"] = os.path.join(rootpath, config["display"])
-    else:
-        config["display"] = None
+            config["display"] = get_path(config["display"])
 
-    if "blacklist" in config and config["blacklist"]:
+    if "blacklist" in config:
         if not os.path.isfile(config["blacklist"]):
-            config["blacklist"] = os.path.join(rootpath, config["blacklist"])
-    else:
-        config["blacklist"] = None
-
-    if "conf_threshold" not in config:
-        config["conf_threshold"] = 0
-    if "obj_threshold" not in config:
-        config["obj_threshold"] = 0
+            config["blacklist"] = get_path(config["blacklist"])
     return config
 
 
@@ -244,21 +266,20 @@ def filter_gt(gt_config_file, bbox_iou, blacklist=None,
             be filtered using this number
     """
     gt_root = os.path.split(gt_config_file)[0]
-    with open(gt_config_file, 'r') as fp:
-        gt_cfg = yaml.load(fp)
+    gt_cfg = GroundTruthConfig(gt_config_file)
     filtered_dirpath = os.path.join(gt_root, "filtered")
     if not os.path.exists(filtered_dirpath):
         os.mkdir(filtered_dirpath)
 
-    for dataset_name, dataset in gt_cfg.items():
-        out_gt_file = os.path.join(gt_root, dataset["groundtruth"]["filtered"])
-        all_gt_file = os.path.join(gt_root, dataset["groundtruth"]["original"])
+    for dataset_name in gt_cfg.datasets():
+        out_gt_file = gt_cfg.gt_file(dataset_name, filtered=True)
+        all_gt_file = gt_cfg.gt_file(dataset_name, filtered=False)
         all_gt_ids = [cols[0] for cols in read_from_file(all_gt_file)]
         all_gt = {cols[0]: json.loads(cols[1]) for cols in
                   read_from_file(all_gt_file)}
         cur_gt = collections.defaultdict(list)
-        for baseline_info in dataset['baselines']:
-            baseline = baseline_info["name"]
+        for baseline in gt_cfg.baselines(dataset_name):
+            baseline_info = gt_cfg.baseline_info(dataset_name, baseline)
             if override_min_conf:
                 baseline_info["conf_threshold"] = override_min_conf
                 if "threshold" in baseline_info:
@@ -267,11 +288,11 @@ def filter_gt(gt_config_file, bbox_iou, blacklist=None,
                 baseline_info["blacklist"] = blacklist
             filtered_res_file = os.path.join(
                 filtered_dirpath, os.path.split(baseline_info["result"])[-1])
-            result = load_result(gt_root, baseline_info)
+            result = DetectionFile(baseline_info["result"], **baseline_info)
             filtered_res_data = [[k, json.dumps(result[k])] for k in result]
             write_to_file(filtered_res_data, filtered_res_file)
-            for imgkey, bbox_list in result.items():
-                for b in bbox_list:
+            for imgkey in result:
+                for b in result[imgkey]:
                     # skip if bbox is already in current ground truth
                     if search_bbox_in_list(b, cur_gt[imgkey], bbox_iou) >= 0:
                         continue
@@ -287,91 +308,106 @@ def filter_gt(gt_config_file, bbox_iou, blacklist=None,
                              sum(len(v) for k, v in cur_gt.items())))
 
 
-def process_prediction_to_verify(gt_config_file, rootpath, file_info_list,
+def process_prediction_to_verify(gt_config_file, dataset_name, pred_name, pred_type,
                                  outfile, pos_iou_threshold, neg_iou_threshold,
                                  baseline_conf=0.5, include_labelmap=None):
     '''
     Processes prediction results for human verification
     Args:
         gt_config_file: path to ground truth config yaml file
-        rootpath: path to the prediction results folder
-        file_info_list: list of dict, including
-            dataset: the dataset name on which detector is run
-            source: the detection model name
-            result: tsv file with image_key, prediction_bboxes_list
-            conf_threhold: optional, float, default is 0
-            display: optional, tsv file of term, display name
-        outfile: tsv file with datasetname_key, bboxes, image_url
+        dataset_name: gt_config[dataset_name]
+        pred_name: gt_config[dataset_name]["baselines"]["name"]
+        pred_type: VerifyImage (tagging results) or VerifyBox(detection results)
+        outfile: tsv file with img_info, bboxes, image_url
         pos_iou_threshold: IoU with a ground truth to be treated as correct
         neg_iou_threshold: IoU with a verified wrong bbox to be treated as wrong
         baseline_conf: the verified confidence score in baselines,
             i.e., if it is 0.5, all bboxes with conf>=0.5 were verified
     '''
+    tag_only = True if pred_type=="VerifyImage" else False
+    if tag_only:
+        pos_iou_threshold = 0
+        neg_iou_threshold = 0
+
     include_classes = None
     if include_labelmap:
         include_classes = set(l[0].lower() for l in read_from_file(include_labelmap))
     # load existing ground truth labels
     gt_cfg = GroundTruthConfig(gt_config_file)
+    if dataset_name not in gt_cfg.datasets():
+        raise Exception("unknow dataset: {}".format(dataset))
 
     num_bbox_to_submit = 0
     num_bbox_pos = 0
     num_bbox_neg = 0
     num_bbox_total = 0
     output_data = []
-    for fileinfo in file_info_list:
-        # load prediction results
-        dataset = fileinfo["dataset"]
-        source = fileinfo["source"]
-        if dataset not in gt_cfg.datasets():
-            raise Exception("unknow dataset: {}".format(dataset))
-        result = load_result(rootpath, fileinfo)
-        logging.info("load prediction results from: {}"
-                     .format(fileinfo["result"]))
 
-        # load ground truth and verified baselines
-        gt_tsv = DetectionFile(gt_cfg.gt_file(dataset))
-        baselines_tsv = []
-        for baseline in gt_cfg.baselines(dataset):
-            baselines_tsv.append(DetectionFile(gt_cfg.baseline_file(dataset, baseline), min_conf=baseline_conf))
+    # load prediction results
+    pred_config = gt_cfg.baseline_info(dataset_name, pred_name)
+    pred_file = pred_config["result"]
+    pred_tsv = DetectionFile(pred_file, **pred_config)
+    logging.info("load prediction results from: {}, {}".format(pred_file, str(pred_config)))
 
-        for imgkey in result:
-            # get result bboxes
-            bboxes = []
-            for b in result[imgkey]:
-                if include_classes and b["class"].lower() not in include_classes:
-                    continue
-                if not is_valid_bbox(b):
-                    logging.error("invalid bbox: {}".format(str(b)))
-                    continue
-                bboxes.append(b)
-            num_bbox_total += len(bboxes)
+    # load ground truth and verified baselines
+    gt_dataset, gt_split = gt_cfg.gt_dataset(dataset_name)
+    baselines_tsv = []
+    for baseline in gt_cfg.baselines(dataset_name):
+        if baseline == pred_name:
+            continue
+        baselines_tsv.append(DetectionFile(gt_cfg.baseline_file(dataset_name, baseline), conf_threshold=baseline_conf))
 
-            verified = set()
-            # if prediction is in ground truth, it is verified as correct
-            idx_map = get_bbox_matching_map(bboxes, gt_tsv[imgkey], pos_iou_threshold)
-            verified.update([idx for idx in range(len(bboxes)) if idx_map[idx]])
-            num_pos_cur = len(verified)
-            num_bbox_pos += num_pos_cur
+    for imgkey, coded_rects in gt_dataset.iter_data(gt_split, 'label', version=-1):
+        if imgkey not in pred_tsv:
+            continue
+        # get result bboxes
+        bboxes = []
+        for b in pred_tsv[imgkey]:
+            if include_classes and b["class"].lower() not in include_classes:
+                continue
+            if not tag_only and not is_valid_bbox(b):
+                logging.error("invalid bbox: {}".format(str(b)))
+                continue
+            bboxes.append(b)
+        num_bbox_total += len(bboxes)
 
-            # if prediction is in baseline but not in gt, it is verified as wrong
+        verified = set()
+
+        if tag_only:
+            assert(all(["rect" not in b for b in bboxes]))
+            gt_bboxes = [b for b in json.loads(coded_rects) if "rect" not in b]
+        else:
+            assert(all(["rect" in b for b in bboxes]))
+            gt_bboxes = [b for b in json.loads(coded_rects) if "rect" in b]
+        # if prediction is in ground truth, it is verified as correct
+        idx_map = get_bbox_matching_map(bboxes, gt_bboxes, pos_iou_threshold)
+        verified.update([idx for idx in range(len(bboxes)) if idx_map[idx]])
+        num_pos_cur = len(verified)
+        num_bbox_pos += num_pos_cur
+
+        # if prediction is in baseline but not in gt, it is verified as wrong
+        for idx in range(len(bboxes)):
+            if idx in verified:
+                continue
+            for base_tsv in baselines_tsv:
+                if tag_only:
+                    base_bboxes = [b for b in base_tsv[imgkey] if "rect" not in b]
+                else:
+                    base_bboxes = [b for b in base_tsv[imgkey] if "rect" in b]
+                if search_bbox_in_list(bboxes[idx], base_bboxes, neg_iou_threshold) >= 0:
+                    verified.add(idx)
+                    break
+        num_bbox_neg += len(verified) - num_pos_cur
+
+        if len(verified) < len(bboxes):
+            new_bboxes = []
             for idx in range(len(bboxes)):
-                if idx in verified:
-                    continue
-                for base_tsv in baselines_tsv:
-                    if search_bbox_in_list(bboxes[idx], base_tsv[imgkey], neg_iou_threshold) >= 0:
-                        verified.add(idx)
-                        break
-            num_bbox_neg += len(verified) - num_pos_cur
+                if idx not in verified:
+                    new_bboxes.append(bboxes[idx])
 
-            if len(verified) < len(bboxes):
-                new_bboxes = []
-                for idx in range(len(bboxes)):
-                    if idx not in verified:
-                        new_bboxes.append(bboxes[idx])
-
-                num_bbox_to_submit += len(new_bboxes)
-                image_url = get_img_url2(imgkey)
-                output_data.append([dataset, json.dumps(new_bboxes), image_url])
+            num_bbox_to_submit += len(new_bboxes)
+            image_url = get_img_url2(imgkey)
+            output_data.append([dataset_name, json.dumps(new_bboxes), image_url])
 
     if output_data:
         write_to_file(output_data, outfile)
@@ -380,46 +416,39 @@ def process_prediction_to_verify(gt_config_file, rootpath, file_info_list,
     return num_bbox_to_submit
 
 
-def merge_gt(gt_config_file, res_files, bbox_matching_iou):
+def merge_gt(dataset_name, gt_config_file, res_files, bbox_matching_iou):
     '''
     Processes human evaluation results to add into existing ground truth labels
     '''
     # load old ground truth labels
-    all_gt, gt_files = _load_all_gt(gt_config_file)
+    gt_cfg = GroundTruthConfig(gt_config_file)
+    gt_dataset, gt_split = gt_cfg.gt_dataset(dataset_name)
+    existing_res = {}
+    url_key_map = {}
+    for key, coded_rects in gt_dataset.iter_data(gt_split, 'label', version=-1):
+        existing_res[key] = json.loads(coded_rects)
+        url_key_map[get_img_url2(key)] = key
 
-    url_key_map = {get_img_url2(k): k for d in all_gt for k in all_gt[d]}
-
-    # merge new results into ground truth
-    added_count = collections.defaultdict(int)
+    num_added = 0
     for res_file in res_files:
         for parts in read_from_file(res_file, check_num_cols=2):
             assert(int(parts[0]) in [1, 2, 3])
             # consensus yes
             if int(parts[0]) == 1:
                 for task in json.loads(parts[1]):
-                    if "image_info" in task:
-                        dataset = task["image_info"]
-                    elif "image_key" in task:
-                        dataset = task["image_key"].split('_', 1)[0]
-                    else:
-                        dataset = None
                     imgkey = url_key_map[task["image_url"]]
-                    existing_bboxes = all_gt[dataset][imgkey]
                     for new_bbox in task["bboxes"]:
-                        if search_bbox_in_list(new_bbox, existing_bboxes,
-                                               bbox_matching_iou) < 0:
-                            existing_bboxes.append(new_bbox)
-                            added_count[dataset] += 1
-
-    for dataset, count in added_count.items():
-        outfile = gt_files[dataset]
-        logging.info("added #gt {} to: {}".format(count, outfile))
-        temp = [[k, json.dumps(all_gt[dataset][k])] for k in all_gt[dataset]]
-        if os.path.isfile(outfile):
-            if os.path.isfile(outfile+".old"):
-                os.remove(outfile+".old")
-            os.rename(outfile, outfile+".old")
-        write_to_file(temp, outfile)
+                        if search_bbox_in_list(new_bbox, existing_res[imgkey], bbox_matching_iou)<0:
+                            existing_res[imgkey].append(new_bbox)
+                            num_added += 1
+    if num_added > 0:
+        def gen_rows():
+            for key, _ in gt_dataset.iter_data(gt_split, 'label', version=-1):
+                yield key, json.dumps(existing_res[key], separators=(',', ':'))
+        info = [("add from", str(res_files)), ("num_added", str(num_added))]
+        gt_dataset.update_data(gen_rows(), gt_split, "label", generate_info=info)
+    else:
+        logging.info("no new add")
 
 
 def populate_pred(infile, outfile):
