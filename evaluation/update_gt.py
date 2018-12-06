@@ -4,7 +4,7 @@ import os
 
 import _init_paths
 from evaluation.analyze_task import analyze_verify_box_task
-from evaluation.eval_utils import merge_gt, process_prediction_to_verify, tune_threshold_for_target, add_config_baseline
+from evaluation.eval_utils import GroundTruthConfig, merge_gt, process_prediction_to_verify, tune_threshold_for_target, add_config_baseline
 from evaluation.generate_task import generate_task_files
 from evaluation.uhrs import UhrsTaskManager
 from evaluation.utils import write_to_file, list_files_in_dir, ensure_dir_empty
@@ -15,8 +15,8 @@ parser.add_argument('source', type=str,
                     help='the baseline name to be verified')
 parser.add_argument('task', choices=['VerifyImage', 'VerifyBox'],
                     help='choose from VerifyBox (for detection results) and VerifyImage (for tagging results)')
-parser.add_argument('--dataset', default=["MIT1K", "Instagram"], nargs='+',
-                    help='datasets to be evaluated, default is MIT1K and Instagram')
+parser.add_argument('--datasets', default=None, nargs='+',
+                    help='datasets to be evaluated, default is all datasets in config')
 parser.add_argument('--config', default='./groundtruth/config.yaml', type=str,
                     help='''path to yaml config file of dataset ground truth and baselines,
                     default is ./prediction/config.yaml''')
@@ -52,7 +52,7 @@ def update_gt(args):
     hp_file = args.honeypot
     task_type = args.task
 
-    for dataset_name in args.dataset:
+    for dataset_name in args.datasets:
         task_dir = os.path.join(args.taskdir, source, dataset_name)
         label_file = os.path.join(task_dir, "eval_label.tsv")
         res_file = os.path.join(task_dir, "eval_result.tsv")
@@ -98,27 +98,32 @@ def update_gt(args):
 
 
 def main(args):
+    # parse args
+    if args.datasets is None:
+        cfg = GroundTruthConfig(args.config)
+        args.datasets = cfg.datasets()
+
     update_gt(args)
 
     if args.tune_threshold:
         thres_dict = {}
-        for dataset in args.dataset:
+        for dataset in args.datasets:
             res_file = os.path.join(args.res_folder, "{}.{}.tsv".format(dataset.lower(), args.source))
-            tmp = tune_threshold_for_target(args.gt, dataset, res_file, args.iou_threshold, args.tune_threshold)
+            tmp = tune_threshold_for_target(args.config, dataset, res_file, args.iou_threshold, args.tune_threshold)
             # choose the max threshold
             for label in tmp:
                 if label not in thres_dict or thres_dict[label] < tmp[label]:
                     thres_dict[label] = tmp[label]
-        outfile = os.path.join(os.path.split(args.gt)[0], "threshold.{}.tsv".format(args.source))
+        outfile = os.path.join(os.path.split(args.config)[0], "threshold.{}.tsv".format(args.source))
         write_to_file([[k, thres_dict[k]] for k in thres_dict], outfile)
 
     if args.add_baseline:
-        for dataset in args.dataset:
+        for dataset in args.datasets:
             fdict = {"result": os.path.join(args.res_folder, "{}.{}.tsv".format(dataset.lower(), args.source))}
-            thres_file = os.path.join(os.path.split(args.gt)[0], "threshold.{}.tsv".format(args.source))
+            thres_file = os.path.join(os.path.split(args.config)[0], "threshold.{}.tsv".format(args.source))
             if os.path.isfile(thres_file):
                 fdict["threshold"] = thres_file
-            add_config_baseline(args.gt, dataset, args.source, fdict)
+            add_config_baseline(args.config, dataset, args.source, fdict)
 
 
 if __name__ == "__main__":
