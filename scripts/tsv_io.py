@@ -405,10 +405,10 @@ class TSVDataset(object):
                     if progress:
                         pbar.update(i)
             else:
-                rows_data = self.iter_composite(split, None, version,
-                        filter_idx)
-                rows_label = self.iter_composite(split, 'label', version,
-                        filter_idx)
+                rows_data = self.iter_composite(split, None, version=version,
+                        filter_idx=filter_idx)
+                rows_label = self.iter_data(split, 'label', version=version,
+                        filter_idx=filter_idx)
                 if unique:
                     returned = set()
                 for i, (r_data, r_label) in enumerate(zip(rows_data, rows_label)):
