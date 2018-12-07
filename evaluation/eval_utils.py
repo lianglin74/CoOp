@@ -8,6 +8,7 @@ import yaml
 
 from scripts.tsv_io import TSVDataset
 from scripts.process_tsv import get_img_url2
+from scripts.qd_common import write_to_yaml_file
 from evaluation.utils import read_from_file, write_to_file
 from evaluation.utils import search_bbox_in_list, is_valid_bbox, get_max_iou_idx, get_bbox_matching_map
 
@@ -118,6 +119,26 @@ class GroundTruthConfig(object):
             if baseline["name"] == name:
                 return parse_config_info(self.rootpath, baseline)
         raise Exception("unknown baseline: {} in {}".format(name, dataset))
+
+    def add_baseline(self, dataset, baseline_name, pred_file, min_conf):
+        if not os.path.isabs(pred_file):
+            assert(os.path.isfile(os.path.join(self.rootpath, pred_file)))
+        else:
+            assert(os.path.isfile(pred_file))
+
+        if "baselines" not in self.config[dataset]:
+            self.config[dataset]["baselines"] = []
+        bases = self.config[dataset]["baselines"]
+        assert(isinstance(bases, list))
+        # check if baseline already exists
+        for b in bases:
+            if b["name"] == baseline_name:
+                raise Exception("{} already exists".format(baseline_name))
+        bases.append(
+            {"name": baseline_name, "result": pred_file,
+            "conf_threshold": min_conf})
+        write_to_yaml_file(self.config, self.config_file)
+        self._load_config()
 
     def _load_config(self):
         with open(self.config_file, 'r') as fp:
