@@ -331,7 +331,7 @@ def filter_gt(gt_config_file, bbox_iou, blacklist=None,
 
 def process_prediction_to_verify(gt_config_file, dataset_name, pred_name, pred_type,
                                  outfile, pos_iou_threshold, neg_iou_threshold,
-                                 baseline_conf=0.5, include_labelmap=None):
+                                 include_labelmap=None):
     '''
     Processes prediction results for human verification
     Args:
@@ -342,8 +342,6 @@ def process_prediction_to_verify(gt_config_file, dataset_name, pred_name, pred_t
         outfile: tsv file with img_info, bboxes, image_url
         pos_iou_threshold: IoU with a ground truth to be treated as correct
         neg_iou_threshold: IoU with a verified wrong bbox to be treated as wrong
-        baseline_conf: the verified confidence score in baselines,
-            i.e., if it is 0.5, all bboxes with conf>=0.5 were verified
     '''
     tag_only = True if pred_type=="VerifyImage" else False
     if tag_only:
@@ -376,7 +374,8 @@ def process_prediction_to_verify(gt_config_file, dataset_name, pred_name, pred_t
     for baseline in gt_cfg.baselines(dataset_name):
         if baseline == pred_name:
             continue
-        baselines_tsv.append(DetectionFile(gt_cfg.baseline_file(dataset_name, baseline), conf_threshold=baseline_conf))
+        base_cfg = gt_cfg.baseline_info(dataset_name, baseline)
+        baselines_tsv.append(DetectionFile(gt_cfg.baseline_file(dataset_name, baseline), **base_cfg))
 
     for imgkey, coded_rects in gt_dataset.iter_data(gt_split, 'label', version=-1):
         if imgkey not in pred_tsv:

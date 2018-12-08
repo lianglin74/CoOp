@@ -22,9 +22,6 @@ parser.add_argument('--config', default='./groundtruth/config.yaml', type=str,
                     default is ./prediction/config.yaml''')
 parser.add_argument('--iou_threshold', default=0.5, type=float,
                     help='IoU threshold for bounding boxes matching, default is 0.5')
-parser.add_argument('--conf_threshold', default=0.5, type=float,
-                    help='''confidence threshold for prediction results,
-                    default is 0.5''')
 parser.add_argument('--displayname', default='', type=str,
                     help='path to display name file')
 parser.add_argument('--labelmap', default='', type=str,
@@ -44,6 +41,13 @@ parser.add_argument('--tune_threshold', default='', type=str,
 
 
 def update_gt(args):
+    # parse args
+    if isinstance(args, list) or isinstance(args, str):
+        args = parser.parse_args(args)
+    if args.datasets is None:
+        cfg = GroundTruthConfig(args.config)
+        args.datasets = cfg.datasets()
+
     NEG_IOU = 0.95  # IoU threshold with wrong box to be treated as wrong
     MERGE_IOU = 0.8   # IoU threshold to merge into existing ground truth
 
@@ -98,11 +102,6 @@ def update_gt(args):
 
 
 def main(args):
-    # parse args
-    if args.datasets is None:
-        cfg = GroundTruthConfig(args.config)
-        args.datasets = cfg.datasets()
-
     update_gt(args)
 
     if args.tune_threshold:

@@ -13,7 +13,7 @@ def list_files_in_dir(dirpath):
 
 def ensure_dir_empty(dirpath):
     if not os.path.exists(dirpath):
-        os.mkdir(dirpath)
+        os.makedirs(dirpath)
     else:
         if len(os.listdir(dirpath)) > 0:
             raise Exception("{} is not empty".format(dirpath))
