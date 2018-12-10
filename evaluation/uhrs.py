@@ -85,7 +85,7 @@ class UhrsTaskManager():
                 num_done, _ = self._count_task_progress(
                     task_hitapp, self._task_log)
                 pbar.update(num_done - pbar.n)
-                time.sleep(300)
+                time.sleep(60)
             num_done, _ = self._count_task_progress(
                     task_hitapp, self._task_log)
             pbar.update(num_done - pbar.n)

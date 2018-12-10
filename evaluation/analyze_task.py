@@ -12,7 +12,7 @@ from evaluation.utils import load_escaped_json, write_to_file
 
 def analyze_verify_box_task(result_files, result_file_type, outfile_res,
                             outfile_rejudge, worker_quality_file=None,
-                            min_num_judges_per_hit=5, min_num_hp=5,
+                            min_num_judges_per_hit=4, min_num_hp=5,
                             accuracy_threshold=0.9, neg_threshold=None):
     """Parses result files from verify_box tasks, where workers are ask to
     verify if a single bbox is good: 1-Yes, 2-No, 3-Can't judge.
@@ -118,7 +118,7 @@ def analyze_verify_box_task(result_files, result_file_type, outfile_res,
     # write tasks needing re-judge
     if rejudge_tasks:
         rejudge_data = pack_task_with_honey_pot(rejudge_tasks, hp_tasks,
-                                                "hp", 15, 2)
+                                                "hp", 20, 4)
         write_task_file(rejudge_data, outfile_rejudge)
     return num_rejudge
 
