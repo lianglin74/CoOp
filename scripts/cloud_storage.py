@@ -4,16 +4,20 @@ from qd_common import load_from_yaml_file
 logger.propagate = False
 
 class CloudStorage(object):
-    def __init__(self):
-        config_file = 'aux_data/configs/azure_blob_account.yaml'
-        config = load_from_yaml_file(config_file)
+    def __init__(self, config=None):
+        if config is None:
+            config_file = 'aux_data/configs/azure_blob_account.yaml'
+            config = load_from_yaml_file(config_file)
         account_name = config['account_name']
-        account_key = config['account_key']
-        self.container_name = 'detectortrain'
+        account_key = config.get('account_key')
+        sas_token = config.get('sas_token')
+        self.container_name = config['container_name']
 
-        self.block_blob_service = BlockBlobService(account_name=account_name, account_key=account_key)
+        self.block_blob_service = BlockBlobService(account_name=account_name, 
+                account_key=account_key, sas_token=sas_token)
 
     def upload(self, file_name):
+        assert False, 'use upload_stream'
         block_blob_service.create_blob_from_path(self.container_name,
                 blob_name, file_name)
 
@@ -32,3 +36,6 @@ class CloudStorage(object):
                     self.container_name,
                     name)
 
+    def download(self, blob_name, local_path):
+        self.block_blob_service.get_blob_to_path(self.container_name,
+                blob_name, local_path)
