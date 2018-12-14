@@ -59,36 +59,36 @@ def main():
     rootpath = "//vigdgx02/raid_data/uhrs/"
     task_dir = "//vigdgx02/raid_data/uhrs/status/new/"
 
-    while True:
-        # sweep new task config files
-        task_yaml_list = [os.path.join(task_dir, f) for f in os.listdir(task_dir)
-            if f.endswith(".yaml") and os.path.isfile(os.path.join(task_dir, f))]
+    # sweep new task config files
+    task_yaml_list = [os.path.join(task_dir, f) for f in os.listdir(task_dir)
+        if f.endswith(".yaml") and os.path.isfile(os.path.join(task_dir, f))]
 
-        if len(task_yaml_list) == 0:
-            time.sleep(100)
-        for task_yaml in task_yaml_list:
-            task_status = TaskStatus(task_yaml)
-            task_config = load_from_yaml_file(task_yaml)
-            gt_config_file = os.path.join(rootpath, task_config["gt_config"])
-            model_name = task_config["model_name"]
+    for task_yaml in task_yaml_list:
+        task_status = TaskStatus(task_yaml)
+        task_config = load_from_yaml_file(task_yaml)
+        gt_config_file = os.path.join(rootpath, task_config["gt_config"])
+        model_name = task_config["model_name"]
 
-            task_status.start()
-            # add the new model to baselines
-            gt_cfg = GroundTruthConfig(gt_config_file)
-            dataset_list = []
-            for pred_file in task_config["pred_files"]:
-                cur_dataset = pred_file["dataset"]
-                assert(cur_dataset not in dataset_list)
-                dataset_list.append(cur_dataset)
-                gt_cfg.add_baseline(cur_dataset, model_name, pred_file["result"], pred_file["conf_threshold"])
+        task_status.start()
+        # add the new model to baselines
+        gt_cfg = GroundTruthConfig(gt_config_file)
+        dataset_list = []
+        for pred_file in task_config["pred_files"]:
+            cur_dataset = pred_file["dataset"]
+            if cur_dataset in dataset_list:
+                task_status.fail()
+                raise ValueError("duplicate dataset {} in task yaml".format(cur_dataset))
+            dataset_list.append(cur_dataset)
+            gt_cfg.add_baseline(cur_dataset, model_name, pred_file["result"], pred_file["conf_threshold"])
 
-            task_root = os.path.dirname(os.path.dirname(gt_config_file))
-            task_dir = os.path.join(task_root, "tasks")
-            hp_dir = os.path.join(task_root, "honeypot")
-            hp_files = [f for f in os.listdir(hp_dir) if f.endswith(".txt")]
-            hp_file = os.path.join(hp_dir, hp_files[0])
+        task_root = os.path.dirname(os.path.dirname(gt_config_file))
+        task_dir = os.path.join(task_root, "tasks")
+        hp_dir = os.path.join(task_root, "honeypot")
+        hp_files = [f for f in os.listdir(hp_dir) if f.endswith(".txt")]
+        hp_file = os.path.join(hp_dir, hp_files[0])
 
-            # update_gt ongoing
+        # update_gt ongoing
+        try:
             for dataset in dataset_list:
                 args = [model_name, task_config["task_type"],
                         "--datasets", dataset,
@@ -96,9 +96,12 @@ def main():
                         "--taskdir", task_dir, "--honeypot", hp_file]
                 logging.info("update ground truth with arguments: {}".format(str(args)))
                 update_gt(args)
+        except Exception as e:
+            task_status.fail()
+            raise e
 
-            # finished updating gt
-            task_status.complete()
+        # finished updating gt
+        task_status.complete()
 
 
 if __name__ == "__main__":

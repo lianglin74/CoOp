@@ -8,3 +8,4 @@ def add_path(path):
 
 QD_ROOT = op.dirname(op.dirname(op.realpath(__file__)))
 add_path(QD_ROOT)
+add_path(op.join(QD_ROOT, "scripts"))

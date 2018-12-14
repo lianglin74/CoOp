@@ -99,13 +99,13 @@ def generate_task_files(task_type, label_file, hp_file, outbase):
     if task_type == "VerifyImage":
         hp_type = "hp"
         _generate_task_files_helper(task_type, label_file, hp_file, outbase, hp_type,
-                                description_file=None, num_tasks_per_hit=20,
-                                num_hp_per_hit=4, hp_neg_prob=0.5)
+                                description_file=None, num_tasks_per_hit=10,
+                                num_hp_per_hit=2, hp_neg_prob=0.5)
     elif task_type == "VerifyBox":
         hp_type = "gt"
         _generate_task_files_helper(task_type, label_file, hp_file, outbase, hp_type,
-                                description_file=None, num_tasks_per_hit=20,
-                                num_hp_per_hit=4, hp_neg_prob=0.5)
+                                description_file=None, num_tasks_per_hit=10,
+                                num_hp_per_hit=2, hp_neg_prob=0.5)
     else:
         raise Exception("invalid task type: {}".format(task_type))
 

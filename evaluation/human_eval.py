@@ -216,7 +216,10 @@ def draw_pr_curve(gt_config_file, dataset_name, iou_threshold,
     plt.ylabel("Precision")
     plt.title(dataset_name)
     gt_root = os.path.split(gt_config_file)[0]
-    fig.savefig(os.path.join(gt_root, dataset_name + "_pr_curve.png"))
+    stats_dir = os.path.join(gt_root, "stats")
+    if not os.path.exists(stats_dir):
+        os.mkdir(stats_dir)
+    fig.savefig(os.path.join(stats_dir, dataset_name + "_pr_curve.png"))
 
 
 def main(args):

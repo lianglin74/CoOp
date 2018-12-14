@@ -118,7 +118,7 @@ def analyze_verify_box_task(result_files, result_file_type, outfile_res,
     # write tasks needing re-judge
     if rejudge_tasks:
         rejudge_data = pack_task_with_honey_pot(rejudge_tasks, hp_tasks,
-                                                "hp", 20, 4)
+                                                "hp", 15, 3)
         write_task_file(rejudge_data, outfile_rejudge)
     return num_rejudge
 
