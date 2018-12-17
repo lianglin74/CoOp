@@ -20,6 +20,8 @@ parser.add_argument('--datasets', default=None, nargs='+',
 parser.add_argument('--config', default='./groundtruth/config.yaml', type=str,
                     help='''path to yaml config file of dataset ground truth and baselines,
                     default is ./prediction/config.yaml''')
+parser.add_argument('--num_judges', default=5, type=int,
+                    help='''number of judges required for each question''')
 parser.add_argument('--iou_threshold', default=0.5, type=float,
                     help='IoU threshold for bounding boxes matching, default is 0.5')
 parser.add_argument('--displayname', default='', type=str,
@@ -51,7 +53,8 @@ def update_gt(args):
     NEG_IOU = 0.95  # IoU threshold with wrong box to be treated as wrong
     MERGE_IOU = 0.8   # IoU threshold to merge into existing ground truth
 
-    task_hitapp = "verify_box_group"
+    # TODO: configure task group basing on task type and judge resource (crowdsource, vendor, internal)
+    task_group = "vendor_verify_box"
     source = args.source
     hp_file = args.honeypot
     task_type = args.task
@@ -75,24 +78,25 @@ def update_gt(args):
         ensure_dir_empty(task_upload_dir)
         generate_task_files(task_type, label_file, hp_file,
                             os.path.join(task_upload_dir, source))
-        uhrs_client.upload_tasks_from_folder(task_hitapp, task_upload_dir,
-                                             prefix=source)
+        uhrs_client.upload_tasks_from_folder(task_group, task_upload_dir,
+                                             prefix=source, num_judges=args.num_judges)
         ensure_dir_empty(task_download_dir)
 
         round_count = 0
         while True:
             round_count += 1
-            uhrs_client.wait_until_task_finish(task_hitapp)
-            uhrs_client.download_tasks_to_folder(task_hitapp, task_download_dir)
+            uhrs_client.wait_until_task_finish(task_group)
+            uhrs_client.download_tasks_to_folder(task_group, task_download_dir)
             download_files = list_files_in_dir(task_download_dir)
             rejudge_filename = "rejudge_{}.tsv".format(round_count)
             num_rejudge = analyze_verify_box_task(
                 download_files, "uhrs", res_file,
                 os.path.join(task_upload_dir, rejudge_filename),
-                os.path.join(task_dir, 'all_workers.tsv'))
+                worker_quality_file=os.path.join(task_dir, 'all_workers.tsv'),
+                min_num_judges_per_hit=args.num_judges-1)
             if num_rejudge > 5 and round_count < 8:
                 uhrs_client.upload_tasks_from_folder(
-                    task_hitapp, task_upload_dir, prefix=rejudge_filename,
+                    task_group, task_upload_dir, prefix=rejudge_filename,
                     num_judges=1)
             else:
                 break
