@@ -30,6 +30,12 @@ class UhrsTaskManager():
         else:
             self.state = State.IDLE
 
+    def is_task_exist(self):
+        if self.state == State.IDLE or self.state == State.UPLOAD_START:
+            return False
+        else:
+            return True
+
     def block_worker(self, worker_id):
         args = [self._uhrs_exe_path, "BlockSingleJudge",
                 "-judgeId", repr(int(worker_id))]

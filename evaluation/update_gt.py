@@ -15,20 +15,17 @@ parser.add_argument('source', type=str,
                     help='the baseline name to be verified')
 parser.add_argument('task', choices=['VerifyImage', 'VerifyBox'],
                     help='choose from VerifyBox (for detection results) and VerifyImage (for tagging results)')
+
+# dataset and ground truth
 parser.add_argument('--datasets', default=None, nargs='+',
                     help='datasets to be evaluated, default is all datasets in config')
 parser.add_argument('--config', default='./groundtruth/config.yaml', type=str,
                     help='''path to yaml config file of dataset ground truth and baselines,
                     default is ./prediction/config.yaml''')
+
+# UHRS task setting
 parser.add_argument('--num_judges', default=5, type=int,
                     help='''number of judges required for each question''')
-parser.add_argument('--iou_threshold', default=0.5, type=float,
-                    help='IoU threshold for bounding boxes matching, default is 0.5')
-parser.add_argument('--displayname', default='', type=str,
-                    help='path to display name file')
-parser.add_argument('--labelmap', default='', type=str,
-                    help='''path to labelmap file, only classes included in the labelmap
-                    will be evaluated. Default is None, all classes will be evaluated''')
 parser.add_argument('--taskdir', default='./tasks/', type=str,
                     help='''path to working directory, used for uploading,
                     downloading, logging, etc''')
@@ -36,6 +33,17 @@ parser.add_argument('--honeypot', default='./honeypot/voc20_easy_gt.txt',
                     help='''path to the honey pot label file, each line is a
                     json dict of a positive ground truth label, including keys:
                     objects_to_find, image_url, bboxes''')
+
+# prediction file
+parser.add_argument('--iou_threshold', default=0.5, type=float,
+                    help='IoU threshold for bounding boxes matching, default is 0.5')
+parser.add_argument('--displayname', default='', type=str,
+                    help='path to display name file')
+parser.add_argument('--labelmap', default='', type=str,
+                    help='''path to labelmap file, only classes included in the labelmap
+                    will be evaluated. Default is None, all classes will be evaluated''')
+
+# more functions
 parser.add_argument('--add_baseline', action="store_true",
                     help='add the verified result to baselines')
 parser.add_argument('--tune_threshold', default='', type=str,
@@ -68,19 +76,20 @@ def update_gt(args):
         task_id_name_log = os.path.join(task_dir, "task_id_name_log")
 
         uhrs_client = UhrsTaskManager(task_id_name_log)
-        ensure_dir_empty(task_dir)
-        logging.info("Updating for dataset: {}".format(dataset_name))
-        num_to_verify = process_prediction_to_verify(args.config, dataset_name, source, task_type,
-                                    label_file, args.iou_threshold, NEG_IOU,
-                                    include_labelmap=args.labelmap)
-        if num_to_verify == 0:
-            continue
-        ensure_dir_empty(task_upload_dir)
-        generate_task_files(task_type, label_file, hp_file,
-                            os.path.join(task_upload_dir, source))
-        uhrs_client.upload_tasks_from_folder(task_group, task_upload_dir,
-                                             prefix=source, num_judges=args.num_judges)
-        ensure_dir_empty(task_download_dir)
+        if not uhrs_client.is_task_exist():
+            ensure_dir_empty(task_dir)
+            logging.info("Updating for dataset: {}".format(dataset_name))
+            num_to_verify = process_prediction_to_verify(args.config, dataset_name, source, task_type,
+                                        label_file, args.iou_threshold, NEG_IOU,
+                                        include_labelmap=args.labelmap)
+            if num_to_verify == 0:
+                continue
+            ensure_dir_empty(task_upload_dir)
+            generate_task_files(task_type, label_file, hp_file,
+                                os.path.join(task_upload_dir, source))
+            uhrs_client.upload_tasks_from_folder(task_group, task_upload_dir,
+                                                prefix=source, num_judges=args.num_judges)
+            ensure_dir_empty(task_download_dir)
 
         round_count = 0
         while True:
@@ -94,7 +103,7 @@ def update_gt(args):
                 os.path.join(task_upload_dir, rejudge_filename),
                 worker_quality_file=os.path.join(task_dir, 'all_workers.tsv'),
                 min_num_judges_per_hit=args.num_judges-1)
-            if num_rejudge > 5 and round_count < 8:
+            if num_rejudge > 5 and round_count < 6:
                 uhrs_client.upload_tasks_from_folder(
                     task_group, task_upload_dir, prefix=rejudge_filename,
                     num_judges=1)
