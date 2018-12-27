@@ -1191,9 +1191,12 @@ def update_confusion_matrix(predicts, gts, threshold,
 
 
 def normalize_to_str(s):
-    if type(s) is str:
-        s = s.decode('unicode_escape')
-    return unicodedata.normalize('NFKD', s).encode('ascii','ignore')
+    if sys.version_info.major == 3:
+        return s
+    else:
+        if type(s) is str:
+            s = s.decode('unicode_escape')
+        return unicodedata.normalize('NFKD', s).encode('ascii','ignore')
 
 def normalize_str_in_rects(data, out_data):
     '''
@@ -1339,7 +1342,7 @@ def populate_dataset_details(data, check_image_details=False):
                 num_worker = 128
                 num_tasks = num_worker * 3
                 num_images = dataset.num_rows(split)
-                num_image_per_worker = (num_images + num_tasks - 1) /num_tasks
+                num_image_per_worker = (num_images + num_tasks - 1) // num_tasks 
                 assert num_image_per_worker > 0
                 all_idx = []
                 for i in range(num_tasks):
