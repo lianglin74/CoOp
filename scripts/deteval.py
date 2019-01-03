@@ -14,6 +14,7 @@ from qd_common import FileProgressingbar, worth_create
 import logging
 import copy
 from tsv_io import tsv_writer
+from tqdm import tqdm
 
 ENTITY_LABEL = "__entity"
 BACKGROUND_LABEL = "__background"
@@ -24,7 +25,7 @@ def load_truths_iter(rows, region_only=False):
     Return: dict [class][image id] => bboxes
     '''
     retdict = dict();
-    for cols in rows:
+    for cols in tqdm(rows):
         if len(cols)<2:
             continue;
         key = cols[0]
@@ -115,7 +116,6 @@ def load_dets(filein, region_only=False):
         # the file.tell() is disabled by the next function and the
         # FileProgressBar here is not supported in python3.
         #bar = FileProgressingbar(tsvin, 'load-dets')
-        from tqdm import tqdm
         for line in tqdm(tsvin):
             cols = [x.strip() for x in line.split("\t")]
             if len(cols)<2:
@@ -241,7 +241,7 @@ def _eval(truths, detresults, ovthresh, confs=None, label_to_keys=None):
     class_thresh = dict()
     apdict = dict()
     class_prec_recall_th = {}
-    for label in sorted(truths.keys()):
+    for label in tqdm(sorted(truths.keys())):
         if label not in detresults:
             apdict[label] = 0
             continue;
