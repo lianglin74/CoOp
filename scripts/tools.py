@@ -30,6 +30,107 @@ from qd_common import json_dump
 from tqdm import tqdm
 import numpy as np
 
+
+def extract_remove_replace_labels(main_tree, target_tree):
+    trees = [main_tree, target_tree]
+    
+    all_tax = [Taxonomy(load_from_yaml_file(t)) for t in trees]
+    all_lower_to_name = [{n.name.lower(): n.name
+        for n in t.root.iter_search_nodes() if n != t.root} 
+        for t in all_tax]
+
+    main_lowers = set(all_lower_to_name[0].keys())
+    target_lower = set(all_lower_to_name[1].keys())
+    common_lower = main_lowers.intersection(target_lower)
+    
+    main_tax = all_tax[0]
+    main_lower_to_name = all_lower_to_name[0]
+    remove_label_lower_to_reason = {}
+    for l in common_lower:
+        ns = main_tax.root.search_nodes(name=main_lower_to_name[l])
+        assert len(ns) == 1
+        n = ns[0]
+        remove_label_lower_to_reason.update({x.name.lower(): n.name for x in
+            n.iter_search_nodes()})
+
+    for l, reason in remove_label_lower_to_reason.items():
+        if l in common_lower:
+            continue
+        logging.info('{} - {}'.format(main_lower_to_name[l], reason))
+
+    return [main_lower_to_name[l] for l in common_lower]
+
+def patch_prediction_result_by_expid(main_full_expid, patch_full_expid, data):
+    '''
+    e.g. 
+    main_full_expid = 'Tax1300V14.4_0.0_0.0_darknet19_448_C_Init.best_model6933_maxIter.10eEffectBatchSize128LR7580_bb_only'
+    patch_full_expid = 'TaxInsideV2_1_darknet19_448_C_Init.best_model9748_maxIter.100eEffectBatchSize128_FixParam.dark6a.leaky_bb_only'
+    data = 'SeeingAIFurnitureTest'
+    patch_prediction_result_by_expid(main_full_expid, patch_full_expid, data)
+    '''
+    c = CaffeWrapper(full_expid=main_full_expid, load_parameter=True,
+            test_data=data, test_split='test')
+    m = c.best_model()
+    main_prediction_file = c._predict_file(m)
+    main_tree_file = 'data/{}/root.yaml'.format(c._data)
+
+    c = CaffeWrapper(full_expid=patch_full_expid, load_parameter=True,
+            test_data=data, test_split='test')
+    m = c.best_model()
+    patch_prediction_file = c._predict_file(m)
+    patch_tree_file = 'data/{}/root.yaml'.format(c._data)
+
+    main_remove_labels = extract_remove_replace_labels(main_tree_file, 
+            patch_tree_file)
+    logging.info(', '.join(main_remove_labels))
+    
+    from process_tsv import hash_sha1
+    output_prediction_file = '{}.{}.predict.tsv'.format(main_prediction_file,
+            hash_sha1(patch_full_expid)[-5:])
+
+    logging.info('output file: {}'.format(output_prediction_file))
+    
+    patch_prediction_result(main_prediction_file, main_tree_file,
+            main_remove_labels,
+            patch_prediction_file, patch_tree_file, output_prediction_file)
+
+def patch_prediction_result(main_prediction_file, main_tree_file,
+        main_remove_labels,
+        patch_prediction_file, 
+        patch_tree_file, 
+        output_prediction_file):
+    main_tax = Taxonomy(load_from_yaml_file(main_tree_file))
+    
+    # we need to add all its children
+    all_remove_labels = []
+    for target_label in main_remove_labels:
+        target_nodes = main_tax.root.search_nodes(name=target_label)
+        assert len(target_nodes) == 1
+        target_node = target_nodes[0]
+        all_remove_labels.extend([n.name for n in
+            target_node.iter_search_nodes()])
+    main_remove_labels = set(all_remove_labels)
+
+    from process_tsv import load_labels
+    key_to_patch_rects, _ = load_labels(patch_prediction_file)
+    
+    def gen_rows():
+        for key, json_rects in tsv_reader(main_prediction_file):
+            main_rects = json.loads(json_rects)
+            to_remove = [r for r in main_rects if r['class'] in main_remove_labels]
+            patch_rects = key_to_patch_rects.get(key, [])
+            #to_add = [r for r in patch_rects if r['class'] in patch_extract_labels]
+            to_add = patch_rects
+            if len(to_add) == 0 and len(to_remove) == 0:
+                yield key, json_rects
+            else:
+                for r in to_remove:
+                    main_rects.remove(r)
+                main_rects.extend(to_add)
+                yield key, json.dumps(main_rects)
+
+    tsv_writer(gen_rows(), output_prediction_file)
+
 def visualize_fp_fn_result(key_fp_fn_pred_gt_result, data, out_folder):
     dataset = TSVDataset(data)
     total = 0
