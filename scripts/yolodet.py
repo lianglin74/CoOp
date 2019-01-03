@@ -194,9 +194,9 @@ def prepare_net_input(im, pixel_mean, network_input_size, **kwargs):
     
     im_resized = im_rescale(im_orig, network_input_size)
     new_h, new_w = im_resized.shape[0:2]
-    left = (network_input_size - new_w) / 2
+    left = (network_input_size - new_w) // 2
     right = network_input_size - new_w - left
-    top = (network_input_size - new_h) / 2
+    top = (network_input_size - new_h) // 2
     bottom = network_input_size - new_h - top
 
     im_squared  = cv2.copyMakeBorder(im_resized, top=top, bottom=bottom, left=left, right=right, borderType= cv2.BORDER_CONSTANT, 
@@ -240,13 +240,13 @@ def im_multi_scale_detect(caffe_net, im, pixel_mean, gpu,
     if kwargs.get('class_specific_nms', True):
         for c in range(prob.shape[1] - 1):
             nms_input = np.concatenate((bbox_xyxy, prob[:, c][:, np.newaxis]), axis=1)
-            keep = nms(nms_input, 0.45, False, device_id=gpu)
+            keep = nms(nms_input, kwargs.get('yolo_nms', 0.45), False, device_id=gpu)
             removed = np.ones(prob.shape[0], dtype=np.bool)
             removed[keep] = False
             prob[removed, c] = 0
     else:
         nms_input = np.concatenate((bbox_xyxy, prob[:, -1][:, np.newaxis]), axis=1)
-        keep = nms(nms_input, 0.45, False, device_id=gpu)
+        keep = nms(nms_input, kwargs.get('yolo_nms', 0.45), False, device_id=gpu)
         removed = np.ones(prob.shape[0], dtype=np.bool)
         removed[keep] = False
         prob[removed, :] = 0
@@ -273,13 +273,13 @@ def im_detect(caffe_net, im, pixel_mean, network_input_size=416, stat=None, **kw
         height2 = int(np.round(alpha * h))
         width2 = int(np.round(alpha * w))
         if h > w:
-            network_input_height = (height2 + 31) / 32 * 32
-            network_input_width = ((network_input_height * w + h - 1) / h
-                    + 31) / 32 * 32
+            network_input_height = (height2 + 31) // 32 * 32
+            network_input_width = ((network_input_height * w + h - 1) // h
+                    + 31) // 32 * 32
         else:
-            network_input_width = (width2 + 31) / 32 * 32
-            network_input_height = ((network_input_width * h + w - 1) / w +
-                    31) / 32 * 32
+            network_input_width = (width2 + 31) // 32 * 32
+            network_input_height = ((network_input_width * h + w - 1) // w +
+                    31) // 32 * 32
         network_input_size = max(network_input_width, 
                 network_input_height)
     else:
@@ -293,9 +293,9 @@ def im_detect(caffe_net, im, pixel_mean, network_input_size=416, stat=None, **kw
         time_start = time_curr
 
     new_h, new_w = im_resized.shape[0:2]
-    left = (network_input_width - new_w) / 2
+    left = (network_input_width - new_w) // 2
     right = network_input_width - new_w - left
-    top = (network_input_height - new_h) / 2
+    top = (network_input_height - new_h) // 2
     bottom = network_input_height - new_h - top
     im_squared  = cv2.copyMakeBorder(im_resized, top=top, bottom=bottom, left=left, right=right, borderType= cv2.BORDER_CONSTANT, value=[0,0,0] )
     if stat != None:
@@ -388,7 +388,7 @@ def postfilter(im, scores, boxes, class_map, max_per_image=1000, thresh=0.005):
         top = max(top, 0)
         bot = min(bot, im_h - 1)
 
-        crect['rect'] = map(float, [left,top,right,bot])
+        crect['rect'] = list(map(float, [left,top,right,bot]))
         cls = scores[i, 0:-1].argmax()
         crect['class'] = class_map[cls]
         crect['conf'] = float(scores[i, -1])
@@ -460,10 +460,11 @@ def result2bblist3(im, probs, boxes, class_map, thresh=0, yolo_tree=False):
     transformed_boxes[:, 3] = np.minimum(x, im_h - 1)
 
     num = len(idx_prob)
-    return [{'rect': map(float, transformed_boxes[boxidx_to_uniquebox[idx_bbox[i]], :]), \
+    return [{'rect': list(map(float,
+        transformed_boxes[boxidx_to_uniquebox[idx_bbox[i]], :])), \
             'class': class_map[idx_prob[i]], \
             'conf': float(probs[idx_bbox[i], idx_prob[i]]) } \
-            for i in xrange(num) ]
+            for i in range(num) ]
 
 def result2bblist2(im, probs, boxes, class_map, thresh=0):
     '''
@@ -488,11 +489,10 @@ def result2bblist2(im, probs, boxes, class_map, thresh=0):
     transformed_boxes[:, 3] = np.minimum(x, im_h - 1)
 
     num = transformed_boxes.shape[0]
-    return [{'rect': map(float, transformed_boxes[i, :]), \
+    return [{'rect': list(map(float, transformed_boxes[i, :])), \
             'class': class_map[selected_label_idx[i]], \
             'conf': float(selected_probs[i]) } \
-            for i in xrange(num) ]
-
+            for i in range(num) ]
 
 def result2bblist(im, probs, boxes, class_map, thresh=None, obj_thresh=None, class_thresh=None):
     if thresh is None:
@@ -533,7 +533,7 @@ def result2bblist(im, probs, boxes, class_map, thresh=None, obj_thresh=None, cla
             bot = min(bot, im_h - 1)
 
             crect = dict()
-            crect['rect'] = map(float, [left, top, right, bot])
+            crect['rect'] = list(map(float, [left, top, right, bot]))
             crect['class'] = label
             crect['conf'] = max(round(probs[i, j], 4), 0.00001)
             crect['obj'] = max(round(probs[i, -1], 4), 0.00001)
@@ -664,7 +664,7 @@ def tsvdet_iter(caffenet, caffemodel, in_rows, key_idx,img_idx, pixel_mean,
                         last_print_time = time.time()
                 count = count + 1
                 in_queue.put(cols)
-        for _ in xrange(num_worker):
+        for _ in range(num_worker):
             in_queue.put(None)  # kill all workers
         logging.info('finished reader')
     reader = mp.Process(target=reader_process, args=(in_rows, in_queue,
