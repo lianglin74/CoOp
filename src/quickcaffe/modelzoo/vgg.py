@@ -1,9 +1,9 @@
 from __future__ import print_function
 from caffe import layers as L, params as P, to_proto
 from caffe.proto import caffe_pb2
-from layerfactory import *
-from cnnmodel import *
-from caffenet import *
+from .layerfactory import *
+from .cnnmodel import *
+from .caffenet import *
 
 class VGG(CaffeNet):
     def crop_size(self):
@@ -12,7 +12,7 @@ class VGG(CaffeNet):
     def roi_size(self):
         return 7
 
-    def add_body(self, netspec, depth=16, lr=1, deploy=True):
+    def add_body(self, netspec, depth=16, lr=1, deploy=True, **kwargs):
         assert depth in (16, 19), 'only support vgg16 and vgg19'
 
         n = netspec

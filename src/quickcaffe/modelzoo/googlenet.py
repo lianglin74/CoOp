@@ -2,8 +2,8 @@ from caffe import layers as L, params as P, to_proto
 from caffe.proto import caffe_pb2
 import caffe
 from os import path
-from layerfactory import *
-from cnnmodel import *
+from .layerfactory import *
+from .cnnmodel import *
 
 class GoogleNet(CNNModel):
     def __init__(self, last_pooling_layer=True, rcnn_mode = False):

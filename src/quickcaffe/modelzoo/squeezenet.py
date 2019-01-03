@@ -1,8 +1,8 @@
 from __future__ import print_function
 from caffe import layers as L, params as P, to_proto
 from caffe.proto import caffe_pb2
-from layerfactory import *
-from cnnmodel import *
+from .layerfactory import *
+from .cnnmodel import *
 
 class SqueezeNet(CNNModel):
     def fire_block(self, n, s, nout_squeeze, nout_expand, lr, deploy):

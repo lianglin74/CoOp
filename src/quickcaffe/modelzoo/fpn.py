@@ -1,9 +1,9 @@
 from __future__ import print_function
 from caffe import layers as L, params as P, to_proto
 from caffe.proto import caffe_pb2
-from layerfactory import *
+from .layerfactory import *
 #from resnet import ResNet
-from darknet import DarkNet
+from .darknet import DarkNet
 class FeaturePyramidNetwork(object):
     def add_body(self, n, stages,featuredim, lr=1, deploy=True):
         retlist = [];

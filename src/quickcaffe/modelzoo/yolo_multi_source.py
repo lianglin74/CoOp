@@ -1,13 +1,12 @@
 import copy
-from itertools import izip
 import logging
 import json
 import numpy as np
 import caffe
 from caffe import layers as L, params as P, to_proto
 from caffe.proto import caffe_pb2
-from layerfactory import conv_bn, last_layer, conv
-from darknet import DarkNet
+from .layerfactory import conv_bn, last_layer, conv
+from .darknet import DarkNet
 import math
 
 
@@ -139,24 +138,24 @@ class YoloMultiSource(object):
         
         if 'rotate_max' in kwargs:
             assert len(kwargs['rotate_max']) == len(box_data_paramss)
-            for box_data_params, rotate_maxs in izip(box_data_paramss,
+            for box_data_params, rotate_maxs in zip(box_data_paramss,
                     kwargs['rotate_max']):
-                for box_data_param, rotate_max in izip(box_data_params,
+                for box_data_param, rotate_max in zip(box_data_params,
                         rotate_maxs):
                     box_data_param['rotate_max'] = rotate_max
 
         if 'rotate_with_90' in kwargs:
             assert len(kwargs['rotate_with_90']) == len(box_data_paramss)
-            for box_data_params, rotate_with_90s in izip(box_data_paramss,
+            for box_data_params, rotate_with_90s in zip(box_data_paramss,
                     kwargs['rotate_with_90']):
-                for box_data_param, rotate_with_90 in izip(box_data_params,
+                for box_data_param, rotate_with_90 in zip(box_data_params,
                         rotate_with_90s):
                     box_data_param['rotate_with_90'] = rotate_with_90
         if 'tsv_box_max_samples' in kwargs:
             assert len(kwargs['tsv_box_max_samples']) == len(box_data_paramss)
-            for box_data_params, max_sampless in izip(box_data_paramss,
+            for box_data_params, max_sampless in zip(box_data_paramss,
                     kwargs['tsv_box_max_samples']):
-                for box_data_param, max_samples in izip(box_data_params,
+                for box_data_param, max_samples in zip(box_data_params,
                         max_sampless):
                     box_data_param['max_samples'] = max_samples
 
@@ -206,7 +205,7 @@ class YoloMultiSource(object):
             np_weights = np_weights * batch_size / np.sum(np_weights)
             self.batch_weights = np_weights
             data_blobs, label_blobs = [], []
-            for i in xrange(len(source_files)):
+            for i in range(len(source_files)):
                 w = float(np_weights[i])
                 assert w > 0
                 assert w.is_integer()
@@ -257,7 +256,7 @@ class YoloMultiSource(object):
         '''
         tops = n.__dict__['tops'].keys()
         found = None
-        for i in xrange(len(tops) - 1, -1, -1):
+        for i in range(len(tops) - 1, -1, -1):
             if n[tops[i]].fn.type_name == 'Convolution' or \
                     n[tops[i]].fn.type_name == 'Pooling':
                 s = n[tops[i]].fn.params.get('stride', 1)
@@ -398,12 +397,14 @@ class YoloMultiSource(object):
                 n[last_top_name] = L.Convolution(n[last2_top_name], kernel_size=1,
                         num_output=num_output, **last_conv_param)
                 label_name = 'label{}'.format(i)
+                loss_weight_multiplier = kwargs['dataset_ops'][i + 1]['loss_weight']
                 self.add_yolo_train_loss_bb_only(n, biases, num_classes[i], 
                         last_top_name, 
                         str(i), 
                         extra_train_param,
                         label_name=label_name,
                         tree_file=kwargs['tree_files'][i] if kwargs['tree_files'] else None,
+                        loss_weight_multiplier=loss_weight_multiplier,
                         **kwargs)
         else:
             for i, num_output in enumerate(num_outputs):
@@ -537,14 +538,14 @@ class YoloMultiSource(object):
                                                    'tree': tree_file
                                                })
             top_preds = 'top_preds{}'.format(suffix)
-	    n[top_preds] = L.SoftmaxTreePrediction(n[softmaxtree_conf],
-	        n[sigmoid_obj],
-	        softmaxtreeprediction_param={
-	          'tree': tree_file,
-	          'threshold': kwargs.get('softmax_tree_prediction_threshold',
+            n[top_preds] = L.SoftmaxTreePrediction(n[softmaxtree_conf],
+                n[sigmoid_obj],
+                softmaxtreeprediction_param={
+                  'tree': tree_file,
+                  'threshold': kwargs.get('softmax_tree_prediction_threshold',
                       0.5),
                   'output_tree_path': kwargs.get('output_tree_path', False)
-	         })
+                 })
             bbox = 'bbox{}'.format(suffix)
             n[bbox] = L.YoloBBs(n[sigmoid_xy], n[wh], n.im_info,
                                yolobbs_param={
@@ -656,8 +657,6 @@ def test_calc_out_idx():
     x = np.asarray([2, 2, 1, 1])
     x = x * 2
     y = calc_out_idx(x, 2)
-    print y
-    print sorted(y)
 
 if __name__ == '__main__':
     #test_yolo()

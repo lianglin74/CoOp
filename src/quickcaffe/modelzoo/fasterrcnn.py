@@ -1,7 +1,7 @@
 from __future__ import print_function
 from caffe import layers as L, params as P, to_proto
 from caffe.proto import caffe_pb2
-from layerfactory import *
+from .layerfactory import *
 
 class FasterRCNN(object):
     def add_input_data(self, n, num_classes):

@@ -1,13 +1,12 @@
 import copy
-from itertools import izip
 import logging
 import json
 import numpy as np
 import caffe
 from caffe import layers as L, params as P, to_proto
 from caffe.proto import caffe_pb2
-from layerfactory import conv_bn, last_layer, conv
-from darknet import DarkNet
+from .layerfactory import conv_bn, last_layer, conv
+from .darknet import DarkNet
 import math
 
 
@@ -139,24 +138,24 @@ class Yolo(object):
         
         if 'rotate_max' in kwargs:
             assert len(kwargs['rotate_max']) == len(box_data_paramss)
-            for box_data_params, rotate_maxs in izip(box_data_paramss,
+            for box_data_params, rotate_maxs in zip(box_data_paramss,
                     kwargs['rotate_max']):
-                for box_data_param, rotate_max in izip(box_data_params,
+                for box_data_param, rotate_max in zip(box_data_params,
                         rotate_maxs):
                     box_data_param['rotate_max'] = rotate_max
 
         if 'rotate_with_90' in kwargs:
             assert len(kwargs['rotate_with_90']) == len(box_data_paramss)
-            for box_data_params, rotate_with_90s in izip(box_data_paramss,
+            for box_data_params, rotate_with_90s in zip(box_data_paramss,
                     kwargs['rotate_with_90']):
-                for box_data_param, rotate_with_90 in izip(box_data_params,
+                for box_data_param, rotate_with_90 in zip(box_data_params,
                         rotate_with_90s):
                     box_data_param['rotate_with_90'] = rotate_with_90
         if 'tsv_box_max_samples' in kwargs:
             assert len(kwargs['tsv_box_max_samples']) == len(box_data_paramss)
-            for box_data_params, max_sampless in izip(box_data_paramss,
+            for box_data_params, max_sampless in zip(box_data_paramss,
                     kwargs['tsv_box_max_samples']):
-                for box_data_param, max_samples in izip(box_data_params,
+                for box_data_param, max_samples in zip(box_data_params,
                         max_sampless):
                     box_data_param['max_samples'] = max_samples
 
@@ -205,7 +204,7 @@ class Yolo(object):
             np_weights = np_weights * batch_size / np.sum(np_weights)
             self.batch_weights = np_weights
             data_blobs, label_blobs = [], []
-            for i in xrange(len(source_files)):
+            for i in range(len(source_files)):
                 w = float(np_weights[i])
                 assert w > 0
                 assert w.is_integer()
@@ -270,7 +269,7 @@ class Yolo(object):
         '''
         tops = n.__dict__['tops'].keys()
         found = None
-        for i in xrange(len(tops) - 1, -1, -1):
+        for i in range(len(tops) - 1, -1, -1):
             if n[tops[i]].fn.type_name == 'Convolution' or \
                     n[tops[i]].fn.type_name == 'Pooling':
                 s = n[tops[i]].fn.params.get('stride', 1)
@@ -621,7 +620,7 @@ class Yolo(object):
         biases = feature_anchor['anchor_bias']
         
         last_top_name = feature_anchor['feature']
-        for i, (c, ks) in enumerate(izip(feature_anchor['extra_conv_channels'], 
+        for i, (c, ks) in enumerate(zip(feature_anchor['extra_conv_channels'], 
                 feature_anchor['extra_conv_kernels'])):
             s = 'extra_conv_{}_{}'.format(feature_anchor['feature'], i)
             add_dark_block(n, n[last_top_name], s,
@@ -811,6 +810,8 @@ class Yolo(object):
                 loss_weight = 1
             else:
                 loss_weight = num_anchor
+            if kwargs.get('softmax_loss_extra_weight'):
+                loss_weight = loss_weight * kwargs['softmax_loss_extra_weight']
             assert 'yolo_softmax_extra_weight' not in kwargs
             n[softmax_loss] = L.SoftmaxWithLoss(n[reshape_conf], n[reshape_t_label],
                     propagate_down=[True, False],
@@ -818,11 +819,12 @@ class Yolo(object):
                     loss_param={'ignore_label': -1, 'normalization':
                         norm_type})
             return
+        loss_weight = kwargs.get('softmax_loss_extra_weight', 1)
         n.reshape_conf = L.Reshape(n.conf, axis=1, num_axes=1, shape={'dim': [num_classes, num_anchor]})
         softmax_norm_type = P.Loss.VALID if kwargs.get('yolo_softmax_norm_by_valid', False) else P.Loss.BATCH_SIZE
         n.softmaxtree_loss = L.SoftmaxTreeWithLoss(n.reshape_conf, n.t_label,
                 propagate_down=[True, False],
-                loss_weight=loss_weight_multiplier,
+                loss_weight=loss_weight * loss_weight_multiplier,
                 loss_param={
                     'ignore_label': -1,
                     'normalization': softmax_norm_type 
@@ -857,14 +859,14 @@ class Yolo(object):
                                                softmaxtree_param={
                                                    'tree': tree_file
                                                })
-	    n.top_preds = L.SoftmaxTreePrediction(n.softmaxtree_conf,
-	        n.sigmoid_obj,
-	        softmaxtreeprediction_param={
-	          'tree': tree_file,
-	          'threshold': kwargs.get('softmax_tree_prediction_threshold',
+            n.top_preds = L.SoftmaxTreePrediction(n.softmaxtree_conf,
+                n.sigmoid_obj,
+                softmaxtreeprediction_param={
+                  'tree': tree_file,
+                  'threshold': kwargs.get('softmax_tree_prediction_threshold',
                       0.5),
                   'output_tree_path': kwargs.get('output_tree_path', False)
-	         })
+                 })
             n.bbox = L.YoloBBs(n.sigmoid_xy, n.wh, n.im_info,
                                yolobbs_param={
                                    'biases': biases,
@@ -978,8 +980,6 @@ def test_calc_out_idx():
     x = np.asarray([2, 2, 1, 1])
     x = x * 2
     y = calc_out_idx(x, 2)
-    print y
-    print sorted(y)
 
 if __name__ == '__main__':
     #test_yolo()

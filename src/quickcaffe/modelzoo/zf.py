@@ -1,8 +1,8 @@
 from __future__ import print_function
 from caffe import layers as L, params as P, to_proto
 from caffe.proto import caffe_pb2
-from layerfactory import *
-from caffenet import *
+from .layerfactory import *
+from .caffenet import *
 
 class ZFNet(CaffeNet):
     def add_body(self, netspec, depth=-1, lr=1, deploy=True):

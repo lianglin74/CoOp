@@ -1,4 +1,4 @@
-from layerfactory import *
+from .layerfactory import *
 
 class CNNModel(object):
     def __init__(self, add_last_pooling_layer=True, rcnn_mode = False):
