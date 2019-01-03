@@ -188,9 +188,26 @@ This repo is for the algorithm development for IRIS object detection. The curren
             'full_expid': prepared_full_expid_name, \
             'test_data': prepared_test_data_name, \
             'test_split': prepared_test_split_name, \
-            'gpus': [0,1,2,3]}"
+            'gpus': [0]}"
       ```
       The output will be under 'output/{}/snapshot/'.format(full_expid)
+2. How to patch the prediction file by the predictions from a specicial model. 
+   1. Scenario
+      1. In the multi-head model, we have a prediction result file from the
+         main model. Meanwhile, we might also have the patched result from a
+         special head. We would like to merge the two prediction files and
+         evaluate the accuracy. 
+   2. Command line
+      ```
+      export main_full_expid='Tax1300V14.4_0.0_0.0_darknet19_448_C_Init.best_model6933_maxIter.10eEffectBatchSize128LR7580_bb_only'
+      export patch_full_expid='TaxInsideV2_1_darknet19_448_C_Init.best_model9748_maxIter.100eEffectBatchSize128_FixParam.dark6a.leaky_bb_only'
+      export data='SeeingAIFurnitureTest'
+      python scripts/tools.py -p \
+        "{'type': 'patch_prediction_result_by_expid', \
+            'main_full_expid': $main_full_expid, \
+            'patch_full_expid': $patch_full_expid, \
+            'data': $data}"
+      ```
 
 ## Visualization
 1. Visualize the data under data/ and the model prediction result under output/
