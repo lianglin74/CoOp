@@ -31,6 +31,17 @@ from tqdm import tqdm
 import numpy as np
 
 
+def adjust_hier_tree_by_action(in_yaml, out_yaml):
+    tax = Taxonomy(load_from_yaml_file(in_yaml))
+    while True:
+        target_nodes = [node for node in tax.root.iter_search_nodes() if node != tax.root and
+                'action' in node.features and node.__getattribute__('action') == 'ignore_and_lift_children']
+        if len(target_nodes) == 0:
+            break
+        # each time, we only do the change on one node
+        target_nodes[0].delete()
+    write_to_yaml_file(tax.dump(for_train=True), out_yaml)
+
 def extract_remove_replace_labels(main_tree, target_tree):
     trees = [main_tree, target_tree]
     
