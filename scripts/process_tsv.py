@@ -144,7 +144,9 @@ def ensure_inject_decorate(func):
         client = get_mongodb_client()
         db = client['qd']
         task = db['task']
-        func_name = func.func_name
+        # .func_name is ok for python2, but not for python3. .__name__ is ok
+        # for both
+        func_name = func.__name__
         if func_name.startswith('ensure_'):
             func_name = func_name[len('ensure_'): ]
         argnames, ins_varargs, ins_kwargs, ins_defaults = inspect.getargspec(func)
@@ -3159,9 +3161,8 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
 
     labels, child_parent_sgs = child_parent_print_tree2(tax.root, 'name')
 
-    label_map_file = overall_dataset.get_labelmap_file()
-    write_to_file('\n'.join(map(lambda l: l.encode('utf-8'), labels)),
-            label_map_file)
+    label_map_file = overall_dataset.get_labelmap_file() 
+    write_to_file('\n'.join(labels), label_map_file)
     # save the parameter
     write_to_yaml_file((taxonomy_folder, kwargs), op.join(overall_dataset._data_root,
             'generate_parameters.yaml'))
@@ -3199,7 +3200,6 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
             op.join(overall_dataset._data_root, 'labels_with_few_images.yaml'))
 
     # get the information of all train val
-    train_vals = []
     ldtsi = []
     logging.info('collecting all candidate images')
     for label_type in out_dataset:
@@ -3220,8 +3220,9 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
     label_to_max_image = {n.name: n.__getattribute__('max_image_extract_for_train')
             if 'max_image_extract_for_train' in n.features and n.__getattribute__('max_image_extract_for_train') > default_max_image
             else default_max_image for n in tax.root.iter_search_nodes() if n != tax.root}
+    label_to_max_image = {l: max(label_to_max_image[l], num_test) for l in label_to_max_image}
     # negative images constraint
-    labels = label_to_max_image.keys()
+    labels = list(label_to_max_image.keys())
     for l in labels:
         label_to_max_image['-' + l] = label_to_max_image[l]
     label_to_max_image[None] = 10000000000
