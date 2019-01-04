@@ -2038,7 +2038,7 @@ def visualize_box_no_draw(data, split, version, label, start_id, color_map={}):
     if label is not None:
         idx = dataset.load_inverted_label(split, version, label)[label]
     else:
-        idx = range(dataset.num_rows(split, t='label', version=version))
+        idx = list(range(dataset.num_rows(split, t='label', version=version)))
     if len(idx) == 0:
         return
     while start_id > len(idx):
@@ -2349,22 +2349,54 @@ class TSVDatasetSource(TSVDataset):
         if self._initialized:
             return
         populate_dataset_details(self.name)
+
+        self.update_label_mapper()
+
+        self._load_inverted()
+
+        self._initialized = True
+
+    def _load_inverted(self):
+        # make sure self.update_label_mapper() is called
         types = ['with_bb', 'no_bb']
         self._type_split_label_idx = []
         for split in self._valid_splits:
             logging.info('loading the inverted file: {}-{}'.format(self.name,
                 split))
-            if not op.isfile(self.get_data(split, 'label',
-                    version=self._version)):
+            if not self.has(split, 'label', version=self._version):
                 continue
-            for t in types:
-                rows = self.iter_data(split, 'inverted.label.{}'.format(t),
+            # load inverted list
+            type_to_inverted = {}
+            for i, t in enumerate(types):
+                rows = self.iter_data(split, 'inverted.label.{}'.format(t), 
                         version=self._version)
-                inverted = {r[0]: (map(int, r[1].split(' ')) if len(r[1]) > 0
-                    else []) for r in rows}
+                type_to_inverted[t] = {r[0]: map(int, r[1].split(' ')) for r in rows if 
+                    r[0] in self._sourcelabel_to_targetlabels and 
+                    len(r[1]) > 0}
+            
+            # register the positive labels
+            for i, t in enumerate(types):
+                inverted = type_to_inverted[t]
+                inverted = {l: inverted[l] for l in inverted if not l.startswith('-')}
                 label_idx = dict_to_list(inverted, 0)
                 for label, idx in label_idx:
                     self._type_split_label_idx.append((t, split, label, idx))
+                    # for no_bb, we need to add the with_bb into the list
+                    if t == 'with_bb':
+                        self._type_split_label_idx.append(('no_bb', split, label, idx))
+
+            if self.use_negative_label:
+                # currently, we only have a scenario where we have negative
+                # annotations in the no_bb data source and the need to apply it
+                # to no_bb target set.
+                inverted = type_to_inverted['no_bb']
+                inverted = {l: inverted[l] for l in inverted if l.startswith('-')}
+                label_idx = dict_to_list(inverted, 0)
+                for label, idx in label_idx:
+                    #self._type_split_label_idx.append(('with_bb', split, label, idx))
+                    self._type_split_label_idx.append(('no_bb', split, label, idx))
+
+        self._type_split_label_idx = list(set(self._type_split_label_idx))
         self._type_to_split_label_idx = list_to_dict(
                 self._type_split_label_idx, 0)
         self._type_to_datasetlabel_to_split_idx = {}
@@ -2381,9 +2413,6 @@ class TSVDatasetSource(TSVDataset):
 
         self._split_to_num_image = {split: self.num_rows(split) for split in
                 self._valid_splits if self.has(split)}
-
-        self.update_label_mapper()
-        self._initialized = True
 
     def update_label_mapper(self):
         root = self._root
@@ -2484,50 +2513,22 @@ class TSVDatasetSource(TSVDataset):
         self._targetlabel_to_sourcelabels = list_to_dict_unique(sourcelabel_targetlabel,
                 1)
 
-        name_to_node = None
-        for sourcelabel in self._sourcelabel_to_targetlabels:
-            targetlabels = self._sourcelabel_to_targetlabels[sourcelabel]
-            # for all these target labels, if A is the parent of B, remove A.
-            if len(targetlabels) > 1:
-                if name_to_node is None:
-                    name_to_node = {node.name: node for node in root.iter_search_nodes() if
-                            node != root}
-                targetnodes = [name_to_node[l] for l in targetlabels]
-                validnodes = []
-                for n in targetnodes:
-                    ancestors = node.get_ancestors()[:-1]
-                    to_remove = []
-                    for v in validnodes:
-                        if v in ancestors:
-                            to_remove.append(v)
-                    for t in to_remove:
-                        validnodes.remove(t)
-                    can_add = True
-                    for v in validnodes:
-                        if n in v.get_ancestors()[:-1]:
-                            can_add = False
-                            break
-                    if can_add:
-                        validnodes.append(n)
-                targetlabels[:] = []
-                targetlabels.extend(v.name for v in validnodes)
 
         return self._sourcelabel_to_targetlabels
 
     def select_tsv_rows(self, label_type):
         self._ensure_initialized()
-        if label_type not in self._type_to_split_label_idx:
-            return []
-        split_label_idx = self._type_to_split_label_idx[label_type]
-        datasetlabel_to_splitidx = list_to_dict(split_label_idx, 1)
         result = []
-        for datasetlabel in datasetlabel_to_splitidx:
-            if datasetlabel in self._sourcelabel_to_targetlabels:
-                split_idxes = datasetlabel_to_splitidx[datasetlabel]
-                targetlabels = self._sourcelabel_to_targetlabels[datasetlabel]
-                for rootlabel in targetlabels:
-                    result.extend([(rootlabel, split, idx) for split, idx in
-                        split_idxes])
+        if label_type in self._type_to_split_label_idx:
+            split_label_idx = self._type_to_split_label_idx[label_type]
+            datasetlabel_to_splitidx = list_to_dict(split_label_idx, 1) 
+            for datasetlabel in datasetlabel_to_splitidx:
+                if datasetlabel in self._sourcelabel_to_targetlabels:
+                    split_idxes = datasetlabel_to_splitidx[datasetlabel]
+                    targetlabels = self._sourcelabel_to_targetlabels[datasetlabel]
+                    for rootlabel in targetlabels:
+                        result.extend([(rootlabel, split, idx) for split, idx in
+                            split_idxes])
         if self._use_all:
             split_to_rootlabel_idx = list_to_dict(result, 1)
             for s in split_to_rootlabel_idx:
@@ -2616,10 +2617,20 @@ def convert_label(label_tsv, idx, label_mapper, with_bb):
         row = tsv.seek(i)
         assert len(row) == 2
         rects = json.loads(row[1])
+        def eval_with_bb(r):
+            if not r['class'].startswith('-'):
+                return 'rect' in r and any(x != 0 for x in r['rect'])
+            else:
+                return 'rect' not in r or all(x == 0 for x in r['rect'])
         if with_bb:
-            rects = [r for r in rects if 'rect' in r and any(x != 0 for x in r['rect'])]
-        else:
-            rects = [r for r in rects if 'rect' not in r or all(x == 0 for x in r['rect'])]
+            # in the case with -, we will not add rect
+                                # with all zeros, thus, no need to check if it is all zeros
+                                # when it is negative samples
+            rects = [r for r in rects if eval_with_bb(r)]
+        # all annotations if eval_with_bb(r) is valid for no_bb. Thus, disable
+        # the following
+        #else:
+            #rects = [r for r in rects if not eval_with_bb(r)]
         if result is None:
             # don't use this, because all list will be shared
             #result = [len(row) * ['d']] * tsv.num_rows()
@@ -2942,7 +2953,6 @@ def create_testX(test_ldtsi, tax, out_dataset, version):
                 source_origin_label = dataset.get_data(split, 'label',
                         version=version)
                 sources_origin_label.append(source_origin_label)
-                src_label_tsv = TSVFile(source_origin_label)
                 converted_label = convert_label(source_origin_label,
                         idx, dataset._sourcelabel_to_targetlabels,
                         with_bb=with_bb)
@@ -3061,11 +3071,7 @@ def regularize_data_sources(data_infos):
             assert len(data_info) < 5
             result.append(r)
         elif type(data_info) is dict:
-            r = {}
-            r['name'] = data_info['data']
-            r['cleaness'] = data_info.get('cleaness', 10)
-            r['valid_splits'] = data_info.get('valid_splits', default_splits)
-            r['use_all'] = data_info.get('use_all', False)
+            r = data_info
             result.append(r)
         else:
             raise Exception('unkwown data_info = {}'.format(data_info))
