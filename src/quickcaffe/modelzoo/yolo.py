@@ -414,7 +414,7 @@ class Yolo(object):
                         suffix='',
                         extra_conv_kernel=extra_conv_kernel,
                         extra_conv_groups=kwargs.get('extra_conv_groups'))
-            num_output = (num_classes + num_obj + coords) * len(biases) / 2
+            num_output = (num_classes + num_obj + coords) * len(biases) // 2
             if kwargs.get('yolo_deconv_to_increase_dim', False):
                 assert not residual_loss
                 n['last_conv'] = L.Deconvolution(last_top, convolution_param={'kernel_size':1,
@@ -505,7 +505,7 @@ class Yolo(object):
                 if not residual_loss:
                     last_top = last_layer(n)
                     self.add_yolo_train_loss(n, biases, num_classes, 
-                            n.__dict__['tops'].keys()[-1], 
+                            list(n.__dict__['tops'].keys())[-1], 
                             '', 
                             extra_train_param,
                             **kwargs)
@@ -544,7 +544,7 @@ class Yolo(object):
             else:
                 if not residual_loss:
                     self.add_yolo_test_loss(n, biases, num_classes, 
-                            n.__dict__['tops'].keys()[-1], 
+                            list(n.__dict__['tops'].keys())[-1], 
                             '',
                             extra_test_param,
                             **kwargs)
@@ -684,7 +684,7 @@ class Yolo(object):
                 loss_weight_multiplier=weight_bb * loss_weight_multiplier,
                 **kwargs)
 
-        num_anchor = len(biases) / 2
+        num_anchor = len(biases) // 2
 
         n.xywh_nobb, n.obj_nobb, n.conf_nobb = L.Slice(n.conv_no_bb,
                                                        ntop=3,
@@ -724,7 +724,7 @@ class Yolo(object):
             label_name = None,
             loss_weight_multiplier=1.,
             **kwargs):
-        num_anchor = len(biases) / 2
+        num_anchor = len(biases) // 2
         if len(kwargs.get('num_extra_convs', [3])) == 1:
             xy = 'xy{}'.format(suffix)
             wh = 'wh{}'.format(suffix)
@@ -747,7 +747,7 @@ class Yolo(object):
             else:
                 n['first_sigmoid_obj'], n['second_sigmoid_obj'] = L.Slice(n[sigmoid_obj], ntop=2,
                         name='slice_dim0',
-                        slice_point=[self.batch_weights[0]],
+                        slice_point=[int(self.batch_weights[0])],
                         slice_dim=0)
                 n['silence_second_sigmoid_obj'] = L.Silence(n['second_sigmoid_obj'], ntop=0,
                         name='silence_second_sigmoid_obj')
@@ -836,7 +836,7 @@ class Yolo(object):
     def add_yolo_test_loss(self, n, biases, num_classes, last_top, suffix, 
             region_prediction_param={}, **kwargs):
         tree_file = kwargs.get('target_synset_tree')
-        num_anchor = len(biases) / 2
+        num_anchor = len(biases) // 2
         class_specific_nms = kwargs.get('class_specific_nms', True)
         if len(kwargs.get('num_extra_convs', [3])) == 1:
             xy = 'xy{}'.format(suffix)

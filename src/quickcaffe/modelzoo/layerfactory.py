@@ -4,7 +4,7 @@ from caffe.proto import caffe_pb2
 import caffe
 
 def last_layer(n):
-    return n.__dict__['tops'][n.__dict__['tops'].keys()[-1]]
+    return n.__dict__['tops'][list(n.__dict__['tops'].keys())[-1]]
 
 def deconv(bottom, nout, ks=3, stride=1, pad=0, lr=1, weight_filler=dict(type='msra'), bias_filler=dict(type='constant', value=0), deploy=True):
     if deploy:
