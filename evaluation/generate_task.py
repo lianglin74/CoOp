@@ -76,7 +76,8 @@ def pack_task_with_honey_pot(task_data, hp_data, hp_type, num_tasks_per_hit,
         line = task_data[start: end]
         for _ in range(num_hp_per_hit):
             line.append(hp_gen.next())
-        np.random.shuffle(line)
+        if num_hp_per_hit > 0:
+            np.random.shuffle(line)
         output_content.append(line)
     return output_content
 
@@ -95,17 +96,23 @@ def write_task_file(data, filepath):
     os.rename(filepath + ".tmp", filepath)
 
 
-def generate_task_files(task_type, label_file, hp_file, outbase):
+def generate_task_files(task_type, label_file, hp_file, outbase,
+                        num_tasks_per_hit=10, num_hp_per_hit=2):
     if task_type == "VerifyImage":
         hp_type = "hp"
         _generate_task_files_helper(task_type, label_file, hp_file, outbase, hp_type,
-                                description_file=None, num_tasks_per_hit=10,
-                                num_hp_per_hit=2, hp_neg_prob=0.5)
+                                description_file=None, num_tasks_per_hit=num_tasks_per_hit,
+                                num_hp_per_hit=num_hp_per_hit, hp_neg_prob=0.5, box_per_img="one")
     elif task_type == "VerifyBox":
         hp_type = "gt"
         _generate_task_files_helper(task_type, label_file, hp_file, outbase, hp_type,
-                                description_file=None, num_tasks_per_hit=10,
-                                num_hp_per_hit=2, hp_neg_prob=0.5)
+                                description_file=None, num_tasks_per_hit=num_tasks_per_hit,
+                                num_hp_per_hit=num_hp_per_hit, hp_neg_prob=0.5, box_per_img="one")
+    elif task_type == "VerifyCover":
+        hp_type = "hp"
+        _generate_task_files_helper(task_type, label_file, hp_file, outbase, hp_type,
+                                description_file=None, num_tasks_per_hit=num_tasks_per_hit,
+                                num_hp_per_hit=num_hp_per_hit, hp_neg_prob=0.5, box_per_img="class")
     else:
         raise Exception("invalid task type: {}".format(task_type))
 
@@ -182,7 +189,7 @@ def generate_tag_honeypot(dataset_name, split, outfile=None):
 
 def _generate_task_files_helper(task_type, label_file, hp_file, outbase, hp_type,
                                 description_file, num_tasks_per_hit,
-                                num_hp_per_hit, hp_neg_prob):
+                                num_hp_per_hit, hp_neg_prob, box_per_img):
     """
     Params:
         task_type: choose from VerifyBox, VerifyImage
@@ -194,8 +201,10 @@ def _generate_task_files_helper(task_type, label_file, hp_file, outbase, hp_type
             UHRS/MTurk tasks
         description_file: tsv file describing the terms, used to
             change display name. columns: term, description
+        box_per_img: choose from one, class, all to 1) show one box per image
+            for verification; 2) show boxes of the same class per image; 3) show
+            all boxes on the image
     """
-    assert(task_type=="VerifyBox" or task_type=="VerifyImage")
     # load terms and descriptions
     term_description_map = None
     if description_file:
@@ -214,14 +223,31 @@ def _generate_task_files_helper(task_type, label_file, hp_file, outbase, hp_type
     for parts in read_from_file(label_file, sep='\t', check_num_cols=3):
         bbox_list = json.loads(parts[1])
         image_url = parts[2]
+        term_bbox_map = collections.defaultdict(list)
         for bbox in bbox_list:
             term = bbox['class']
             if term_description_map and term in term_description_map:
                 term = term_description_map[term]
             term_count[term] += 1
-            task_data.append({"uuid": str(uuid.uuid4()), "image_info": parts[0],
+            term_bbox_map[term].append(bbox)
+        if box_per_img == "one":
+            for term in term_bbox_map:
+                for bbox in term_bbox_map[term]:
+                    task_data.append({"uuid": str(uuid.uuid4()), "image_info": parts[0],
                               "question_type": task_type, "image_url": image_url,
                               "objects_to_find": term, "bboxes": [bbox]})
+        elif box_per_img == "class":
+            for term in term_bbox_map:
+                task_data.append({"uuid": str(uuid.uuid4()), "image_info": parts[0],
+                              "question_type": task_type, "image_url": image_url,
+                              "objects_to_find": term, "bboxes": term_bbox_map[term]})
+        elif box_per_img == "all":
+            all_terms = ' ;'.join([t for t in term_bbox_map])
+            task_data.append({"uuid": str(uuid.uuid4()), "image_info": parts[0],
+                              "question_type": task_type, "image_url": image_url,
+                              "objects_to_find": all_terms, "bboxes":bbox_list})
+        else:
+            raise ValueError("Invalid box_per_img type: {}. Choose from: one, class, all".format(box_per_img))
 
     # load gt data to create honey pot
     if hp_file:

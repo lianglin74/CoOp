@@ -148,20 +148,26 @@ class UhrsTaskManager():
             return 111012
         elif task_group == "vendor_verify_box":
             return 113795
+        elif task_group == "vendor_draw_box":
+            return 113972
         else:
             raise Exception("Unknown task: {}".format(task_group))
 
 
 def test():
     rootpath = "//ivm-server2/IRIS/OD/eval/tasks/test/"
+    task_group = "test"
+
     uhrs_client = UhrsTaskManager(os.path.join(rootpath, "log.txt"))
+
+    # test blocking workers
     w_id = 388605
     w_file = os.path.join(rootpath, "bad_worker.txt")
-    task_group = "test"
     with open(w_file, 'w') as fp:
         fp.write(str(w_id) + '\n')
     uhrs_client.block_worker(w_id)
     uhrs_client.block_workers(w_file)
+
     upload_dir = os.path.join(rootpath, "upload")
     download_dir = os.path.join(rootpath, "download")
     uhrs_client.upload_tasks_from_folder(task_group, upload_dir, num_judges=1)

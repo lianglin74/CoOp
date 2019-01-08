@@ -10,6 +10,30 @@ from evaluation.uhrs import UhrsTaskManager
 from evaluation.utils import load_escaped_json, write_to_file
 
 
+def analyze_draw_box_task(result_files, result_file_type, outfile_res):
+    # load results
+    df_records = load_task_results(result_files, result_file_type)
+    url2ans_map = collections.defaultdict(list)
+    url2task_map = dict()
+    for _, row in df_records.iterrows():
+        input_task = load_escaped_json(row['Input.input_content'])
+        answer = [parse_bbox(b) for b in json.loads(row['Answer.output'])]
+        for b in answer:
+            b["class"] = input_task["objects_to_find"]
+        img_url = input_task["image_url"]
+        # TODO: currently only one judge will draw box for one image
+        assert img_url not in url2ans_map
+        url2ans_map[img_url].extend(answer)
+        url2task_map[img_url] = input_task
+
+    res = []  # image_info, list of bboxes, url
+    for url in url2ans_map:
+        # TODO: merge bbox list
+        bbox_list = url2ans_map[url]
+        res.append([url2task_map[url]["image_key"], json.dumps(bbox_list), url])
+    write_to_file(res, outfile_res)
+
+
 def analyze_verify_box_task(result_files, result_file_type, outfile_res,
                             outfile_rejudge, worker_quality_file=None,
                             min_num_judges_per_hit=4, min_num_hp=5,
@@ -20,26 +44,7 @@ def analyze_verify_box_task(result_files, result_file_type, outfile_res,
     consensus will be written to outfile_rejudge
     """
     # load results
-    logging.info('\n'.join(['Merging Labeling result file:{:s}\t'.format(a)
-                            for a in result_files]))
-    results = pd.DataFrame()
-    if result_file_type == "mturk":
-        for resultfile in result_files:
-            results = results.append(pd.read_csv(resultfile))
-        logging.info('{:d} lines loaded.'.format(len(results)))
-        df_records = results[['HITId', 'WorkerId', 'Answer.output',
-                              'Input.input_content']]
-    elif result_file_type == "uhrs":
-        for resultfile in result_files:
-            results = results.append(pd.read_csv(resultfile, sep='\t'))
-        logging.info('{:d} lines loaded.'.format(len(results)))
-        df_records = results[['HitID', 'JudgeID', 'output',
-                              'input_content']].rename(
-                     columns={'HitID': 'HITId', 'JudgeID': 'WorkerId',
-                              'output': 'Answer.output',
-                              'input_content': 'Input.input_content'})
-    else:
-        raise Exception("invalid file type: {}".format(result_file_type))
+    df_records = load_task_results(result_files, result_file_type)
 
     # analyze worker quality
     bad_worker_ids = analyze_worker_quality(df_records, worker_quality_file,
@@ -130,6 +135,44 @@ def get_consensus_answer(answers, consensus_threshold=0.5):
         if count > threshold_count:
             return ans
     return None
+
+
+def load_task_results(result_files, result_file_type):
+    logging.info('\n'.join(['Merging Labeling result file:{:s}\t'.format(a)
+                            for a in result_files]))
+    results = pd.DataFrame()
+    if result_file_type == "mturk":
+        for resultfile in result_files:
+            results = results.append(pd.read_csv(resultfile))
+        logging.info('{:d} lines loaded.'.format(len(results)))
+        df_records = results[['HITId', 'WorkerId', 'Answer.output',
+                              'Input.input_content']]
+    elif result_file_type == "uhrs":
+        for resultfile in result_files:
+            results = results.append(pd.read_csv(resultfile, sep='\t'))
+        logging.info('{:d} lines loaded.'.format(len(results)))
+        df_records = results[['HitID', 'JudgeID', 'output',
+                              'input_content']].rename(
+                     columns={'HitID': 'HITId', 'JudgeID': 'WorkerId',
+                              'output': 'Answer.output',
+                              'input_content': 'Input.input_content'})
+    else:
+        raise Exception("invalid file type: {}".format(result_file_type))
+    return df_records
+
+
+def parse_bbox(bbox):
+    """ Parses bbox format from uhrs
+    """
+    left = bbox["left"]
+    assert left>=0 and left<bbox["image_width"]
+    right = bbox["left"] + bbox["width"]
+    assert right>left and right<=bbox["image_width"]
+    top = bbox["top"]
+    assert top>=0 and top<bbox["image_height"]
+    bottom = bbox["top"] + bbox["height"]
+    assert bottom>top and bottom<=bbox["image_height"]
+    return {"rect": [left, top, right, bottom], "class": bbox["label"]}
 
 
 def analyze_worker_quality(df_records, worker_quality_file=None, min_num_hp=5,

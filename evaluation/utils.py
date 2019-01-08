@@ -4,6 +4,7 @@ from __future__ import division
 import json
 import numpy as np
 import os
+import shutil
 
 
 def list_files_in_dir(dirpath):
@@ -11,12 +12,15 @@ def list_files_in_dir(dirpath):
             if os.path.isfile(os.path.join(dirpath, f))]
 
 
-def ensure_dir_empty(dirpath):
+def ensure_dir_empty(dirpath, remove_ok=False):
     if not os.path.exists(dirpath):
         os.makedirs(dirpath)
     else:
         if len(os.listdir(dirpath)) > 0:
-            raise Exception("{} is not empty".format(dirpath))
+            if not remove_ok:
+                raise Exception("Directory not empty: {}".format(dirpath))
+            shutil.rmtree(dirpath)
+            os.mkdir(dirpath)
 
 
 def read_from_file(filepath, sep='\t', check_num_cols=None):
