@@ -108,6 +108,7 @@
                     let rect_dic = rects[i];
                     let rect = rect_dic['rect'];
                     let display_rect = [1, 2, 3, 4];
+
                     display_rect[0] = rect[0] * img_scale;
                     display_rect[1] = rect[1] * img_scale;
                     display_rect[2] = rect[2] * img_scale;
@@ -137,8 +138,8 @@
                     let bk_color = bk_colors[label];
                     let bk_color_format = 'rgb(' + bk_color[0] + ',' + bk_color[1] + ',' + bk_color[2] + ', 0.8)';
 
-                    if (rect_dic['conf'] != null) {
-
+                    //if (rect_dic['conf'] != null) 
+                    {
 
                         ctx.beginPath();
 
@@ -159,12 +160,11 @@
                         }
 
                         //if (flag == 1) {
-                        if (rect_dic['conf'] > 0 && rect_dic['conf'] < 1) {
+                        //if (rect_dic['conf'] > 0 && rect_dic['conf'] < 1) {
 
                             ctx.rect(display_rect[0], display_rect[1], display_rect[2] - display_rect[0], display_rect[3] - display_rect[1]);
 
-
-                            label = label + ': ' + rect_dic['conf'].toFixed(2);
+                            //label = label + ': ' + rect_dic['conf'].toFixed(2);
                             //}
 
                             placed_positions[[Math.floor(text_x), Math.floor(text_y)]] = 'x'
@@ -174,11 +174,12 @@
 
                             ctx.fillStyle = color_format;
                             ctx.fillText(label, text_x, text_y + shift_y);
-                        }
+                        //}
 
                         ctx.strokeStyle = color_format;
 
                         ctx.lineWidth = 2;
+                        
 
                         ctx.closePath();
                         ctx.stroke();
@@ -204,7 +205,7 @@
                 ctx.drawImage(img, 0, 0, canvas_obj.width, img.height * scale);
                 //ctx.drawImage(img, 0, img.height * scale + 2, canvas_obj.width, img.height * scale);
                 draw_bb_1(ctx, current_type_to_rects, img.width * scale,
-                    img.height * scale, scale, 0);
+                     img.height * scale, scale, 0);
                 // draw_bb_2(ctx, current_type_to_rects, img.width * scale,
                 //     img.height * scale, scale, img.height * scale + 2);
             };
@@ -257,7 +258,6 @@
                     }
                 }
 
-
                 document.getElementById(id).appendChild(elem);
                 j++;
                 if (j > image_cols) {
@@ -274,6 +274,7 @@
         }
 
         function update_label_list(type_to_rects, unchecked_labels, unchecked_type) {
+            
             current_type_to_rects = Object.assign({}, type_to_rects)
 
             for (let t of unchecked_type.entries()) {
@@ -379,7 +380,8 @@
         {% else %}
         let all_key = []
         {% endif %}
-
+        
+        //let black_list = JSON.parse("{{ black_list|escapejs }}");
         let label_list_dic = {};
         let type_list_dic = {};
 
@@ -491,7 +493,7 @@
         }
     </script>
 
-    <script>
+    <!-- <script>
         // Add active class to the current button (highlight it)
         var header = document.getElementById("myHeader");
         var btns = header.getElementsByClassName("btn");
@@ -536,6 +538,6 @@
             }
         }
 
-    </script>
+    </script> -->
 </body>
 </html>
