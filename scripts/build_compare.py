@@ -75,6 +75,7 @@ def build_side_by_side_compare(
     dictRightResult = read_result(inRightResultTsvFilename, dictRightThreshold)
 
     print 'Start to write compare result . . .'
+    
     f_out_tsv = open(outTsvFilename, 'w')
 
     with open(inImageTsvFilename, 'r') as f_in_tsv:

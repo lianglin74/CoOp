@@ -633,6 +633,18 @@ def view_image_compare_test(request, data, split, version, label, start_id, min_
 
     return render(request, 'detection/images_compare_test.html', context)
 
+def read_threshold(thresholdFilename):
+    dict_threshold  = {}
+    if os.path.isfile(thresholdFilename):
+        with open(thresholdFilename, 'r') as f:
+            lines = f.readlines()
+            lines = [line.strip('\n') for line in lines]
+
+            for line in lines:
+                cols = [x.strip() for x in line.split('\t')]
+                dict_threshold[cols[0]] = float(cols[1])
+    return dict_threshold
+
 def view_image_compare(request, data, split, version, label, start_id, min_conf_left, min_conf_right):
     '''
     use js to render the box in the client side
@@ -946,34 +958,42 @@ def get_compare_data_info(name=None):
     if name is None:
         predictConfig = './data/compare/config.yaml'
         configs = load_from_yaml_file(predictConfig)
-        configs_insta = configs['Instagram']
-        configs_insta_bl = configs_insta['baselines']
+        
+        # dataset_name_01 = 'Instagram'
+        # dataset_name_02 = 'MIT1K'
 
-        configs_mit1k = configs['MIT1K']
-        configs_mit_bl = configs_mit1k['baselines']
+        dataset_name_01 = 'OpenImageV4FurnitureTest'
+        dataset_name_02 = 'SeeingAIFurnitureTest'
+
+        configs_01 = configs[dataset_name_01]
+        configs_01_bl = configs_01['baselines']
+
+        configs_02 = configs[dataset_name_02]
+        configs_02_bl = configs_02['baselines']
         
         # files = [f for f in os.listdir(dbPath) if op.isfile(op.join(dbPath, f))]
         results = []
-        for bl1 in configs_mit_bl:
-            if (bl1['name'].find("google"))>=0:
-                for bl2 in configs_mit_bl:
-                    if (bl2['name'].find("google"))<0:
+
+        for bl1 in configs_02_bl:
+            if (bl1['name'].find("google"))>=0 or (bl1['name'].find("amazon"))>=0:
+                for bl2 in configs_02_bl:
+                    if (bl2['name'].find("google"))<0 and (bl2['name'].find("amazon"))<0:
                         if "conf_threshold" in bl2:
                             min_conf = bl2["conf_threshold"]
                         else:
                             min_conf = 0
-                        compare_name = "MIT1K_"+bl2['name'] + "_vs_" + bl1['name']
+                        compare_name = dataset_name_02 + "_" + bl2['name'] + "_vs_" + bl1['name']
                         results.append({"name": compare_name, "min_conf": min_conf })
 
-        for bl1 in configs_insta_bl:
-            if (bl1['name'].find("google"))>=0:
-                for bl2 in configs_insta_bl:
-                    if (bl2['name'].find("google"))<0:
+        for bl1 in configs_01_bl:
+            if (bl1['name'].find("google"))>=0 or (bl1['name'].find("amazon"))>=0:
+                for bl2 in configs_01_bl:
+                    if (bl2['name'].find("google"))<0 and (bl2['name'].find("amazon"))<0:
                         if "conf_threshold" in bl2:
                             min_conf = bl2["conf_threshold"]
                         else:
                             min_conf = 0
-                        compare_name = "Instagram_"+bl2['name'] + "_vs_" + bl1['name']
+                        compare_name = dataset_name_01 + "_"+bl2['name'] + "_vs_" + bl1['name']
                         results.append({"name": compare_name, "min_conf": min_conf })
         return results
     else:
@@ -1000,12 +1020,11 @@ def get_compare_data_info(name=None):
         return name_splits_labels
 
 
-def parse_compare_data(data):
+def parse_compare_data(data_source_name):
     
-    items = [x.strip() for x in data.split('_')]
+    items = [x.strip() for x in data_source_name.split('_')]
 
-    # print "items"
-    # print items
+    # print "items", items
 
     dataSource = items[0]
     leftLabel = items[1]
@@ -1019,6 +1038,7 @@ def parse_compare_data(data):
     configs_data_bl = configs_data['baselines']
     thresholdFile = None
     displayFile = None
+    
     for bl in configs_data_bl:
         if bl['name'] == leftLabel:
             leftFile = bl['result']
@@ -1029,7 +1049,7 @@ def parse_compare_data(data):
         if bl['name'] == rightLabel:
             rightFile = bl['result']
   
-    return leftFile, rightFile, dataSource+".tsv", leftLabel, rightLabel, thresholdFile, displayFile
+    return leftFile, rightFile, dataSource, leftLabel, rightLabel, thresholdFile, displayFile
 
 def view_compare(request):
     import shutil
@@ -1071,11 +1091,13 @@ def view_compare(request):
         if not op.isdir(dataPath):
             os.mkdir(dataPath, 0755)
  
-            leftFile, rightFile, imageFile, leftLabel, rightLabel, leftThreshold, leftDisplay = parse_compare_data(data)
+            leftFile, rightFile, data_source_name, leftLabel, rightLabel, leftThreshold, leftDisplay = parse_compare_data(data)
 
             leftFile = "./data/compare/" + leftFile
             rightFile = "./data/compare/" + rightFile
-            imageFile = "./data/compare/" + imageFile
+            imageFile = "./data/" + data_source_name +  "/" + split + ".tsv" 
+
+            print leftFile, rightFile, imageFile
 
             if leftThreshold != None:
                 leftThreshold = "./data/compare/" + leftThreshold
@@ -1083,7 +1105,7 @@ def view_compare(request):
             if leftDisplay != None:
                 leftDisplay = "./data/compare/" + leftDisplay
             
-            print leftFile, rightFile, imageFile, leftLabel, rightLabel
+            # print leftFile, rightFile, imageFile, leftLabel, rightLabel
 
             build_side_by_side_compare(leftFile,
                 rightFile,
@@ -1095,7 +1117,10 @@ def view_compare(request):
                 rightLabel,
                 leftDisplay)
 
-            shutil.copy2("./data/compare/blacklist.txt", "./data/"+data)
+            black_list_filename = "./data/compare/blacklist.txt"
+
+            if op.isfile(black_list_filename):
+                shutil.copy2(black_list_filename, "./data/"+data)
 
             populate_dataset_details(data)
 
