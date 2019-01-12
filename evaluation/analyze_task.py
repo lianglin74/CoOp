@@ -14,23 +14,22 @@ def analyze_draw_box_task(result_files, result_file_type, outfile_res):
     # load results
     df_records = load_task_results(result_files, result_file_type)
     url2ans_map = collections.defaultdict(list)
-    url2task_map = dict()
     for _, row in df_records.iterrows():
-        input_task = load_escaped_json(row['Input.input_content'])
+        try:
+            input_task = load_escaped_json(row['Input.input_content'])
+        except Exception:
+            continue
         answer = [parse_bbox(b) for b in json.loads(row['Answer.output'])]
         for b in answer:
             b["class"] = input_task["objects_to_find"]
         img_url = input_task["image_url"]
-        # TODO: currently only one judge will draw box for one image
-        assert img_url not in url2ans_map
         url2ans_map[img_url].extend(answer)
-        url2task_map[img_url] = input_task
 
-    res = []  # image_info, list of bboxes, url
+    res = []  # url, list of bboxes
     for url in url2ans_map:
-        # TODO: merge bbox list
+        # TODO: merge answers from several workers to get confidence scores
         bbox_list = url2ans_map[url]
-        res.append([url2task_map[url]["image_key"], json.dumps(bbox_list), url])
+        res.append([url, json.dumps(bbox_list)])
     write_to_file(res, outfile_res)
 
 
