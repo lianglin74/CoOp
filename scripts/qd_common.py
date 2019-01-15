@@ -32,6 +32,13 @@ import argparse
 import subprocess as sp
 
 
+def hash_sha1(s):
+    import hashlib
+    if type(s) is not str:
+        from pprint import pformat
+        s = pformat(s)
+    return hashlib.sha1(s.encode('utf-8')).hexdigest()
+
 def ensure_copy_file(src, dest):
     ensure_directory(op.dirname(dest))
     if not op.isfile(dest):

@@ -77,6 +77,7 @@ from pymongo import MongoClient
 import pymongo
 from datetime import datetime
 import inspect
+from qd_common import hash_sha1
 
 def convert_pred_to_dataset_label(full_expid, predict_file,
         th_file, min_value):
@@ -571,12 +572,6 @@ def db_insert_many(collection, all_info):
         if '_id' in a:
             del a['_id']
     collection.insert_many(all_info)
-
-def hash_sha1(s):
-    import hashlib
-    if type(s) is not str:
-        s = pformat(s)
-    return hashlib.sha1(s.encode('utf-8')).hexdigest()
 
 class VisualizationDatabaseByMongoDB():
     def __init__(self):

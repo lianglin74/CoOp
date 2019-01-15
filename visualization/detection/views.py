@@ -818,9 +818,10 @@ def view_image_js2(request, data, split, version, label, start_id):
     for i, (fname, origin, gt) in enumerate(images):
         if i >= max_image_shown:
             break
+        from qd_common import hash_sha1
         origin_html_path = save_image_in_static(origin, '{}/{}/{}/origin_{}.jpg'.format(data, split,
                                                                                         version,
-                                                                                        fname))
+                                                                                        hash_sha1(fname)))
         all_key.append(fname)
         all_url.append('/static/' + origin_html_path)
         all_type_to_rects.append({'gt': gt})
