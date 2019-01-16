@@ -60,7 +60,7 @@ class HoneyPotGenerator(object):
 
 
 def pack_task_with_honey_pot(task_data, hp_data, hp_type, num_tasks_per_hit,
-                             num_hp_per_hit, hp_neg_prob=0.5):
+                             num_hp_per_hit, hp_neg_prob=0.5, multiple_tasks_per_hit=True):
     ''' Generate hits composed of real tasks and honey pot
     '''
     output_content = []
@@ -71,14 +71,24 @@ def pack_task_with_honey_pot(task_data, hp_data, hp_type, num_tasks_per_hit,
                                    class_candidates=class_candidates)
     else:
         hp_gen = None
-    for start in np.arange(0, num_total_task, num_tasks_per_hit):
-        end = min(start + num_tasks_per_hit, num_total_task)
-        line = task_data[start: end]
-        for _ in range(num_hp_per_hit):
-            line.append(hp_gen.next())
-        if num_hp_per_hit > 0:
-            np.random.shuffle(line)
-        output_content.append(line)
+
+    if multiple_tasks_per_hit:
+        # packed UI: each hit shows multiple tasks
+        for start in np.arange(0, num_total_task, num_tasks_per_hit):
+            end = min(start + num_tasks_per_hit, num_total_task)
+            line = task_data[start: end]
+            for _ in range(num_hp_per_hit):
+                line.append(hp_gen.next())
+            if num_hp_per_hit > 0:
+                np.random.shuffle(line)
+            output_content.append(line)
+    else:
+        # each hit shows only one task
+        ratio = int(num_tasks_per_hit / num_hp_per_hit)
+        for start in np.arange(0, num_total_task, ratio):
+            end = min(start + ratio, num_total_task)
+            output_content.extend(task_data[start: end])
+            output_content.append(hp_gen.next())
     return output_content
 
 
@@ -109,6 +119,11 @@ def generate_task_files(task_type, label_file, hp_file, outbase,
                                 description_file=None, num_tasks_per_hit=num_tasks_per_hit,
                                 num_hp_per_hit=num_hp_per_hit, hp_neg_prob=0.5, box_per_img="one")
     elif task_type == "VerifyCover":
+        hp_type = "hp"
+        _generate_task_files_helper(task_type, label_file, hp_file, outbase, hp_type,
+                                description_file=None, num_tasks_per_hit=num_tasks_per_hit,
+                                num_hp_per_hit=num_hp_per_hit, hp_neg_prob=0.5, box_per_img="class")
+    elif task_type == "DrawBox":
         hp_type = "hp"
         _generate_task_files_helper(task_type, label_file, hp_file, outbase, hp_type,
                                 description_file=None, num_tasks_per_hit=num_tasks_per_hit,
@@ -261,7 +276,8 @@ def _generate_task_files_helper(task_type, label_file, hp_file, outbase, hp_type
     # merge task and honey pot data
     output_data = pack_task_with_honey_pot(task_data, hp_data, hp_type,
                                            num_tasks_per_hit,
-                                           num_hp_per_hit, hp_neg_prob)
+                                           num_hp_per_hit, hp_neg_prob,
+                                           multiple_tasks_per_hit=(task_type!="DrawBox"))
     logging.info("writing #task: {}, #HP: {}"
                  .format(len(task_data),
                          len(task_data)*num_hp_per_hit/num_tasks_per_hit))
