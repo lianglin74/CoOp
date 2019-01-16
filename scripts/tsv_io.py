@@ -493,11 +493,16 @@ def tsv_writer(values, tsv_file_name, sep='\t'):
     idx = 0
     tsv_file_name_tmp = tsv_file_name + '.tmp'
     tsv_lineidx_file_tmp = tsv_lineidx_file + '.tmp'
-    with open(tsv_file_name_tmp, 'w') as fp, open(tsv_lineidx_file_tmp, 'w') as fpidx:
+    with open(tsv_file_name_tmp, 'wb') as fp, open(tsv_lineidx_file_tmp, 'w') as fpidx:
         assert values is not None
         for value in values:
             assert value
-            v = '{0}\n'.format(sep.join(map(str, value)))
+            v = sep.join(map(lambda v: str(v) if type(v) is not str else v, value)) + '\n'
+            # even when v is str, it is also ok to call encode(); if it is
+            # unicode, it is fine. These are under python2. If it is python 3,
+            # this is also valid. Do not check if type(v) is unicode since
+            # python3 has no unicode.
+            v = v.encode('utf-8')
             fp.write(v)
             fpidx.write(str(idx) + '\n')
             idx = idx + len(v)
