@@ -1,6 +1,4 @@
 import time
-from utils.accuracy import get_accuracy_calculator
-from utils.averagemeter import AverageMeter
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -8,7 +6,10 @@ import torch.optim
 from torch.optim import lr_scheduler
 from bisect import bisect_right
 import numpy as np
-from lib.sigmoid_cross_entropy_loss_with_balancing import SigmoidCrossEntropyLossWithBalancing
+
+from ..utils.accuracy import get_accuracy_calculator
+from ..utils.averagemeter import AverageMeter
+from ..lib import layers
 
 
 def get_criterion(multi_label=False, multi_label_negative_sample_weights_file = None):
@@ -20,7 +21,7 @@ def get_criterion(multi_label=False, multi_label_negative_sample_weights_file = 
             print("Use SigmoidCrossEntropyLossWithBalancing")
             with open(multi_label_negative_sample_weights_file, "r") as f:
                 weights = [float(line) for line in f]
-                criterion = SigmoidCrossEntropyLossWithBalancing(np.array(weights)).cuda()
+                criterion = layers.SigmoidCrossEntropyLossWithBalancing(np.array(weights)).cuda()
     else:
         print("Use CrossEntropyLoss")
         criterion = nn.CrossEntropyLoss().cuda()
@@ -113,31 +114,43 @@ def get_scheduler(optimizer, args):
 
     return scheduler
 
-def train(args, train_loader, model, criterion, optimizer, epoch, logger):
+
+def train(args, train_loader, model, criterion, optimizer, epoch, logger, accuracy):
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
-    accuracy = get_accuracy_calculator(multi_label=not isinstance(criterion, nn.CrossEntropyLoss))
+
+    orig_losses = AverageMeter()
+    ccs_losses = AverageMeter()
+
+    ccs_loss_layer = layers.CCSLoss()
+    ccs_loss_param = 1.0
 
     # switch to train mode
     model.train()
 
     end = time.time()
     tic = time.time()
-
     for i, (input, target) in enumerate(train_loader):
         # measure data loading time
         data_time.update(time.time() - end)
-
         target = target.cuda(non_blocking=True)
 
         # compute output
-        output = model(input)
-        loss = criterion(output, target)
+        all_outputs = model(input)
+        output, feature = all_outputs[0], all_outputs[1]
+        # NOTE: use detach() to not calculate grad w.r.t. weight in ccs_loss
+        weight = model.module.fc.weight
+        ccs_loss = ccs_loss_layer(feature, weight, target)
+        orig_loss = criterion(output, target)
+
+        loss = orig_loss + ccs_loss_param*ccs_loss
 
         # measure accuracy and record loss
         accuracy.calc(output, target)
         losses.update(loss.item(), input.size(0))
+        orig_losses.update(orig_loss.item(), input.size(0))
+        ccs_losses.update(ccs_loss.item(), input.size(0))
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
@@ -154,9 +167,11 @@ def train(args, train_loader, model, criterion, optimizer, epoch, logger):
                         'Speed: {speed:.2f} samples/sec\t' \
                         'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t' \
                         'Data {data_time.val:.3f} ({data_time.avg:.3f})\t' \
-                        'Loss {loss.val:.4f} ({loss.avg:.4f})\t'.format(
+                        'Loss {loss.val:.4f} ({loss.avg:.4f})\t' \
+                        'Original Loss {orig_loss.val:.4f} ({orig_loss.avg:.4f})\t' \
+                        'CCS Loss {ccs_loss.val:.4f} ({ccs_loss.avg:.4f})\t'.format(
                         epoch, i, len(train_loader), speed=speed, batch_time=batch_time,
-                        data_time=data_time, loss=losses)
+                        data_time=data_time, loss=losses, orig_loss=orig_losses, ccs_loss=ccs_losses)
             info_str += accuracy.result_str()
             logger.info(info_str)
             tic = time.time()

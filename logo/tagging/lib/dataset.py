@@ -301,7 +301,6 @@ class CropClassTSVDataset(Dataset):
             rect: the rect of bbox
             label_idx
         """
-        res = []
         if os.path.isfile(self._cache) and not self._overwrite_cache:
             return self._read_into_buffer(self._cache)
 

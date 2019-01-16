@@ -1,13 +1,12 @@
 import torch
 import time
 import torch.nn as nn
-from utils.accuracy import get_accuracy_calculator
-from utils.averagemeter import AverageMeter
+from ..utils.accuracy import get_accuracy_calculator
+from ..utils.averagemeter import AverageMeter
 
 
 def validate(val_loader, model, criterion, logger):
     batch_time = AverageMeter()
-    losses = AverageMeter()
     accuracy = get_accuracy_calculator(multi_label=not isinstance(criterion, nn.CrossEntropyLoss))
 
     # switch to evaluate mode
@@ -20,12 +19,11 @@ def validate(val_loader, model, criterion, logger):
             target = target.cuda(non_blocking=True)
 
             # compute output
-            output = model(input)
-            loss = criterion(output, target)
+            all_outputs = model(input)
+            output, feature = all_outputs[0], all_outputs[1]
 
             # measure accuracy and record loss
             accuracy.calc(output, target)
-            losses.update(loss.item(), input.size(0))
 
             # measure elapsed time
             batch_time.update(time.time() - end)

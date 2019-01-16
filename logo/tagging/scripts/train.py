@@ -1,6 +1,7 @@
 import argparse
 import os
 import shutil
+import six
 import time
 
 import torch
@@ -16,19 +17,24 @@ import torchvision.datasets as datasets
 import torchvision.models as models
 from torchvision.models.resnet import model_urls
 
-from lib.dataset import TSVDataset, TSVDatasetPlusYaml
-from utils.parser import parse_args
-from utils.data import get_data_loader
-from utils.train_utils import get_criterion, get_optimizer, get_scheduler, train
-from utils.test import validate
-from utils.save_model import save_checkpoint
-from utils.logger import Logger, DistributedLogger
+from ..lib import layers
+from ..lib.dataset import TSVDataset, TSVDatasetPlusYaml
+from ..utils.parser import get_arg_parser
+from ..utils.data import get_data_loader
+from ..utils.train_utils import get_criterion, get_optimizer, get_scheduler, get_accuracy_calculator, train
+from ..utils.test import validate
+from ..utils.save_model import save_checkpoint
+from ..utils.logger import Logger, DistributedLogger
 
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
     and callable(models.__dict__[name]))
 
 def main(args):
+    if isinstance(args, list) or isinstance(args, six.string_types):
+        parser = get_arg_parser(model_names)
+        args = parser.parse_args(args)
+
     best_prec1 = 0
 
     args.distributed = args.world_size > 1
@@ -69,6 +75,8 @@ def main(args):
         logger.info("=> creating model '{}'".format(args.arch))
         model = models.__dict__[args.arch](num_classes=train_dataset.label_dim())
 
+    model = layers.ResNetFeatureExtract(model)
+
     if not args.distributed:
         if args.arch.startswith('alexnet') or args.arch.startswith('vgg'):
             model.features = torch.nn.DataParallel(model.features)
@@ -83,6 +91,7 @@ def main(args):
     criterion = get_criterion(train_dataset.is_multi_label(), args.neg_weight_file)
     optimizer = get_optimizer(model, args)
     scheduler = get_scheduler(optimizer, args)
+    accuracy = get_accuracy_calculator(multi_label=train_dataset.is_multi_label())
 
     # optionally resume from a checkpoint
     if args.resume:
@@ -105,6 +114,7 @@ def main(args):
         validate(val_loader, model, criterion, logger)
         return
 
+    best_epoch = args.start_epoch
     for epoch in range(args.start_epoch, args.epochs):
         epoch_tic = time.time()
         if args.distributed:
@@ -113,7 +123,7 @@ def main(args):
         scheduler.step()
 
         # train for one epoch
-        train(args, train_loader, model, criterion, optimizer, epoch, logger)
+        train(args, train_loader, model, criterion, optimizer, epoch, logger, accuracy)
 
         if args.rank == 0:
             # evaluate on validation set
@@ -121,6 +131,8 @@ def main(args):
 
             # remember best prec@1 and save checkpoint
             is_best = prec1 > best_prec1
+            if is_best:
+                best_epoch = epoch
             best_prec1 = max(prec1, best_prec1)
             save_checkpoint({
                 'epoch': epoch + 1,
@@ -133,11 +145,14 @@ def main(args):
                 'labelmap': train_dataset.get_labelmap(),
             }, is_best, args.prefix, epoch+1, args.output_dir)
             info_str = 'Epoch: [{0}]\t' \
-                        'Time {time:.3f}\t'.format(epoch, time=time.time()-epoch_tic)
+                        'Time {time:.3f}\t' \
+                        'Best Epoch {best_epoch:d}\t' \
+                        'Best Prec1 {best_prec1:.3f}'.format(epoch, time=time.time()-epoch_tic,
+                        best_epoch=best_epoch, best_prec1=best_prec1)
             logger.info(info_str)
 
 
 if __name__ == '__main__':
     torch.manual_seed(2018)
-    args = parse_args(model_names)
-    main(args)
+    parser = get_arg_parser(model_names)
+    main(parser.parse_args())

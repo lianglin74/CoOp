@@ -31,11 +31,13 @@ def main():
     tag1_expid = "gt_only"
     det2_expid = "TaxLogoV1_1_darknet19_448_C_Init.best_model9748_maxIter.50eEffectBatchSize128_bb_only"
     tag2_expid = "pretrained_0.1"
+    tag3_expid = "ccs_code_fix"
 
     records.append(["1k logo detector"] + evaluate_detector(det1_expid))
     records.append(["logo/non-logo detector"] + evaluate_detector(det2_expid))
 
     records.append(["two-stage"] + evaluate_two_stage(det2_expid, tag2_expid))
+    records.append(["two-stage-ccs"] + evaluate_two_stage(det2_expid, tag3_expid))
 
     fpath = os.path.join(rootpath, "table")
     fields = range(len(records[0]))
@@ -58,15 +60,18 @@ def evaluate_two_stage(det_expid, tag_expid):
     eval_file = evaluate_detection(trained_dataset, data_split, pred_file, os.path.join(outdir, "{}.{}.pretrained.det.eval".format(trained_dataset, data_split)))
     eval_res.extend(parse_eval_file(eval_file))
 
-    # feature similarity on unknown classes
+    # feature matching on unknown classes
     pred_file = croptagger.predict_on_unknown_class(new_dataset, data_split)
     eval_file = evaluate_detection(new_dataset, data_split, pred_file, os.path.join(outdir, "{}.{}.new.region.eval".format(new_dataset, data_split)), region_only=True)
     eval_res.extend(parse_eval_file(eval_file))
     eval_file = evaluate_detection(new_dataset, data_split, pred_file, os.path.join(outdir, "{}.{}.new.det.eval".format(new_dataset, data_split)))
     eval_res.extend(parse_eval_file(eval_file))
 
-    # ROC for feature recognition
+    # metrics for featurizer/recognition
+    # ROC for pair comparision (positive pairs are from the same class, negative pairs are from differen classes)
     croptagger.compare_pairs(pair_dataset, data_split)
+    # precision@k on ground truth regions (match features of canonical images and real images)
+    croptagger.predict_on_unknown_class(new_dataset, data_split, region_source="gt")
     return eval_res
 
 
@@ -87,7 +92,7 @@ def evaluate_detector(det_expid):
     pred_file, _ = yolo_predict(full_expid=det_expid, test_data=new_dataset, test_split=data_split)
     eval_file = evaluate_detection(new_dataset, data_split, pred_file, os.path.join(outdir, "{}.{}.new.region.eval".format(new_dataset, data_split)), region_only=True)
     eval_res.extend(parse_eval_file(eval_file))
-    # detector can not detect unknow categories
+    # detector can not detect unknown categories
     eval_res.extend(["N/A"]*len(iou_thres))
     return eval_res
 

@@ -97,7 +97,6 @@ def generate_canonical_tsv(dirpath, labelmap, outfile):
     logging.info("find #img: {}, #valid: {}".format(num_imgs, num_valid_imgs))
 
 
-
 def scrape_canonical_image(labelmap, outdir, num_imgs=30, ext=".png"):
     urlmap = os.path.join(outdir, "urlmap.tsv")
     with open(urlmap, 'w', buffering=0) as fout:
