@@ -19,7 +19,14 @@ def analyze_draw_box_task(result_files, result_file_type, outfile_res):
             input_task = load_escaped_json(row['Input.input_content'])
         except Exception:
             continue
-        answer = [parse_bbox(b) for b in json.loads(row['Answer.output'])]
+        # skip honey pot
+        if "expected_output" in input_task:
+            continue
+        answer = []
+        for b in json.loads(row['Answer.output']):
+            b = parse_bbox(b)
+            if b:
+                answer.append(b)
         for b in answer:
             b["class"] = input_task["objects_to_find"]
         img_url = input_task["image_url"]
@@ -164,13 +171,15 @@ def parse_bbox(bbox):
     """ Parses bbox format from uhrs
     """
     left = bbox["left"]
-    assert left>=0 and left<bbox["image_width"]
+    left = np.clip(left, 0, bbox["image_width"])
     right = bbox["left"] + bbox["width"]
-    assert right>left and right<=bbox["image_width"]
+    right = np.clip(right, left, bbox["image_width"])
     top = bbox["top"]
-    assert top>=0 and top<bbox["image_height"]
+    top = np.clip(top, 0, bbox["image_height"])
     bottom = bbox["top"] + bbox["height"]
-    assert bottom>top and bottom<=bbox["image_height"]
+    bottom = np.clip(bottom, top, bbox["image_height"])
+    if right - left <= 0 or bottom - top <= 0:
+        return None
     return {"rect": [left, top, right, bottom], "class": bbox["label"]}
 
 

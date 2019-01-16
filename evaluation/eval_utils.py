@@ -459,17 +459,17 @@ def merge_gt(dataset_name, gt_config_file, res_files, bbox_matching_iou):
 
     add_label_to_dataset(gt_dataset, gt_split, bbox_matching_iou, gen_labels(),
             label_key_type="url",
-            info_str="add labels from: {}".format(', '.join(res_files)))
+            info_list=[("add labels from", ', '.join(res_files))])
 
 
 def add_label_to_dataset(dataset, split, iou_threshold, labels,
-                         label_key_type="url", info_str=None):
+                         label_key_type="url", info_list=None):
     """
     Adds the bbox labels to existing dataset. New labels of IoU>threshold with
     other labels will not be added
     Args:
         dataset: TSVDataset
-        labels: iterable of labels. Each label contains imgkey/url, list of bboxes
+        labels: iterable of labels. Each label contains tuple of str (imgkey/url, list of bboxes)
         label_key_type: choose from url or key
     """
     assert(label_key_type=="url" or label_key_type=="key")
@@ -494,8 +494,8 @@ def add_label_to_dataset(dataset, split, iou_threshold, labels,
             for key, _ in dataset.iter_data(split, 'label', version=-1):
                 yield key, json.dumps(existing_res[key], separators=(',', ':'))
         info = [("num_added", str(num_added))]
-        if info_str:
-            info.append(info_str)
+        if info_list and len(info_list) > 0:
+            info.extend(info_list)
         dataset.update_data(gen_rows(), split, "label", generate_info=info)
     else:
         logging.info("no new add")
