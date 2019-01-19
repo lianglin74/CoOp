@@ -3,6 +3,7 @@ import copy
 import json
 import logging
 import os
+import six
 from shutil import copyfile
 import yaml
 
@@ -484,7 +485,10 @@ def add_label_to_dataset(dataset, split, iou_threshold, labels,
         imgkey = parts[0]
         if label_key_type == "url":
             imgkey = url_key_map[imgkey]
-        for new_bbox in json.loads(parts[1]):
+        bboxes = parts[1]
+        if isinstance(bboxes, six.string_types):
+            bboxes = json.loads(bboxes)
+        for new_bbox in bboxes:
             if search_bbox_in_list(new_bbox, existing_res[imgkey], iou_threshold)<0:
                 existing_res[imgkey].append(new_bbox)
                 num_added += 1

@@ -69,7 +69,6 @@ def main():
         gt_config_file = os.path.join(rootpath, task_config["gt_config"])
         model_name = task_config["model_name"]
 
-        task_status.start()
         # add the new model to baselines
         gt_cfg = GroundTruthConfig(gt_config_file)
         dataset_list = []
@@ -77,10 +76,12 @@ def main():
             cur_dataset = pred_file["dataset"]
             if cur_dataset in dataset_list:
                 task_status.fail()
-                raise ValueError("duplicate dataset {} in task yaml".format(cur_dataset))
+                raise ValueError("Do not submit multiple files for one dataset: {}. Split them into different tasks".format(cur_dataset))
             dataset_list.append(cur_dataset)
-            gt_cfg.add_baseline(cur_dataset, model_name, pred_file["result"], pred_file["conf_threshold"])
+            if model_name not in gt_cfg.baselines(cur_dataset):
+                gt_cfg.add_baseline(cur_dataset, model_name, pred_file["result"], pred_file["conf_threshold"])
 
+        task_status.start()
         task_root = os.path.dirname(os.path.dirname(gt_config_file))
         task_dir = os.path.join(task_root, "tasks")
         hp_dir = os.path.join(task_root, "honeypot")
