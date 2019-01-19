@@ -33,7 +33,7 @@ class CropTaggingWrapper(object):
         self._rootpath = "/raid/data/brand_output/{}/classifier/{}".format(det_expid, tag_expid)
         self.labelmap = os.path.join(self._rootpath, "labelmap.txt")
         self.tag_model_path = os.path.join(self._rootpath, "snapshot/model_best.pth.tar")
-        self.log_file = os.path.join(self._rootpath, "prediction_log.txt")
+        self.log_file = os.path.join(self._rootpath, "eval/prediction_log.txt")
 
         self.num_workers = 24
 
@@ -106,7 +106,7 @@ class CropTaggingWrapper(object):
         data_yaml = self._write_data_yaml(dataset_name, split, "test", rp_file)
         fea_file = self.extract_feature(data_yaml)
 
-        outfile = os.path.join(self._rootpath, "{}.{}.pair.roc.png".format(dataset_name, split))
+        outfile = os.path.join(os.path.dirname(self.log_file), "{}.{}.pair.roc.png".format(dataset_name, split))
         if worth_create(fea_file, outfile):
             compare_pair_features(fea_file, outfile)
         return outfile
@@ -116,6 +116,9 @@ class CropTaggingWrapper(object):
         return pred_file
 
     def tag_predict(self, datayaml, force_rewrite=False):
+        """ Tagging on given images and regions
+        output: TSV file of image_key, json bbox(rect, obj), tag:conf list separated by ;
+        """
         outpath = "{}.tagging.tsv".format(datayaml.rsplit('.', 1)[0])
         if not force_rewrite and not worth_create(datayaml, outpath):
             logging.info("skip tagging, already exists: {}".format(outpath))
@@ -131,6 +134,9 @@ class CropTaggingWrapper(object):
         return outpath
 
     def extract_feature(self, datayaml, force_rewrite=False):
+        """ Features on given images and regions
+        output: TSV file of image_key, json bbox(rect, obj), b64_string of np.float32 array
+        """
         outpath = "{}.feature.tsv".format(datayaml.rsplit('.', 1)[0])
         if not force_rewrite and not worth_create(datayaml, outpath):
             logging.info("skip extracting feature, already exists: {}".format(outpath))

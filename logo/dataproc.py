@@ -1,9 +1,11 @@
 import base64
 import collections
 import cv2
+import datetime
 import json
 import logging
 import os
+from PIL import Image
 from urllib2 import Request, urlopen
 
 import _init_paths
@@ -61,7 +63,7 @@ def _is_bbox_same(b1, b2):
         return False
 
 
-def generate_canonical_tsv(dirpath, labelmap, outfile):
+def convert_local_images_to_b64(dirpath, labelmap, outfile, max_per_class=None):
     """
     Saves images to TSV file: imgkey, list of bboxes, b64string
     """
@@ -77,9 +79,8 @@ def generate_canonical_tsv(dirpath, labelmap, outfile):
 
             num_cur = 0
             for fname in os.listdir(imgdir):
-                # if fname.rsplit('.', 1) not in ["jpg", "png", "svg"]:
-                #     logging.info("invald image ext: {}".format(fname))
-                #     continue
+                if max_per_class and num_cur >= max_per_class:
+                    break
                 num_imgs += 1
                 im = cv2.imread(os.path.join(imgdir, fname), cv2.IMREAD_COLOR)
                 if im is None:
@@ -97,40 +98,73 @@ def generate_canonical_tsv(dirpath, labelmap, outfile):
     logging.info("find #img: {}, #valid: {}".format(num_imgs, num_valid_imgs))
 
 
-def scrape_canonical_image(labelmap, outdir, num_imgs=30, ext=".png"):
-    urlmap = os.path.join(outdir, "urlmap.tsv")
-    with open(urlmap, 'w', buffering=0) as fout:
+def scrape_image(labelmap, outfile, num_imgs=30, ext="jpg", query_format="{}",
+                 download_to=None, use_b64=False):
+    """
+    Scrapes images from Bing with terms in labelmap, formatted as query_format
+    outfile: TSV file of img_key, json list of dict, url
+    download_to: directory path, if None, images will not be downloaded.
+    use_b64: the format of downloaded images, b64 string or files
+    """
+    if download_to:
+        if use_b64:
+            f_download = open(download_to, 'wb')
+        else:
+            assert os.path.isdir(download_to)
+
+    with open(outfile, 'w', buffering=0) as fout:
         for cols in tsv_reader(labelmap):
             term = cols[0]
             logging.info("term: {}".format(term))
-            term_dir = os.path.join(outdir, term)
-            if not os.path.exists(term_dir):
-                os.mkdir(term_dir)
-            query_term = ' '.join([term.replace('_', ' '), "logo"])
-            urls = scrape_bing(query_term, num_imgs, trans_bg=True)
+            query_term = query_format.format(term)
+            if ext and "png" in ext:
+                trans_bg = True
+            else:
+                trans_bg = False
+            urls = scrape_bing(query_term, num_imgs, trans_bg=trans_bg)
+
             for idx, url in enumerate(urls):
-                if not url.endswith(ext):
+                im = try_retrieve_image(url)
+                if not im:
                     continue
-                fpath = os.path.join(term_dir, str(idx)+ext)
-                if try_download_image(url, fpath):
-                    fout.write('\t'.join([url, term, fpath]))
-                    fout.write('\n')
+                # avoid key collision with existing images
+                img_key = "{}.{}".format(datetime.datetime.now().strftime("%Y%m%d%H%M%S%f"), ext)
+                label = [{"class": term}]
+                fout.write('\t'.join([img_key, json.dumps(label), url]))
+                fout.write('\n')
+                if download_to and not use_b64:
+                    impath = os.path.join(download_to, img_key)
+                    save_img_to_file(im, impath)
+                if download_to and use_b64:
+                    v = '\t'.join(map(lambda v: str(v) if type(v) is not str else v,
+                                      [img_key, json.dumps(label), base64.b64encode(im)]))
+                    v += '\n'
+                    v = v.encode('utf-8')
+                    f_download.write(v)
 
 
-def try_download_image(url, fpath):
+def save_img_to_file(img_data, fpath):
+    try:
+        with open(fpath, 'wb') as fout:
+            fout.write(img_data)
+        return True
+    except Exception as e:
+        logging.info("error save: {}".format(e.message))
+        if os.path.isfile(fpath):
+            os.remove(fpath)
+    return False
+
+
+def try_retrieve_image(url):
     req = Request(url, headers={
             "User-Agent": "Mozilla/5.0 (X11; Linux i686) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.27 Safari/537.17"})
     try:
         response = urlopen(req, None, 10)
+        if response.code != 200:
+            return None
         data = response.read()
         response.close()
-        with open(fpath, 'wb') as fout:
-            fout.write(data)
-        im = Image.open(fpath)
-        im.verify()
-        return True
+        return data
     except Exception as e:
         logging.info("error downloading: {}".format(e.message))
-        if os.path.isfile(fpath):
-            os.remove(fpath)
-    return False
+    return None

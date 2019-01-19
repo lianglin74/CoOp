@@ -142,6 +142,35 @@ def load_dets(filein, region_only=False):
         retdict[label] = sorted(retdict[label], key=lambda x:-x[1])
     return retdict;
 
+def load_dets_iter(rows, region_only=False):
+    '''
+    Return: dict [class] => list of (image id, conf, bbox), in ascending order of conf
+    '''
+    retdict = dict();
+    for cols in rows:
+        if len(cols)<2:
+            continue;
+        key = cols[0]
+        rects = json.loads(cols[1]);
+        for rect in rects:
+            if region_only:
+                label = ENTITY_LABEL
+            else:
+                label = rect['class'].strip().lower();
+            if label == BACKGROUND_LABEL:
+                continue
+            if 'rect' in rect:
+                # coords +1 as we did for load_truths
+                bbox = [ x+1 for x in rect['rect'] ];
+            else:
+                bbox = None
+            if label not in retdict:
+                retdict[label]=[]
+            retdict[label] += [ (key,rect['conf'],bbox)]
+    for label in retdict:
+        retdict[label] = sorted(retdict[label], key=lambda x:-x[1])
+    return retdict;
+
 def rect_area(rc):
     return (rc[2]-rc[0] + 1)*(rc[3]-rc[1] + 1);
 
@@ -241,7 +270,7 @@ def _eval(truths, detresults, ovthresh, confs=None, label_to_keys=None):
     class_thresh = dict()
     apdict = dict()
     class_prec_recall_th = {}
-    for label in tqdm(sorted(truths.keys())):
+    for label in sorted(truths.keys()):
         if label not in detresults:
             apdict[label] = 0
             continue;
