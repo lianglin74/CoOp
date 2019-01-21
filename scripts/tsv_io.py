@@ -1,19 +1,12 @@
 import logging
-import re
 import glob
 import json
 import random
-from qd_common import default_data_path, ensure_directory
-from qd_common import read_to_buffer, load_list_file
-from qd_common import write_to_yaml_file, load_from_yaml_file
+from qd_common import ensure_directory
+from qd_common import load_list_file
 import os
 import os.path as op
-from ete3 import Tree
 from qd_common import generate_lineidx
-from qd_common import parse_test_data
-from qd_common import img_from_base64
-import numpy as np
-import yaml
 try:
     from itertools import izip as zip
 except ImportError:
@@ -21,6 +14,29 @@ except ImportError:
     pass
 import progressbar 
 from tqdm import tqdm
+
+
+def reorder_tsv_keys(in_tsv_file, ordered_keys, out_tsv_file):
+    tsv = TSVFile(in_tsv_file)
+    keys = [tsv.seek_first_column(i) for i in tqdm(range(len(tsv)))]
+    key_to_idx = {key: i for i, key in enumerate(keys)}
+    def gen_rows():
+        for key in tqdm(ordered_keys):
+            idx = key_to_idx[key]
+            yield tsv.seek(idx)
+    tsv_writer(gen_rows(), out_tsv_file)
+
+def read_to_character(fp, c):
+    result = []
+    while True:
+        s = fp.read(32)
+        assert s != ''
+        if c in s:
+            result.append(s[: s.index(c)])
+            break
+        else:
+            result.append(s)
+    return ''.join(result)
 
 class TSVFile(object):
     def __init__(self, tsv_file, cache_policy=None):
@@ -42,6 +58,13 @@ class TSVFile(object):
         pos = self._lineidx[idx]
         self._fp.seek(pos)
         return [s.strip() for s in self._fp.readline().split('\t')]
+
+    def seek_first_column(self, idx):
+        self._ensure_tsv_opened()
+        self._ensure_lineidx_loaded()
+        pos = self._lineidx[idx]
+        self._fp.seek(pos)
+        return read_to_character(self._fp, '\t')
 
     def __getitem__(self, index):
         return self.seek(index)
@@ -78,12 +101,13 @@ class TSVFile(object):
                     avail, total))
             else:
                 pbar = tqdm(total=total/1024./1024.)
-                while True:
-                    x = self._fp.read(1024*1024*100)
-                    if len(x) == 0:
-                        break
-                    pbar.update(len(x) / 1024./1024.)
-                    result.write(x)
+                with open(self.tsv_file, 'r') as fp:
+                    while True:
+                        x = fp.read(1024*1024*100)
+                        if len(x) == 0:
+                            break
+                        pbar.update(len(x) / 1024./1024.)
+                        result.write(x)
                 self._fp = result
 
         elif self.cache_policy == 'tmp':
@@ -163,7 +187,7 @@ class TSVDataset(object):
 
     def load_keys(self, split):
         result = []
-        for row in self.iter_data(split, 'label'):
+        for row in tqdm(self.iter_data(split, 'label')):
             result.append(row[0])
         return result
 
@@ -287,7 +311,7 @@ class TSVDataset(object):
                 if len(ss) == 1 and ss[0] == '':
                     result[row[0]] = []
                 else:
-                    result[row[0]] = map(int, ss)
+                    result[row[0]] = list(map(int, ss))
             return result 
         else:
             all_label = load_list_file(self.get_data(split, 'labelmap', version))
@@ -302,7 +326,7 @@ class TSVDataset(object):
             if len(ss) == 1 and ss[0] == '':
                 result[row[0]] = []
             else:
-                result[row[0]] = map(int, ss)
+                result[row[0]] = list(map(int, ss))
             return result
 
     def load_inverted_label_as_list(self, split, version=None, label=None):
@@ -318,7 +342,7 @@ class TSVDataset(object):
                 if len(ss) == 1 and ss[0] == '':
                     result.append((row[0], []))
                 else:
-                    result.append((row[0], map(int, ss)))
+                    result.append((row[0], list(map(int, ss))))
             return result 
         else:
             all_label = self.load_labelmap()
@@ -331,7 +355,7 @@ class TSVDataset(object):
             if len(ss) == 1 and ss[0] == '':
                 result.append((row[0], []))
             else:
-                result.append((row[0], map(int, ss)))
+                result.append((row[0], list(map(int, ss))))
             return result
 
     def has(self, split, t=None, version=None):
@@ -515,9 +539,7 @@ def tsv_reader(tsv_file_name, sep='\t'):
             yield [x.strip() for x in line.split(sep)]
 
 def csv_reader(tsv_file_name):
-    with open(tsv_file_name, 'r') as fp:
-        for i, line in enumerate(fp):
-            yield [x.strip() for x in line.split(',')]
+    tsv_reader(tsv_file_name, ',')
 
 def get_meta_file(tsv_file):
     return op.splitext(tsv_file)[0] + '.meta.yaml'
@@ -598,7 +620,8 @@ def create_inverted_list(rows):
     inverted = {}
     inverted_with_bb = {}
     inverted_no_bb = {}
-    for i, row in enumerate(rows):
+    logging.info('creating inverted')
+    for i, row in tqdm(enumerate(rows)):
         labels = json.loads(row[1])
         if type(labels) is list:
             # detection dataset
