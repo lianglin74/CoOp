@@ -32,6 +32,10 @@ import argparse
 import subprocess as sp
 
 
+def gen_uuid():
+    import uuid
+    return uuid.uuid4().hex
+
 def remove_dir(d):
     shutil.rmtree(d)
 
