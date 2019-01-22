@@ -642,7 +642,6 @@ def tsvdet_iter(caffenet, caffemodel, in_rows, key_idx,img_idx, pixel_mean,
     import tempfile
     # save the key, used for re-ranking to keep the order
     key_file = op.join(tempfile.gettempdir(), gen_uuid() + '.tsv')
-    import ipdb;ipdb.set_trace(context=15)
 
     if debug:
         #gpus = [-1]
