@@ -79,7 +79,49 @@ from datetime import datetime
 import inspect
 from qd_common import hash_sha1
 
-def convert_pred_to_dataset_label(full_expid, predict_file,
+def get_data_distribution(data, split, version):
+    # return a dictionary to represent the distribution of the data
+    # only composite dataset requires the following two information
+    result = {}
+
+    populate_dataset_details(data)
+    source_to_num_image = {}
+    source_to_num_bb = {}
+    dataset = TSVDataset(data)
+    tsvsource_to_imageratio = {src[5:]: 
+            (float(numdestimages) / float(numsrcimages))
+            for src, numdestimages, numsrcimages in 
+            dataset.iter_data(split + 'X', 'tsvsource.numdestimages.numsrcimages')}
+    result['tsvsource_to_imageratio'] = tsvsource_to_imageratio
+
+    tsvsource_to_boxratio = {src[5:]: 
+            (float(numdest) / float(numsrc))
+            for src, numdest, numsrc in 
+            dataset.iter_data(split + 'X', 'tsvsource.numdestbbs.numsrcbbs')}
+    result['tsvsource_to_boxratio'] = tsvsource_to_boxratio
+
+    tsvsource_to_num_image = {source[5:]: int(num_image) for source, num_image in dataset.iter_data(split + 'X', 'numImagesPerSource')}
+    result['tsvsource_to_num_image'] = tsvsource_to_num_image
+
+    tsvsource_to_num_category = {source[5:]: int(num_image) for source, num_image
+            in dataset.iter_data(split + 'X', 'numCategoriesPerSource')}
+    result['tsvsource_to_num_category'] = tsvsource_to_num_category
+
+    label_to_count = {l: int(c) for l, c in dataset.iter_data(split, 'inverted.label.count', version=version)}
+    unique_labels = set([l if not l.startswith('-') else l[1:] for l in label_to_count])
+    import math
+    all_label_pos_negs = [[l, [label_to_count.get(l, 0), -label_to_count.get('-' + l, 0)]] for l in unique_labels]
+    all_label_pos_negs = [[l, [math.log10(label_to_count.get(l, 0) + 1), 
+        -math.log10(label_to_count.get('-' + l, 0) + 1)]] for l in unique_labels]
+    all_label_pos_negs = sorted(all_label_pos_negs, key=lambda x: x[1][0])
+    result['all_label_pos_negs'] = all_label_pos_negs
+
+    result['num_labels_with_neg'] = len([l for l, (pos, neg) in all_label_pos_negs if neg != 0])
+    result['num_labels_with_pos'] = len([l for l, (pos, neg) in all_label_pos_negs if pos != 0])
+
+    return result
+
+def convert_pred_to_dataset_label(full_expid, predict_file, 
         th_file, min_value):
     pred_file = op.join('output',
             full_expid,
@@ -153,12 +195,19 @@ def ensure_inject_decorate(func):
         argnames, ins_varargs, ins_kwargs, ins_defaults = inspect.getargspec(func)
         # we have not supported if other paramseters is not None
         assert ins_varargs is None and ins_kwargs is None and ins_defaults is None
-        assert len(argnames) == len(args)
-        assert len(kwargs) == 0
         query = {'task_type': func_name}
-        for n, v in zip(argnames, args):
+        for n, v in zip(argnames[: len(args)], args):
             assert n not in query
             query[n] = v
+        for k in kwargs:
+            assert k not in query
+            query[k] = kwargs[k]
+        
+        # create the unique index to make the update_one atomic
+        logging.info('make sure the index is created: {}'.format(
+            ', '.join(query.keys())))
+        task.create_index([(k, pymongo.ASCENDING) for k in query])
+
         while True:
             result = task.update_one(filter=query,
                                     update={'$setOnInsert': query},
@@ -528,10 +577,13 @@ def inject_gt_version(data, split, version, previous_key_to_rects):
             all_rect.extend(rects)
         else:
             previous_rects = previous_key_to_rects[key]
+            # use strict_rect_in_rects rather than rect_in_rects: if the higher
+            # version contains more properies, we want to have the properies in
+            # teh database also.
             previous_not_in_current = copy.deepcopy([r for r in previous_rects if
-                    not rect_in_rects(r, rects, iou=0.99)])
-            current_not_in_previous = copy.deepcopy([r for r in rects if
-                    not rect_in_rects(r, previous_rects, iou=0.99)])
+                    not strict_rect_in_rects(r, rects)])
+            current_not_in_previous = copy.deepcopy([r for r in rects if 
+                    not strict_rect_in_rects(r, previous_rects)])
             for r in previous_not_in_current:
                 r['data'] = data
                 r['split'] = split
@@ -771,6 +823,15 @@ class VisualizationDatabaseByMongoDB():
         return image_info
 
     def query_ground_truth(self, data, split, version, label, start_id, max_item):
+        pipeline = self.get_ground_truth_pipeline(data, split, version, label, start_id, max_item)
+        image_info = list(self._gt.aggregate(pipeline['pipeline']))
+        logging.info(len(image_info))
+        image_info = [{'key': x['key'], 
+            'url': x['url'], 
+            'gt': x['gt']} for x in image_info]
+        return pipeline, image_info
+
+    def get_ground_truth_pipeline(self, data, split, version, label, start_id, max_item):
         rank, start_id = self._get_positive_start(start_id, max_item)
 
         match_pairs = {'data': data}
@@ -819,16 +880,13 @@ class VisualizationDatabaseByMongoDB():
                         'as': 'url',
                         }},
                     {'$unwind': '$url'},
-                    {'$addFields': {'url': '$url.url'}},
+                    {'$addFields': {'url': '$url.url',
+                                    'key': '$_id.key'}},
                     ]
 
-        logging.info(pformat(pipeline))
-        image_info = list(self._gt.aggregate(pipeline))
-        logging.info(len(image_info))
-        image_info = [{'key': x['_id']['key'],
-            'url': x['url'],
-            'gt': x['gt']} for x in image_info]
-        return image_info
+        return {'pipeline': pipeline,
+                'database': 'qd',
+                'collection': 'ground_truth'}
 
 def get_class_count(data, splits):
     dataset = TSVDataset(data)
@@ -1317,6 +1375,24 @@ def update_labelmap(rows, num_rows, labelmap):
             labelmap.add(row[1])
     logging.info('done')
 
+def derive_composite_meta_data(data, split, t):
+    data_to_dataset = {}
+    dataset = TSVDataset(data)
+    def gen_rows():
+        assert dataset.has(split, 'label')
+        for key, _ in tqdm(dataset.iter_data(split, 'label')):
+            c_data, c_split, c_key = parse_combine(key)
+            if c_data in data_to_dataset:
+                c_dataset = data_to_dataset[c_data]
+            else:
+                c_dataset = TSVDataset(c_data)
+                data_to_dataset[c_data] = c_dataset
+            assert c_dataset.has(c_split, t)
+            _, t_data = c_dataset.seek_by_key(c_key, c_split, t)
+            yield key, t_data
+    assert not dataset.has(split, t)
+    dataset.write_data(gen_rows(), split, t)
+
 def populate_dataset_details(data, check_image_details=False):
     logging.info(data)
     dataset = TSVDataset(data)
@@ -1327,43 +1403,46 @@ def populate_dataset_details(data, check_image_details=False):
     for split in splits:
         if dataset.has(split) and not dataset.has(split, 'hw') \
                 and check_image_details:
-            multi_thread = True
-            if not multi_thread:
-                logging.info('generating hw')
-                rows = dataset.iter_data(split, progress=True)
-                dataset.write_data(((row[0], ' '.join(map(str,
-                    img_from_base64(row[-1]).shape[:2]))) for
-                    row in rows), split, 'hw')
+            if op.isfile(dataset.get_data(split + 'X')):
+                derive_composite_meta_data(data, split, 'hw')
             else:
-                from pathos.multiprocessing import ProcessingPool as Pool
-                num_worker = 128
-                num_tasks = num_worker * 3
-                num_images = dataset.num_rows(split)
-                num_image_per_worker = (num_images + num_tasks - 1) // num_tasks 
-                assert num_image_per_worker > 0
-                all_idx = []
-                for i in range(num_tasks):
-                    curr_idx_start = i * num_image_per_worker
-                    if curr_idx_start >= num_images:
-                        break
-                    curr_idx_end = curr_idx_start + num_image_per_worker
-                    curr_idx_end = min(curr_idx_end, num_images)
-                    if curr_idx_end > curr_idx_start:
-                        all_idx.append(range(curr_idx_start, curr_idx_end))
-                logging.info('creating pool')
-                m = Pool(num_worker)
-                def get_hw(filter_idx):
-                    dataset = TSVDataset(data)
-                    rows = dataset.iter_data(split, progress=True,
-                            filter_idx=filter_idx)
-                    return [(row[0], ' '.join(map(str,
-                        img_from_base64(row[-1]).shape[:2])))
-                        for row in rows]
-                all_result = m.map(get_hw, all_idx)
-                x = []
-                for r in all_result:
-                    x.extend(r)
-                dataset.write_data(x, split, 'hw')
+                multi_thread = True
+                if not multi_thread:
+                    logging.info('generating hw')
+                    rows = dataset.iter_data(split, progress=True)
+                    dataset.write_data(((row[0], ' '.join(map(str,
+                        img_from_base64(row[-1]).shape[:2]))) for 
+                        row in rows), split, 'hw')
+                else:
+                    from pathos.multiprocessing import ProcessingPool as Pool
+                    num_worker = 128
+                    num_tasks = num_worker * 3
+                    num_images = dataset.num_rows(split)
+                    num_image_per_worker = (num_images + num_tasks - 1) // num_tasks 
+                    assert num_image_per_worker > 0
+                    all_idx = []
+                    for i in range(num_tasks):
+                        curr_idx_start = i * num_image_per_worker
+                        if curr_idx_start >= num_images:
+                            break
+                        curr_idx_end = curr_idx_start + num_image_per_worker
+                        curr_idx_end = min(curr_idx_end, num_images)
+                        if curr_idx_end > curr_idx_start:
+                            all_idx.append(range(curr_idx_start, curr_idx_end))
+                    logging.info('creating pool')
+                    m = Pool(num_worker)
+                    def get_hw(filter_idx):
+                        dataset = TSVDataset(data)
+                        rows = dataset.iter_data(split, progress=True,
+                                filter_idx=filter_idx)
+                        return [(row[0], ' '.join(map(str,
+                            img_from_base64(row[-1]).shape[:2]))) 
+                            for row in rows]
+                    all_result = m.map(get_hw, all_idx)
+                    x = []
+                    for r in all_result:
+                        x.extend(r)
+                    dataset.write_data(x, split, 'hw')
 
     # for each data tsv, generate the label tsv and the inverted file
     for split in splits:
@@ -1608,23 +1687,30 @@ def populate_num_images_composite(dataset):
                     'inverted.label.count')}
             for label in label_to_count_with_bb:
                 count = label_to_count_with_bb[label]
-                nodes = tax.root.search_nodes(name=label)
+                if not label.startswith('-'):
+                    nodes = tax.root.search_nodes(name=label)
+                else:
+                    nodes = tax.root.search_nodes(name=label[1:])
                 assert len(nodes) == 1, label
                 node = nodes[0]
-                node.add_feature('{}_{}'.format(suffix, split), count)
+                if not label.startswith('-'):
+                    node.add_feature('{}_{}'.format(suffix, split), count)
+                else:
+                    node.add_feature('{}_{}_neg'.format(suffix, split), count)
     write_to_yaml_file(tax.dump(), dest_tree_file)
 
 def create_index_composite_dataset(dataset):
-    fname_numImagesPerSource = op.join(dataset._data_root,
-            'trainX.numImagesPerSource.tsv')
+    split = 'train'
+    splitx = split + 'X'
+    fname_numImagesPerSource = dataset.get_data(splitx, 
+            'numImagesPerSource')
     if op.isfile(fname_numImagesPerSource):
         return
     # how many images are contributed from each data source
-    trainX_file = dataset.get_data('trainX')
+    trainX_file = dataset.get_data(splitx)
     source_tsvs = load_list_file(trainX_file)
-    num_images_per_datasource = [None] * len(source_tsvs)
 
-    shuffle_file = dataset.get_shuffle_file('train')
+    shuffle_file = dataset.get_shuffle_file(split)
     if not op.isfile(shuffle_file):
         return
     rows = tsv_reader(shuffle_file)
@@ -1635,38 +1721,58 @@ def create_index_composite_dataset(dataset):
     all_idxSource_idxRow = list(set(all_idxSource_idxRow))
 
     idxSource_to_idxRows = list_to_dict(all_idxSource_idxRow, 0)
+    num_images_per_datasource = [None] * len(source_tsvs)
+    num_srcimages_per_datasource = [TSVFile(s).num_rows() for s in source_tsvs]
     for idxSource in idxSource_to_idxRows:
         assert num_images_per_datasource[idxSource] is None
         num_images_per_datasource[idxSource] = len(idxSource_to_idxRows[idxSource])
     tsv_writer([(name, str(num)) for name, num in zip(source_tsvs,
         num_images_per_datasource)], fname_numImagesPerSource)
+    dataset.write_data([(source_tsvs[i], num_images_per_datasource[i], num_srcimages_per_datasource[i]) 
+        for i in range(len(source_tsvs))], splitx,
+        'tsvsource.numdestimages.numsrcimages')
 
     # for each data source, how many labels are contributed and how many are
     # not
     source_dataset_names = [op.basename(op.dirname(t)) for t in source_tsvs]
-    source_tsv_label_files = load_list_file(dataset.get_data('trainX',
+    source_tsv_label_files = load_list_file(dataset.get_data(splitx,
         'origin.label'))
     source_tsv_labels = [TSVFile(t) for t in source_tsv_label_files]
-    trainX_label_file = dataset.get_data('trainX', 'label')
+    trainX_label_file = dataset.get_data(splitx, 'label')
     all_dest_label_file = load_list_file(trainX_label_file)
     dest_labels = [TSVFile(f) for f in all_dest_label_file]
     all_idxSource_sourceLabel_destLabel = []
     logging.info('each datasource and each idx row')
+    idxSource_to_numRect = {}
+    all_idxSource_numSourceRects_numDestRects = []
     for idx_source, idx_row in tqdm(all_idxSource_idxRow):
         source_rects = json.loads(source_tsv_labels[idx_source].seek(idx_row)[-1])
         dest_rects = json.loads(dest_labels[idx_source].seek(idx_row)[-1])
+        if idx_source not in idxSource_to_numRect:
+            idxSource_to_numRect[idx_source] = 0
+        idxSource_to_numRect[idx_source] = idxSource_to_numRect[idx_source] + \
+            len(dest_rects)
+        all_idxSource_numSourceRects_numDestRects.append((
+            idx_source, len(source_rects), len(dest_rects)))
         for r in dest_rects:
-            sr = None
-            for s in source_rects:
-                if all(x == y for (x, y) in zip(s['rect'], r['rect'])):
-                    sr = s
-                    break
-            # move to the end
-            source_rects.remove(sr)
-            source_rects.append(sr)
             all_idxSource_sourceLabel_destLabel.append((idx_source,
-                sr['class'], r['class']))
+                r.get('class_from', r['class']), r['class']))
+    idxSource_to_numSourceRects_numDestRects = list_to_dict(
+            all_idxSource_numSourceRects_numDestRects, 0)
+    idxSource_to_numSourceRects_numDestRect = {idxSource: [sum(x1 for x1, x2 in idxSource_to_numSourceRects_numDestRects[idxSource]), 
+             sum(x2 for x1, x2 in idxSource_to_numSourceRects_numDestRects[idxSource])] 
+        for idxSource in idxSource_to_numSourceRects_numDestRects}
 
+    dataset.write_data([(source_tsvs[idxSource],
+        idxSource_to_numSourceRects_numDestRect[idxSource][1],
+        idxSource_to_numSourceRects_numDestRect[idxSource][0])
+        for idxSource in range(len(source_tsvs))],
+        splitx, 'tsvsource.numdestbbs.numsrcbbs')
+
+    sourcetsv_to_num_rect = {source_tsvs[idx_source]: idxSource_to_numRect[idx_source] 
+            for idx_source in idxSource_to_numRect}
+    dataset.write_data([(s, sourcetsv_to_num_rect[s]) for s in source_tsvs],
+        splitx, 'numRectsPerSource')
     idxSource_to_sourceLabel_destLabels = list_to_dict(
             all_idxSource_sourceLabel_destLabel, 0)
     source_numSourceLabels = [(s, 0) for s in source_tsvs]
@@ -1678,9 +1784,8 @@ def create_index_composite_dataset(dataset):
                 len(sourceLabel_to_destLabels))
         source_includedSourceLabels[idxSource][1].extend(
                 sourceLabel_to_destLabels.keys())
-
-    tsv_writer([(n, str(i)) for (n, i) in source_numSourceLabels],
-            op.join(dataset._data_root, 'trainX.numCategoriesPerSource.tsv'))
+    dataset.write_data([(n, str(i)) for (n, i) in source_numSourceLabels], 
+            splitx, 'numCategoriesPerSource')
 
     # save teh list of included labels
     sourceDataset_to_includedSourceLabels = {}
@@ -1693,14 +1798,14 @@ def create_index_composite_dataset(dataset):
         sourceDataset_to_includedSourceLabels[source_dataset_name] = \
                 set(sourceDataset_to_includedSourceLabels[source_dataset_name])
 
-    tsv_writer([(n, ','.join(v)) for (n, v) in
-        sourceDataset_to_includedSourceLabels.iteritems()], op.join(dataset._data_root,
+    tsv_writer([(n, ','.join(sourceDataset_to_includedSourceLabels[n])) for n in
+        sourceDataset_to_includedSourceLabels], op.join(dataset._data_root, 
             'trainX.includeCategoriesPerSourceDataset.tsv'))
 
     tsv_writer([(n, get_nick_name(noffset_to_synset(s)) if is_noffset(s) else
-        s) for (n, v) in sourceDataset_to_includedSourceLabels.iteritems()
-          for s in v], op.join(dataset._data_root,
-            'trainX.includeCategoriesPerSourceDatasetReadable.tsv'))
+        s) for n in sourceDataset_to_includedSourceLabels
+          for s in sourceDataset_to_includedSourceLabels[n]], 
+          op.join(dataset._data_root, 'trainX.includeCategoriesPerSourceDatasetReadable.tsv'))
 
     #sourceDataset_to_excludeSourceLabels = {}
     ## find out the excluded label list
@@ -1756,6 +1861,7 @@ class TSVTransformer(object):
         if self._total_rows % 500 == 0:
             logging.info('processed = {}'.format(self._total_rows))
         return out
+
 def randomize_tsv_file(tsv_file):
     prefix = os.path.splitext(tsv_file)[0]
     shuffle_file = prefix + '.shuffle'
@@ -2054,7 +2160,6 @@ def visualize_box_no_draw(data, split, version, label, start_id, color_map={}):
         im = img_from_base64(img_str)
         origin = np.copy(im)
         rects = try_json_parse(label_str)
-        new_name = key.replace('/', '_').replace(':', '')
         if type(rects) is list:
             def get_rect_class(rects):
                 all_class = []
@@ -2070,9 +2175,9 @@ def visualize_box_no_draw(data, split, version, label, start_id, color_map={}):
                         all_rect.append((0, 0, im.shape[1] - 1, im.shape[0] - 1))
                 return all_rect, all_class
 
-            yield (new_name, origin, rects)
+            yield (key, origin, rects)
         else:
-            yield new_name, origin, [{'class': label_str, 'rect': [0, 0, 0, 0]}]
+            yield key, origin, [{'class': label_str, 'rect': [0, 0, 0, 0]}]
 
 def visualize_box(data, split, version, label, start_id, color_map={}):
     dataset = TSVDataset(data)
@@ -2604,8 +2709,6 @@ def convert_one_label(rects, label_mapper):
     rects.extend(rects2)
 
 def convert_label(label_tsv, idx, label_mapper, with_bb):
-    '''
-    '''
     tsv = TSVFile(label_tsv)
     result = None
     for i in tqdm(idx):
@@ -2661,22 +2764,22 @@ def create_info_for_ambigous_noffset(name, noffsets):
 
 def node_should_have_images(root, th, fname):
     enough = True
-    few_training = []
+    few_training_with_bb = []
     for node in root.iter_search_nodes():
-        if node.cum_images_no_bb + node.cum_images_with_bb < th:
-            few_training.append({'name': node.name,
-                'cum_images_no_bb': node.cum_images_no_bb,
+        if node == root:
+            continue
+        if node.cum_images_with_bb < th:
+            few_training_with_bb.append({'name': node.name, 
                 'cum_images_with_bb': node.cum_images_with_bb,
                 'parent list': [p.name for p in node.get_ancestors()[:-1]]})
             enough = False
-            logging.warn('less images: {} ({}, {})'.format(
+            logging.warn('less images: {} ({})'.format(
                 node.name.encode('utf-8'),
-                node.cum_images_with_bb,
-                node.cum_images_no_bb))
+                node.cum_images_with_bb))
     if enough:
         logging.info('con. every node has at least {} images'.format(th))
     else:
-        write_to_yaml_file(few_training, fname)
+        write_to_yaml_file(few_training_with_bb, fname)
 
 def clean_dataset2(source_dataset_name, dest_dataset_name):
     source_dataset = TSVDataset(source_dataset_name)
@@ -2685,6 +2788,7 @@ def clean_dataset2(source_dataset_name, dest_dataset_name):
     for split in splits:
         src_tsv = source_dataset.get_data(split)
         if op.isfile(src_tsv):
+            valid_idxs = []
             dest_tsv = dest_dataset.get_data(split)
             def gen_rows():
                 rows = tsv_reader(src_tsv)
@@ -2731,11 +2835,14 @@ def clean_dataset2(source_dataset_name, dest_dataset_name):
                         num_removed_rects = num_removed_rects + len(to_remove)
                     for rect in to_remove:
                         rects.remove(rect)
+                    valid_idxs.append(i)
                     if len(to_remove) > 0:
                         yield row[0], json.dumps(rects), row[2]
                     else:
                         yield row
             tsv_writer(gen_rows(), dest_tsv)
+            dest_dataset.write_data(source_dataset.iter_data(split, 'label',
+                filter_idx=valid_idxs), split, 'label')
 
 def clean_dataset(source_dataset_name, dest_dataset_name):
     '''
@@ -3189,7 +3296,7 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
     write_to_yaml_file(tax.dump(['images_with_bb']), dest)
 
     tree_file = overall_dataset.get_tree_file()
-    write_to_file('\n'.join(['{} {}{}'.format(c.encode('utf-8'), p, '' if sg < 0 else ' {}'.format(sg))
+    write_to_file('\n'.join(['{} {}{}'.format(c, p, '' if sg < 0 else ' {}'.format(sg))
                              for c, p, sg in child_parent_sgs]),
             tree_file)
     for label_type in out_dataset:
@@ -3623,6 +3730,10 @@ def convert_to_uhrs_with_url(data):
         dataset.write_data(gen_rows(), split,
                 'url', version=v)
 
+def find_same_location_rects(target, rects, iou=0.95):
+    return [r for r in rects if 
+        calculate_iou(target['rect'], r['rect']) > iou]
+
 def find_same_rects(target, rects, iou=0.95):
     same_class_rects = [r for r in rects if r['class'] == target['class']]
     return [r for r in same_class_rects if
@@ -3635,6 +3746,9 @@ def rect_in_rects(target, rects, iou=0.95):
     else:
         return any(r for r in same_class_rects if 'rect' in r and
             calculate_iou(target['rect'], r['rect']) > iou)
+
+def strict_rect_in_rects(target, rects):
+    return any(target == r for r in rects)
 
 def load_key_rects(iter_data):
     result = []

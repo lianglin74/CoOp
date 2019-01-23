@@ -21,7 +21,7 @@ def show_net_input(data, label, max_image_to_show=None):
     num_image = label.shape[0]
     if max_image_to_show:
         num_image = min(max_image_to_show, num_image)
-    num_rect = label.shape[1] / 5
+    num_rect = label.shape[1] // 5
     im_height = all_image[0].shape[0]
     im_width = all_image[0].shape[1]
     for i in range(num_image):
@@ -45,18 +45,23 @@ def show_net_input(data, label, max_image_to_show=None):
 def draw_bb(im, all_rect, all_label, 
         probs=None, 
         color=None,
-        #font_scale=0.5, 
-        #font_thickness=1,
+        font_scale=None, 
+        font_thickness=None,
         #rect_thickness=2,
         draw_label=True):
     '''
     all_rect: x0, y0, x1, y1
     '''
-    ref = sum(im.shape[:2]) / 2
-
-    font_scale = ref / 500.
-    font_thickness = max(ref / 250, 1)
-    rect_thickness = max(ref / 250, 1)
+    ref = sum(im.shape[:2]) // 2
+    
+    if font_scale is None:
+        font_scale = ref / 500.
+    if font_thickness is None:
+        font_thickness = max(ref // 250, 1)
+    rect_thickness = max(ref // 250, 1)
+    # in python3, it is float, and we need to convert it to integer
+    font_thickness = int(font_thickness)
+    rect_thickness = int(rect_thickness)
 
     dist_label = set(all_label)
     if color is None:
@@ -125,26 +130,33 @@ def load_image(file_name):
     return cv2.imread(file_name)
 
 def show_image(im):
-    name = 'image'
-    #cv2.namedWindow(name, cv2.WINDOW_NORMAL)
-    cv2.namedWindow("image", cv2.WND_PROP_FULLSCREEN)
-    cv2.setWindowProperty("image",cv2.WND_PROP_FULLSCREEN,1)
-    cv2.imshow(name, im)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
-    for i in range(1, 5):
-        cv2.waitKey(1)
+    show_images([im], 1, 1)
+    #name = 'image'
+    ##cv2.namedWindow(name, cv2.WINDOW_NORMAL)
+    #cv2.namedWindow("image", cv2.WND_PROP_FULLSCREEN)
+    #cv2.setWindowProperty("image",cv2.WND_PROP_FULLSCREEN,1)
+    #cv2.imshow(name, im)
+    #cv2.waitKey(0)
+    #cv2.destroyAllWindows()
+    #for i in range(1, 5):
+        #cv2.waitKey(1)
 
 def show_images(all_image, num_rows, num_cols):
-    _, ax = plt.subplots(num_rows, num_cols)
-    ax = ax.reshape((num_rows, num_cols))
+    plt.figure(1)
+
     k = 0
     for i in range(num_rows):
         for j in range(num_cols):
             if k >= len(all_image):
                 break
-            ax[i, j].imshow(cv2.cvtColor(all_image[k],
-                cv2.COLOR_BGR2RGB))
+            plt.subplot(num_rows, num_cols, k + 1)
+            if len(all_image[k].shape) == 3:
+                plt.imshow(cv2.cvtColor(all_image[k],
+                    cv2.COLOR_BGR2RGB))
+            else:
+                # grey image
+                assert len(all_image[k].shape) == 2
+                plt.imshow(all_image[k])
             k = k + 1
     plt.show()
     plt.close()
