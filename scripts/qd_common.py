@@ -53,7 +53,7 @@ def cmd_run(list_cmd, return_output=False, env=None,
         shell=False):
     logging.info('start to cmd run: {}'.format(' '.join(map(str, list_cmd))))
     # if we dont' set stdin as sp.PIPE, it will complain the stdin is not a tty
-    # device. Maybe, the reson is it is inside another process. 
+    # device. Maybe, the reson is it is inside another process.
     # if stdout=sp.PIPE, it will not print the result in the screen
     e = os.environ.copy()
     if 'SSH_AUTH_SOCK' in e:
@@ -68,22 +68,22 @@ def cmd_run(list_cmd, return_output=False, env=None,
             #p = sp.Popen(list_cmd, stdin=sp.PIPE, cwd=working_dir)
         #else:
         if shell:
-            p = sp.Popen(' '.join(list_cmd), 
-                    stdin=stdin, 
-                    env=e, 
+            p = sp.Popen(' '.join(list_cmd),
+                    stdin=stdin,
+                    env=e,
                     cwd=working_dir,
                     shell=True)
         else:
-            p = sp.Popen(list_cmd, 
-                    stdin=sp.PIPE, 
-                    env=e, 
+            p = sp.Popen(list_cmd,
+                    stdin=sp.PIPE,
+                    env=e,
                     cwd=working_dir)
         message = p.communicate()
         if p.returncode != 0:
             raise ValueError(message)
     else:
         if shell:
-            message = sp.check_output(' '.join(list_cmd), 
+            message = sp.check_output(' '.join(list_cmd),
                     env=e,
                     cwd=working_dir,
                     shell=True)
@@ -91,7 +91,7 @@ def cmd_run(list_cmd, return_output=False, env=None,
             message = sp.check_output(list_cmd,
                     env=e,
                     cwd=working_dir)
-    
+
     logging.info('finished the cmd run')
     return message
 
@@ -336,6 +336,7 @@ def calculate_image_ap(predicts, gts):
                 if iou > 0.3:
                     matched[i] = True
                     corrects[j] = 1
+                    break
     return calculate_ap_by_true_list(corrects, len(gts))
 
 def get_parameters_by_full_expid(full_expid):
@@ -538,7 +539,7 @@ def drop_second_batch_in_bn(net):
         l.top.remove(l.top[0])
         l.top.append(l.name + '/slice0')
         all_layer.append(l)
-        
+
         fix_bn_layer = net.layer.add()
         fix_bn_layer.name = l.name + '/bn1'
         fix_bn_layer.bottom.append(l.name + '/slice1')

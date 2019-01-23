@@ -18,13 +18,10 @@ from tagging.scripts import extract, pred
 from tagging.utils import accuracy
 from scripts.qd_common import calculate_iou, write_to_yaml_file, load_from_yaml_file, init_logging, worth_create
 from evaluation.eval_utils import DetectionFile
+from evaluation import dataproc
+from logo import constants
 from scripts.tsv_io import TSVDataset, TSVFile, tsv_reader, tsv_writer
 from scripts.yolotrain import yolo_predict
-
-
-BACKGROUND_LABEL = "__background"
-BBOX_POS_PAIR_IDS = "pos_pair_ids"
-BBOX_NEG_PAIR_IDS = "neg_pair_ids"
 
 
 class CropTaggingWrapper(object):
@@ -53,6 +50,8 @@ class CropTaggingWrapper(object):
         outfile = os.path.join(self._rootpath, "{}.{}.tag.predict.tsv".format(dataset_name, split))
         if worth_create(tag_file, outfile):
             parse_tagging_predict(tag_file, outfile)
+        # align the order of imgkeys
+        dataproc.align_detection(dataset_name, split, outfile)
         return outfile
 
     def predict_on_unknown_class(self, dataset_name, split, region_source="predict"):
@@ -95,6 +94,8 @@ class CropTaggingWrapper(object):
                             dataset_name, split, rp_file, prototype_dataset, prototype_split))
                     fp.write(acc_str)
                     fp.write('\n')
+        # align the order of imgkeys
+        dataproc.align_detection(dataset_name, split, outfile)
         return outfile
 
     def compare_pairs(self, dataset_name, split):
@@ -265,7 +266,7 @@ def parse_tagging_predict(infile, outfile, nms_type="cls_dep", bg_skip=1):
         for i, (label, conf) in enumerate(label_conf_pair):
             if i >= bg_skip:
                 break
-            if label == BACKGROUND_LABEL:
+            if label == constants.BACKGROUND_LABEL:
                 is_bg = True
                 break
         if is_bg:
@@ -291,8 +292,8 @@ def compare_pair_features(fea_file, outfile):
         cols = fea_tsv.seek(i)
         bbox = json.loads(cols[1])
         # positive pairs
-        if BBOX_POS_PAIR_IDS in bbox:
-            for pid in bbox[BBOX_POS_PAIR_IDS]:
+        if constants.BBOX_POS_PAIR_IDS in bbox:
+            for pid in bbox[constants.BBOX_POS_PAIR_IDS]:
                 if pid in pos_pair_lineidx_dict:
                     assert(len(pos_pair_lineidx_dict[pid]) == 1)
                     pos_pair_lineidx_dict[pid].append(i)
@@ -300,8 +301,8 @@ def compare_pair_features(fea_file, outfile):
                     pos_pair_lineidx_dict[pid] = [i]
 
         # negative pairs
-        if BBOX_NEG_PAIR_IDS in bbox:
-            for pid in bbox[BBOX_NEG_PAIR_IDS]:
+        if constants.BBOX_NEG_PAIR_IDS in bbox:
+            for pid in bbox[constants.BBOX_NEG_PAIR_IDS]:
                 if pid in neg_pair_lineidx_dict:
                     assert(len(neg_pair_lineidx_dict[pid]) == 1)
                     neg_pair_lineidx_dict[pid].append(i)
@@ -453,7 +454,7 @@ def merge_gt_rp(gt_file, rp_file, outfile, pos_iou=0.5, neg_iou=0.05):
                 count_class[b["class"]] += 1
             elif overlaps[bbox_idx_max] < neg_iou:
                 # background candidate
-                b["class"] = BACKGROUND_LABEL
+                b["class"] = constants.BACKGROUND_LABEL
                 bg_cands.append((imgkey, b))
 
         for b in gt_bboxes:

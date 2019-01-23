@@ -9,9 +9,26 @@ from PIL import Image
 from urllib2 import Request, urlopen
 
 import _init_paths
-from logo.classifier import BBOX_POS_PAIR_IDS, BBOX_NEG_PAIR_IDS
-from scripts.qd_common import scrape_bing
-from scripts.tsv_io import tsv_reader, tsv_writer
+import logo.constants
+from scripts import qd_common
+from scripts import tsv_io
+
+
+def align_detection(dataset_name, split, pred_file, outfile=None, min_conf=0.0):
+    """
+    Aligns detection imgkeys with gt for visualization
+    """
+    pred_res = {p[0]: json.loads(p[1]) for p in tsv_io.tsv_reader(pred_file)}
+    dataset = tsv_io.TSVDataset(dataset_name)
+    def gen_output():
+        for k, _ in dataset.iter_data(split, 'label'):
+            bbox = pred_res[k] if k in pred_res else []
+            if min_conf > 0:
+                bbox = [b for b in bbox if "conf" not in b or b["conf"]>=min_conf]
+            yield k, json.dumps(bbox, separators=(',', ':'))
+    if not outfile:
+        outfile = pred_file
+    tsv_io.tsv_writer(gen_output(), outfile)
 
 
 def convert_pair_to_label_file(pair_files, outfile):
@@ -22,8 +39,8 @@ def convert_pair_to_label_file(pair_files, outfile):
     """
     label_dict = collections.defaultdict(list)
     for fpath, is_pos in pair_files:
-        pair_field = BBOX_POS_PAIR_IDS if is_pos else BBOX_NEG_PAIR_IDS
-        for cols in tsv_reader(fpath):
+        pair_field = logo.constants.BBOX_POS_PAIR_IDS if is_pos else logo.constants.BBOX_NEG_PAIR_IDS
+        for cols in tsv_io.tsv_reader(fpath):
             pair_id = cols[0]
             it1 = json.loads(cols[1])
             it2 = json.loads(cols[2])
@@ -45,7 +62,7 @@ def convert_pair_to_label_file(pair_files, outfile):
 
                 target_it[pair_field].append(pair_id)
 
-    tsv_writer([[k, json.dumps(label_dict[k])] for k in label_dict], outfile)
+    tsv_io.tsv_writer([[k, json.dumps(label_dict[k])] for k in label_dict], outfile)
 
 
 def _retrieve_bbox_idx(bbox, bbox_list):
@@ -70,7 +87,7 @@ def convert_local_images_to_b64(dirpath, labelmap, outfile, max_per_class=None):
     num_imgs = 0
     num_valid_imgs = 0
     with open(outfile, 'w') as fout:
-        for cols in tsv_reader(labelmap):
+        for cols in tsv_io.tsv_reader(labelmap):
             term = cols[0]
             imgdir = os.path.join(dirpath, term)
             if not os.path.exists(imgdir):
@@ -113,7 +130,7 @@ def scrape_image(labelmap, outfile, num_imgs=30, ext="jpg", query_format="{}",
             assert os.path.isdir(download_to)
 
     with open(outfile, 'w', buffering=0) as fout:
-        for cols in tsv_reader(labelmap):
+        for cols in tsv_io.tsv_reader(labelmap):
             term = cols[0]
             logging.info("term: {}".format(term))
             query_term = query_format.format(term)
@@ -121,7 +138,7 @@ def scrape_image(labelmap, outfile, num_imgs=30, ext="jpg", query_format="{}",
                 trans_bg = True
             else:
                 trans_bg = False
-            urls = scrape_bing(query_term, num_imgs, trans_bg=trans_bg)
+            urls = qd_common.scrape_bing(query_term, num_imgs, trans_bg=trans_bg)
 
             for idx, url in enumerate(urls):
                 im = try_retrieve_image(url)

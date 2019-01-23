@@ -3,29 +3,13 @@ import os
 import uuid
 
 from evaluation.eval_utils import DetectionFile, GroundTruthConfig, _thresholding_detection, merge_gt
-from evaluation.generate_task import generate_verify_box_task
+from evaluation.generate_task import generate_task_files
 from evaluation.analyze_task import analyze_verify_box_task
 from evaluation.uhrs import UhrsTaskManager
 from evaluation.utils import read_from_file, write_to_file, get_max_iou_idx, list_files_in_dir
 from scripts.process_tsv import get_img_url2
 from scripts.qd_common import init_logging, ensure_directory
-from scripts.tsv_io import tsv_reader, tsv_writer
-
-
-def align_detection(ref_file, pred_file, outfile=None, min_conf=0.0):
-    """
-    Aligns detection imgkeys with gt for visualization
-    """
-    pred = DetectionFile(pred_file)
-    if not outfile:
-        outfile = pred_file.rsplit('.', 1)[0] + ".aligned.tsv"
-    outdata = []
-    for cols in tsv_reader(ref_file):
-        k = cols[0]
-        bbox = pred[k] if k in pred else []
-        bbox = [b for b in bbox if "conf" not in b or b["conf"]>=min_conf]
-        outdata.append([k, json.dumps(bbox)])
-    tsv_writer(outdata, outfile)
+from scripts.tsv_io import tsv_reader, tsv_writer, TSVDataset
 
 
 def get_wrong_pred(pred_file, gt_file, labelmap=None, outfile=None, min_conf=0.5, iou=0.5):
@@ -109,9 +93,8 @@ def manual_check(source_name, gt_config_file, labelmap, dirpath, min_conf=0.5, i
     task_label_file = os.path.join(dirpath, "eval_labels.tsv")
     write_to_file(task_data, task_label_file)
     fname = "manual_check_{}".format(source_name)
-    generate_verify_box_task(task_label_file, None,
-                             outbase=os.path.join(upload_dir, fname),
-                             num_tasks_per_hit=20, num_hp_per_hit=0)
+    generate_task_files("VerifyBox", task_label_file, None, outbase=os.path.join(upload_dir, fname),
+                        num_tasks_per_hit=20, num_hp_per_hit=0)
 
     uhrs_client = UhrsTaskManager(task_id_name_log)
     uhrs_client.upload_tasks_from_folder(task_hitapp, upload_dir,
