@@ -45,6 +45,10 @@ class TSVFile(object):
         self._fp = None
         self._lineidx = None
         self.cache_policy= cache_policy
+        # the process always keeps the process which opens the
+        # file. If the pid is not equal to the currrent pid, we will re-open
+        # teh file. 
+        self.pid = None 
         
         self._cache()
     
@@ -130,8 +134,18 @@ class TSVFile(object):
             raise ValueError('unkwown cache policy {}'.format(self.cache_policy))
 
     def _ensure_tsv_opened(self):
+        if self.cache_policy == 'memory':
+            assert self._fp is not None
+            return
+
         if self._fp is None:
             self._fp = open(self.tsv_file, 'r')
+            self.pid = os.getpid()
+
+        if self.pid != os.getpid():
+            logging.info('re-open {} because the process id changed'.format(self.tsv_file))
+            self._fp = open(self.tsv_file, 'r')
+            self.pid = os.getpid()
 
 class TSVDataset(object):
     def __init__(self, name):
