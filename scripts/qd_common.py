@@ -407,8 +407,9 @@ def calculate_image_ap2(predicts, gts):
                 if iou > 0.5:
                     matched[i] = True
                     corrects[j] = 1
+                    match_idx[j] = i
                     break
-    return calculate_ap_by_true_list(corrects, len(gts))
+    return calculate_ap_by_true_list(corrects, len(gts)), match_idx
 
 def get_parameters_by_full_expid(full_expid):
     yaml_file = op.join('output', full_expid, 'parameters.yaml')
