@@ -60,7 +60,7 @@ def cmd_run(list_cmd, return_output=False, env=None,
         shell=False):
     logging.info('start to cmd run: {}'.format(' '.join(map(str, list_cmd))))
     # if we dont' set stdin as sp.PIPE, it will complain the stdin is not a tty
-    # device. Maybe, the reson is it is inside another process.
+    # device. Maybe, the reson is it is inside another process. 
     # if stdout=sp.PIPE, it will not print the result in the screen
     e = os.environ.copy()
     if 'SSH_AUTH_SOCK' in e:
@@ -75,15 +75,15 @@ def cmd_run(list_cmd, return_output=False, env=None,
             #p = sp.Popen(list_cmd, stdin=sp.PIPE, cwd=working_dir)
         #else:
         if shell:
-            p = sp.Popen(' '.join(list_cmd),
-                    stdin=stdin,
-                    env=e,
+            p = sp.Popen(' '.join(list_cmd), 
+                    stdin=stdin, 
+                    env=e, 
                     cwd=working_dir,
                     shell=True)
         else:
-            p = sp.Popen(list_cmd,
-                    stdin=sp.PIPE,
-                    env=e,
+            p = sp.Popen(list_cmd, 
+                    stdin=sp.PIPE, 
+                    env=e, 
                     cwd=working_dir)
         message = p.communicate()
         if p.returncode != 0:
@@ -346,7 +346,7 @@ def calculate_ap_by_true_list_count_num(corrects, total):
     precision = (1. * np.cumsum(corrects)) / np.arange(1, 1 + len(corrects))
     if np.sum(corrects) == 0:
         return 0
-    return np.sum(precision) / len(precision) * np.sum(corrects) / total
+    return np.sum(precision) / len(precision) * np.sum(corrects) / total 
 
 def calculate_weighted_ap_by_true_list(corrects, weights, total):
     precision = np.cumsum(corrects * weights) / (np.cumsum(weights) + 0.0001)
@@ -408,7 +408,6 @@ def calculate_image_ap2(predicts, gts):
                     matched[i] = True
                     corrects[j] = 1
                     match_idx[j] = i
-                    break
     return calculate_ap_by_true_list(corrects, len(gts)), match_idx
 
 def get_parameters_by_full_expid(full_expid):
@@ -611,7 +610,7 @@ def drop_second_batch_in_bn(net):
         l.top.remove(l.top[0])
         l.top.append(l.name + '/slice0')
         all_layer.append(l)
-
+        
         fix_bn_layer = net.layer.add()
         fix_bn_layer.name = l.name + '/bn1'
         fix_bn_layer.bottom.append(l.name + '/slice1')
@@ -779,7 +778,7 @@ def yolo_old_to_new(old_proto, old_model, new_model):
             new_p[i + 4 * num_anchor, :] = o
             new_cls_start = i * num_classes + 5 * num_anchor
             new_p[new_cls_start : (new_cls_start + num_classes), :] = cls
-
+    
     for old_p, new_p in zip(all_old, all_new):
         old_p[...] = new_p
 
