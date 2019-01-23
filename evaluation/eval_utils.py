@@ -17,10 +17,12 @@ from evaluation.utils import search_bbox_in_list, is_valid_bbox, get_max_iou_idx
 
 class DetectionFile(object):
     def __init__(self, predict_file, key_col_idx=0, bbox_col_idx=1, conf_threshold=0,
-                 threshold=None, display=None, obj_threshold=0, blacklist=None, **kwargs):
+                 threshold=None, display=None, obj_threshold=0, blacklist=None,
+                 sort_by_conf=False, **kwargs):
         self.tsv_file = predict_file
         self.key_col_idx = key_col_idx
         self.bbox_col_idx = bbox_col_idx
+        self.sort_by_conf = sort_by_conf
 
         self._fp = None
         self._keyidx = None
@@ -54,10 +56,13 @@ class DetectionFile(object):
         self._fp.seek(self._keyidx[key])
         cols = self._fp.readline().strip().split('\t')
         bboxes = json.loads(cols[self.bbox_col_idx])
-        return _thresholding_detection(
+        bboxes = _thresholding_detection(
                     bboxes, thres_dict=self._threshold_dict, display_dict=self._display_dict,
                     obj_threshold=self._obj_threshold, conf_threshold=self._conf_threshold,
                     blacklist=self._blacklist)
+        if self.sort_by_conf:
+            bboxes = sorted(bboxes, key=lambda b: b["conf"], reverse=True)
+        return bboxes
 
     def _ensure_keyidx_loaded(self):
         self._ensure_tsv_opened()
@@ -356,7 +361,7 @@ def process_prediction_to_verify(gt_config_file, dataset_name, pred_name, pred_t
     # load existing ground truth labels
     gt_cfg = GroundTruthConfig(gt_config_file)
     if dataset_name not in gt_cfg.datasets():
-        raise Exception("unknow dataset: {}".format(dataset))
+        raise Exception("unknow dataset: {}".format(dataset_name))
 
     num_bbox_to_submit = 0
     num_bbox_pos = 0
@@ -403,7 +408,7 @@ def process_prediction_to_verify(gt_config_file, dataset_name, pred_name, pred_t
             gt_bboxes = [b for b in json.loads(coded_rects) if "rect" in b]
         # if prediction is in ground truth, it is verified as correct
         idx_map = get_bbox_matching_map(bboxes, gt_bboxes, pos_iou_threshold)
-        verified.update([idx for idx in range(len(bboxes)) if idx_map[idx]])
+        verified.update(idx_map.keys())
         num_pos_cur = len(verified)
         num_bbox_pos += num_pos_cur
 

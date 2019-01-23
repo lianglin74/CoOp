@@ -6,6 +6,8 @@ import numpy as np
 import os
 import shutil
 
+import _init_paths
+from scripts import deteval
 
 def list_files_in_dir(dirpath):
     return [os.path.join(dirpath, f) for f in os.listdir(dirpath)
@@ -81,54 +83,45 @@ def get_max_iou_idx(new_bbox, bbox_list):
     return max_indices, max_iou
 
 
-def get_bbox_matching_map(list1, list2, iou_threshold):
+def get_bbox_matching_map(bbox_list1, bbox_list2, iou_threshold, allow_multiple_to_one=False):
     """
-    Returns the matching map from list1 to list2. List is a list of bboxes
-    i.e., list1[i] matches list2[res[i]] if res[i] is not None
+    Returns a dict that maps indices of bbox_list1 to those of bbox_list2,
+    s.t. IoU(bbox_list1[i], bbox_list2[map[i]]) > iou_threshold
+    bbox_list1, bbox_list2: a list of bboxes
+    allow_multiple_to_one: if False, force a one-to-one mapping, i.e., if i!=j, map[i]!=map[j]
     """
-    res = [None] * len(list1)
+    match_map = {}
 
     if iou_threshold == 0:
         # class only
-        for idx1, bbox1 in enumerate(list1):
-            for idx2, bbox2 in enumerate(list2):
-                if bbox1["class"] == bbox2["class"]:
-                    res[idx1] = idx2
+        for i, p in enumerate(bbox_list1):
+            for j, g in enumerate(bbox_list2):
+                if p["class"].lower() == g["class"].lower():
+                    match_map[i] = j
+                    break
     else:
         # class + rect
-        visited = set()  # visited idx in list2
-        for idx1, bbox1 in enumerate(list1):
-            indices2, max_iou = get_max_iou_idx(bbox1, list2)
-            if max_iou < iou_threshold:
-                continue
-            for idx2 in indices2:
-                if idx2 not in visited:
-                    res[idx1] = idx2
-                    visited.add(idx2)
-    return res
+        matched = [False] * len(bbox_list2)
+        for i, p in enumerate(bbox_list1):
+            max_iou = 0
+            max_iou_idx = None
+            for j, g in enumerate(bbox_list2):
+                if p["class"].lower() == g["class"].lower():
+                    if allow_multiple_to_one or not matched[j]:
+                        iou = deteval.IoU(p["rect"], g["rect"])
+                        if iou > max_iou:
+                            max_iou = iou
+                            max_iou_idx = j
+            if max_iou > iou_threshold:
+                matched[max_iou_idx] = True
+                match_map[i] = max_iou_idx
+    return match_map
 
 
 def calculate_iou(bbox1, bbox2):
     if not is_valid_bbox(bbox1) or not is_valid_bbox(bbox2):
         raise Exception("invalid bbox")
-    # intersection part
-    intersection_left = max(bbox1['rect'][0], bbox2['rect'][0])
-    intersection_top = max(bbox1['rect'][1], bbox2['rect'][1])
-    intersection_right = min(bbox1['rect'][2], bbox2['rect'][2])
-    intersection_bottom = min(bbox1['rect'][3], bbox2['rect'][3])
-
-    if intersection_right <= intersection_left or \
-            intersection_bottom <= intersection_top:
-        return 0.0
-    w = max(0.0, intersection_right-intersection_left+1)
-    h = max(0.0, intersection_bottom-intersection_top+1)
-    intersection_area = w * h
-    bb1_area = calculate_bbox_area(bbox1)
-    bb2_area = calculate_bbox_area(bbox2)
-
-    iou = intersection_area / float(bb1_area + bb2_area - intersection_area)
-    assert(iou > 0 and iou <= 1)
-    return iou
+    return deteval.IoU(bbox1["rect"], bbox2["rect"])
 
 
 def is_valid_bbox(bbox):

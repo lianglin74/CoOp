@@ -14,7 +14,7 @@ import yaml
 import _init_paths
 from evaluation.eval_utils import filter_gt, load_gt, load_result, GroundTruthConfig, DetectionFile
 from scripts.qd_common import init_logging
-from evaluation.utils import search_bbox_in_list
+from evaluation import utils
 
 
 parser = argparse.ArgumentParser(
@@ -37,8 +37,8 @@ def eval_result(gt, result, iou_threshold):
     """Calculates accumulated statitics on all results
 
     Args:
-        gt: dict of image key and ground truth pairs
-        result: dict of image key and detection result pairs
+        gt: dict of image key: ground truth bboxes
+        result: dict of image key: detection result bboxes
         iou_threshold: IoU threshold to consider two boxes as matching
 
     Returns:
@@ -55,10 +55,12 @@ def eval_result(gt, result, iou_threshold):
             continue
         res_bboxes = result[imgkey]
         num_result_bboxes += len(res_bboxes)
+
+        idx_map = utils.get_bbox_matching_map(res_bboxes, gt_bboxes, iou_threshold,
+                                              allow_multiple_to_one=True)
+        num_correct_bboxes += len(idx_map)
         for b in res_bboxes:
             categories.add(b["class"].lower())
-            if search_bbox_in_list(b, gt_bboxes, iou_threshold) >= 0:
-                num_correct_bboxes += 1
 
     precision = float(num_correct_bboxes) / num_result_bboxes * 100
     recall = float(num_correct_bboxes) / num_gt_bboxes * 100
@@ -77,11 +79,15 @@ def eval_result_per_class(gt, result, iou_threshold):
     num_result_bboxes_per_class = collections.defaultdict(int)
     num_correct_bboxes_per_class = collections.defaultdict(int)
     for imgkey in result:
-        for b in result[imgkey]:
-            gt_bboxes = gt[imgkey]
-            num_result_bboxes_per_class[b["class"].lower()] += 1
-            if search_bbox_in_list(b, gt_bboxes, iou_threshold) >= 0:
-                num_correct_bboxes_per_class[b["class"].lower()] += 1
+        res_bboxes = result[imgkey]
+        gt_bboxes = gt[imgkey]
+        idx_map = utils.get_bbox_matching_map(res_bboxes, gt_bboxes, iou_threshold,
+                                              allow_multiple_to_one=True)
+        for i, b in enumerate(res_bboxes):
+            c = b["class"].lower()
+            num_result_bboxes_per_class[c] += 1
+            if i in idx_map:
+                num_correct_bboxes_per_class[c] += 1
     return num_result_bboxes_per_class, num_correct_bboxes_per_class
 
 
@@ -120,7 +126,7 @@ def eval_dataset(gt_config_file, dataset_name, iou_threshold,
         base_file = gt_cfg.baseline_file(dataset_name, baseline)
         base_info = gt_cfg.baseline_info(dataset_name, baseline)
         base_info["blacklist"] = blacklist
-        result = DetectionFile(base_file, **base_info)
+        result = DetectionFile(base_file, sort_by_conf=True, **base_info)
         num_gt_bboxes, num_result_bboxes, num_correct_bboxes, \
             precision, recall, num_unique_categories = eval_result(
                                                     gt, result, iou_threshold)
@@ -173,17 +179,21 @@ def draw_pr_curve(gt_config_file, dataset_name, iou_threshold,
         # the chosen conf threshold to present final prediction
         if "conf_threshold" in baseline_info:
             chosen_threshold = baseline_info["conf_threshold"]
+            start_from_conf = min(start_from_conf, chosen_threshold)
         else:
             chosen_threshold = start_from_conf
         baseline_info["conf_threshold"] = start_from_conf
         if "threshold" in baseline_info:
             del baseline_info["threshold"]
         baseline_info["blacklist"] = blacklist
-        result = DetectionFile(baseline_info["result"], **baseline_info)
+        result = DetectionFile(baseline_info["result"], sort_by_conf=True, **baseline_info)
         y_score_gt = []
         for imgkey in result:
-            for b in result[imgkey]:
-                if search_bbox_in_list(b, gt[imgkey], iou_threshold) >= 0:
+            res_bboxes = result[imgkey]
+            idx_map = utils.get_bbox_matching_map(res_bboxes, gt[imgkey], iou_threshold,
+                                                  allow_multiple_to_one=True)
+            for i, b in enumerate(res_bboxes):
+                if i in idx_map:
                     y_score_gt.append((b["conf"], 1))
                 else:
                     y_score_gt.append((b["conf"], 0))
@@ -195,8 +205,7 @@ def draw_pr_curve(gt_config_file, dataset_name, iou_threshold,
         chosen_idx = -1
         for score, is_correct in y_score_gt:
             num_result += 1
-            if is_correct:
-                num_correct += 1
+            num_correct += is_correct
             precision_list.append(float(num_correct) / num_result)
             recall_list.append(float(num_correct) / num_gt)
             if score <= chosen_threshold and chosen_idx < 0:
@@ -209,6 +218,7 @@ def draw_pr_curve(gt_config_file, dataset_name, iou_threshold,
         start_idx = 100
         plt.plot(recall_list[start_idx:], precision_list[start_idx:], '-D',
                  markevery=[chosen_idx - start_idx], label=baseline_info["name"])
+
     ax.margins(0.05)
     plt.legend()
     plt.xlabel("Recall")
