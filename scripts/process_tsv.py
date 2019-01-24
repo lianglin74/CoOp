@@ -258,8 +258,7 @@ def ensure_composite_key_url(data, split):
             yield key, url
     dataset.write_data(gen_rows(), split, 'key.url')
 
-@ensure_inject_decorate
-def ensure_upload_image_to_blob(data, split):
+def upload_image_to_blob(data, split):
     from cloud_storage import CloudStorage
     from StringIO import StringIO
     s = CloudStorage()
@@ -281,6 +280,10 @@ def ensure_upload_image_to_blob(data, split):
                     clean_name)
             yield key, url
     dataset.write_data(gen_rows(), split, 'key.url')
+
+@ensure_inject_decorate
+def ensure_upload_image_to_blob(data, split):
+    upload_image_to_blob(data, split)
 
 @ensure_inject_decorate
 def ensure_inject_image(data, split):
