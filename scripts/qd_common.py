@@ -359,34 +359,31 @@ def calculate_ap_by_true_list_100(corrects, confs, total):
     return np.sum(precision * corrects) / total
 
 def calculate_image_ap_weighted(predicts, gts, weights):
+    corrects, _ = match_prediction_to_gt(predicts, gts)
+    return calculate_weighted_ap_by_true_list(corrects, weights, len(gts))
+
+def match_prediction_to_gt(predicts, gts, iou_th=0.5):
     matched = [False] * len(gts)
     corrects = np.zeros(len(predicts))
     match_idx = [-1] * len(predicts)
     for j, p in enumerate(predicts):
-        for i, g in enumerate(gts):
-            if not matched[i]:
-                iou = calculate_iou(p, g)
-                if iou > 0.5:
-                    matched[i] = True
-                    corrects[j] = 1
-                    match_idx[j] = i
-    return calculate_weighted_ap_by_true_list(corrects, weights, len(gts))
+        idx_gts = [(i, g) for i, g in enumerate(gts) if not matched[i]]
+        if len(idx_gts) == 0:
+            # max does not support empty input
+            continue
+        idx_gt_ious = [(i, g, calculate_iou(p, g)) for i, g in idx_gts]
+        max_idx, _, max_iou = max(idx_gt_ious, key=lambda x: x[-1])
+        if max_iou > iou_th:
+            matched[max_idx] = True
+            corrects[j] = 1
+            match_idx[j] = max_idx
+    return corrects, match_idx
 
 def calculate_image_ap(predicts, gts, count_num=False):
     '''
     a list of rects, use 2 to return more info
     '''
-    matched = [False] * len(gts)
-    corrects = np.zeros(len(predicts))
-    match_idx = [-1] * len(predicts)
-    for j, p in enumerate(predicts):
-        for i, g in enumerate(gts):
-            if not matched[i]:
-                iou = calculate_iou(p, g)
-                if iou > 0.5:
-                    matched[i] = True
-                    corrects[j] = 1
-                    match_idx[j] = i
+    corrects, _ = match_prediction_to_gt(predicts, gts)
     if not count_num:
         return calculate_ap_by_true_list(corrects, len(gts))
     else:
@@ -397,17 +394,7 @@ def calculate_image_ap2(predicts, gts):
     '''
     a list of rects
     '''
-    matched = [False] * len(gts)
-    corrects = np.zeros(len(predicts))
-    match_idx = [-1] * len(predicts)
-    for j, p in enumerate(predicts):
-        for i, g in enumerate(gts):
-            if not matched[i]:
-                iou = calculate_iou(p, g)
-                if iou > 0.5:
-                    matched[i] = True
-                    corrects[j] = 1
-                    match_idx[j] = i
+    corrects, match_idx = match_prediction_to_gt(predicts, gts)
     return calculate_ap_by_true_list(corrects, len(gts)), match_idx
 
 def get_parameters_by_full_expid(full_expid):
