@@ -8,6 +8,7 @@ import numpy as np
 import os
 import uuid
 
+import evaluation.utils
 from evaluation.utils import read_from_file, write_to_file, escape_json_obj, calculate_bbox_area
 from scripts.process_tsv import get_img_url2
 from scripts.tsv_io import TSVFile, TSVDataset, tsv_writer
@@ -36,9 +37,12 @@ class HoneyPotGenerator(object):
         if self._count == 0:
             raise Exception("data cannot be empty")
         self.hp_neg_prob = hp_neg_prob
-        self.class_candidates = set(class_candidates)
-        if not self.class_candidates:
-            self.class_candidates = set(b["class"] for b in d["bboxes"] for d in self._data)
+        if not class_candidates:
+            self.class_candidates = set()
+            for d in self._data:
+                self.class_candidates.add(d["objects_to_find"])
+        else:
+            self.class_candidates = set(class_candidates)
 
     def next(self):
         self._cur_idx = (self._cur_idx + 1) % self._count
@@ -65,10 +69,8 @@ def pack_task_with_honey_pot(task_data, hp_data, hp_type, num_tasks_per_hit,
     '''
     output_content = []
     num_total_task = len(task_data)
-    class_candidates = set(d["objects_to_find"] for d in task_data)
     if num_hp_per_hit > 0:
-        hp_gen = HoneyPotGenerator(hp_data, hp_type, hp_neg_prob=hp_neg_prob,
-                                   class_candidates=class_candidates)
+        hp_gen = HoneyPotGenerator(hp_data, hp_type, hp_neg_prob=hp_neg_prob)
     else:
         hp_gen = None
 
@@ -157,14 +159,13 @@ def generate_box_honeypot(dataset_name, imgfiles, labelfiles, outfile=None, easy
             num_total_bboxes += len(bboxes)
             image_url = get_img_url2(key)
             for bbox in bboxes:
-                bbox["rect"] = [np.clip(bbox["rect"][0], 0, w), np.clip(bbox["rect"][1], 0, h),
-                                np.clip(bbox["rect"][2], 0, w), np.clip(bbox["rect"][3], 0, h)]
+                bbox["rect"] = evaluation.utils.truncate_rect(bbox["rect"], h, w)
+                if not evaluation.utils.is_valid_bbox(bbox):
+                    continue
                 bbox_area = calculate_bbox_area(bbox)
                 if float(bbox_area) / (h*w) > easy_area_thres:
                     num_easy_bboxes += 1
                     term = bbox["class"]
-                    if dataset_name.startswith("brand") or dataset_name.startswith("logo"):
-                        term = bbox["class"] + " logo"
                     hp_data.append(
                         {"image_info": dataset_name, "image_url": image_url,
                             "objects_to_find": term,
@@ -197,6 +198,47 @@ def generate_tag_honeypot(dataset_name, split, outfile=None):
             hp_data.append({"image_info": dataset_name, "image_url": image_url,
                             "objects_to_find": tag, "expected_output": OPT_NEG,
                             "question_type": "VerifyImage"})
+    if outfile:
+        tsv_writer([[json.dumps(d)] for d in hp_data], outfile)
+    return hp_data
+
+
+def generate_draw_box_honeypot(dataset_name, split, outfile=None, version=0,
+                               max_boxes=5, easy_area_thres=0.05):
+    dataset = TSVDataset(dataset_name)
+    hp_data = []
+    img_hw_dict = {}
+    for cols in dataset.iter_data(split, 'hw'):
+        imgkey = cols[0]
+        h, w = cols[1].split(' ')
+        img_hw_dict[imgkey] = (int(h), int(w))
+    num_total_candidates = 0
+    for imgkey, coded_rects in dataset.iter_data(split, 'label', version=version):
+        image_url = get_img_url2(imgkey)
+        im_h, im_w = img_hw_dict[imgkey]
+        class2bboxes = collections.defaultdict(list)
+        for b in json.loads(coded_rects):
+            class2bboxes[b["class"]].append(b)
+        num_total_candidates += len(class2bboxes)
+        for term in class2bboxes:
+            bboxes = class2bboxes[term]
+            # too many boxes on one image
+            if len(bboxes) > max_boxes:
+                continue
+            is_hard = False
+            for b in bboxes:
+                if is_hard:
+                    break
+                b["rect"] = evaluation.utils.truncate_rect(b["rect"], im_h, im_w)
+                if not evaluation.utils.is_valid_bbox(b):
+                    is_hard = True
+                else:
+                    b_area = evaluation.utils.calculate_bbox_area(b)
+                    if b_area / float(im_h*im_w) <= easy_area_thres:
+                        is_hard = True
+            if not is_hard:
+                hp_data.append({"objects_to_find": term, "expected_output": bboxes, "image_url": image_url})
+    logging.info("#total candidates: {}\t #easy: {}".format(num_total_candidates, len(hp_data)))
     if outfile:
         tsv_writer([[json.dumps(d)] for d in hp_data], outfile)
     return hp_data

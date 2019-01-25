@@ -46,11 +46,14 @@ def write_to_file(data, filepath, sep='\t'):
 
 
 def escape_json_obj(json_obj):
-    return json.dumps(json_obj).replace(',', '#').replace('"', '$')
+    # deprecated: make json_string CSV compatiable
+    # return json.dumps(json_obj).replace(',', '#').replace('"', '$')
+    return json.dumps(json_obj, separators=(',',':'))
 
 
 def load_escaped_json(json_str):
-    return json.loads(json_str.replace('#', ',').replace('$', '"'))
+    # return json.loads(json_str.replace('#', ',').replace('$', '"'))
+    return json.loads(json_str)
 
 
 def search_bbox_in_list(new_bbox, existing_list, iou_threshold):
@@ -135,3 +138,7 @@ def is_valid_bbox(bbox):
 def calculate_bbox_area(bbox):
     return (bbox['rect'][2] - bbox['rect'][0] + 1) * \
             (bbox['rect'][3] - bbox['rect'][1] + 1)
+
+
+def truncate_rect(rect, im_h, im_w):
+    return [np.clip(rect[0], 0, im_w), np.clip(rect[1], 0, im_h), np.clip(rect[2], 0, im_w), np.clip(rect[3], 0, im_h)]

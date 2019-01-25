@@ -33,11 +33,20 @@ def analyze_draw_box_task(result_files, result_file_type, outfile_res):
         url2ans_map[img_url].extend(answer)
 
     res = []  # url, list of bboxes
+    num_empty = 0
+    num_bboxes = 0
+    num_imgs = len(url2ans_map)
     for url in url2ans_map:
         # TODO: merge answers from several workers to get confidence scores
         bbox_list = url2ans_map[url]
+        num_bboxes += len(bbox_list)
+        if len(bbox_list) == 0:
+            num_empty += 1
         res.append([url, json.dumps(bbox_list)])
+    logging.info("#images: {}, #empty images: {} ({}%), #bboxes per img: {}"
+                 .format(num_imgs, num_empty, float(num_empty)/num_imgs*100, float(num_bboxes)/(num_imgs-num_empty)))
     write_to_file(res, outfile_res)
+    return url2ans_map
 
 
 def analyze_verify_box_task(result_files, result_file_type, outfile_res,
