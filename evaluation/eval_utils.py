@@ -390,6 +390,9 @@ def process_prediction_to_verify(gt_config_file, dataset_name, pred_name, pred_t
         # get result bboxes
         bboxes = []
         for b in pred_tsv[imgkey]:
+            # NOTE: hard coded to avoid including too many parent node prediction
+            if not tag_only and b["class"] == "logo":
+                continue
             if include_classes and b["class"].lower() not in include_classes:
                 continue
             if not tag_only and not is_valid_bbox(b):
