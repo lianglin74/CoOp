@@ -1,7 +1,4 @@
 import numpy as np
-import sys
-import os
-import os.path as osp
 import google.protobuf as pb
 from argparse import ArgumentParser
 import caffe
@@ -89,6 +86,9 @@ def process_weights(weights_old, weights_new, to_be_absorbed, proto_old,proto_ne
              output_weights.params[name][1].data[...] = bias_dict[name]
     output_weights.save(weights_new)
 
+def merge_bn(proto_old, weights_old, proto_new, weights_new):
+    model, to_be_absorbed = process_prototxt(proto_old, proto_new);
+    process_weights(weights_old,weights_new,to_be_absorbed, proto_old,proto_new,model)
 
 if __name__ == '__main__':
     parser = ArgumentParser(
@@ -99,9 +99,7 @@ if __name__ == '__main__':
     parser.add_argument('-ow', '--output_weights', help="New weights caffemodel")
     args = parser.parse_args()
     proto_old = args.model;
-    proto_new = args.output_model or osp.splitext(proto_old)[0] + '_inference.prototxt'
-    model, to_be_absorbed = process_prototxt(proto_old, proto_new);
-    if args.weights is not None:
-        weights_old = args.weights;
-        weights_new = args.output_weights or osp.splitext(weights_old)[0] + '_inference.caffemodel'
-        process_weights(weights_old,weights_new,to_be_absorbed, proto_old,proto_new,model)
+    proto_new = args.output_model
+    weights_old = args.weights;
+    weights_new = args.output_weights
+    merge_bn(proto_old, weights_old, proto_new, weights_new)
