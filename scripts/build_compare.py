@@ -86,13 +86,13 @@ def build_side_by_side_compare(
             img_id = cols[0]
             if img_id in dictLeftResult:
                 f_out_tsv.write("{}\t{}\t{}\n".format(
-                    str(cnt)+"_"+inLeftLabel, json.dumps(dictLeftResult[img_id]), cols[-1]))
+                    img_id+"_"+inLeftLabel, json.dumps(dictLeftResult[img_id]), cols[-1]))
                 if img_id in dictRightResult:
                     f_out_tsv.write("{}\t{}\t{}\n".format(
-                        str(cnt)+"_"+inRightLabel, json.dumps(dictRightResult[img_id]), cols[-1]))
+                        img_id+"_"+inRightLabel, json.dumps(dictRightResult[img_id]), cols[-1]))
                 else:
                     f_out_tsv.write("{}\t{}\t{}\n".format(
-                        str(cnt)+"_Missed", [], cols[-1]))
+                        img_id+"_Missed", [], cols[-1]))
             line = f_in_tsv.readline()
             cnt = cnt + 1
             if cnt % 100 == 0:

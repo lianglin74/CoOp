@@ -359,15 +359,16 @@
 
     </script>
     <script>
-        let black_list = JSON.parse("{{ black_list|escapejs }}");
-        let all_type_to_rects = JSON.parse("{{ all_type_to_rects|escapejs }}");
-        let target_label = '{{ target_label }}'
-        let all_url = JSON.parse("{{ all_url|escapejs }}");
         {% if all_key %}
         let all_key = JSON.parse("{{ all_key |escapejs }}");
         {% else %}
         let all_key = []
         {% endif %}
+        let black_list = JSON.parse("{{ black_list|escapejs }}");
+        let all_type_to_rects = JSON.parse("{{ all_type_to_rects|escapejs }}");
+        let target_label = '{{ target_label }}'
+        let all_url = JSON.parse("{{ all_url|escapejs }}");
+        
 
         let label_list_dic = {};
         let type_list_dic = {};
