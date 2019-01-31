@@ -32,6 +32,20 @@ import argparse
 import subprocess as sp
 
 
+def gen_uuid():
+    import uuid
+    return uuid.uuid4().hex
+
+def remove_dir(d):
+    shutil.rmtree(d)
+
+def hash_sha1(s):
+    import hashlib
+    if type(s) is not str:
+        from pprint import pformat
+        s = pformat(s)
+    return hashlib.sha1(s.encode('utf-8')).hexdigest()
+
 def ensure_copy_file(src, dest):
     ensure_directory(op.dirname(dest))
     if not op.isfile(dest):
@@ -76,7 +90,7 @@ def cmd_run(list_cmd, return_output=False, env=None,
             raise ValueError(message)
     else:
         if shell:
-            message = sp.check_output(' '.join(list_cmd), 
+            message = sp.check_output(' '.join(list_cmd),
                     env=e,
                     cwd=working_dir,
                     shell=True)
@@ -84,9 +98,8 @@ def cmd_run(list_cmd, return_output=False, env=None,
             message = sp.check_output(list_cmd,
                     env=e,
                     cwd=working_dir)
-    
-    logging.info('finished the cmd run')
-    return message
+        logging.info('finished the cmd run')
+        return message.decode('utf-8')
 
 
 def parallel_map(func, all_task, isDebug=False):
@@ -102,9 +115,16 @@ def parallel_map(func, all_task, isDebug=False):
         return result
 
 def url_to_str(url):
-    import urllib2
     try:
-        fp = urllib2.urlopen(url, timeout=10)
+        # py3
+        from urllib.request import urlopen
+        from urllib.request import HTTPError
+    except ImportError:
+        # py2
+        from urllib2 import urlopen
+        from urllib2 import HTTPError
+    try:
+        fp = urlopen(url, timeout=10)
         buf = fp.read()
         real_url = fp.geturl()
         if real_url != url and (not real_url.startswith('https') or
@@ -112,8 +132,13 @@ def url_to_str(url):
             logging.info('new url = {}; old = {}'.format(fp.geturl(), url))
             # the image gets redirected, which means the image is not available
             return None
-        return buf
-    except urllib2.HTTPError as err:
+        if type(buf) is str:
+            # py2
+            return buf
+        else:
+            # py3
+            return buf.decode()
+    except HTTPError as err:
         logging.error("url: {}; error code {}; message: {}".format(
             url, err.code, err.msg))
         return None
@@ -284,7 +309,8 @@ def concat_files(ins, out):
     ensure_directory(op.dirname(out))
     out_tmp = out + '.tmp'
     with open(out_tmp, 'wb') as fp_out:
-        for f in ins:
+        for i, f in enumerate(ins):
+            logging.info('concating {}/{} - {}'.format(i, len(ins), f))
             with open(f, 'rb') as fp_in:
                 shutil.copyfileobj(fp_in, fp_out, 1024*1024*10)
     os.rename(out_tmp, out)
@@ -316,20 +342,60 @@ def calculate_ap_by_true_list(corrects, total):
         return 0
     return np.sum(precision * corrects) / total
 
-def calculate_image_ap(predicts, gts):
+def calculate_ap_by_true_list_count_num(corrects, total):
+    precision = (1. * np.cumsum(corrects)) / np.arange(1, 1 + len(corrects))
+    if np.sum(corrects) == 0:
+        return 0
+    return np.sum(precision) / len(precision) * np.sum(corrects) / total 
+
+def calculate_weighted_ap_by_true_list(corrects, weights, total):
+    precision = np.cumsum(corrects * weights) / (np.cumsum(weights) + 0.0001)
+    if total == 0:
+        return 0
+    return np.mean(precision) * np.sum(corrects) / total
+
+def calculate_ap_by_true_list_100(corrects, confs, total):
+    precision = (1. * np.cumsum(corrects)) / map(lambda x: 100. * (1 - x) + 1, confs)
+    return np.sum(precision * corrects) / total
+
+def calculate_image_ap_weighted(predicts, gts, weights):
+    corrects, _ = match_prediction_to_gt(predicts, gts)
+    return calculate_weighted_ap_by_true_list(corrects, weights, len(gts))
+
+def match_prediction_to_gt(predicts, gts, iou_th=0.5):
+    matched = [False] * len(gts)
+    corrects = np.zeros(len(predicts))
+    match_idx = [-1] * len(predicts)
+    for j, p in enumerate(predicts):
+        idx_gts = [(i, g) for i, g in enumerate(gts) if not matched[i]]
+        if len(idx_gts) == 0:
+            # max does not support empty input
+            continue
+        idx_gt_ious = [(i, g, calculate_iou(p, g)) for i, g in idx_gts]
+        max_idx, _, max_iou = max(idx_gt_ious, key=lambda x: x[-1])
+        if max_iou > iou_th:
+            matched[max_idx] = True
+            corrects[j] = 1
+            match_idx[j] = max_idx
+    return corrects, match_idx
+
+def calculate_image_ap(predicts, gts, count_num=False):
+    '''
+    a list of rects, use 2 to return more info
+    '''
+    corrects, _ = match_prediction_to_gt(predicts, gts)
+    if not count_num:
+        return calculate_ap_by_true_list(corrects, len(gts))
+    else:
+        return calculate_ap_by_true_list_count_num(corrects, len(gts))
+
+
+def calculate_image_ap2(predicts, gts):
     '''
     a list of rects
     '''
-    matched = [False] * len(gts)
-    corrects = np.zeros(len(predicts))
-    for j, p in enumerate(predicts):
-        for i, g in enumerate(gts):
-            if not matched[i]:
-                iou = calculate_iou(p, g)
-                if iou > 0.3:
-                    matched[i] = True
-                    corrects[j] = 1
-    return calculate_ap_by_true_list(corrects, len(gts))
+    corrects, match_idx = match_prediction_to_gt(predicts, gts)
+    return calculate_ap_by_true_list(corrects, len(gts)), match_idx
 
 def get_parameters_by_full_expid(full_expid):
     yaml_file = op.join('output', full_expid, 'parameters.yaml')
@@ -464,7 +530,7 @@ def list_to_dict_unique(l, idx):
     return result
 
 def list_to_dict(l, idx):
-    result = {}
+    result = OrderedDict()
     for x in l:
         if x[idx] not in result:
             result[x[idx]] = []
@@ -613,7 +679,7 @@ def yolo_new_to_old(new_proto, new_model, old_model):
         all_new.append(new_bias[:, np.newaxis])
         all_old.append(old_bias[:, np.newaxis])
 
-    for i in xrange(num_anchor):
+    for i in range(num_anchor):
         for new_p, old_p in zip(all_new, all_old):
             x = new_p[i + 0 * num_anchor, :]
             y = new_p[i + 1 * num_anchor, :]
@@ -682,8 +748,8 @@ def yolo_old_to_new(old_proto, old_model, new_model):
         all_old.append(old_bias[:, np.newaxis])
         all_new.append(new_bias[:, np.newaxis])
 
-    for i in xrange(num_anchor):
-        for old_p, new_p in izip(all_old, all_new):
+    for i in range(num_anchor):
+        for old_p, new_p in zip(all_old, all_new):
             x = old_p[0 + i * (5 + num_classes), :]
             y = old_p[1 + i * (5 + num_classes), :]
             w = old_p[2 + i * (5 + num_classes), :]
@@ -699,8 +765,8 @@ def yolo_old_to_new(old_proto, old_model, new_model):
             new_p[i + 4 * num_anchor, :] = o
             new_cls_start = i * num_classes + 5 * num_anchor
             new_p[new_cls_start : (new_cls_start + num_classes), :] = cls
-
-    for old_p, new_p in izip(all_old, all_new):
+    
+    for old_p, new_p in zip(all_old, all_new):
         old_p[...] = new_p
 
     net.save(new_model)
@@ -874,9 +940,9 @@ def setup_yaml():
 def init_logging():
     np.seterr(divide = "raise", over="warn", under="warn",  invalid="raise")
     logging.basicConfig(level=logging.INFO,
-    format='%(asctime)s.%(msecs)03d %(filename)s:%(lineno)s %(funcName)10s(): %(message)s',
-    datefmt='%m-%d %H:%M:%S',
-    )
+            format='%(asctime)s.%(msecs)03d %(process)d %(filename)s:%(lineno)s %(funcName)10s(): %(message)s',
+            datefmt='%m-%d %H:%M:%S',
+            )
     setup_yaml()
 
 def ensure_directory(path):
@@ -886,8 +952,8 @@ def ensure_directory(path):
         if not os.path.exists(path) and not op.islink(path):
             try:
                 os.makedirs(path)
-            except OSError as e:
-                if e.errno == errno.EEXIST and os.path.isdir(folder_location):
+            except OSError:
+                if os.path.isdir(path):
                     # another process has done makedir
                     pass
                 else:
@@ -1011,7 +1077,7 @@ def construct_model(solver, test_proto_file, is_last=True, iteration=None):
     else:
         total = (solver_param.max_iter + solver_param.snapshot - 1) / solver_param.snapshot
         all_model = []
-        for i in xrange(total + 1, 0, -1):
+        for i in range(total + 1, 0, -1):
             if i == 0:
                 continue
             j = i * solver_param.snapshot

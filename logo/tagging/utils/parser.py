@@ -1,7 +1,7 @@
 import argparse
 
 
-def parse_args(model_names):
+def get_arg_parser(model_names):
     parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
     # necessary inputs
     parser.add_argument('data', metavar='DIR',
@@ -74,4 +74,4 @@ def parse_args(model_names):
     parser.add_argument('--finetune', dest='finetune', action='store_true',
                         help='finetune last layer by using 0.1x lr for previous layers')
 
-    return parser.parse_args()
+    return parser

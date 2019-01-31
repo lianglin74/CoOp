@@ -87,10 +87,18 @@ class UhrsTaskManager():
         num_done, num_total = self._count_task_progress(
             task_group, self._task_log)
         with tqdm(total=num_total) as pbar:
+            last_done = 0
+            last_tic = time.time()
             while not self._is_task_finished(task_group, self._task_log):
                 num_done, _ = self._count_task_progress(
                     task_group, self._task_log)
                 pbar.update(num_done - pbar.n)
+                # terminate if almost done and stuck for too long
+                tic = time.time()
+                if float(num_done) / num_total > 0.95 and num_done==last_done and tic-last_tic>1800:
+                    break
+                last_done = num_done
+                last_tic = tic
                 time.sleep(60)
             num_done, _ = self._count_task_progress(
                     task_group, self._task_log)
@@ -103,8 +111,8 @@ class UhrsTaskManager():
             state = self._get_task_state(task_group, i)[0]
             if state == 1:
                 return False
-            if state == 0 or state == 2:
-                raise Exception("task id {} is not active now".format(i))
+            if state == 0:
+                raise Exception("task id {} is disabled".format(i))
         return True
 
     def _count_task_progress(self, task_group, logfile):
@@ -150,6 +158,8 @@ class UhrsTaskManager():
             return 113795
         elif task_group == "vendor_draw_box":
             return 113972
+        elif task_group == "crowdsource_draw_box":
+            return 86129
         else:
             raise Exception("Unknown task: {}".format(task_group))
 

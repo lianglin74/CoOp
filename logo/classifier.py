@@ -1,24 +1,27 @@
 import base64
 import collections
+import datetime
 import json
 import logging
 import numpy as np
 import os
+import torch
 
 from sklearn.metrics import roc_curve, auc
+import matplotlib
+# use a non-interactive backend to generate images without having a window appear
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 import _init_paths
 from tagging.scripts import extract, pred
+from tagging.utils import accuracy
 from scripts.qd_common import calculate_iou, write_to_yaml_file, load_from_yaml_file, init_logging, worth_create
 from evaluation.eval_utils import DetectionFile
+from evaluation import dataproc
+from logo import constants
 from scripts.tsv_io import TSVDataset, TSVFile, tsv_reader, tsv_writer
 from scripts.yolotrain import yolo_predict
-
-
-BACKGROUND_LABEL = "__background"
-BBOX_POS_PAIR_IDS = "pos_pair_ids"
-BBOX_NEG_PAIR_IDS = "neg_pair_ids"
 
 
 class CropTaggingWrapper(object):
@@ -26,7 +29,8 @@ class CropTaggingWrapper(object):
         self.det_expid = det_expid
         self._rootpath = "/raid/data/brand_output/{}/classifier/{}".format(det_expid, tag_expid)
         self.labelmap = os.path.join(self._rootpath, "labelmap.txt")
-        self.tag_model_path = os.path.join(self._rootpath, "model_best.pth.tar")
+        self.tag_model_path = os.path.join(self._rootpath, "snapshot/model_best.pth.tar")
+        self.log_file = os.path.join(self._rootpath, "eval/prediction_log.txt")
 
         self.num_workers = 24
 
@@ -46,15 +50,25 @@ class CropTaggingWrapper(object):
         outfile = os.path.join(self._rootpath, "{}.{}.tag.predict.tsv".format(dataset_name, split))
         if worth_create(tag_file, outfile):
             parse_tagging_predict(tag_file, outfile)
+        # align the order of imgkeys
+        dataproc.align_detection(dataset_name, split, outfile)
         return outfile
 
-    def predict_on_unknown_class(self, dataset_name, split):
+    def predict_on_unknown_class(self, dataset_name, split, region_source="predict"):
         """
         Predicts on unknown classes by comparing similarity with reference database
         Returns file of imgkey, list of bboxes
         """
         # get region proposal
-        rp_file = self.det_predict(dataset_name, split)
+        if region_source == "predict":
+            rp_file = self.det_predict(dataset_name, split)
+            top_k_acc = None
+        elif region_source == "gt":
+            d = TSVDataset(dataset_name)
+            rp_file = d.get_data(split, t='label', version=-1)
+            top_k_acc = (1,5)
+        else:
+            raise ValueError("Invalid region source: {}".format(region_source))
 
         # get feature for prediction
         data_yaml = self._write_data_yaml(dataset_name, split, "test", rp_file)
@@ -62,14 +76,26 @@ class CropTaggingWrapper(object):
 
         # TODO: configure reference database
         # get feature for gt/canonical
-        data_yaml = self._write_data_yaml("logo40", "train", "test")
+        prototype_dataset = "logo40"
+        prototype_split = "train"
+        data_yaml = self._write_data_yaml(prototype_dataset, prototype_split, "test")
         gt_fea_file = self.extract_feature(data_yaml)
 
-
         # compare similarity
-        outfile = os.path.join(self._rootpath, "{}.{}.fea.predict.tsv".format(dataset_name, split))
+        outfile = os.path.join(self._rootpath,
+                "{}.{}.fea.predict.region.{}.tsv".format(dataset_name, split, region_source))
         if worth_create(fea_file, outfile) or worth_create(gt_fea_file, outfile):
-            compare_similarity(gt_fea_file, fea_file, outfile)
+            acc_str = compare_similarity(gt_fea_file, fea_file, outfile, top_k_acc=top_k_acc)
+            if acc_str:
+                with open(self.log_file, 'a') as fp:
+                    fp.write("\nTime: {}\t Method: {}\n" \
+                            "Test dataset: {}({})\t RegionProposal: {}\t Prototype database: {}({})\n".format(
+                            datetime.datetime.now(), "predict_on_unknown_class",
+                            dataset_name, split, rp_file, prototype_dataset, prototype_split))
+                    fp.write(acc_str)
+                    fp.write('\n')
+        # align the order of imgkeys
+        dataproc.align_detection(dataset_name, split, outfile)
         return outfile
 
     def compare_pairs(self, dataset_name, split):
@@ -81,17 +107,19 @@ class CropTaggingWrapper(object):
         data_yaml = self._write_data_yaml(dataset_name, split, "test", rp_file)
         fea_file = self.extract_feature(data_yaml)
 
-        outfile = os.path.join(self._rootpath, "{}.{}.pair.roc.png".format(dataset_name, split))
+        outfile = os.path.join(os.path.dirname(self.log_file), "{}.{}.pair.roc.png".format(dataset_name, split))
         if worth_create(fea_file, outfile):
             compare_pair_features(fea_file, outfile)
         return outfile
-
 
     def det_predict(self, dataset_name, split):
         pred_file, _ = yolo_predict(full_expid=self.det_expid, test_data=dataset_name, test_split=split)
         return pred_file
 
     def tag_predict(self, datayaml, force_rewrite=False):
+        """ Tagging on given images and regions
+        output: TSV file of image_key, json bbox(rect, obj), tag:conf list separated by ;
+        """
         outpath = "{}.tagging.tsv".format(datayaml.rsplit('.', 1)[0])
         if not force_rewrite and not worth_create(datayaml, outpath):
             logging.info("skip tagging, already exists: {}".format(outpath))
@@ -107,6 +135,9 @@ class CropTaggingWrapper(object):
         return outpath
 
     def extract_feature(self, datayaml, force_rewrite=False):
+        """ Features on given images and regions
+        output: TSV file of image_key, json bbox(rect, obj), b64_string of np.float32 array
+        """
         outpath = "{}.feature.tsv".format(datayaml.rsplit('.', 1)[0])
         if not force_rewrite and not worth_create(datayaml, outpath):
             logging.info("skip extracting feature, already exists: {}".format(outpath))
@@ -121,8 +152,11 @@ class CropTaggingWrapper(object):
 
     def _write_data_yaml(self, dataset_name, split, session, labelfile=None):
         dataset = TSVDataset(dataset_name)
-        data_yaml = os.path.join(self._rootpath,
-                ".".join([dataset_name, split, "dataset.yaml"]))
+        data_yaml_info = [dataset_name, split]
+        if labelfile:
+            data_yaml_info.append("label"+str(hash(labelfile)))
+        data_yaml_info.append("dataset.yaml")
+        data_yaml = os.path.join(self._rootpath, ".".join(data_yaml_info))
         if os.path.isfile(data_yaml):
             data_config = load_from_yaml_file(data_yaml)
         else:
@@ -154,26 +188,48 @@ class CropTaggingWrapper(object):
         return True
 
 
-def compare_similarity(gt_fea_file, pred_fea_file, outfile, nms_type="cls_dep"):
+def compare_similarity(gt_fea_file, pred_fea_file, outfile, nms_type="cls_dep", top_k_acc=None):
     """
     Compares feature similarity (cosine distance)
+    gt_fea is the feature of canonical images, pred_fea is the feature of real images
     gt_fea_file, pred_fea_file cols: imgkey, bbox, b64_feature_string
     outfile cols: imgkey (from pred_fea_file), list of bboxes
+    top_k_acc: tuple of integers, calculate precision@k for the feature matching results
+            against original labels in pred_fea_file
     """
     gt_feas = []
+    class_indices = {}
+    all_classes = []
     for cols in tsv_reader(gt_fea_file):
         bbox = json.loads(cols[1])
         fea = from_b64_to_fea(cols[2])
-        gt_feas.append((bbox["class"], fea))
+        c = bbox["class"]
+        if c not in class_indices:
+            class_indices[c] = len(all_classes)
+            all_classes.append(c)
+        gt_feas.append((class_indices[c], fea))
 
     pred_dict = collections.defaultdict(list)  # imgkey: list of bbox
+    num_classes = len(class_indices)
+    all_target = []  # batch_size * 1 (single label)
+    all_pred = []  # batch_size * num_classes
     for cols in tsv_reader(pred_fea_file):
         bbox = json.loads(cols[1])
         cur_fea = from_b64_to_fea(cols[2])
         all_sim = np.array([cosine_similarity(cur_fea, f[1]) for f in gt_feas])
+
+        if top_k_acc and bbox["class"] in class_indices:
+            all_target.append([class_indices[bbox["class"]]])
+            cur_pred = [0] * num_classes
+            for i, score in enumerate(all_sim):
+                c_idx = gt_feas[i][0]
+                cur_pred[c_idx] = max(score, cur_pred[c_idx])
+            all_pred.append(cur_pred)
+        # get the nearest neighbor
         max_idx = np.argmax(all_sim)
-        bbox["class"] = gt_feas[max_idx][0]
-        bbox["conf"] = bbox["obj"] * all_sim[max_idx]
+        bbox["class"] = all_classes[gt_feas[max_idx][0]]
+        obj_score = bbox["obj"] if "obj" in bbox else 1.0
+        bbox["conf"] = obj_score * all_sim[max_idx]
         pred_dict[cols[0]].append(bbox)
 
     if nms_type:
@@ -181,6 +237,13 @@ def compare_similarity(gt_fea_file, pred_fea_file, outfile, nms_type="cls_dep"):
             pred_dict[key] = nms_wrapper(pred_dict[key], nms_type=nms_type)
 
     tsv_writer([[k, json.dumps(pred_dict[k])] for k in pred_dict], outfile)
+
+    if top_k_acc:
+        acc = accuracy.SingleLabelAccuracy(top_k_acc)
+        acc.calc(torch.from_numpy(np.array(all_pred)), torch.tensor(all_target))
+        return acc.result_str()
+    else:
+        return ""
 
 
 def parse_tagging_predict(infile, outfile, nms_type="cls_dep", bg_skip=1):
@@ -203,7 +266,7 @@ def parse_tagging_predict(infile, outfile, nms_type="cls_dep", bg_skip=1):
         for i, (label, conf) in enumerate(label_conf_pair):
             if i >= bg_skip:
                 break
-            if label == BACKGROUND_LABEL:
+            if label == constants.BACKGROUND_LABEL:
                 is_bg = True
                 break
         if is_bg:
@@ -229,8 +292,8 @@ def compare_pair_features(fea_file, outfile):
         cols = fea_tsv.seek(i)
         bbox = json.loads(cols[1])
         # positive pairs
-        if BBOX_POS_PAIR_IDS in bbox:
-            for pid in bbox[BBOX_POS_PAIR_IDS]:
+        if constants.BBOX_POS_PAIR_IDS in bbox:
+            for pid in bbox[constants.BBOX_POS_PAIR_IDS]:
                 if pid in pos_pair_lineidx_dict:
                     assert(len(pos_pair_lineidx_dict[pid]) == 1)
                     pos_pair_lineidx_dict[pid].append(i)
@@ -238,8 +301,8 @@ def compare_pair_features(fea_file, outfile):
                     pos_pair_lineidx_dict[pid] = [i]
 
         # negative pairs
-        if BBOX_NEG_PAIR_IDS in bbox:
-            for pid in bbox[BBOX_NEG_PAIR_IDS]:
+        if constants.BBOX_NEG_PAIR_IDS in bbox:
+            for pid in bbox[constants.BBOX_NEG_PAIR_IDS]:
                 if pid in neg_pair_lineidx_dict:
                     assert(len(neg_pair_lineidx_dict[pid]) == 1)
                     neg_pair_lineidx_dict[pid].append(i)
@@ -354,16 +417,16 @@ def nms(dets, thresh):
     return keep
 
 
-def prepare_training_data(det_expid, gt_dataset_name, outdir, split="train"):
+def prepare_training_data(det_expid, gt_dataset_name, outdir, gt_split="train"):
     # generate region proposal
-    detpred_file, _ = yolo_predict(full_expid=det_expid, test_data=gt_dataset_name, test_split=split)
+    detpred_file, _ = yolo_predict(full_expid=det_expid, test_data=gt_dataset_name, test_split=gt_split)
 
     # merge region proposal and ground truth
     pos_iou = 0.5
     neg_iou = 0.05
-    outfile = os.path.join(outdir, "region_proposal/{}.{}.gt_rp.{}_{}.tsv".format(dataset_name, split, pos_iou, neg_iou))
-    dataset = TSVDataset(dataset_name)
-    merge_gt_rp(dataset.get_data(split, t='label'), detpred_file, outfile, pos_iou, neg_iou)
+    outfile = os.path.join(outdir, "region_proposal/{}.{}.gt_rp.{}_{}.tsv".format(gt_dataset_name, gt_split, pos_iou, neg_iou))
+    dataset = TSVDataset(gt_dataset_name)
+    merge_gt_rp(dataset.get_data(gt_split, t='label'), detpred_file, outfile, pos_iou, neg_iou)
 
 
 def merge_gt_rp(gt_file, rp_file, outfile, pos_iou=0.5, neg_iou=0.05):
@@ -391,7 +454,7 @@ def merge_gt_rp(gt_file, rp_file, outfile, pos_iou=0.5, neg_iou=0.05):
                 count_class[b["class"]] += 1
             elif overlaps[bbox_idx_max] < neg_iou:
                 # background candidate
-                b["class"] = BACKGROUND_LABEL
+                b["class"] = constants.BACKGROUND_LABEL
                 bg_cands.append((imgkey, b))
 
         for b in gt_bboxes:

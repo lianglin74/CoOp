@@ -1,5 +1,5 @@
 import torch
-from utils.averagemeter import AverageMeter
+from ..utils.averagemeter import AverageMeter
 
 
 class Accuracy(object):

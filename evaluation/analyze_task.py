@@ -14,24 +14,39 @@ def analyze_draw_box_task(result_files, result_file_type, outfile_res):
     # load results
     df_records = load_task_results(result_files, result_file_type)
     url2ans_map = collections.defaultdict(list)
-    url2task_map = dict()
     for _, row in df_records.iterrows():
-        input_task = load_escaped_json(row['Input.input_content'])
-        answer = [parse_bbox(b) for b in json.loads(row['Answer.output'])]
+        try:
+            input_task = load_escaped_json(row['Input.input_content'])
+        except Exception:
+            continue
+        # skip honey pot
+        if "expected_output" in input_task:
+            continue
+        answer = []
+        for b in json.loads(row['Answer.output']):
+            b = parse_bbox(b)
+            if b:
+                answer.append(b)
         for b in answer:
             b["class"] = input_task["objects_to_find"]
         img_url = input_task["image_url"]
-        # TODO: currently only one judge will draw box for one image
-        assert img_url not in url2ans_map
         url2ans_map[img_url].extend(answer)
-        url2task_map[img_url] = input_task
 
-    res = []  # image_info, list of bboxes, url
+    res = []  # url, list of bboxes
+    num_empty = 0
+    num_bboxes = 0
+    num_imgs = len(url2ans_map)
     for url in url2ans_map:
-        # TODO: merge bbox list
+        # TODO: merge answers from several workers to get confidence scores
         bbox_list = url2ans_map[url]
-        res.append([url2task_map[url]["image_key"], json.dumps(bbox_list), url])
+        num_bboxes += len(bbox_list)
+        if len(bbox_list) == 0:
+            num_empty += 1
+        res.append([url, json.dumps(bbox_list)])
+    logging.info("#images: {}, #empty images: {} ({}%), #bboxes per img: {}"
+                 .format(num_imgs, num_empty, float(num_empty)/num_imgs*100, float(num_bboxes)/(num_imgs-num_empty)))
     write_to_file(res, outfile_res)
+    return url2ans_map
 
 
 def analyze_verify_box_task(result_files, result_file_type, outfile_res,
@@ -165,13 +180,15 @@ def parse_bbox(bbox):
     """ Parses bbox format from uhrs
     """
     left = bbox["left"]
-    assert left>=0 and left<bbox["image_width"]
+    left = np.clip(left, 0, bbox["image_width"])
     right = bbox["left"] + bbox["width"]
-    assert right>left and right<=bbox["image_width"]
+    right = np.clip(right, left, bbox["image_width"])
     top = bbox["top"]
-    assert top>=0 and top<bbox["image_height"]
+    top = np.clip(top, 0, bbox["image_height"])
     bottom = bbox["top"] + bbox["height"]
-    assert bottom>top and bottom<=bbox["image_height"]
+    bottom = np.clip(bottom, top, bbox["image_height"])
+    if right - left <= 0 or bottom - top <= 0:
+        return None
     return {"rect": [left, top, right, bottom], "class": bbox["label"]}
 
 

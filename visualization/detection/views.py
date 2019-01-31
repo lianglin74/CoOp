@@ -828,13 +828,10 @@ def view_image_js2(request, data, split, version, label, start_id):
         
         filename, file_extension = os.path.splitext(fname)
         
-        if file_extension.lower() == '.jpg' or file_extension.lower() == '.png':
-            formatstring = '{}/{}/{}/{}'
-        else:
-            formatstring = '{}/{}/{}/{}.png'
-
-        origin_html_path = save_image_in_static(origin, formatstring.format(data, split, version, hash_sha1(fname)+".jpg"))
-
+        from qd_common import hash_sha1
+        origin_html_path = save_image_in_static(origin, '{}/{}/{}/origin_{}.jpg'.format(data, split,
+                                                                                        version,
+                                                                                        hash_sha1(fname)))
         all_key.append(fname)
         all_url.append('/static/' + origin_html_path)
         all_type_to_rects.append({'gt': gt})

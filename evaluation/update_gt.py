@@ -24,7 +24,7 @@ parser.add_argument('--config', default='./groundtruth/config.yaml', type=str,
                     default is ./prediction/config.yaml''')
 
 # UHRS task setting
-parser.add_argument('--num_judges', default=5, type=int,
+parser.add_argument('--num_judges', default=4, type=int,
                     help='''number of judges required for each question''')
 parser.add_argument('--taskdir', default='./tasks/', type=str,
                     help='''path to working directory, used for uploading,
@@ -62,7 +62,7 @@ def update_gt(args):
     MERGE_IOU = 0.8   # IoU threshold to merge into existing ground truth
 
     # TODO: configure task group basing on task type and judge resource (crowdsource, vendor, internal)
-    task_group = "vendor_verify_box"
+    task_group = "crowdsource_verify_box"
     source = args.source
     hp_file = args.honeypot
     task_type = args.task

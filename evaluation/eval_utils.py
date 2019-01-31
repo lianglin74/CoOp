@@ -3,9 +3,11 @@ import copy
 import json
 import logging
 import os
+import six
 from shutil import copyfile
 import yaml
 
+from scripts import tsv_io
 from scripts.tsv_io import TSVDataset
 from scripts.process_tsv import get_img_url2
 from scripts.qd_common import write_to_yaml_file
@@ -15,10 +17,12 @@ from evaluation.utils import search_bbox_in_list, is_valid_bbox, get_max_iou_idx
 
 class DetectionFile(object):
     def __init__(self, predict_file, key_col_idx=0, bbox_col_idx=1, conf_threshold=0,
-                 threshold=None, display=None, obj_threshold=0, blacklist=None, **kwargs):
+                 threshold=None, display=None, obj_threshold=0, blacklist=None,
+                 sort_by_conf=False, **kwargs):
         self.tsv_file = predict_file
         self.key_col_idx = key_col_idx
         self.bbox_col_idx = bbox_col_idx
+        self.sort_by_conf = sort_by_conf
 
         self._fp = None
         self._keyidx = None
@@ -52,10 +56,13 @@ class DetectionFile(object):
         self._fp.seek(self._keyidx[key])
         cols = self._fp.readline().strip().split('\t')
         bboxes = json.loads(cols[self.bbox_col_idx])
-        return _thresholding_detection(
+        bboxes = _thresholding_detection(
                     bboxes, thres_dict=self._threshold_dict, display_dict=self._display_dict,
                     obj_threshold=self._obj_threshold, conf_threshold=self._conf_threshold,
                     blacklist=self._blacklist)
+        if self.sort_by_conf:
+            bboxes = sorted(bboxes, key=lambda b: b["conf"], reverse=True)
+        return bboxes
 
     def _ensure_keyidx_loaded(self):
         self._ensure_tsv_opened()
@@ -354,7 +361,7 @@ def process_prediction_to_verify(gt_config_file, dataset_name, pred_name, pred_t
     # load existing ground truth labels
     gt_cfg = GroundTruthConfig(gt_config_file)
     if dataset_name not in gt_cfg.datasets():
-        raise Exception("unknow dataset: {}".format(dataset))
+        raise Exception("unknow dataset: {}".format(dataset_name))
 
     num_bbox_to_submit = 0
     num_bbox_pos = 0
@@ -383,6 +390,9 @@ def process_prediction_to_verify(gt_config_file, dataset_name, pred_name, pred_t
         # get result bboxes
         bboxes = []
         for b in pred_tsv[imgkey]:
+            # NOTE: hard coded to avoid including too many parent node prediction
+            if not tag_only and b["class"] == "logo":
+                continue
             if include_classes and b["class"].lower() not in include_classes:
                 continue
             if not tag_only and not is_valid_bbox(b):
@@ -401,7 +411,7 @@ def process_prediction_to_verify(gt_config_file, dataset_name, pred_name, pred_t
             gt_bboxes = [b for b in json.loads(coded_rects) if "rect" in b]
         # if prediction is in ground truth, it is verified as correct
         idx_map = get_bbox_matching_map(bboxes, gt_bboxes, pos_iou_threshold)
-        verified.update([idx for idx in range(len(bboxes)) if idx_map[idx]])
+        verified.update(idx_map.keys())
         num_pos_cur = len(verified)
         num_bbox_pos += num_pos_cur
 
@@ -439,34 +449,66 @@ def process_prediction_to_verify(gt_config_file, dataset_name, pred_name, pred_t
 def merge_gt(dataset_name, gt_config_file, res_files, bbox_matching_iou):
     '''
     Processes human evaluation results to add into existing ground truth labels
+    res_file: aggregated results from UHRS. The first column is 1/2/3, which
+        stands for Yes/No/Can'tJudge. The second column is a list of dict, each
+        dict has "image_url", "bboxes".
     '''
-    # load old ground truth labels
+    # load old ground truth dataset
     gt_cfg = GroundTruthConfig(gt_config_file)
     gt_dataset, gt_split = gt_cfg.gt_dataset(dataset_name)
+
+    def gen_labels():
+        for res_file in res_files:
+            for parts in read_from_file(res_file, check_num_cols=2):
+                assert(int(parts[0]) in [1, 2, 3])
+                # consensus yes
+                if int(parts[0]) == 1:
+                    for task in json.loads(parts[1]):
+                        yield task["image_url"], task["bboxes"]
+
+    add_label_to_dataset(gt_dataset, gt_split, bbox_matching_iou, gen_labels(),
+            label_key_type="url",
+            info_list=[("add labels from", ', '.join(res_files))])
+
+
+def add_label_to_dataset(dataset, split, iou_threshold, labels,
+                         label_key_type="url", info_list=None):
+    """
+    Adds the bbox labels to existing dataset. New labels of IoU>threshold with
+    other labels will not be added
+    Args:
+        dataset: TSVDataset
+        labels: iterable of labels. Each label contains tuple of str (imgkey/url, list of bboxes)
+        label_key_type: choose from url or key
+    """
+    assert(label_key_type=="url" or label_key_type=="key")
     existing_res = {}
     url_key_map = {}
-    for key, coded_rects in gt_dataset.iter_data(gt_split, 'label', version=-1):
+    for key, coded_rects in dataset.iter_data(split, 'label', version=-1):
         existing_res[key] = json.loads(coded_rects)
         url_key_map[get_img_url2(key)] = key
 
     num_added = 0
-    for res_file in res_files:
-        for parts in read_from_file(res_file, check_num_cols=2):
-            assert(int(parts[0]) in [1, 2, 3])
-            # consensus yes
-            if int(parts[0]) == 1:
-                for task in json.loads(parts[1]):
-                    imgkey = url_key_map[task["image_url"]]
-                    for new_bbox in task["bboxes"]:
-                        if search_bbox_in_list(new_bbox, existing_res[imgkey], bbox_matching_iou)<0:
-                            existing_res[imgkey].append(new_bbox)
-                            num_added += 1
+    for parts in labels:
+        imgkey = parts[0]
+        if label_key_type == "url":
+            imgkey = url_key_map[imgkey]
+        bboxes = parts[1]
+        if isinstance(bboxes, six.string_types):
+            bboxes = json.loads(bboxes)
+        for new_bbox in bboxes:
+            if search_bbox_in_list(new_bbox, existing_res[imgkey], iou_threshold)<0:
+                existing_res[imgkey].append(new_bbox)
+                num_added += 1
+
     if num_added > 0:
         def gen_rows():
-            for key, _ in gt_dataset.iter_data(gt_split, 'label', version=-1):
+            for key, _ in dataset.iter_data(split, 'label', version=-1):
                 yield key, json.dumps(existing_res[key], separators=(',', ':'))
-        info = [("add from", str(res_files)), ("num_added", str(num_added))]
-        gt_dataset.update_data(gen_rows(), gt_split, "label", generate_info=info)
+        info = [("num_added", str(num_added))]
+        if info_list and len(info_list) > 0:
+            info.extend(info_list)
+        dataset.update_data(gen_rows(), split, "label", generate_info=info)
     else:
         logging.info("no new add")
 

@@ -637,6 +637,11 @@ def tsvdet_iter(caffenet, caffemodel, in_rows, key_idx,img_idx, pixel_mean,
     cmap = [load_labelmap_list(c) for c in cmapfile]
     count = 0
     debug = kwargs.get('debug_detect', False)
+    
+    from qd_common import gen_uuid
+    import tempfile
+    # save the key, used for re-ranking to keep the order
+    key_file = op.join(tempfile.gettempdir(), gen_uuid() + '.tsv')
 
     if debug:
         #gpus = [-1]
@@ -651,24 +656,26 @@ def tsvdet_iter(caffenet, caffemodel, in_rows, key_idx,img_idx, pixel_mean,
         out_queue = mp.Queue(10 * len(gpus));
     num_worker = len(gpus)
 
-    def reader_process(in_rows, in_queue, num_worker, img_idx):
+    def reader_process(in_rows, in_queue, num_worker, img_idx, key_file):
         last_print_time = 0
         count = 0
         from tqdm import tqdm
-        for cols in tqdm(in_rows):
-            if len(cols) > img_idx:
-                if in_queue.full():
-                    if time.time() - last_print_time > 10:
-                        logging.info(outtsv_file)
-                        logging.info('reader is waiting for the process. {}'.format(count))
-                        last_print_time = time.time()
-                count = count + 1
-                in_queue.put(cols)
+        with open(key_file, 'wb') as key_fp:
+            for cols in tqdm(in_rows):
+                key_fp.write(cols[0] + '\n')
+                if len(cols) > img_idx:
+                    if in_queue.full():
+                        if time.time() - last_print_time > 10:
+                            logging.info(outtsv_file)
+                            logging.info('reader is waiting for the process. {}'.format(count))
+                            last_print_time = time.time()
+                    count = count + 1
+                    in_queue.put(cols)
         for _ in range(num_worker):
             in_queue.put(None)  # kill all workers
         logging.info('finished reader')
     reader = mp.Process(target=reader_process, args=(in_rows, in_queue,
-        num_worker, img_idx))
+        num_worker, img_idx, key_file))
     reader.daemon = True
     reader.start()
 
@@ -730,6 +737,14 @@ def tsvdet_iter(caffenet, caffemodel, in_rows, key_idx,img_idx, pixel_mean,
     logging.info('writer finished')
 
     #caffe.print_perf(count)
+    # reorder the prediction results
+    from tsv_io import reorder_tsv_keys
+    from qd_common import load_list_file
+    logging.info('loading {} to get the ordered keys'.format(key_file))
+    ordered_keys = load_list_file(key_file)
+    logging.info('re-ordering the detection result by keys')
+    reorder_tsv_keys(outtsv_file, ordered_keys, outtsv_file)
+    os.remove(key_file)
 
     return count
 
