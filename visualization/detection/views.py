@@ -53,7 +53,7 @@ from .models import *
 import django.core.files
 import logging
 import uuid
-from qd_common import load_class_ap
+from qd_common import load_class_ap, worth_create
 from process_tsv import visualize_predict
 from process_tsv import visualize_predict_no_draw
 from process_tsv import get_class_count
@@ -65,6 +65,12 @@ import copy
 
 init_logging()
 
+def hash_sha1(s):
+    import hashlib
+    if type(s) is not str:
+        from pprint import pformat
+        s = pformat(s)
+    return hashlib.sha1(s.encode('utf-8')).hexdigest()
 
 def run_in_qd(func, *args, **kwargs):
     curr_dir = os.curdir
@@ -521,7 +527,7 @@ def view_image_compare2(request, data, split, version, label, start_id, min_conf
             break
 
         origin_html_path = save_image_in_static(
-            origin, '{}/{}/{}/origin_{}.jpg'.format(data, split, version, fname))
+            origin, '{}/{}/{}/{}.jpg'.format(data, split, version, fname))
 
         all_key.append(fname)
         all_url.append('/static/' + origin_html_path)
@@ -683,7 +689,7 @@ def view_image_compare(request, data, split, version, label, start_id, min_conf_
             break
 
         origin_html_path = save_image_in_static(
-            origin, '{}/{}/{}/origin_{}.jpg'.format(data, split, version, fname))
+            origin, '{}/{}/{}/{}.jpg'.format(data, split, version, fname))
 
         all_key.append(fname)
         all_url.append('/static/' + origin_html_path)
@@ -724,6 +730,7 @@ def view_image_compare(request, data, split, version, label, start_id, min_conf_
                             if item['conf'] >= min_conf_left:
                                 gt1.append(item)
 
+       
         all_type_to_rects.append({'gt': gt1})
 
     os.chdir(curr_dir)
@@ -818,9 +825,16 @@ def view_image_js2(request, data, split, version, label, start_id):
     for i, (fname, origin, gt) in enumerate(images):
         if i >= max_image_shown:
             break
-        origin_html_path = save_image_in_static(origin, '{}/{}/{}/origin_{}.jpg'.format(data, split,
-                                                                                        version,
-                                                                                        fname))
+        
+        filename, file_extension = os.path.splitext(fname)
+        
+        if file_extension.lower() == '.jpg' or file_extension.lower() == '.png':
+            formatstring = '{}/{}/{}/{}'
+        else:
+            formatstring = '{}/{}/{}/{}.png'
+
+        origin_html_path = save_image_in_static(origin, formatstring.format(data, split, version, hash_sha1(fname)+".jpg"))
+
         all_key.append(fname)
         all_url.append('/static/' + origin_html_path)
         all_type_to_rects.append({'gt': gt})
@@ -1086,18 +1100,24 @@ def view_compare(request):
         dataPath = "./data/" + data
         os.chdir(get_qd_root())
 
-        print "dataPath:", dataPath
+        # print "dataPath:", dataPath
+
+        leftFile, rightFile, data_source_name, leftLabel, rightLabel, leftThreshold, leftDisplay = parse_compare_data(data)
+
+        leftFile = "./data/compare/" + leftFile
+        rightFile = "./data/compare/" + rightFile
+        imageFile = "./data/" + data_source_name +  "/" + split + ".tsv"
+
+        print leftFile
+        print rightFile
+        print imageFile
+
+        if os.path.isfile(dataPath +"/test.tsv"):
+            if worth_create(leftFile, dataPath +"/test.tsv") or worth_create(rightFile, dataPath +"/test.tsv"):
+                shutil.rmtree( dataPath )
 
         if not op.isdir(dataPath):
             os.mkdir(dataPath, 0755)
- 
-            leftFile, rightFile, data_source_name, leftLabel, rightLabel, leftThreshold, leftDisplay = parse_compare_data(data)
-
-            leftFile = "./data/compare/" + leftFile
-            rightFile = "./data/compare/" + rightFile
-            imageFile = "./data/" + data_source_name +  "/" + split + ".tsv" 
-
-            print leftFile, rightFile, imageFile
 
             if leftThreshold != None:
                 leftThreshold = "./data/compare/" + leftThreshold
@@ -1118,7 +1138,6 @@ def view_compare(request):
                 leftDisplay)
 
             black_list_filename = "./data/compare/blacklist.txt"
-
             if op.isfile(black_list_filename):
                 shutil.copy2(black_list_filename, "./data/"+data)
 

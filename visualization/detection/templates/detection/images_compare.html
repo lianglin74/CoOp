@@ -307,6 +307,7 @@
             let label_table = document.getElementById("type_table");
 
             let row = label_table.insertRow(-1)
+            
             for (let i = 0; i < type_list.length; i++) {
 
                 let label_checkbox = document.createElement('input');
@@ -329,6 +330,9 @@
             let label_table = document.getElementById("label_table");
 
             let row = label_table.insertRow(-1)
+            
+            label_list.sort(function (a, b) {return a.toLowerCase().localeCompare(b.toLowerCase()) })
+
             for (let i = 0; i < label_list.length; i++) {
 
                 let label_checkbox = document.createElement('input');
