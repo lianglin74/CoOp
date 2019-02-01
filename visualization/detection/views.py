@@ -964,74 +964,60 @@ def findVersion(longversion):
 
     return longversion[pos0+1:pos1]
 
-
-def get_compare_data_info(name=None):
-    if name is None:
-        predictConfig = './data/compare/config.yaml'
-        configs = load_from_yaml_file(predictConfig)
-        
-        # dataset_name_01 = 'Instagram'
-        # dataset_name_02 = 'MIT1K'
-
-        dataset_name_01 = 'OpenImageV4FurnitureTest'
-        dataset_name_02 = 'SeeingAIFurnitureTest'
-
-        configs_01 = configs[dataset_name_01]
-        configs_01_bl = configs_01['baselines']
-
-        configs_02 = configs[dataset_name_02]
-        configs_02_bl = configs_02['baselines']
-        
-        # files = [f for f in os.listdir(dbPath) if op.isfile(op.join(dbPath, f))]
-        results = []
-
-        for bl1 in configs_02_bl:
-            # if (bl1['name'].find("google"))>=0 or (bl1['name'].find("amazon"))>=0:
-            for bl2 in configs_02_bl:
-                if bl1['name'].find(bl2['name'])<0:
-                    if (bl2['name'].find("google"))<0 and (bl2['name'].find("amazon"))<0:
-                        if "conf_threshold" in bl2:
-                            min_conf = bl2["conf_threshold"]
-                        else:
-                            min_conf = 0
-                        compare_name = dataset_name_02 + "_" + bl2['name'] + "_vs_" + bl1['name']
-                        results.append({"name": compare_name, "min_conf": min_conf })
-
-        for bl1 in configs_01_bl:
-            # if (bl1['name'].find("google"))>=0 or (bl1['name'].find("amazon"))>=0:
-            for bl2 in configs_01_bl:
-                if bl1['name'].find(bl2['name']) < 0:
-                    if (bl2['name'].find("google"))<0 and (bl2['name'].find("amazon"))<0:
-                        if "conf_threshold" in bl2:
-                            min_conf = bl2["conf_threshold"]
-                        else:
-                            min_conf = 0
-                        compare_name = dataset_name_01 + "_"+bl2['name'] + "_vs_" + bl1['name']
-                        results.append({"name": compare_name, "min_conf": min_conf })
-        return results
+def get_compare_all_info(config_path=None):
+    if config_path is None:
+        cmp_config = './data/compare_config.yaml'
     else:
-        dataset = TSVDataset(name)
-        if not op.isfile(dataset.get_labelmap_file()):
-            return []
-        global_labelmap = None
-        labels = dataset.load_labelmap()
-        valid_split_versions = []
-        splits = ['train', 'trainval', 'test']
-        for split in splits:
-            v = 0
-            while True:
-                if not dataset.has(split, 'label', v):
-                    break
-                labelmap = []
-                label_count_rows = dataset.iter_data(split, 'inverted.label.count', v)
-                label_count = [(r[0], int(r[1])) for r in label_count_rows]
-                label_count = sorted(label_count, key=lambda x: x[1])
-                valid_split_versions.append((split, v, [(i, l, c) for i, (l, c) in
-                    enumerate(label_count)]))
-                v = v + 1
-        name_splits_labels = [(name, valid_split_versions)]
-        return name_splits_labels
+        cmp_config = config_path
+    
+    configs = load_from_yaml_file(cmp_config)
+    cmp_tasks = "compare"
+    tasks = configs[cmp_tasks]
 
+    # print "tasks", tasks
+    results = []
+    for cmp_task in tasks:
+        # print cmp_task
+        config_name = cmp_task["datapath"]
+        task_config =  op.join(config_name, "config.yaml")
+        if op.isfile(task_config):
+            db_list = cmp_task["dataset"]
+            # print db_list
+            results.extend(get_compare_data_info(config_name, db_list))
+    # print results
+    return results
+
+def get_compare_data_info(config_path=None, dblist=None):
+    if config_path is None:
+        predictConfig = './data/compare/config.yaml'
+    else:
+        predictConfig = op.join(config_path, "config.yaml")
+
+    configs = load_from_yaml_file(predictConfig)
+    results = []
+
+    if dblist:
+    # dataset_name_01 = 'Instagram'
+    # dataset_name_02 = 'MIT1K'
+
+        for db in dblist:
+            
+            configs_dict = configs[db]
+            configs_bl = configs_dict['baselines']
+            
+            for bl1 in configs_bl:
+            # if (bl1['name'].find("google"))>=0 or (bl1['name'].find("amazon"))>=0:
+                for bl2 in configs_bl:
+                    if bl1['name'].find(bl2['name'])<0:
+                        if (bl2['name'].find("google"))<0 and (bl2['name'].find("amazon"))<0:
+                            if "conf_threshold" in bl2:
+                                min_conf = bl2["conf_threshold"]
+                            else:
+                                min_conf = 0
+                            compare_name = db + "_" + bl2['name'] + "_vs_" + bl1['name']
+                            # print compare_name
+                            results.append({"name": compare_name, "min_conf": min_conf })
+    return results
 
 def parse_compare_data(data_source_name):
     
@@ -1063,6 +1049,17 @@ def parse_compare_data(data_source_name):
             rightFile = bl['result']
   
     return leftFile, rightFile, dataSource, leftLabel, rightLabel, thresholdFile, displayFile
+
+def view_compare_all(request):
+
+    if request.GET.get('data', '') == '':
+        curr_dir = os.curdir
+        os.chdir(get_qd_root())
+        results = get_compare_all_info()
+        os.chdir(curr_dir)
+        context = {'results': results}
+        return render(request, 'detection/compare_list_result.html', context)
+    return
 
 def view_compare(request):
     import shutil

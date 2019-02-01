@@ -224,9 +224,8 @@ This repo is for the algorithm development for IRIS object detection. The curren
       model under output/
    5. Go to http://ip:8000/detection/view_tree/ to view the tree structure data
 2. Visualize comparsion between two models prediction results/
-   1. link  predict result to ./data/compare
-        eg: ln /mnt/ivm-server2_od/eval/prediction ./data/compare
-   2. Go to http://$server_name:8000/detection/view_compare
+   1. edit comparison config at ./data/compare_config.yaml
+   2. Go to http://$server_name:8000/detection/view_compare_all/
 
 ## Deploy
 1. Convert the model trained with -full_gpu to the model without -full_gpu
