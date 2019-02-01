@@ -986,8 +986,9 @@ def get_compare_data_info(name=None):
         results = []
 
         for bl1 in configs_02_bl:
-            if (bl1['name'].find("google"))>=0 or (bl1['name'].find("amazon"))>=0:
-                for bl2 in configs_02_bl:
+            # if (bl1['name'].find("google"))>=0 or (bl1['name'].find("amazon"))>=0:
+            for bl2 in configs_02_bl:
+                if bl1['name'].find(bl2['name'])<0:
                     if (bl2['name'].find("google"))<0 and (bl2['name'].find("amazon"))<0:
                         if "conf_threshold" in bl2:
                             min_conf = bl2["conf_threshold"]
@@ -997,8 +998,9 @@ def get_compare_data_info(name=None):
                         results.append({"name": compare_name, "min_conf": min_conf })
 
         for bl1 in configs_01_bl:
-            if (bl1['name'].find("google"))>=0 or (bl1['name'].find("amazon"))>=0:
-                for bl2 in configs_01_bl:
+            # if (bl1['name'].find("google"))>=0 or (bl1['name'].find("amazon"))>=0:
+            for bl2 in configs_01_bl:
+                if bl1['name'].find(bl2['name']) < 0:
                     if (bl2['name'].find("google"))<0 and (bl2['name'].find("amazon"))<0:
                         if "conf_threshold" in bl2:
                             min_conf = bl2["conf_threshold"]
