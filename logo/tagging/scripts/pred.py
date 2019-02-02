@@ -9,6 +9,7 @@ import torch.nn as nn
 import torch.nn.parallel
 import torch.backends.cudnn as cudnn
 import torch.distributed as dist
+import torch.nn.functional as F
 import torch.optim
 import torch.utils.data
 import torch.utils.data.distributed
@@ -108,9 +109,10 @@ def main(args):
             end = time.time()
 
             _, pred_topk = output.topk(args.topk, dim=1, largest=True)
+            prob = F.softmax(output, dim=1)
 
             for n in range(num_samples):
-                pred = [(labelmap[k], output[n, k].item()) for k in pred_topk[n,:args.topk]]
+                pred = [(labelmap[k], prob[n, k].item()) for k in pred_topk[n,:args.topk]]
                 result = ';'.join(['{0}:{1:.5f}'.format(p[0], p[1]) for p in pred])
                 fout.write('{0}\t{1}\n'.format('\t'.join([str(_) for _ in cols[n]]), result))
 

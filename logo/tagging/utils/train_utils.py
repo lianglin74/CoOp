@@ -139,18 +139,21 @@ def train(args, train_loader, model, criterion, optimizer, epoch, logger, accura
         # compute output
         all_outputs = model(input)
         output, feature = all_outputs[0], all_outputs[1]
-        # NOTE: use detach() to not calculate grad w.r.t. weight in ccs_loss
-        weight = model.module.fc.weight
-        ccs_loss = ccs_loss_layer(feature, weight, target)
         orig_loss = criterion(output, target)
+        if ccs_loss_param > 0:
+            # NOTE: use detach() to not calculate grad w.r.t. weight in ccs_loss
+            weight = model.module.fc.weight
+            ccs_loss = ccs_loss_layer(feature, weight, target)
+            orig_losses.update(orig_loss.item(), input.size(0))
+            ccs_losses.update(ccs_loss.item(), input.size(0))
 
-        loss = orig_loss + ccs_loss_param*ccs_loss
+            loss = orig_loss + ccs_loss_param*ccs_loss
+        else:
+            loss = orig_loss
 
         # measure accuracy and record loss
         accuracy.calc(output, target)
         losses.update(loss.item(), input.size(0))
-        orig_losses.update(orig_loss.item(), input.size(0))
-        ccs_losses.update(ccs_loss.item(), input.size(0))
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
@@ -167,11 +170,14 @@ def train(args, train_loader, model, criterion, optimizer, epoch, logger, accura
                         'Speed: {speed:.2f} samples/sec\t' \
                         'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t' \
                         'Data {data_time.val:.3f} ({data_time.avg:.3f})\t' \
-                        'Loss {loss.val:.4f} ({loss.avg:.4f})\t' \
-                        'Original Loss {orig_loss.val:.4f} ({orig_loss.avg:.4f})\t' \
-                        'CCS Loss {ccs_loss.val:.4f} ({ccs_loss.avg:.4f})\t'.format(
+                        'Loss {loss.val:.4f} ({loss.avg:.4f})\t'.format(
                         epoch, i, len(train_loader), speed=speed, batch_time=batch_time,
-                        data_time=data_time, loss=losses, orig_loss=orig_losses, ccs_loss=ccs_losses)
+                        data_time=data_time, loss=losses)
+            if ccs_loss_param > 0:
+                loss_str = 'Original Loss {orig_loss.val:.4f} ({orig_loss.avg:.4f})\t' \
+                           'CCS Loss {ccs_loss.val:.4f} ({ccs_loss.avg:.4f})\t'.format(
+                            orig_loss=orig_losses, ccs_loss=ccs_losses)
+                info_str += loss_str
             info_str += accuracy.result_str()
             logger.info(info_str)
             tic = time.time()

@@ -16,21 +16,26 @@ import matplotlib.pyplot as plt
 import _init_paths
 from tagging.scripts import extract, pred
 from tagging.utils import accuracy
-from scripts.qd_common import calculate_iou, write_to_yaml_file, load_from_yaml_file, init_logging, worth_create
+from scripts.qd_common import calculate_iou, write_to_yaml_file, load_from_yaml_file, init_logging, worth_create, ensure_directory
 from evaluation.eval_utils import DetectionFile
 from evaluation import dataproc
 from logo import constants
 from scripts.tsv_io import TSVDataset, TSVFile, tsv_reader, tsv_writer
+from scripts import tsv_io
 from scripts.yolotrain import yolo_predict
 
 
 class CropTaggingWrapper(object):
     def __init__(self, det_expid, tag_expid):
         self.det_expid = det_expid
+        self._data_folder = "/raid/data/brand_output/"
         self._rootpath = "/raid/data/brand_output/{}/classifier/{}".format(det_expid, tag_expid)
         self.labelmap = os.path.join(self._rootpath, "labelmap.txt")
         self.tag_model_path = os.path.join(self._rootpath, "snapshot/model_best.pth.tar")
         self.log_file = os.path.join(self._rootpath, "eval/prediction_log.txt")
+        ensure_directory(self._rootpath)
+        ensure_directory(os.path.dirname(self.tag_model_path))
+        ensure_directory(os.path.dirname(self.log_file))
 
         self.num_workers = 24
 
@@ -87,7 +92,7 @@ class CropTaggingWrapper(object):
         if worth_create(fea_file, outfile) or worth_create(gt_fea_file, outfile):
             acc_str = compare_similarity(gt_fea_file, fea_file, outfile, top_k_acc=top_k_acc)
             if acc_str:
-                with open(self.log_file, 'a') as fp:
+                with open(self.log_file, 'a+') as fp:
                     fp.write("\nTime: {}\t Method: {}\n" \
                             "Test dataset: {}({})\t RegionProposal: {}\t Prototype database: {}({})\n".format(
                             datetime.datetime.now(), "predict_on_unknown_class",
@@ -116,7 +121,75 @@ class CropTaggingWrapper(object):
         pred_file, _ = yolo_predict(full_expid=self.det_expid, test_data=dataset_name, test_split=split)
         return pred_file
 
-    def tag_predict(self, datayaml, force_rewrite=False):
+    def eval_classification(self, dataset_name, split, rp_file, topk=(1, 5)):
+        num_bboxes_per_img = 0
+        num_classes_per_img = 0
+
+        data_yaml = self._write_data_yaml(dataset_name, split, "test", rp_file)
+        tag_file = self.tag_predict(data_yaml, max_k=max(max(topk), 10), force_rewrite=False)
+        all_classes = [p[0] for p in tsv_reader(self.labelmap)]
+        class2idx = {p: i for i, p in enumerate(all_classes)}
+        num_classes = len(all_classes)
+
+        all_pred = []    # num_samples * num_classes
+        all_target = []  # num_samples * num_classes, multi-label
+        is_multi_label = False
+        all_imgkey = set()
+        for cols in tsv_reader(tag_file):
+            imgkey = cols[0]
+            all_imgkey.add(imgkey)
+            cur_pred = [0]*num_classes
+            cur_target = [0]*num_classes
+            gt_box = json.loads(cols[1])
+            # multi label or single label
+            if "classes" in gt_box:
+                gt_classes = gt_box["classes"]
+                is_multi_label = True
+            else:
+                gt_classes = [gt_box["class"]]
+            num_bboxes_per_img += 1
+            num_classes_per_img += len(gt_classes)
+
+            for c in gt_classes:
+                cur_target[class2idx[c]] = 1.0
+
+            for it in cols[-1].split(';'):
+                c, conf = it.split(':')
+                cur_pred[class2idx[c]] = float(conf)
+            all_pred.append(cur_pred)
+            all_target.append(cur_target)
+
+        num_imgs = len(all_imgkey)
+        num_bboxes_per_img /= float(num_imgs)
+        num_classes_per_img /= float(num_imgs)
+
+        if is_multi_label:
+            # multi label
+            acc = accuracy.MultiLabelAccuracy()
+            acc.calc(torch.tensor(all_pred), torch.tensor(all_target))
+            acc_str = acc.result_str()
+        else:
+            # single label
+            acc = accuracy.SingleLabelAccuracy(topk)
+            for pred, target in zip(all_pred, all_target):
+                target_indices = [i for i, t in enumerate(target) if t==1]
+                for t in target_indices:
+                    acc.calc(torch.tensor([pred]), torch.tensor([[t]]))
+            acc_str = acc.result_str()
+
+        log_str = "\nTime: {}\t Method: {}\n" \
+                "Test dataset: {}({})\t RegionProposal: {}\t" \
+                "is_multi_label: {}, #bboxs per img: {}, #classes per img: {}\n".format(
+                datetime.datetime.now(), "classification",
+                dataset_name, split, rp_file, is_multi_label, num_bboxes_per_img, num_classes_per_img)
+        log_str += acc_str
+        logging.info(log_str)
+        with open(self.log_file, 'a+') as fp:
+            fp.write(log_str)
+            fp.write('\n')
+
+
+    def tag_predict(self, datayaml, force_rewrite=False, max_k=1):
         """ Tagging on given images and regions
         output: TSV file of image_key, json bbox(rect, obj), tag:conf list separated by ;
         """
@@ -129,7 +202,7 @@ class CropTaggingWrapper(object):
             "--model", self.tag_model_path,
             "--output", outpath,
             "--labelmap", self.labelmap,
-            "--topk", str(1),
+            "--topk", str(max_k),
             "--workers", str(self.num_workers)
         ])
         return outpath
@@ -150,10 +223,54 @@ class CropTaggingWrapper(object):
         ])
         return outpath
 
+    def whole_image_region(self, dataset_name, split, is_multi_label=False):
+        # set the proposed region as the whole image
+        rp_file = os.path.join(self._data_folder, "{}.{}.whole_img_region.tsv".format(dataset_name, split))
+        dataset = TSVDataset(dataset_name)
+        if worth_create(dataset.get_data(split), rp_file) \
+                or worth_create(dataset.get_data(split, 'label', version=-1), rp_file):
+            label_iter = dataset.iter_data(split, 'label', version=-1)
+            def gen_labels():
+                for imgkey, hw in dataset.iter_data(split, "hw"):
+                    h, w = hw.split(' ')
+                    k, coded_rects = label_iter.next()
+                    assert(k == imgkey)
+                    bboxes = json.loads(coded_rects)
+                    classes = set(b["class"] for b in bboxes)
+                    if is_multi_label:
+                        label = [{"rect": [0, 0, int(w), int(h)], "classes": list(classes)}]
+                    else:
+                        # single label per rect, rect value can be same
+                        label = []
+                        for c in classes:
+                            label.append({"rect": [0, 0, int(w), int(h)], "class": c})
+                    yield imgkey, json.dumps(label, separators=(',', ':'))
+            tsv_writer(gen_labels(), rp_file)
+        return os.path.realpath(rp_file)
+
     def _write_data_yaml(self, dataset_name, split, session, labelfile=None):
         dataset = TSVDataset(dataset_name)
         data_yaml_info = [dataset_name, split]
         if labelfile:
+            # check key orders, the image key must match in image file and label file
+            ordered_keys = []
+            for key, _, _ in dataset.iter_data(split):
+                ordered_keys.append(key)
+            label_tsv = tsv_io.TSVFile(labelfile)
+            keys = [label_tsv.seek_first_column(i) for i in range(len(label_tsv))]
+            if len(ordered_keys)!=len(keys) or any([i!=j for i, j in zip(ordered_keys, keys)]):
+                key_to_idx = {key: i for i, key in enumerate(keys)}
+                def gen_rows():
+                    for key in ordered_keys:
+                        if key in key_to_idx:
+                            idx = key_to_idx[key]
+                            yield label_tsv.seek(idx)
+                        else:
+                            yield [key, "[]"]
+                new_labelfile = labelfile+".ordered"
+                tsv_writer(gen_rows(), new_labelfile)
+                labelfile = new_labelfile
+
             data_yaml_info.append("label"+str(hash(labelfile)))
         data_yaml_info.append("dataset.yaml")
         data_yaml = os.path.join(self._rootpath, ".".join(data_yaml_info))
@@ -274,7 +391,7 @@ def parse_tagging_predict(infile, outfile, nms_type="cls_dep", bg_skip=1):
 
         # use classification label as label, classification score * obj as conf score
         bbox["class"] = label_conf_pair[0][0]
-        bbox["conf"] = float(label_conf_pair[0][1]) / 100 * bbox["obj"]
+        bbox["conf"] = float(label_conf_pair[0][1]) * bbox["obj"]
 
         pred_dict[key].append(bbox)
     if nms_type:

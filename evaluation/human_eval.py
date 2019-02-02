@@ -6,6 +6,9 @@ import argparse
 import collections
 import json
 import logging
+import matplotlib
+# use a non-interactive backend to generate images without having a window appear
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import os
 import pandas as pd
@@ -220,7 +223,7 @@ def draw_pr_curve(gt_config_file, dataset_name, iou_threshold,
                  markevery=[chosen_idx - start_idx], label=baseline_info["name"])
 
     ax.margins(0.05)
-    plt.legend()
+    plt.legend(loc=0, fontsize="small")
     plt.xlabel("Recall")
     plt.xticks([])
     plt.ylabel("Precision")

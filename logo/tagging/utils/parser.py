@@ -14,6 +14,10 @@ def get_arg_parser(model_names):
     parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
                         help='number of data loading workers (default: 4)')
 
+    # custom hyper parameter config
+    parser.add_argument('--hyper-param-config', default='', type=str, metavar='PATH',
+                        help='path to yaml config of hyper parameters')
+
     # has default hyper parameter for ResNet
     parser.add_argument('--epochs', default=90, type=int, metavar='N',
                         help='number of total epochs to run')

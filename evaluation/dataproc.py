@@ -4,9 +4,11 @@ import cv2
 import datetime
 import json
 import logging
+import multiprocessing as mp
 import os
 from PIL import Image
 import shutil
+from tqdm import tqdm
 from urllib2 import Request, urlopen
 import uuid
 
@@ -58,8 +60,7 @@ def build_dataset_from_web(tax_yaml_file, out_dataset_name, data_split):
         for it in qd_common.load_from_yaml_file(tax_yaml_file):
             label_counts.append((it["name"], target_num-it["cum_images_with_bb"]))
 
-        scrape_image(label_counts, scraped_image_file, ext="jpg", query_format="{} flickr",
-                    download_to=None)
+        scrape_image_parallel(label_counts, scraped_image_file, ext="jpg", query_format="{} flickr")
 
         hp_file = "/raid/data/uhrs/draw_box/honeypot/voc0712.test.easygt.txt"
         upload_dir = os.path.join(outdir, "upload")
@@ -84,22 +85,10 @@ def build_dataset_from_web(tax_yaml_file, out_dataset_name, data_split):
     outinfo = os.path.join(out_data_root, "train.generate.info.tsv")
 
     if qd_common.worth_create(res_file, outtsv):
-        with open(outtsv, 'w') as fp:
+        def data_iter():
             for url in url2ans:
-                bboxes = url2ans[url]
-                if len(bboxes) == 0:
-                    continue
-                im_bytes = image_url_to_bytes(url)
-                if im_bytes is None:
-                    continue
-                b64_img = base64.b64encode(im_bytes)
-                try:
-                    h, w = qd_common.img_from_base64(b64_img).shape[:2]
-                except:
-                    print("fail")
-                    continue
-                fp.write('\t'.join([url2key[url], json.dumps(bboxes, separators=(',', ':')), b64_img]))
-                fp.write('\n')
+                yield [url2key[url], json.dumps(url2ans[url], separators=(',', ':')), url]
+        urls_to_img_file_parallel(data_iter, 2, (0,1), outtsv)
         info_data = [("images collected from", scraped_image_file)]
         tsv_io.tsv_writer(info_data, outinfo)
 
@@ -208,64 +197,72 @@ def convert_local_images_to_b64(dirpath, labelmap, outfile, max_per_class=None):
     logging.info("find #img: {}, #valid: {}".format(num_imgs, num_valid_imgs))
 
 
-def scrape_image(label_counts, outfile, ext="jpg", query_format="{}",
-                 download_to=None, use_b64=False):
+def scrape_image_parallel(label_counts, outfile, ext="jpg", query_format="{}"):
     """
     Scrapes images from Bing with terms in labelmap, formatted as query_format
     label_counts: list of pair (term, num_to_scrape)
-    outfile: TSV file of img_key, json list of dict, url
-    download_to: directory path, if None, images will not be downloaded.
-    use_b64: the format of downloaded images, b64 string or files
+    outfile: TSV file of img_key, json list of dict {"class":term}, url
     """
     if os.path.isfile(outfile):
         raise ValueError("already exists: {}".format(outfile))
-    if download_to:
-        if use_b64:
-            f_download = open(download_to, 'wb')
+    from pathos.multiprocessing import ProcessPool as Pool
+    num_worker = 128
+    num_tasks = num_worker * 3
+    num_rows = len(label_counts)
+    num_rows_per_task = (num_rows + num_tasks - 1) // num_tasks
+    all_args = []
+    for i in range(num_tasks):
+        cur_idx_start = i*num_rows_per_task
+        if cur_idx_start >= num_rows:
+            break
+        cur_idx_end = min(cur_idx_start+num_rows_per_task, num_rows)
+        if cur_idx_end > cur_idx_start:
+            all_args.append((label_counts[cur_idx_start: cur_idx_end], ext, query_format))
+
+    m = Pool(num_worker)
+    all_result = m.map(scrape_image, all_args)
+    m.close()
+    def gen_res():
+        for res in all_result:
+            for row in res:
+                yield row
+    tsv_io.tsv_writer(gen_res(), outfile)
+
+
+def scrape_image(label_counts, ext, query_format):
+    ret = []
+    for cols in label_counts:
+        term, num_imgs = cols[0], int(cols[1])
+        query_term = query_format.format(term)
+        if ext and "png" in ext:
+            trans_bg = True
         else:
-            assert os.path.isdir(download_to)
+            trans_bg = False
+        urls = qd_common.scrape_bing(query_term, num_imgs*2, trans_bg=trans_bg)
 
-    with open(outfile, 'w', buffering=0) as fout:
-        for cols in label_counts:
-            term, num_imgs = cols[0], int(cols[1])
-            logging.info("term: {}".format(term))
-            query_term = query_format.format(term)
-            if ext and "png" in ext:
-                trans_bg = True
-            else:
-                trans_bg = False
-            urls = qd_common.scrape_bing(query_term, num_imgs*2, trans_bg=trans_bg)
-
-            num_valid_img = 0
-            for idx, url in enumerate(urls):
-                if num_valid_img >= num_imgs:
-                    break
-                if not is_url_clean(url):
-                    continue
-                im_bytes = image_url_to_bytes(url)
-                if not im_bytes:
-                    continue
-                try:
-                    im = qd_common.str_to_image(im_bytes)
-                    h, w, c = im.shape
-                except:
-                    continue
-                # avoid key collision with existing images
-                img_key = "{}_{}.{}".format(term, datetime.datetime.now().strftime("%Y%m%d%H%M%S%f"), ext)
-                img_key = img_key.replace(' ', '_')
-                label = [{"class": term}]
-                fout.write('\t'.join([img_key, json.dumps(label), url]))
-                fout.write('\n')
-                num_valid_img += 1
-                if download_to and not use_b64:
-                    impath = os.path.join(download_to, img_key)
-                    save_img_to_file(im_bytes, impath)
-                if download_to and use_b64:
-                    v = '\t'.join(map(lambda v: str(v) if type(v) is not str else v,
-                                      [img_key, json.dumps(label), base64.b64encode(im_bytes)]))
-                    v += '\n'
-                    v = v.encode('utf-8')
-                    f_download.write(v)
+        num_valid_img = 0
+        for idx, url in enumerate(urls):
+            if num_valid_img >= num_imgs:
+                break
+            if not is_url_clean(url):
+                continue
+            im_bytes = image_url_to_bytes(url)
+            if not im_bytes:
+                continue
+            try:
+                im = qd_common.img_from_base64(base64.b64encode(im_bytes))
+                h, w, c = im.shape
+                assert c == 3
+            except:
+                continue
+            # avoid key collision with existing images
+            # img_key = "{}_{}.{}".format(term, datetime.datetime.now().strftime("%Y%m%d%H%M%S%f"), ext)
+            img_key = "{}_{}.{}".format(query_term, idx, ext)
+            img_key = img_key.replace(' ', '_')
+            label = [{"class": term}]
+            ret.append([img_key, json.dumps(label), url])
+            num_valid_img += 1
+    return ret
 
 
 def save_img_to_file(img_bytes, fpath):
@@ -302,3 +299,96 @@ def is_url_clean(url):
     except:
         return False
     return True
+
+
+def urls_to_img_file_parallel(in_rows, url_col_idx, out_cols_idx, outpath, keep_order=False):
+    """ Given iterable of rows, writes TSV file: out_cols_idx, followed by b64_image of the given url
+    """
+    num_workers = mp.cpu_count() + 10
+    in_queue = mp.Queue(10 * num_workers)
+    out_queue = mp.Queue(10 * num_workers)
+
+    # save the key, used for re-ranking to keep the order
+    import tempfile
+    key_file = os.path.join(tempfile.gettempdir(), qd_common.gen_uuid() + '.tsv')
+
+    def reader_process(in_rows, in_queue, num_workers, url_col_idx, out_cols_idx, key_file):
+        max_col_idx = max(url_col_idx, max(out_cols_idx))
+        with open(key_file, 'wb') as key_fp:
+            for cols in tqdm(in_rows):
+                if max_col_idx >= len(cols):
+                    logging.info("invalid input row: {}".format(cols))
+                    continue
+                key_fp.write(cols[url_col_idx] + '\n')
+                in_queue.put(cols)
+        for _ in range(num_workers):
+            in_queue.put(None)  # ending signal for workers
+
+    def worker_process(in_queue, out_queue, url_col_idx, out_cols_idx):
+        while True:
+            cols = in_queue.get()
+            if cols is None:
+                out_queue.put(None)
+                break
+            out_cols = [cols[i] for i in out_cols_idx]
+            url = cols[url_col_idx]
+            img_bytes = image_url_to_bytes(url)
+            if img_bytes is not None:
+                b64_str = base64.b64encode(img_bytes)
+                im = qd_common.img_from_base64(b64_str)
+                h, w, c = im.shape
+                # NOTE: opencv has a bug, even set the flag cv2.IMREAD_COLOR, some
+                # images still return 4 channels
+                if c!=3:
+                    logging.info("invalid image format: {}".format(url))
+                    continue
+                out_cols.append(b64_str)
+                out_queue.put(out_cols)
+
+    def writer_process(out_queue, num_workers, outpath):
+        def gen_output():
+            num_finished = 0
+            while True:
+                if num_finished == num_workers:
+                    break
+                cols = out_queue.get()
+                if cols is None:
+                    num_finished += 1
+                else:
+                    yield cols
+        tsv_io.tsv_writer(gen_output(), outpath)
+
+    reader = mp.Process(target=reader_process, args=(in_rows,
+            in_queue, num_workers, url_col_idx, out_cols_idx, key_file))
+    reader.daemon = True
+    reader.start()
+    worker_pool = []
+    for _ in range(num_workers):
+        worker = mp.Process(target=worker_process, args=(in_queue,
+                out_queue, url_col_idx, out_cols_idx))
+        worker.daemon = True
+        worker_pool.append(worker)
+        worker.start()
+    writer = mp.Process(target=writer_process, args=(out_queue, num_workers, outpath))
+    writer.daemon = True
+    writer.start()
+
+    reader.join()
+    if reader.exitcode != 0:
+        logging.info('reader failed')
+        for proc in worker_pool: #wait all process finished.
+            proc.terminate()
+        writer.terminate()
+        return
+    logging.info('reader finished')
+    for proc in worker_pool: #wait all process finished.
+        proc.join()
+    logging.info('worker finished')
+    writer.join()
+    logging.info('writer finished')
+
+    # reorder results
+    if keep_order:
+        ordered_keys = qd_common.load_list_file(key_file)
+        tsv_io.reorder_tsv_keys(outpath, ordered_keys, outpath)
+    os.remove(key_file)

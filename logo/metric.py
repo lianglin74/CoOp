@@ -46,7 +46,7 @@ def main():
     records.append(["1k logo detector"] + evaluate_detector(det1_expid))
     records.append(["logo/non-logo detector"] + evaluate_detector(det3_expid))
 
-    records.append(["two-stage"] + evaluate_two_stage(det3_expid, tag5_expid))
+    records.append(["two-stage"] + evaluate_two_stage(det2_expid, tag3_expid))
     records.append(["two-stage-ccs"] + evaluate_two_stage(det3_expid, tag4_expid))
 
     fpath = os.path.join(rootpath, "table")
@@ -125,7 +125,7 @@ def evaluate_detection(dataset_name, split, pred_file, outfile, region_only=Fals
     """
     logging.info("Evaluate detection on: {} {}".format(dataset_name, split))
     dataset = TSVDataset(dataset_name)
-    truth_iter = dataset.iter_data(split, 'label', version=0)
+    truth_iter = dataset.iter_data(split, 'label', version=-1)
     return deteval.deteval_iter(truth_iter=truth_iter, dets=pred_file, report_file=outfile, region_only=region_only)
 
 

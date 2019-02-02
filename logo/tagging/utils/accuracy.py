@@ -70,7 +70,7 @@ class MultiLabelAccuracy(Accuracy):
                 if k == 0:
                     continue
                 n += 1
-                pred = torch.ones(num_classes).cuda().mul(-1)
+                pred = torch.ones(num_classes).mul(-1)
                 pred[pred_topk[i,:k]] = 1
                 correct = pred.eq(target[i])
                 accuracy += correct.float().sum() * 100. / k

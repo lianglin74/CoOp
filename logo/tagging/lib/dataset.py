@@ -1,11 +1,14 @@
 import os
 import torch
 from torch.utils.data import Dataset
-from tsv_io import TSVFile
-from qd_common import img_from_base64, generate_lineidx, load_from_yaml_file, tsv_reader
-from qd_common import FileProgressingbar
+
+# TODO: the importing behavior here depends on sys.path, which must include QD_ROOT(/quickdetection/)
+from scripts.tsv_io import TSVFile, tsv_reader
+from scripts.qd_common import img_from_base64, generate_lineidx, load_from_yaml_file
+from scripts.qd_common import FileProgressingbar
 
 import multiprocessing as mp
+import pathos.multiprocessing
 import numpy as np
 import yaml
 import base64
@@ -210,37 +213,6 @@ class TSVDatasetWithoutLabel(TSVDatasetPlus):
         return img, cols
 
 
-_cur_data = None
-class TSVFileWrapper(TSVFile):
-    """ Multiprocess wrapper of TSVFile, to used in Pytorch dataloader
-    """
-    def seek(self, idx):
-        return self.tsv.seek(idx)
-
-    def __getitem__(self, idx):
-        return self.seek(idx)
-
-    def __len__(self):
-        return self.num_rows()
-
-    @property
-    def tsv(self):
-        proc = mp.current_process()
-        pid = proc.pid
-        global _cur_data
-        if not _cur_data:
-            _cur_data = defaultdict(dict)
-        else:
-            if pid in _cur_data and self.tsv_file in _cur_data[pid]:
-                return _cur_data[pid][self.tsv_file]
-
-        # this has to be print because this could be in another process
-        tsv = TSVFile(self.tsv_file)
-        assert(tsv.num_rows())
-        _cur_data[pid].update({self.tsv_file: tsv})
-        return tsv
-
-
 class CropClassTSVDataset(Dataset):
     def __init__(self, tsvfile, labelmap, labelfile=None, label_filter_fn=None,
                  transform=None, logger=None, for_test=False, reorder_label=False,
@@ -252,7 +224,8 @@ class CropClassTSVDataset(Dataset):
             labelfile: label tsv file, columns are key, bboxes
             label_filter_fn: callable, filter the bbox list
         """
-        self.tsv = TSVFileWrapper(tsvfile)
+        self.tsv = TSVFile(tsvfile)
+        self.tsvfile = tsvfile
         self.labelfile = labelfile
         self.transform = transform
         self.label_to_idx = {}
@@ -273,7 +246,7 @@ class CropClassTSVDataset(Dataset):
         _cache_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "cache")
         self._cache = os.path.join(_cache_dir, "{}.tsv".format(hash(';'.join([tsvfile, labelfile if labelfile else "", str(for_test)]))))
         try:
-            self._class_instance_idx = self._generate_class_instance_index()
+            self._class_instance_idx = self._generate_class_instance_index_parallel()
         except Exception as e:
             if os.path.isfile(self._cache):
                 os.remove(self._cache)
@@ -295,11 +268,8 @@ class CropClassTSVDataset(Dataset):
                 ret.append(line.strip().split(sep))
         return ret
 
-    def _generate_class_instance_index(self):
-        """ the index of intance in target classes: (img_idx, rect)
-            img_idx: line idx of the tsv file
-            rect: the rect of bbox
-            label_idx
+    def _generate_class_instance_index_old(self):
+        """ DEPRECATED: use _generate_class_instance_index_parallel
         """
         if os.path.isfile(self._cache) and not self._overwrite_cache:
             return self._read_into_buffer(self._cache)
@@ -350,17 +320,14 @@ class CropClassTSVDataset(Dataset):
 
         return self._read_into_buffer(self._cache)
 
-    def _int_rect(self, rect, enlarge_factor=1.0):
-        left, top, right, bot = rect
-        w = (right - left) * enlarge_factor / 2.0
-        h = (bot - top) * enlarge_factor / 2.0
-        cx = (left+right)/2.0
-        cy = (top+bot)/2.0
-        left = cx - w
-        right = cx + w
-        top = cy - h
-        bot = cy + h
-        return int(np.floor(left)), int(np.floor(top)), int(np.ceil(right)), int(np.ceil(bot))
+    def _generate_class_instance_index_parallel(self):
+        """ For training: (img_idx, rect, label_idx)
+            For testing: (img_idx, rect, original_bbox)
+            img_idx: line idx of the image tsv file
+            rect: left, top, right, bot
+        """
+        return gen_index(self.tsvfile, self.labelfile, self.label_to_idx, self._for_test,
+                self._enlarge_bbox, self.key_col, self.label_col, self.img_col, self.logger)
 
     def __getitem__(self, index):
         info = self._class_instance_idx[index]
@@ -401,5 +368,86 @@ class CropClassTSVDatasetYaml(CropClassTSVDataset):
 
         super(CropClassTSVDatasetYaml, self).__init__(
             tsv_file, labelmap, label_file,
-            for_test=for_test, reorder_label=for_test, transform=transform)
+            for_test=for_test, reorder_label=False, transform=transform)
 
+
+def gen_index(imgfile, labelfile, label_to_idx, for_test,
+                enlarge_bbox, key_col, label_col, img_col, logger):
+    all_args = []
+    num_worker = mp.cpu_count()
+    num_tasks = num_worker * 3
+    imgtsv = TSVFile(imgfile)
+    num_images = imgtsv.num_rows()
+    num_image_per_worker = (num_images + num_tasks - 1) // num_tasks
+    assert num_image_per_worker > 0
+    for i in range(num_tasks):
+        curr_idx_start = i * num_image_per_worker
+        if curr_idx_start >= num_images:
+            break
+        curr_idx_end = curr_idx_start + num_image_per_worker
+        curr_idx_end = min(curr_idx_end, num_images)
+        if curr_idx_end > curr_idx_start:
+            all_args.append((curr_idx_start, curr_idx_end))
+
+    def _gen_index_helper(args):
+        start, end = args[0], args[1]
+        ret = []
+        img_tsv = TSVFile(imgfile)
+        if labelfile is not None:
+            label_tsv = TSVFile(labelfile)
+        else:
+            label_tsv = None
+        for idx in range(start, end):
+            img_row = img_tsv.seek(idx)
+            if label_tsv:
+                label_row = label_tsv.seek(idx)
+                if img_row[key_col] != label_row[key_col]:
+                    if logger:
+                        logger.info("image key do not match in {} and {}".format(imgfile, labelfile))
+                    return None
+                bboxes = json.loads(label_row[label_col])
+            else:
+                bboxes = json.loads(img_row[label_col])
+            img = img_from_base64(img_row[img_col])
+            height, width, _ = img.shape
+            for bbox in bboxes:
+                left, top, right, bot = int_rect(bbox["rect"], enlarge_bbox)
+                left = np.clip(left, 0, width)
+                right = np.clip(right, 0, width)
+                top = np.clip(top, 0, height)
+                bot = np.clip(bot, 0, height)
+                # ignore invalid bbox
+                if bot <= top or right <= left:
+                    if logger:
+                        logger.info("skip invalid bbox in {}".format(img_row[0]))
+                    continue
+                info = [idx, left, top, right, bot]
+                if for_test:
+                    info.append(json.dumps(bbox))
+                else:
+                    # label only exists in training data
+                    c = bbox["class"]
+                    info.append(label_to_idx[c])
+                ret.append(info)
+        return ret
+
+    m = pathos.multiprocessing.ProcessingPool(num_worker)
+    all_res = m.map(_gen_index_helper, all_args)
+    x = []
+    for r in all_res:
+        if r is None:
+            raise Exception("fail to generate index")
+        x.extend(r)
+    return x
+
+def int_rect(rect, enlarge_factor=1.0):
+    left, top, right, bot = rect
+    w = (right - left) * enlarge_factor / 2.0
+    h = (bot - top) * enlarge_factor / 2.0
+    cx = (left+right)/2.0
+    cy = (top+bot)/2.0
+    left = cx - w
+    right = cx + w
+    top = cy - h
+    bot = cy + h
+    return int(np.floor(left)), int(np.floor(top)), int(np.ceil(right)), int(np.ceil(bot))
