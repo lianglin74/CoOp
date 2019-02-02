@@ -979,15 +979,16 @@ def get_compare_all_info(config_path=None):
     for cmp_task in tasks:
         # print cmp_task
         config_name = cmp_task["datapath"]
+        task_name = cmp_task["task"]
         task_config =  op.join(config_name, "config.yaml")
         if op.isfile(task_config):
             db_list = cmp_task["dataset"]
             # print db_list
-            results.extend(get_compare_data_info(config_name, db_list))
+            results.extend(get_compare_data_info(task_name, config_name, db_list))
     # print results
     return results
 
-def get_compare_data_info(config_path=None, dblist=None):
+def get_compare_data_info(task_name, config_path=None, dblist=None):
     if config_path is None:
         predictConfig = './data/compare/config.yaml'
     else:
@@ -1009,14 +1010,21 @@ def get_compare_data_info(config_path=None, dblist=None):
             # if (bl1['name'].find("google"))>=0 or (bl1['name'].find("amazon"))>=0:
                 for bl2 in configs_bl:
                     if bl1['name'].find(bl2['name'])<0:
-                        if (bl2['name'].find("google"))<0 and (bl2['name'].find("amazon"))<0:
+                        if (bl2['name'].find("google"))<0 and (bl2['name'].find("amazon"))<0 and (bl2['name'].find("aws"))<0:
+
                             if "conf_threshold" in bl2:
-                                min_conf = bl2["conf_threshold"]
+                                min_conf_left = bl2["conf_threshold"]
                             else:
-                                min_conf = 0
-                            compare_name = db + "_" + bl2['name'] + "_vs_" + bl1['name']
+                                min_conf_left = 0
+                            
+                            if "conf_threshold" in bl1:
+                                min_conf_right = bl1["conf_threshold"]
+                            else:
+                                min_conf_right = 0
+
+                            compare_name = task_name + "_" + db + "_" + bl2['name'] + "_vs_" + bl1['name']
                             # print compare_name
-                            results.append({"name": compare_name, "min_conf": min_conf })
+                            results.append({"name": compare_name, "min_conf_left": min_conf_left, "min_conf_right": min_conf_right })
     return results
 
 def parse_compare_data(data_source_name):
@@ -1024,31 +1032,59 @@ def parse_compare_data(data_source_name):
     items = [x.strip() for x in data_source_name.split('_')]
 
     # print "items", items
-
-    dataSource = items[0]
-    leftLabel = items[1]
-    rightLabel = items[3]
+    task = items[0]
+    dataSource = items[1]
+    leftLabel = items[2]
+    rightLabel = items[4]
 
     os.chdir(get_qd_root())
-    predictConfig = './data/compare/config.yaml'
+
+    all_config  =  './data/compare_config.yaml'
+    all_configs = load_from_yaml_file(all_config)
+    cmp_configs = all_configs["compare"]
+    
+    
+
+    predictConfigPath = ""
+    for cmp_config in cmp_configs:
+        if cmp_config["task"] == task:
+            predictConfigPath = cmp_config["datapath"]
+            
+
+    predictConfig = op.join(predictConfigPath, "config.yaml")
+
     configs = load_from_yaml_file(predictConfig)
 
     configs_data = configs[dataSource]
     configs_data_bl = configs_data['baselines']
-    thresholdFile = None
-    displayFile = None
+
+    gd = configs_data["groundtruth"]
+    # print gd
+    orig = gd["original"]
+
+    image_db = ""
+    image_db = orig["dataset"]
+
+    thresholdFileLeft = None
+    displayFileLeft = None
+    thresholdFileRight = None
+    displayFileRight = None
     
     for bl in configs_data_bl:
         if bl['name'] == leftLabel:
             leftFile = bl['result']
             if 'threshold' in bl:
-                thresholdFile = bl['threshold']
+                thresholdFileLeft = bl['threshold']
             if 'display' in bl:
-                displayFile = bl['display']
+                displayFileLeft = bl['display']
         if bl['name'] == rightLabel:
             rightFile = bl['result']
+            if 'threshold' in bl:
+                thresholdFileRight = bl['threshold']
+            if 'display' in bl:
+                displayFileRight = bl['display']
   
-    return leftFile, rightFile, dataSource, leftLabel, rightLabel, thresholdFile, displayFile
+    return leftFile, rightFile, image_db, leftLabel, rightLabel, thresholdFileLeft, thresholdFileRight, displayFileLeft, displayFileRight
 
 def view_compare_all(request):
 
@@ -1066,11 +1102,13 @@ def view_compare(request):
     if request.GET.get('data', '') == '':
         curr_dir = os.curdir
         os.chdir(get_qd_root())
-        results = get_compare_data_info()
+        results = get_compare_all_info()
         os.chdir(curr_dir)
         context = {'results': results}
         return render(request, 'detection/compare_list_result.html', context)
     else:
+        # task = request.GET.get('task')
+
         data = request.GET.get('data')
         split = request.GET.get('split')
         if split == 'None':
@@ -1096,12 +1134,28 @@ def view_compare(request):
         dataPath = "./data/" + data
         os.chdir(get_qd_root())
 
-        # print "dataPath:", dataPath
+        print "dataPath:", dataPath
+        # print data
+        leftFile, rightFile, data_source_name, leftLabel, rightLabel, leftThreshold, rightThreshold, leftDisplay, rightDisplay = parse_compare_data(data)
 
-        leftFile, rightFile, data_source_name, leftLabel, rightLabel, leftThreshold, leftDisplay = parse_compare_data(data)
+        items = [x.strip() for x in data.split('_')]
+        # print "items", items
+        task = items[0]
+        os.chdir(get_qd_root())
 
-        leftFile = "./data/compare/" + leftFile
-        rightFile = "./data/compare/" + rightFile
+        all_config  =  './data/compare_config.yaml'
+        all_configs = load_from_yaml_file(all_config)
+        cmp_configs = all_configs["compare"]
+
+        predictConfigPath = ""
+        for cmp_config in cmp_configs:
+            if cmp_config["task"] == task:
+                predictConfigPath = cmp_config["datapath"]
+
+
+        leftFile = op.join(predictConfigPath, leftFile)
+        rightFile = op.join(predictConfigPath, rightFile)
+
         imageFile = "./data/" + data_source_name +  "/" + split + ".tsv"
 
         print leftFile
@@ -1116,10 +1170,16 @@ def view_compare(request):
             os.mkdir(dataPath, 0755)
 
             if leftThreshold != None:
-                leftThreshold = "./data/compare/" + leftThreshold
+                leftThreshold = op.join(predictConfigPath, leftThreshold)
+
+            if rightThreshold != None:
+                rightThreshold = op.join(predictConfigPath, rightThreshold)
             
             if leftDisplay != None:
-                leftDisplay = "./data/compare/" + leftDisplay
+                leftDisplay = op.join(predictConfigPath, leftDisplay)
+            
+            if rightDisplay != None:
+                rightDisplay = op.join(predictConfigPath, rightDisplay)
             
             # print leftFile, rightFile, imageFile, leftLabel, rightLabel
 
@@ -1128,17 +1188,20 @@ def view_compare(request):
                 imageFile,
                 dataPath +"/test.tsv",
                 leftThreshold,
-                None,
+                rightThreshold,
                 leftLabel,
                 rightLabel,
-                leftDisplay)
+                leftDisplay,
+                rightDisplay)
 
-            black_list_filename = "./data/compare/blacklist.txt"
+            black_list_filename = op.join(predictConfigPath, "blacklist.txt")
+
             if op.isfile(black_list_filename):
                 shutil.copy2(black_list_filename, "./data/"+data)
 
             populate_dataset_details(data)
 
+        # print request, data, split, version
         result = view_image_compare(
             request, data, split, version, label, start_id, min_conf_left, min_conf_right)
 

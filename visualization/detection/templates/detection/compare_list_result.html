@@ -31,7 +31,7 @@
 <body>
     <ul>
     {% for result in results %}
-    <li><a href="{% url 'detection:view_compare' %}?data={{ result.name }}&split=test&version=0&start_id=0&min_conf_left={{ result.min_conf }}&min_conf_right=0" target='_blank'>{{ result.name }}</a>
+    <li><a href="{% url 'detection:view_compare' %}?data={{ result.name }}&split=test&version=0&start_id=0&min_conf_left={{ result.min_conf_left }}&min_conf_right={{ result.min_conf_right }}" target='_blank'>{{ result.name }}</a>
     </li>
     {% endfor %}
     </ul>

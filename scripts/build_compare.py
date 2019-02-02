@@ -61,7 +61,8 @@ def build_side_by_side_compare(
         inRightThresholdFilename=None,
         inLeftLabel="left",
         inRightLabel="right",
-        leftDisplay = None):
+        leftDisplay = None,
+        rightDisplay = None):
 
     dictLeftThreshold = {}
     if inLeftThresholdFilename != None:
@@ -72,7 +73,7 @@ def build_side_by_side_compare(
         dictRightThreshold = read_threshold(inRightThresholdFilename)
 
     dictLeftResult = read_result(inLeftResultTsvFilename, dictLeftThreshold, leftDisplay)
-    dictRightResult = read_result(inRightResultTsvFilename, dictRightThreshold)
+    dictRightResult = read_result(inRightResultTsvFilename, dictRightThreshold, rightDisplay)
 
     print 'Start to write compare result . . .'
     
