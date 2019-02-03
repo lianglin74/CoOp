@@ -18,7 +18,7 @@ import torchvision.models as models
 
 from ..utils.data import get_testdata_loader
 from ..utils.averagemeter import AverageMeter
-from ..lib.qd_common import tsv_writer
+from scripts.tsv_io import tsv_writer
 
 import base64
 
