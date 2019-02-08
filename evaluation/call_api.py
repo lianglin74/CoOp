@@ -104,7 +104,7 @@ def post_process_aws(response, im_height, im_width, prop_parents=True):
     return all_res
 
 
-def call_gcloud(imgfile, det_file, key_col=0, img_col=2):
+def call_gcloud(imgfile, det_file, key_col=0, img_col=2, detection="object"):
     """
     Calls Google Could to get object detection results.
     https://cloud.google.com/vision/docs/detecting-objects
@@ -117,13 +117,20 @@ def call_gcloud(imgfile, det_file, key_col=0, img_col=2):
         imgkey = cols[key_col]
         img = types.Image(content=base64.b64decode(cols[img_col]))
         try:
-            resp = client.object_localization(image=img).localized_object_annotations
+            img_arr = qd_common.img_from_base64(cols[img_col])
+            im_h, im_w, im_c = img_arr.shape
+            if detection == "object":
+                resp = client.object_localization(image=img).localized_object_annotations
+                res = post_process_gcloud(resp, im_h, im_w)
+            elif detection == "logo":
+                resp = client.logo_detection(image=img).logo_annotations
+                res = post_process_gcloud_logo(resp)
+            else:
+                raise ValueError("Invalid detection type: {}".format(detection))
             print("Processed {}".format(idx+1), end='\r')
             sys.stdout.flush()
-
-            img = qd_common.img_from_base64(cols[img_col])
-            im_h, im_w, im_c = img.shape
-            res = post_process_gcloud(resp, im_h, im_w)
+        except ValueError as e:
+            raise e
         except Exception as e:
             logging.error("gcloud failed for image: {}. Message: {}".format(imgkey, str(e)))
             res = []
@@ -141,5 +148,18 @@ def post_process_gcloud(response, im_height, im_width):
         right = vertices[2].x * im_width
         bot = vertices[2].y * im_height
         all_res.append({"class": obj.name, "conf": obj.score,
+                        "rect": [left, top, right, bot]})
+    return all_res
+
+
+def post_process_gcloud_logo(response):
+    all_res = []
+    for obj in response:
+        vertices = obj.bounding_poly.vertices
+        left = vertices[0].x
+        top = vertices[0].y
+        right = vertices[2].x
+        bot = vertices[2].y
+        all_res.append({"class": obj.description, "conf": obj.score,
                         "rect": [left, top, right, bot]})
     return all_res

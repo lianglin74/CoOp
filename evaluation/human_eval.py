@@ -158,7 +158,7 @@ def eval_dataset(gt_config_file, dataset_name, iou_threshold,
         os.mkdir(stats_dir)
     df_per_class.to_csv(os.path.join(stats_dir,
                         "{}_category_pr.tsv".format(dataset_name)),
-                        sep='\t', index=False)
+                        sep='\t', index=False, encoding='utf8')
 
 
 def draw_pr_curve(gt_config_file, dataset_name, iou_threshold,
@@ -225,7 +225,7 @@ def draw_pr_curve(gt_config_file, dataset_name, iou_threshold,
     ax.margins(0.05)
     plt.legend(loc=0, fontsize="small")
     plt.xlabel("Recall")
-    plt.xticks([])
+    # plt.xticks([])
     plt.ylabel("Precision")
     plt.title(dataset_name)
     gt_root = os.path.split(gt_config_file)[0]

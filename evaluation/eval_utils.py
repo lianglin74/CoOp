@@ -113,7 +113,7 @@ class GroundTruthConfig(object):
         gt = self.config[dataset]["groundtruth"][gt_type]
         if isinstance(gt, dict):
             tsv_dataset, split = self.gt_dataset(dataset)
-            fpath = tsv_dataset.get_data(split, 'label', version=-1)
+            fpath = tsv_dataset.get_data(split, 'label', version=gt.get("version", -1))
             return os.path.realpath(fpath)
         else:
             return os.path.join(self.rootpath, gt)

@@ -36,6 +36,7 @@ def main():
     det1_expid = "brand1048_darknet19_448_B_noreorg_rotate10_Init.best_model8022_extraConvKernel.1.3.1_TsvBoxSamples50ExtraConvGroups1_4_1EffectBatchSize128"
     det2_expid = "TaxLogoV1_1_darknet19_448_C_Init.best_model9748_maxIter.50eEffectBatchSize128_bb_only"
     det3_expid = "TaxLogoV1_7_darknet19_448_C_Init.best_model9748_maxIter.75eEffectBatchSize128_bb_only"
+    det4_expid = "brand1048Clean_net_RongFasterRCNN"
 
     tag1_expid = "gt_only"
     tag2_expid = "pretrained_0.1"
@@ -94,17 +95,19 @@ def evaluate_two_stage(det_expid, tag_expid):
 def evaluate_detector(det_expid):
     outdir = os.path.join(rootpath, "{}/deteval".format(det_expid))
     if not os.path.exists(outdir):
-        os.mkdir(outdir)
+        os.makedirs(outdir)
 
     eval_res = []
     file_dict = {}
     # pretrained
     pred_file, _ = yolo_predict(full_expid=det_expid, test_data=trained_dataset, test_split=data_split)
     fname = "{}.{}.pretrained.region.eval".format(trained_dataset, data_split)
-    eval_file = evaluate_detection(trained_dataset, data_split, pred_file, os.path.join(outdir, fname), region_only=True)
+    eval_file = evaluate_detection(trained_dataset, data_split, pred_file,
+            os.path.join(outdir, fname), region_only=True, version=2)
     eval_res.extend(parse_eval_file(eval_file))
     file_dict[fname] = eval_file
-    eval_file = evaluate_detection(trained_dataset, data_split, pred_file, os.path.join(outdir, "{}.{}.pretrained.det.eval".format(trained_dataset, data_split)))
+    eval_file = evaluate_detection(trained_dataset, data_split, pred_file,
+            os.path.join(outdir, "{}.{}.pretrained.det.eval".format(trained_dataset, data_split)), version=2)
     eval_res.extend(parse_eval_file(eval_file))
 
     # logo/non-logo
@@ -120,12 +123,12 @@ def evaluate_detector(det_expid):
     return eval_res
 
 
-def evaluate_detection(dataset_name, split, pred_file, outfile, region_only=False):
+def evaluate_detection(dataset_name, split, pred_file, outfile, region_only=False, version=-1):
     """ Calculates mAP for detection results (label+bbox or bbox only)
     """
     logging.info("Evaluate detection on: {} {}".format(dataset_name, split))
     dataset = TSVDataset(dataset_name)
-    truth_iter = dataset.iter_data(split, 'label', version=-1)
+    truth_iter = dataset.iter_data(split, 'label', version=version)
     return deteval.deteval_iter(truth_iter=truth_iter, dets=pred_file, report_file=outfile, region_only=region_only)
 
 
