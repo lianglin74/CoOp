@@ -1908,7 +1908,8 @@ def try_json_parse(s):
     except ValueError:
         return s
 
-def visualize_predict_no_draw(full_expid, predict_file, label, start_id, threshold):
+def visualize_predict_no_draw(full_expid, predict_file, label, start_id,
+        threshold):
     test_data, test_data_split = parse_test_data(predict_file)
     pred_full_path = op.join('output', full_expid, 'snapshot', predict_file)
     pred_key_path = '{}.key.tsv'.format(pred_full_path)
@@ -1998,7 +1999,9 @@ def visualize_predict_no_draw(full_expid, predict_file, label, start_id, thresho
         row_pred = tsv_pred.seek(idx_pred)
         assert row_gt[0] == row_pred[0], (row_gt[0], row_pred[0])
 
-        rects_gt = json.loads(row_gt[1])
+        rects_gt = json.loads(next(test_dataset.iter_data(test_data_split, 'label',
+            filter_idx=[idx_gt], version=-1))[1])
+
         rects_pred = json.loads(row_pred[1])
         rects_pred = [r for r in rects_pred if r['conf'] > threshold]
         im_origin = img_from_base64(row_gt[-1])
@@ -3546,17 +3549,17 @@ def get_data_sources(public_only=False, version=None):
         if version=='exclude_golden_test':
             return [
                     {
-                        'data': 'coco2017',
+                        'name': 'coco2017', 
                         'valid_splits': ['train', 'trainval'],
                         'cleaness': 10
                     },
                     {
-                        'data': 'voc0712',
+                        'name': 'voc0712', 
                         'valid_splits': ['train', 'trainval'],
                         'cleaness': 10
                     },
                     {
-                        'data': 'OpenImageV4_448',
+                        'name': 'OpenImageV4_448', 
                         'valid_splits': ['train', 'trainval'],
                         'cleaness': 10
                     },
@@ -3582,19 +3585,19 @@ def get_data_sources(public_only=False, version=None):
         elif version == 'exclude_golden_use_voc_coco_all':
             return [
                     {
-                        'data': 'coco2017',
+                        'name': 'coco2017', 
                         'valid_splits': ['train', 'trainval'],
                         'cleaness': 10,
                         'use_all': True,
                     },
                     {
-                        'data': 'voc0712',
+                        'name': 'voc0712', 
                         'valid_splits': ['train', 'trainval'],
                         'cleaness': 10,
                         'use_all': True,
                     },
                     {
-                        'data': 'OpenImageV4_448',
+                        'name': 'OpenImageV4_448', 
                         'valid_splits': ['train', 'trainval'],
                         'cleaness': 9
                     },
@@ -3616,6 +3619,141 @@ def get_data_sources(public_only=False, version=None):
                     ('clothingClean', 7),
                     ('imagenet22k_448', 6),
                     ('4000_Full_setClean', 6),
+            ]
+        elif version == 'logo':
+            return [
+                    {
+                        'name': 'coco2017', 
+                        'valid_splits': ['train', 'trainval'],
+                        'cleaness': 10,
+                        'use_all': True,
+                    },
+                    {
+                        'name': 'voc0712', 
+                        'valid_splits': ['train', 'trainval'],
+                        'cleaness': 10,
+                        'use_all': True,
+                    },
+                    {
+                        'name': 'brand1048Clean',
+                        'valid_splits': ['train', 'trainval'],
+                        'cleaness': 7,
+                        'use_all': True,
+                    },
+            ]
+        elif version == 'logo2':
+            return [
+                    {
+                        'name': 'coco2017', 
+                        'valid_splits': ['train', 'trainval'],
+                        'cleaness': 10,
+                        'use_all': True,
+                    },
+                    {
+                        'name': 'voc0712', 
+                        'valid_splits': ['train', 'trainval'],
+                        'cleaness': 10,
+                        'use_all': True,
+                    },
+                    {
+                        'name': 'brand1048',
+                        'valid_splits': ['train', 'trainval'],
+                        'cleaness': 7,
+                        'use_all': True,
+                    },
+                    {
+                        'name': 'FlickrLogos-32',
+                        'cleaness': 10,
+                        'use_all': True,
+                    },
+                    {
+                        'name': 'BelgaLogos',
+                        'cleaness': 10,
+                        'use_all': True,
+                    },
+                    {
+                        'name': 'FlickrLogos_47',
+                        'cleaness': 10,
+                        'use_all': True,
+                    },
+                    {
+                        'name': 'LogosInTheWild-v2Clean',
+                        'cleaness': 10,
+                        'use_all': True,
+                    },
+                    {
+                        'name': 'openlogo',
+                        'cleaness': 10,
+                        'use_all': True,
+                    },
+            ]
+        elif version == 'logo2_novoccoco':
+            return [
+                    {
+                        'name': 'brand1048',
+                        'valid_splits': ['train', 'trainval'],
+                        'cleaness': 7,
+                        'use_all': True,
+                    },
+                    {
+                        'name': 'FlickrLogos-32',
+                        'cleaness': 10,
+                        'use_all': True,
+                    },
+                    {
+                        'name': 'BelgaLogos',
+                        'cleaness': 10,
+                        'use_all': True,
+                    },
+                    {
+                        'name': 'FlickrLogos_47',
+                        'cleaness': 10,
+                        'use_all': True,
+                    },
+                    {
+                        'name': 'LogosInTheWild-v2Clean',
+                        'cleaness': 10,
+                        'use_all': True,
+                    },
+                    {
+                        'name': 'openlogo',
+                        'cleaness': 10,
+                        'use_all': True,
+                    },
+            ]
+        elif version == 'logo_db_only':
+            return [
+                    {
+                        'name': 'brand1048',
+                        'valid_splits': ['train', 'trainval'],
+                        'cleaness': 7,
+                        'use_all': True,
+                    },
+                    {
+                        'name': 'FlickrLogos-32',
+                        'cleaness': 10,
+                        'use_all': True,
+                    },
+                    {
+                        'name': 'BelgaLogos',
+                        'cleaness': 10,
+                        'use_all': True,
+                    },
+                    {
+                        'name': 'FlickrLogos_47',
+                        'cleaness': 10,
+                        'use_all': True,
+                    },
+                    {
+                        'name': 'LogosInTheWild-v2Clean',
+                        'cleaness': 10,
+                        'use_all': True,
+                    },
+                    {
+                        'name': 'openlogo',
+                        'cleaness': 10,
+                        'use_all': True,
+                    },
             ]
         else:
             raise ValueError('Unknown version = {}'.format(version))
@@ -3711,12 +3849,12 @@ def _get_url_from_name(name):
     return _SITE + _CONTAINER_NAME + "/" + name
 
 def parse_combine(key):
-    splits = ['_train_', '_trainval_', '_test_']
-    for split in splits:
-        if split in key:
-            data_key = key.split(split)
-            return data_key[0], split[1:-1], data_key[1]
-    return None, None, key
+    pattern = '(.*?)_(train|trainval|test)_(.*)'
+    result = re.match(pattern, key)
+    if result is None:
+        return None, None, key
+    else:
+        return result.groups()
 
 def convert_to_uhrs_with_url(data):
     dataset = TSVDataset(data)

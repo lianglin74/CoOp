@@ -37,7 +37,11 @@ def gen_uuid():
     return uuid.uuid4().hex
 
 def remove_dir(d):
-    shutil.rmtree(d)
+    ensure_remove_dir(d)
+
+def ensure_remove_dir(d):
+    if op.isdir(d):
+        shutil.rmtree(d)
 
 def hash_sha1(s):
     import hashlib
@@ -239,10 +243,15 @@ def set_if_not_exist(d, key, value):
 def print_as_html(table, html_output):
     from jinja2 import Environment, FileSystemLoader
     j2_env = Environment(loader=FileSystemLoader('./'), trim_blocks=True)
-    cols = []
+    # find the cols with longest length. If it does not include all cols, then
+    # append those not included
+    _, cols = max([(len(table[row]), table[row]) for row in table], 
+            key=lambda x: x[0])
+    cols = list(cols)
     for row in table:
-        cols.extend(table[row])
-    cols = list(set(cols))
+        for c in table[row]:
+            if c not in cols:
+                cols.append(c)
     r = j2_env.get_template('aux_data/html_template/table_viewer.html').render(
         table=table,
         rows=table.keys(),
@@ -328,7 +337,7 @@ def get_mpi_local_size():
     return int(os.environ.get('OMPI_COMM_WORLD_LOCAL_SIZE', '1'))
 
 def load_class_ap(full_expid, predict_file):
-    report_file = '{}.report'.format(op.splitext(predict_file)[0])
+    report_file = predict_file
     fname = op.join('output', full_expid, 'snapshot', report_file +
             '.class_ap.json')
     if op.isfile(fname):
@@ -453,11 +462,12 @@ def get_all_tree_data():
         if op.isfile(op.join('data', name, 'root_enriched.yaml'))]
 
 def parse_test_data(predict_file):
-    # 'model_iter_368408.caffemodel.Tax1300V14.1_OpenImageV4_448Test_with_bb.train.maintainRatio.OutTreePath.TreeThreshold0.1.ClsIndependentNMS.predict'
-    pattern = 'model_iter_[0-9]*[e]*\.(?:caffemodel|pth\.tar)\.(.*)\.(train|trainval|test).*\.predict'
+    # e.g. 'model_iter_368408.caffemodel.Tax1300V14.1_OpenImageV4_448Test_with_bb.train.maintainRatio.OutTreePath.TreeThreshold0.1.ClsIndependentNMS.predict'
+    pattern = 'model(?:_iter)?_[0-9]*[e]?\.(?:caffemodel|pth\.tar|pth)\.(.*)\.(train|trainval|test).*\.predict'
     match_result = re.match(pattern, predict_file)
     if match_result and len(match_result.groups()) == 2:
         return match_result.groups()
+    # the following will be deprecated gradually
     parts = predict_file.split('.')
     idx_caffemodel = [i for i, p in enumerate(parts) if 'caffemodel' in p]
     if len(idx_caffemodel) == 1:
@@ -492,11 +502,30 @@ def parse_iteration(predict_file):
         logging.info('interpreting {} as -1'.format(num_str))
         return -1
 
+def parse_snapshot_rank(predict_file):
+    '''
+    it could be iteration, or epoch
+    '''
+    pattern = 'model_iter_([0-9]*)e*\.|model_([0-9]*)e*\.pth'
+    match_result = re.match(pattern, predict_file)
+    if match_result is None:
+        return -1
+    else:
+        matched_iters = [r for r in match_result.groups() if r is not None]
+        assert len(matched_iters) == 1
+        return int(matched_iters[0])
+
 def get_all_predict_files(full_expid):
     model_folder = op.join('output', full_expid, 'snapshot')
-    found = glob.glob(op.join(model_folder, '*.predict'))
-    predict_files = [op.basename(f) for f in found]
-    iterations = [(parse_iteration(p), p) for p in predict_files]
+    
+    predict_files = []
+    found = glob.glob(op.join(model_folder, '*.report'))
+    predict_files.extend([op.basename(f) for f in found])
+
+    found = glob.glob(op.join(model_folder, '*.report.v[0-9]'))
+    predict_files.extend([op.basename(f) for f in found])
+
+    iterations = [(parse_snapshot_rank(p), p) for p in predict_files]
     iterations.sort(key=lambda x: -x[0])
     return [p for i, p in iterations]
 
