@@ -12,7 +12,7 @@ try:
 except ImportError:
     # python 3
     pass
-import progressbar 
+import progressbar
 from tqdm import tqdm
 
 
@@ -41,20 +41,20 @@ def read_to_character(fp, c):
 class TSVFile(object):
     def __init__(self, tsv_file, cache_policy=None):
         self.tsv_file = tsv_file
-        self.lineidx = op.splitext(tsv_file)[0] + '.lineidx' 
+        self.lineidx = op.splitext(tsv_file)[0] + '.lineidx'
         self._fp = None
         self._lineidx = None
         self.cache_policy= cache_policy
         # the process always keeps the process which opens the
         # file. If the pid is not equal to the currrent pid, we will re-open
-        # teh file. 
-        self.pid = None 
-        
+        # teh file.
+        self.pid = None
+
         self._cache()
-    
+
     def num_rows(self):
         self._ensure_lineidx_loaded()
-        return len(self._lineidx) 
+        return len(self._lineidx)
 
     def seek(self, idx):
         self._ensure_tsv_opened()
@@ -75,7 +75,7 @@ class TSVFile(object):
 
     def __len__(self):
         return self.num_rows()
-    
+
     def _ensure_lineidx_loaded(self):
         if self._lineidx is None:
             if not op.isfile(self.lineidx) and not op.islink(self.lineidx):
@@ -92,14 +92,14 @@ class TSVFile(object):
             # thread, it won't copy it to each worker
             logging.info('caching {} to memory'.format(self.tsv_file))
             try:
-                import cStringIO as StringIO 
+                import cStringIO as StringIO
             except:
                 # python 3
                 from io import StringIO
             result = StringIO.StringIO()
             total = op.getsize(self.tsv_file)
             import psutil
-            avail = psutil.virtual_memory().available 
+            avail = psutil.virtual_memory().available
             if avail < total:
                 logging.info('not enough memory to cache {} < {}. fall back'.format(
                     avail, total))
@@ -118,7 +118,7 @@ class TSVFile(object):
             tmp_tsvfile = op.join('/tmp', self.tsv_file)
             tmp_lineidx = op.join('/tmp', self.lineidx)
             ensure_directory(op.dirname(tmp_tsvfile))
-            
+
             from qd_common import ensure_copy_file
             ensure_copy_file(self.tsv_file, tmp_tsvfile)
             ensure_copy_file(self.lineidx, tmp_lineidx)
@@ -148,11 +148,11 @@ class TSVFile(object):
             self.pid = os.getpid()
 
 class TSVDataset(object):
-    def __init__(self, name):
+    def __init__(self, name, data_root=None):
         self.name = name
-        proj_root = os.path.dirname(os.path.dirname(os.path.realpath(__file__)));
-        result = {}
-        data_root = os.path.join(proj_root, 'data', name)
+        if data_root is None:
+            proj_root = os.path.dirname(os.path.dirname(os.path.realpath(__file__)));
+            data_root = os.path.join(proj_root, 'data', name)
         self._data_root = op.relpath(data_root)
         self._fname_to_tsv = {}
 
@@ -166,7 +166,7 @@ class TSVDataset(object):
             self._split_to_key_to_idx[split] = key_to_idx
         idx = key_to_idx[key]
         return next(self.iter_data(split, t, version, filter_idx=[idx]))
-    
+
     def load_labelmap(self):
         return load_list_file(self.get_labelmap_file())
 
@@ -183,7 +183,7 @@ class TSVDataset(object):
         return op.join(self._data_root, 'labelmap.pos.txt')
 
     def get_train_shuffle_file(self):
-        return self.get_shuffle_file('train') 
+        return self.get_shuffle_file('train')
 
     def get_shuffle_file(self, split_name):
         return op.join(self._data_root, '{}.shuffle.txt'.format(split_name))
@@ -220,13 +220,13 @@ class TSVDataset(object):
                     '{}_{}_{}'.format(self.name,
                         '.'.join(map(str, dataset_ops[0]['old_label_idx'])),
                         dataset_ops[0]['new_label_idx']))
-            self._data_root = target_folder 
+            self._data_root = target_folder
 
     def get_test_tsv_file(self, t=None):
         return self.get_data('test', t)
 
     def get_test_tsv_lineidx_file(self):
-        return op.join(self._data_root, 'test.lineidx') 
+        return op.join(self._data_root, 'test.lineidx')
 
     def get_train_tsvs(self, t=None):
         if op.isfile(self.get_data('train', t)):
@@ -277,11 +277,11 @@ class TSVDataset(object):
                 return op.join(self._data_root, '{}.tsv'.format(split_name))
             else:
                 return op.join(self._data_root, '{}.{}.tsv'.format(split_name,
-                    t)) 
+                    t))
         elif version > 0:
             if t is None:
                 return op.join(self._data_root, '{}.v{}.tsv'.format(split_name,
-                    version)) 
+                    version))
             else:
                 return op.join(self._data_root, '{}.{}.v{}.tsv'.format(split_name,
                     t, version))
@@ -290,7 +290,7 @@ class TSVDataset(object):
                 return self.get_data(split_name, t)
             v = self.get_latest_version(split_name, t)
             return self.get_data(split_name, t, v)
-            
+
 
     def get_num_train_image(self):
         if op.isfile(self.get_data('trainX')):
@@ -309,7 +309,7 @@ class TSVDataset(object):
 
     def load_noffsets(self):
         logging.info('deprecated: pls generate it on the fly')
-        return load_list_file(self.get_noffsets_file()) 
+        return load_list_file(self.get_noffsets_file())
 
     def load_inverted_label(self, split, version=None, label=None):
         fname = self.get_data(split, 'inverted.label', version)
@@ -326,7 +326,7 @@ class TSVDataset(object):
                     result[row[0]] = []
                 else:
                     result[row[0]] = list(map(int, ss))
-            return result 
+            return result
         else:
             all_label = load_list_file(self.get_data(split, 'labelmap', version))
             if label not in all_label:
@@ -357,7 +357,7 @@ class TSVDataset(object):
                     result.append((row[0], []))
                 else:
                     result.append((row[0], list(map(int, ss))))
-            return result 
+            return result
         else:
             all_label = self.load_labelmap()
             result = []
@@ -374,7 +374,7 @@ class TSVDataset(object):
 
     def has(self, split, t=None, version=None):
         return op.isfile(self.get_data(split, t, version)) or (
-                op.isfile(self.get_data('{}X'.format(split), t, version)) and 
+                op.isfile(self.get_data('{}X'.format(split), t, version)) and
                 op.isfile(self.get_shuffle_file(split)))
 
     def last_update_time(self, split, t=None, version=None):
@@ -418,7 +418,7 @@ class TSVDataset(object):
             assert op.isfile(f), f
             return len(load_list_file(self.get_shuffle_file(split)))
 
-    def iter_data(self, split, t=None, version=None, 
+    def iter_data(self, split, t=None, version=None,
             unique=False, filter_idx=None, progress=False):
         if progress:
             if filter_idx is None:
@@ -432,7 +432,7 @@ class TSVDataset(object):
             if t is not None:
                 if unique:
                     returned = set()
-                for i, row in enumerate(self.iter_composite(split, t, version, 
+                for i, row in enumerate(self.iter_composite(split, t, version,
                         filter_idx=filter_idx)):
                     if unique and row[0] in returned:
                         continue
@@ -495,7 +495,7 @@ class TSVDataset(object):
 
     def update_data(self, rows, split, t, generate_info=None):
         '''
-        if the data are the same, we will not do anything. 
+        if the data are the same, we will not do anything.
         '''
         rows = list(rows)
         assert t is not None
@@ -507,7 +507,7 @@ class TSVDataset(object):
                     is_equal = False
                     break
                 for o, n in zip(origin_row, new_row):
-                    if o != n: 
+                    if o != n:
                         is_equal = False
                         break
                 if not is_equal:
@@ -594,7 +594,7 @@ def create_inverted_tsv(rows, inverted_label_file, label_map):
             assert type(labels) is int
             curr_unique_labels = [label_map[labels]]
         for l in curr_unique_labels:
-            assert type(l) == str or type(l) == unicode 
+            assert type(l) == str or type(l) == unicode
             if l not in inverted:
                 inverted[l] = [i]
             else:
@@ -623,7 +623,7 @@ def create_inverted_list2(rows, th=None):
             assert type(labels) is int
             curr_unique_labels = [str(labels)]
         for l in curr_unique_labels:
-            assert type(l) == str or type(l) == unicode 
+            assert type(l) == str or type(l) == unicode
             if l not in inverted:
                 inverted[l] = [i]
             else:
@@ -640,9 +640,9 @@ def create_inverted_list(rows):
         if type(labels) is list:
             # detection dataset
             curr_unique_labels = set([l['class'] for l in labels])
-            curr_unique_with_bb_labels = set([l['class'] for l in labels 
+            curr_unique_with_bb_labels = set([l['class'] for l in labels
                 if 'rect' in l and any(x != 0 for x in l['rect'])])
-            curr_unique_no_bb_labels = set([l['class'] for l in labels 
+            curr_unique_no_bb_labels = set([l['class'] for l in labels
                 if 'rect' not in l or all(x == 0 for x in l['rect'])])
         else:
             assert type(labels) is int
@@ -651,7 +651,7 @@ def create_inverted_list(rows):
             curr_unique_no_bb_labels = curr_unique_labels
         def update(unique_labels, inv):
             for l in unique_labels:
-                assert type(l) == str or type(l) == unicode 
+                assert type(l) == str or type(l) == unicode
                 if l not in inv:
                     inv[l] = [i]
                 else:
@@ -670,7 +670,7 @@ def tsv_shuffle_reader(tsv_file):
         for l in lineidx:
             fp.seek(int(float(l)))
             yield [x.strip() for x in fp.readline().split('\t')]
-    
+
 def load_labelmap(data):
     dataset = TSVDataset(data)
     return dataset.load_labelmap()
