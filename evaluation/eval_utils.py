@@ -490,9 +490,15 @@ def add_label_to_dataset(dataset, split, iou_threshold, labels,
 
     num_added = 0
     for parts in labels:
-        imgkey = parts[0]
         if label_key_type == "url":
-            imgkey = url_key_map[imgkey]
+            if parts[0] not in url_key_map:
+                continue
+            imgkey = url_key_map[parts[0]]
+        else:
+            imgkey = parts[0]
+        if imgkey not in existing_res:
+            logging.info("image does not exist: {}".format(imgkey))
+            continue
         bboxes = parts[1]
         if isinstance(bboxes, six.string_types):
             bboxes = json.loads(bboxes)

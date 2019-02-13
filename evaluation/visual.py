@@ -8,8 +8,8 @@ from evaluation.analyze_task import analyze_verify_box_task
 from evaluation.uhrs import UhrsTaskManager
 from evaluation.utils import read_from_file, write_to_file, get_max_iou_idx, list_files_in_dir
 from scripts.process_tsv import get_img_url2
-from scripts.qd_common import init_logging, ensure_directory
-from scripts.tsv_io import tsv_reader, tsv_writer, TSVDataset
+from qd.qd_common import ensure_directory
+from qd.tsv_io import tsv_reader, tsv_writer, TSVDataset
 
 
 def get_wrong_pred(pred_file, gt_file, labelmap=None, outfile=None, min_conf=0.5, iou=0.5):
@@ -60,11 +60,12 @@ def get_wrong_pred(pred_file, gt_file, labelmap=None, outfile=None, min_conf=0.5
     return all_wrong_pred
 
 
-def manual_check(source_name, gt_config_file, labelmap, dirpath, min_conf=0.5, iou=0.5):
+def manual_check(source_name, gt_config_file, task_dir, min_conf=0.5, iou=0.5, labelmap=None):
     """
     Manually check false positive prediction via UHRS UI
     """
     # prepare working directory
+    dirpath = os.path.join(task_dir, source_name)
     ensure_directory(dirpath)
 
     task_hitapp = "internal_verify_box"
@@ -107,6 +108,5 @@ def manual_check(source_name, gt_config_file, labelmap, dirpath, min_conf=0.5, i
     analyze_verify_box_task(
             download_files, "uhrs", res_file, outfile_rejudge=None,
             worker_quality_file=None, min_num_judges_per_hit=1)
-
-    merge_gt(gt_config_file, [res_file], 0.8)
-
+    for dataset in config.datasets():
+        merge_gt(dataset, gt_config_file, [res_file], 0.8)
