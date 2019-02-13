@@ -1296,9 +1296,6 @@ def tsv_details(row_hw, row_label, num_rows):
             # special tags, which is annoying
             curr_labels = set(normalize_to_str(rect['class']) for rect in rects)
             for rect in rects:
-                if "rect" not in rect:
-                    # it is image-level annotation
-                    continue
                 r = rect['rect']
                 if all(x == 0 for x in r):
                     # it is image-level annotation
@@ -2619,7 +2616,6 @@ class TSVDatasetSource(TSVDataset):
                 0)
         self._targetlabel_to_sourcelabels = list_to_dict_unique(sourcelabel_targetlabel,
                 1)
-
 
         return self._sourcelabel_to_targetlabels
 

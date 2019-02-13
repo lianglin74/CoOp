@@ -104,13 +104,8 @@ def draw_bb(im, all_rect, all_label,
             if draw_label:
                 label_in_image = '{}'.format(label)
 
-        def gen_candidate():
-            # above of top left
-            yield int(rect[0]) + 2, int(rect[1]) - 4
-            # below of bottom left
-            yield int(rect[0]) + 2, int(rect[3]) + text_height + 2
         if draw_label or probs is not None:
-            (_, text_height), _ = cv2.getTextSize(label_in_image, cv2.FONT_HERSHEY_SIMPLEX,
+            (text_width, text_height), _ = cv2.getTextSize(label_in_image, cv2.FONT_HERSHEY_SIMPLEX,
                     font_scale, font_thickness)
             text_left = int(rect[0] + 2)
             left_top = (int(rect[0]), int(rect[1]))
