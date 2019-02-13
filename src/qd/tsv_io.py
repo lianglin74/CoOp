@@ -151,8 +151,8 @@ class TSVDataset(object):
     def __init__(self, name, data_root=None):
         self.name = name
         if data_root is None:
-            proj_root = os.path.dirname(os.path.dirname(os.path.realpath(__file__)));
-            data_root = os.path.join(proj_root, 'data', name)
+            proj_root = op.dirname(op.dirname(op.dirname(op.realpath(__file__))))
+            data_root = op.join(proj_root, 'data', name)
         self._data_root = op.relpath(data_root)
         self._fname_to_tsv = {}
 
