@@ -3,81 +3,69 @@ try:
 except:
     # if it comes here, it is python3
     pass
-from process_image import show_images
-import re
-import shutil
+from tqdm import tqdm
+import argparse
+import base64
+import copy
+import cv2
 import glob
-import yaml
-import matplotlib.pyplot as plt
-from tsv_io import tsv_reader, tsv_writer
-from pprint import pformat
+import imghdr
+import inspect
+import json
+import logging
+import numpy as np
 import os
 import os.path as op
-import sys
-import json
-from pprint import pprint
-import multiprocessing as mp
-import random
-import numpy as np
-from qd_common import ensure_directory
-from qd_common import default_data_path, load_net
-import time
-from multiprocessing import Queue
-from shutil import copytree
-from shutil import rmtree
-from qd_common import img_from_base64
-import cv2
-import base64
-from taxonomy import load_label_parent, labels2noffsets
-from taxonomy import LabelToSynset, synset_to_noffset
-from taxonomy import noffset_to_synset
-from taxonomy import get_nick_name
-from taxonomy import load_all_tax, merge_all_tax
-from taxonomy import child_parent_print_tree2
-from taxonomy import create_markdown_url
-#from taxonomy import populate_noffset
-from taxonomy import populate_cum_images
-from taxonomy import gen_term_list
-from taxonomy import gen_noffset
-from taxonomy import populate_url_for_offset
-from taxonomy import disambibuity_noffsets
-from taxonomy import Taxonomy
-from qd_common import read_to_buffer, load_list_file
-from qd_common import write_to_yaml_file, load_from_yaml_file
-from qd_common import encoded_from_img
-from tsv_io import extract_label
-from tsv_io import create_inverted_tsv
-from tsv_io import create_inverted_list
-
-from process_image import draw_bb, show_image, save_image
-from qd_common import write_to_file
-from tsv_io import TSVDataset, TSVFile
-from qd_common import init_logging
-import logging
-from qd_common import is_cluster
-from tsv_io import tsv_shuffle_reader
-import argparse
-from tsv_io import get_meta_file
-import imghdr
-from qd_common import calculate_iou
-from qd_common import yolo_old_to_new
-from qd_common import generate_lineidx
-from qd_common import list_to_dict, list_to_dict_unique
-from qd_common import dict_to_list
-from qd_common import parse_test_data
-from qd_common import worth_create
-from tsv_io import load_labels
-import unicodedata
-from taxonomy import is_noffset
-import copy
-from tsv_io import create_inverted_list2
-from qd_common import calculate_image_ap
-from tqdm import tqdm
-from pymongo import MongoClient
 import pymongo
+import random
+import re
+import shutil
+import sys
+import time
+import unicodedata
+import yaml
+
 from datetime import datetime
-import inspect
-from qd_common import hash_sha1
+from pprint import pformat
+from pymongo import MongoClient
+from .process_image import draw_bb, show_image, save_image
+from .process_image import show_images
+from .qd_common import calculate_image_ap
+from .qd_common import calculate_iou
+from .qd_common import dict_to_list
+from .qd_common import ensure_directory
+from .qd_common import generate_lineidx
+from .qd_common import hash_sha1
+from .qd_common import img_from_base64
+from .qd_common import init_logging
+from .qd_common import json_dump
+from .qd_common import list_to_dict, list_to_dict_unique
+from .qd_common import parse_test_data
+from .qd_common import read_to_buffer, load_list_file
+from .qd_common import worth_create
+from .qd_common import write_to_file
+from .qd_common import write_to_yaml_file, load_from_yaml_file
+from .taxonomy import child_parent_print_tree2
+from .taxonomy import create_markdown_url
+from .taxonomy import disambibuity_noffsets
+from .taxonomy import gen_noffset
+from .taxonomy import gen_term_list
+from .taxonomy import get_nick_name
+from .taxonomy import is_noffset
+from .taxonomy import LabelToSynset, synset_to_noffset
+from .taxonomy import load_all_tax, merge_all_tax
+from .taxonomy import noffset_to_synset
+from .taxonomy import populate_cum_images
+from .taxonomy import populate_url_for_offset
+from .taxonomy import Taxonomy
+from .tsv_io import create_inverted_list
+from .tsv_io import create_inverted_list2
+from .tsv_io import extract_label
+from .tsv_io import get_meta_file
+from .tsv_io import load_labels
+from .tsv_io import TSVDataset, TSVFile
+from .tsv_io import tsv_reader, tsv_writer
+
 
 def get_data_distribution(data, split, version):
     # return a dictionary to represent the distribution of the data
@@ -128,7 +116,7 @@ def convert_pred_to_dataset_label(full_expid, predict_file,
             'snapshot',
             predict_file)
 
-    from qd_common import parse_test_data
+    from .qd_common import parse_test_data
     data, split = parse_test_data(predict_file)
 
     from process_tsv import load_key_rects
@@ -162,8 +150,8 @@ def convert_pred_to_dataset_label(full_expid, predict_file,
 
 
 def ensure_inject_expid(full_expid):
-    from qd_common import get_all_predict_files
-    from qd_common import load_solver
+    from .qd_common import get_all_predict_files
+    from .qd_common import load_solver
     solver_prototxt = op.join('output', full_expid,
         'solver.prototxt')
     if not op.isfile(solver_prototxt):
@@ -899,27 +887,6 @@ def get_class_count(data, splits):
                 for row in dataset.iter_data(
                     split, 'inverted.label.count', -1)}
     return result
-
-def update_yolo_test_proto(input_test, test_data, map_file, output_test):
-    dataset = TSVDataset(test_data)
-    if op.isfile(dataset.get_noffsets_file()):
-        test_noffsets = dataset.load_noffsets()
-    else:
-        test_noffsets = labels2noffsets(dataset.load_labelmap())
-    test_map_id = []
-    net = load_net(input_test)
-    for l in net.layer:
-        if l.type == 'RegionOutput':
-            tree_file = l.region_output_param.tree
-            r = load_label_parent(tree_file)
-            noffset_idx, noffset_parentidx, noffsets = r
-            for noffset in test_noffsets:
-                test_map_id.append(noffset_idx[noffset])
-            write_to_file('\n'.join(map(str, test_map_id)), map_file)
-            l.region_output_param.map = map_file
-            l.region_output_param.thresh = 0.005
-    assert len(test_noffsets) == len(test_map_id)
-    write_to_file(str(net), output_test)
 
 def get_colored_name(node, colors):
     name = node.name
@@ -4031,6 +3998,62 @@ def convert_uhrs_result_back_to_sources(in_tsv, debug=True, tree_file=None):
                 logging.info('equal - {} - {}'.format(data, split))
         populate_dataset_details(data)
 
+def remove_has_confirmed_colocation_labels(all_data, iou_threshold=0.75):
+    all_split = ['train', 'trainval', 'test']
+    debug = False
+    for data in all_data:
+        dataset = TSVDataset(data)
+        for split in all_split:
+            if not dataset.has(split):
+                continue
+            logging.info('{} -> {}'.format(data, split))
+            info = {'total': 0, 'removed': 0}
+            def gen_rows():
+                for i, (key, en_rects) in tqdm(enumerate(dataset.iter_data(split,
+                    'label', version=-1))):
+                    rects = json.loads(en_rects)
+                    info['total'] = info['total'] + len(rects)
+                    if debug:
+                        _, _, im = next(dataset.iter_data(split, filter_idx=[i]))
+                        im = img_from_base64(im)
+                        im_origin = np.copy(im)
+                        draw_bb(im_origin, [r['rect'] for r in rects], [r['class'] for r in rects])
+                    all_removed = []
+                    # some labels has no rect
+                    good_rects = [r for r in rects if 'rect' in r and
+                            ('conf' not in r or ('conf' in r and 'uhrs_confirm' in r))]
+                    pro_no_verify = [r for r in rects if 'conf' in r and
+                            'uhrs_confirm' not in r and 'rect' in r]
+                    no_rects = [r for r in rects if 'rect' not in r]
+                    assert len(good_rects) + len(pro_no_verify) + len(no_rects)==len(rects)
+                    to_remove = []
+                    for r in pro_no_verify:
+                        if any((s for s in good_rects if
+                                calculate_iou(r['rect'], s['rect']) >
+                                iou_threshold)):
+                            to_remove.append(r)
+                    for t in to_remove:
+                        rects.remove(t)
+                    info['removed'] = info['removed'] + len(to_remove)
+                    all_removed.extend(to_remove)
+                    if debug and len(all_removed) > 0:
+                        logging.info(len(all_removed))
+                        im_removed = np.copy(im)
+                        logging.info(pformat(all_removed))
+                        draw_bb(im_removed, [r['rect'] for r in all_removed],
+                                [r['class'] for r in all_removed])
+                        show_images([im_origin, im_removed], 1, 2)
+                    yield key, json_dump(rects)
+            def gen_info():
+                yield 'remove auto-pro and has good labels in same locatoin', iou_threshold
+                yield 'total', info['total']
+                yield 'removed', info['removed']
+                ratio = 1. * info['removed'] / info['total']
+                yield 'ratio', ratio
+                logging.info(pformat(info))
+                logging.info(ratio)
+
+            dataset.update_data(gen_rows(), split, 'label', generate_info=gen_info())
 
 def process_tsv_main(**kwargs):
     if kwargs['type'] == 'gen_tsv':
@@ -4056,11 +4079,6 @@ def process_tsv_main(**kwargs):
     elif kwargs['type'] == 'taxonomy_to_tsv':
         taxonomy_folder = kwargs['input']
         build_taxonomy_impl(taxonomy_folder, **kwargs)
-    elif kwargs['type'] == 'yolo_model_convert':
-        old_proto = kwargs['prototxt']
-        old_model = kwargs['model']
-        new_model = kwargs['output']
-        yolo_old_to_new(old_proto, old_model, new_model)
     elif kwargs['type'] == 'build_data_index':
         data = kwargs['input']
         populate_dataset_details(data)

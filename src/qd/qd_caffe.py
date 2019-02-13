@@ -544,4 +544,30 @@ def test_correct_caffe_file_path():
         for s1_d, s2_d in zip(s1_h.data, s2_h.data):
             assert s1_d == s2_d
 
+def update_yolo_test_proto(input_test, test_data, map_file, output_test):
+    from .tsv_io import TSVDataset
+    from .taxonomy import labels2noffsets, load_label_parent
+    from .qd_common import write_to_file
+    import os.path as op
+
+    dataset = TSVDataset(test_data)
+    if op.isfile(dataset.get_noffsets_file()):
+        test_noffsets = dataset.load_noffsets()
+    else:
+        test_noffsets = labels2noffsets(dataset.load_labelmap())
+    test_map_id = []
+    net = load_net(input_test)
+    for l in net.layer:
+        if l.type == 'RegionOutput':
+            tree_file = l.region_output_param.tree
+            r = load_label_parent(tree_file)
+            noffset_idx, noffset_parentidx, noffsets = r
+            for noffset in test_noffsets:
+                test_map_id.append(noffset_idx[noffset])
+            write_to_file('\n'.join(map(str, test_map_id)), map_file)
+            l.region_output_param.map = map_file
+            l.region_output_param.thresh = 0.005
+    assert len(test_noffsets) == len(test_map_id)
+    write_to_file(str(net), output_test)
+
 
