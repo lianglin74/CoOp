@@ -633,45 +633,29 @@ def create_inverted_list2(rows, th=None):
     return inverted, keys
 
 def is_verified_rect(rect):
-    if 'class' in rect and \
-            'rect' in rect and \
-            'uhrs_confirm' in rect and \
-            rect['uhrs_confirm'] > 0:
-        is_verified = True
-    else:
-        all_verified_keys = [
-                ['class', 'rect'], # voc0712
-                ['class', 'rect', 'diff'], # voc, some rect has diff
-                ['class', 'rect', 'workerId'], # from the labeler
-                ['class', 'rect', 'merge_from'], # we will further evaluate merge_from
-                ]
-        is_verified = any(len(ls) == len(rect) and all(l in rect for l in ls) for ls in all_verified_keys)
-        if is_verified and 'merge_from' in rect:
-            # we need to verify all boxes in teh merge_from
-            if any(not is_verified(r) for r in rect['merge_from']):
-                is_verified = False
+    allowed_keys = set(['class', 'rect', 'uhrs_confirm', 'uhrs_uncertain',
+            'conf', 'merge_from', 'class_from', 'change_from', 'from', 'diff',
+            'IsInside', 'IsGroupOf', 'IsDepiction', 'IsOccluded',
+            'IsTruncated', 'workerId', 'class_propagate_from'])
+    unkonwn_keys = [k for k in rect if k not in allowed_keys]
+    if len(unkonwn_keys) > 0:
+        import ipdb;ipdb.set_trace(context=15)
+        logging.info('unknown keys = {}\n'.format(pformat(unkonwn_keys)))
 
-    if 'class' in rect and 'rect' in rect and \
-            'uhrs_uncertain' in rect and rect['uhrs_uncertain'] > 0:
-        if 'uhrs_confirm' in rect and rect['uhrs_confirm'] > 0:
-            # sometimes, the verification result is good, sometimes, it is
-            # uncertain. In this case, we just say, it is verified.
-            is_noverified = False
-        else:
-            is_noverified = True
-    else:
-        all_noverified_keys = [['class', 'rect', 'from', 'conf']]
-        is_noverified = any(len(ls) == len(rect) and all(l in rect for l in ls) for ls in all_noverified_keys)
-
-    # the following check is kind of redundant, but just make sure there is no
-    # overlap in all_verified_keys and all_noverified_keys. in that case, it is
-    # confusing, and normally, the reason is typo
-    if is_verified and not is_noverified:
-        return True
-    elif not is_verified and is_noverified:
+    if 'class' not in rect or 'rect' not in rect:
         return False
-    else:
-        raise Exception('what it is?\n{}'.format(pformat(rect)))
+
+    if 'uhrs_confirm' in rect:
+        assert rect['uhrs_confirm'] > 0
+        return True
+
+    if 'conf' in rect:
+        return False
+
+    if 'merge_from' in rect:
+        return all(is_verified_rect(r) for r in rect['merge_from'])
+
+    return True
 
 def create_inverted_list(rows):
     inverted = {}

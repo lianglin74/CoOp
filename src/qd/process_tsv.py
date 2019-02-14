@@ -1362,45 +1362,57 @@ def derive_composite_meta_data(data, split, t):
 
 def ensure_create_inverted_tsvs(dataset, splits):
     # for each data tsv, generate the inverted file, and the labelmap
+    is_parallel = True
     for split in splits:
-        v = 0
-        while True:
-            if not dataset.has(split, 'label', v):
-                break
-            if not dataset.has(split, 'labelmap', v) or \
-                dataset.last_update_time(split, 'labelmap', v) < dataset.last_update_time(split, 'label', v):
-                curr_labelmap = set()
-                update_labelmap(dataset.iter_data(split, 'label', v),
-                        dataset.num_rows(split),
-                        curr_labelmap)
-                curr_labelmap = sorted(list(curr_labelmap))
-                dataset.write_data([[l] for l in curr_labelmap], split, 'labelmap', v)
-            else:
-                curr_labelmap = None
-            inverted_keys = ['inverted.label',
-                    'inverted.label.with_bb',
-                    'inverted.label.no_bb',
-                    'inverted.label.with_bb.verified',
-                    'inverted.label.with_bb.noverified',]
-            if any(not dataset.has(split, k, v) for k in inverted_keys):
-                logging.info('version = {}'.format(v))
-                if curr_labelmap is None:
-                    curr_labelmap = []
-                    for row in dataset.iter_data(split, 'labelmap', v):
-                        assert len(row) == 1
-                        curr_labelmap.append(row[0])
-                def gen_inverted_rows(inv):
-                    for label in inv:
-                        assert label in curr_labelmap
-                    for label in curr_labelmap:
-                        i = inv[label] if label in inv else []
-                        yield label, ' '.join(map(str, i))
-                inverted_result = create_inverted_list(
-                        dataset.iter_data(split, 'label', v))
-                for k in inverted_keys:
-                    dataset.write_data(gen_inverted_rows(inverted_result[k]),
-                            split, k, v)
-            v = v + 1
+        if not dataset.has(split):
+            continue
+        latest = dataset.get_latest_version(split, 'label')
+        if not is_parallel:
+            for v in range(latest + 1):
+                assert dataset.has(split, 'label', v)
+                ensure_create_inverted_tsv_for_each((dataset, split, v))
+        else:
+            import multiprocessing as mp
+            p = mp.Pool()
+            param = [(dataset, split, v) for v in range(latest + 1)]
+            p.map(ensure_create_inverted_tsv_for_each, param)
+
+def ensure_create_inverted_tsv_for_each(args):
+    dataset, split, v = args
+    if not dataset.has(split, 'labelmap', v) or \
+        dataset.last_update_time(split, 'labelmap', v) < dataset.last_update_time(split, 'label', v):
+        curr_labelmap = set()
+        update_labelmap(dataset.iter_data(split, 'label', v),
+                dataset.num_rows(split),
+                curr_labelmap)
+        curr_labelmap = sorted(list(curr_labelmap))
+        dataset.write_data([[l] for l in curr_labelmap], split, 'labelmap', v)
+    else:
+        curr_labelmap = None
+    inverted_keys = ['inverted.label',
+            'inverted.label.with_bb',
+            'inverted.label.no_bb',
+            'inverted.label.with_bb.verified',
+            'inverted.label.with_bb.noverified',]
+    if any(not dataset.has(split, k, v) for k in inverted_keys):
+        logging.info('version = {}'.format(v))
+        if curr_labelmap is None:
+            curr_labelmap = []
+            for row in dataset.iter_data(split, 'labelmap', v):
+                assert len(row) == 1
+                curr_labelmap.append(row[0])
+        def gen_inverted_rows(inv):
+            logging.info('re-orderring')
+            for label in tqdm(inv):
+                assert label in curr_labelmap
+            for label in curr_labelmap:
+                i = inv[label] if label in inv else []
+                yield label, ' '.join(map(str, i))
+        inverted_result = create_inverted_list(
+                dataset.iter_data(split, 'label', v))
+        for k in inverted_keys:
+            dataset.write_data(gen_inverted_rows(inverted_result[k]),
+                    split, k, v)
 
 def populate_dataset_details(data, check_image_details=False):
     logging.info(data)
@@ -2376,8 +2388,11 @@ def collect_label(row, stat, **kwargs):
 
 class TSVDatasetSource(TSVDataset):
     def __init__(self, name, root=None, version=-1,
-            valid_splits=['train', 'trainval', 'test'], cleaness=10,
-            use_all=False, use_negative_label=False):
+            valid_splits=['train', 'trainval', 'test'],
+            cleaness=10,
+            use_all=False,
+            use_negative_label=False,
+            select_by_verified=False):
         super(TSVDatasetSource, self).__init__(name)
         self._noffset_count = {}
         self._type = None
@@ -2392,12 +2407,12 @@ class TSVDatasetSource(TSVDataset):
         self._version = version
         self._valid_splits = valid_splits
         self._use_all = use_all
+        self._select_by_verified = select_by_verified
         self.cleaness = cleaness
         self.use_negative_label = use_negative_label
 
     def populate_info(self, root):
         self._ensure_initialized()
-        types = ['with_bb', 'no_bb']
         for node in root.iter_search_nodes():
             if root == node:
                 continue
@@ -2442,7 +2457,12 @@ class TSVDatasetSource(TSVDataset):
             # load inverted list
             type_to_inverted = {}
             for i, t in enumerate(types):
-                rows = self.iter_data(split, 'inverted.label.{}'.format(t),
+                if self._select_by_verified:
+                    inverted_label_type = 'inverted.label.{}.verified'.format(t)
+                else:
+                    inverted_label_type = 'inverted.label.{}'.format(t)
+                import ipdb;ipdb.set_trace(context=15)
+                rows = self.iter_data(split, inverted_label_type,
                         version=self._version)
                 type_to_inverted[t] = {r[0]: map(int, r[1].split(' ')) for r in rows if
                     r[0] in self._sourcelabel_to_targetlabels and
@@ -3507,272 +3527,282 @@ def standarize_crawled(tsv_input, tsv_output):
             yield image_name, json.dumps(rects), image_str
     tsv_writer(gen_rows(), tsv_output)
 
-def get_data_sources(public_only=False, version=None):
-    '''
-    gradually deprecate the parameter of public_only. Use the parameter of
-    version
-    '''
-    if version:
-        if version=='exclude_golden_test':
-            return [
-                    {
-                        'name': 'coco2017',
-                        'valid_splits': ['train', 'trainval'],
-                        'cleaness': 10
-                    },
-                    {
-                        'name': 'voc0712',
-                        'valid_splits': ['train', 'trainval'],
-                        'cleaness': 10
-                    },
-                    {
-                        'name': 'OpenImageV4_448',
-                        'valid_splits': ['train', 'trainval'],
-                        'cleaness': 10
-                    },
-                    ('Naturalist', 10),
-                    ('elder', 10),
-                    ('imagenet200Diff', 10),
-                    ('open_images_clean_1', 9),
-                    ('open_images_clean_2', 9),
-                    ('open_images_clean_3', 9),
-                    ('imagenet1kLocClean', 9),
-                    ('imagenet3k_448Clean', 9),
-                    ('VisualGenomeClean', 9),
-                    ('brand1048Clean', 8),
-                    ('mturk700_url_as_keyClean', 8),
-                    ('crawl_office_v1', 8),
-                    ('crawl_office_v2', 8),
-                    ('Materialist', 8),
-                    ('MSLogoClean', 8),
-                    ('clothingClean', 8),
-                    ('imagenet22k_448', 7),
-                    ('4000_Full_setClean', 7),
-            ]
-        elif version == 'exclude_golden_use_voc_coco_all':
-            return [
-                    {
-                        'name': 'coco2017',
-                        'valid_splits': ['train', 'trainval'],
-                        'cleaness': 10,
-                        'use_all': True,
-                    },
-                    {
-                        'name': 'voc0712',
-                        'valid_splits': ['train', 'trainval'],
-                        'cleaness': 10,
-                        'use_all': True,
-                    },
-                    {
-                        'name': 'OpenImageV4_448',
-                        'valid_splits': ['train', 'trainval'],
-                        'cleaness': 9
-                    },
-                    ('Naturalist', 9),
-                    ('elder', 9),
-                    ('imagenet200Diff', 9),
-                    ('open_images_clean_1', 8),
-                    ('open_images_clean_2', 8),
-                    ('open_images_clean_3', 8),
-                    ('imagenet1kLocClean', 8),
-                    ('imagenet3k_448Clean', 8),
-                    ('VisualGenomeClean', 8),
-                    ('brand1048Clean', 7),
-                    ('mturk700_url_as_keyClean', 7),
-                    ('crawl_office_v1', 7),
-                    ('crawl_office_v2', 7),
-                    ('Materialist', 7),
-                    ('MSLogoClean', 7),
-                    ('clothingClean', 7),
-                    ('imagenet22k_448', 6),
-                    ('4000_Full_setClean', 6),
-            ]
-        elif version == 'logo':
-            return [
-                    {
-                        'name': 'coco2017',
-                        'valid_splits': ['train', 'trainval'],
-                        'cleaness': 10,
-                        'use_all': True,
-                    },
-                    {
-                        'name': 'voc0712',
-                        'valid_splits': ['train', 'trainval'],
-                        'cleaness': 10,
-                        'use_all': True,
-                    },
-                    {
-                        'name': 'brand1048Clean',
-                        'valid_splits': ['train', 'trainval'],
-                        'cleaness': 7,
-                        'use_all': True,
-                    },
-            ]
-        elif version == 'logo2':
-            return [
-                    {
-                        'name': 'coco2017',
-                        'valid_splits': ['train', 'trainval'],
-                        'cleaness': 10,
-                        'use_all': True,
-                    },
-                    {
-                        'name': 'voc0712',
-                        'valid_splits': ['train', 'trainval'],
-                        'cleaness': 10,
-                        'use_all': True,
-                    },
-                    {
-                        'name': 'brand1048',
-                        'valid_splits': ['train', 'trainval'],
-                        'cleaness': 7,
-                        'use_all': True,
-                    },
-                    {
-                        'name': 'FlickrLogos-32',
-                        'cleaness': 10,
-                        'use_all': True,
-                    },
-                    {
-                        'name': 'BelgaLogos',
-                        'cleaness': 10,
-                        'use_all': True,
-                    },
-                    {
-                        'name': 'FlickrLogos_47',
-                        'cleaness': 10,
-                        'use_all': True,
-                    },
-                    {
-                        'name': 'LogosInTheWild-v2Clean',
-                        'cleaness': 10,
-                        'use_all': True,
-                    },
-                    {
-                        'name': 'openlogo',
-                        'cleaness': 10,
-                        'use_all': True,
-                    },
-            ]
-        elif version == 'logo2_novoccoco':
-            return [
-                    {
-                        'name': 'brand1048',
-                        'valid_splits': ['train', 'trainval'],
-                        'cleaness': 7,
-                        'use_all': True,
-                    },
-                    {
-                        'name': 'FlickrLogos-32',
-                        'cleaness': 10,
-                        'use_all': True,
-                    },
-                    {
-                        'name': 'BelgaLogos',
-                        'cleaness': 10,
-                        'use_all': True,
-                    },
-                    {
-                        'name': 'FlickrLogos_47',
-                        'cleaness': 10,
-                        'use_all': True,
-                    },
-                    {
-                        'name': 'LogosInTheWild-v2Clean',
-                        'cleaness': 10,
-                        'use_all': True,
-                    },
-                    {
-                        'name': 'openlogo',
-                        'cleaness': 10,
-                        'use_all': True,
-                    },
-            ]
-        elif version == 'logo_db_only':
-            return [
-                    {
-                        'name': 'brand1048',
-                        'valid_splits': ['train', 'trainval'],
-                        'cleaness': 7,
-                        'use_all': True,
-                    },
-                    {
-                        'name': 'FlickrLogos-32',
-                        'cleaness': 10,
-                        'use_all': True,
-                    },
-                    {
-                        'name': 'BelgaLogos',
-                        'cleaness': 10,
-                        'use_all': True,
-                    },
-                    {
-                        'name': 'FlickrLogos_47',
-                        'cleaness': 10,
-                        'use_all': True,
-                    },
-                    {
-                        'name': 'LogosInTheWild-v2Clean',
-                        'cleaness': 10,
-                        'use_all': True,
-                    },
-                    {
-                        'name': 'openlogo',
-                        'cleaness': 10,
-                        'use_all': True,
-                    },
-            ]
-        else:
-            raise ValueError('Unknown version = {}'.format(version))
-    if not public_only:
+def get_data_sources(version):
+    if version=='exclude_golden_test':
         return [
-            ('coco2017', 10),
-            ('voc0712', 10),
-            ('Naturalist', 10),
-            ('elder', 10),
-            ('imagenet200Diff', 10),
-            ('OpenImageV4_448', 10),
-            ('open_images_clean_1', 9),
-            ('open_images_clean_2', 9),
-            ('open_images_clean_3', 9),
-            ('imagenet1kLocClean', 9),
-            ('imagenet3k_448Clean', 9),
-            ('VisualGenomeClean', 9),
-            ('brand1048Clean', 8),
-            ('mturk700_url_as_keyClean', 8),
-            ('crawl_office_v1', 8),
-            ('crawl_office_v2', 8),
-            ('Materialist', 8),
-            ('MSLogoClean', 8),
-            ('clothingClean', 8),
-            ('imagenet22k_448', 7),
-            ('4000_Full_setClean', 7),
+                {
+                    'name': 'coco2017',
+                    'valid_splits': ['train', 'trainval'],
+                    'cleaness': 10
+                },
+                {
+                    'name': 'voc0712',
+                    'valid_splits': ['train', 'trainval'],
+                    'cleaness': 10
+                },
+                {
+                    'name': 'OpenImageV4_448',
+                    'valid_splits': ['train', 'trainval'],
+                    'cleaness': 10
+                },
+                ('Naturalist', 10),
+                ('elder', 10),
+                ('imagenet200Diff', 10),
+                ('open_images_clean_1', 9),
+                ('open_images_clean_2', 9),
+                ('open_images_clean_3', 9),
+                ('imagenet1kLocClean', 9),
+                ('imagenet3k_448Clean', 9),
+                ('VisualGenomeClean', 9),
+                ('brand1048Clean', 8),
+                ('mturk700_url_as_keyClean', 8),
+                ('crawl_office_v1', 8),
+                ('crawl_office_v2', 8),
+                ('Materialist', 8),
+                ('MSLogoClean', 8),
+                ('clothingClean', 8),
+                ('imagenet22k_448', 7),
+                ('4000_Full_setClean', 7),
+        ]
+    elif version == 'exclude_golden_use_voc_coco_all':
+        return [
+                {
+                    'name': 'coco2017',
+                    'valid_splits': ['train', 'trainval'],
+                    'cleaness': 10,
+                    'use_all': True,
+                },
+                {
+                    'name': 'voc0712',
+                    'valid_splits': ['train', 'trainval'],
+                    'cleaness': 10,
+                    'use_all': True,
+                },
+                {
+                    'name': 'OpenImageV4_448',
+                    'valid_splits': ['train', 'trainval'],
+                    'cleaness': 9
+                },
+                {
+                    'name': 'Naturalist',
+                    'cleaness': 9,
+                },
+                {
+                    'name': 'elder',
+                    'cleaness': 9,
+                },
+                {
+                    'name': 'imagenet200Diff',
+                    'cleaness': 9,
+                },
+                {
+                    'name': 'open_images_clean_1',
+                    'cleaness': 8,
+                },
+                {
+                    'name': 'open_images_clean_2',
+                    'cleaness': 8,
+                },
+                {
+                    'name': 'open_images_clean_3',
+                    'cleaness': 8,
+                },
+                {
+                    'name': 'imagenet1kLocClean',
+                    'cleaness': 8,
+                },
+                {
+                    'name': 'imagenet3k_448Clean',
+                    'cleaness': 8,
+                },
+                {
+                    'name': 'VisualGenomeClean',
+                    'cleaness': 8,
+                },
+                {
+                    'name': 'brand1048Clean',
+                    'cleaness': 7,
+                },
+                {
+                    'name': 'mturk700_url_as_keyClean',
+                    'cleaness': 7,
+                },
+                {
+                    'name': 'crawl_office_v1',
+                    'cleaness': 7,
+                },
+                {
+                    'name': 'crawl_office_v2',
+                    'cleaness': 7,
+                },
+                {
+                    'name': 'Materialist',
+                    'cleaness': 7,
+                },
+                {
+                    'name': 'MSLogoClean',
+                    'cleaness': 7,
+                },
+                {
+                    'name': 'clothingClean',
+                    'cleaness': 7,
+                },
+                {
+                    'name': 'imagenet22k_448',
+                    'cleaness': 6,
+                },
+                {
+                    'name': '4000_Full_setClean',
+                    'cleaness': 6,
+                },
+        ]
+    elif version == 'logo':
+        return [
+                {
+                    'name': 'coco2017',
+                    'valid_splits': ['train', 'trainval'],
+                    'cleaness': 10,
+                    'use_all': True,
+                },
+                {
+                    'name': 'voc0712',
+                    'valid_splits': ['train', 'trainval'],
+                    'cleaness': 10,
+                    'use_all': True,
+                },
+                {
+                    'name': 'brand1048Clean',
+                    'valid_splits': ['train', 'trainval'],
+                    'cleaness': 7,
+                    'use_all': True,
+                },
+        ]
+    elif version == 'logo2':
+        return [
+                {
+                    'name': 'coco2017',
+                    'valid_splits': ['train', 'trainval'],
+                    'cleaness': 10,
+                    'use_all': True,
+                },
+                {
+                    'name': 'voc0712',
+                    'valid_splits': ['train', 'trainval'],
+                    'cleaness': 10,
+                    'use_all': True,
+                },
+                {
+                    'name': 'brand1048',
+                    'valid_splits': ['train', 'trainval'],
+                    'cleaness': 7,
+                    'use_all': True,
+                },
+                {
+                    'name': 'FlickrLogos-32',
+                    'cleaness': 10,
+                    'use_all': True,
+                },
+                {
+                    'name': 'BelgaLogos',
+                    'cleaness': 10,
+                    'use_all': True,
+                },
+                {
+                    'name': 'FlickrLogos_47',
+                    'cleaness': 10,
+                    'use_all': True,
+                },
+                {
+                    'name': 'LogosInTheWild-v2Clean',
+                    'cleaness': 10,
+                    'use_all': True,
+                },
+                {
+                    'name': 'openlogo',
+                    'cleaness': 10,
+                    'use_all': True,
+                },
+        ]
+    elif version == 'logo2_novoccoco':
+        return [
+                {
+                    'name': 'brand1048',
+                    'valid_splits': ['train', 'trainval'],
+                    'cleaness': 7,
+                    'use_all': True,
+                },
+                {
+                    'name': 'FlickrLogos-32',
+                    'cleaness': 10,
+                    'use_all': True,
+                },
+                {
+                    'name': 'BelgaLogos',
+                    'cleaness': 10,
+                    'use_all': True,
+                },
+                {
+                    'name': 'FlickrLogos_47',
+                    'cleaness': 10,
+                    'use_all': True,
+                },
+                {
+                    'name': 'LogosInTheWild-v2Clean',
+                    'cleaness': 10,
+                    'use_all': True,
+                },
+                {
+                    'name': 'openlogo',
+                    'cleaness': 10,
+                    'use_all': True,
+                },
+        ]
+    elif version == 'extra_furniture':
+        return [
+                {
+                    'name': 'SeeingAISplit',
+                    'valid_splits': ['train'],
+                },
+                {
+                    'name': 'FurnitureMissing',
+                },
             ]
+    elif version == 'logo_db_only':
+        return [
+                {
+                    'name': 'brand1048',
+                    'valid_splits': ['train', 'trainval'],
+                    'cleaness': 7,
+                    'use_all': True,
+                },
+                {
+                    'name': 'FlickrLogos-32',
+                    'cleaness': 10,
+                    'use_all': True,
+                },
+                {
+                    'name': 'BelgaLogos',
+                    'cleaness': 10,
+                    'use_all': True,
+                },
+                {
+                    'name': 'FlickrLogos_47',
+                    'cleaness': 10,
+                    'use_all': True,
+                },
+                {
+                    'name': 'LogosInTheWild-v2Clean',
+                    'cleaness': 10,
+                    'use_all': True,
+                },
+                {
+                    'name': 'openlogo',
+                    'cleaness': 10,
+                    'use_all': True,
+                },
+        ]
     else:
-        return [
-            ('coco2017', 10),
-            ('voc0712', 10),
-            ('Naturalist', 10),
-            ('elder', 10),
-            ('imagenet200Diff', 10),
-            ('OpenImageV4_448', 10),
-            #('open_images_clean_1', 9),
-            #('open_images_clean_2', 9),
-            #('open_images_clean_3', 9),
-            ('imagenet1kLocClean', 9),
-            ('imagenet3k_448Clean', 9),
-            ('VisualGenomeClean', 9),
-            ('brand1048Clean', 8),
-            #('mturk700_url_as_keyClean', 8),
-            #('crawl_office_v1', 8),
-            #('crawl_office_v2', 8),
-            ('Materialist', 8),
-            #('4000_Full_setClean', 7),
-            #('MSLogoClean', 8),
-            #('clothingClean', 8),
-            ('imagenet22k_448', 7),
-            ]
-
+        raise ValueError('Unknown version = {}'.format(version))
 
 def get_img_url2(img_key):
     # don't use get_image_url
