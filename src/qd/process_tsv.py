@@ -1360,6 +1360,48 @@ def derive_composite_meta_data(data, split, t):
     assert not dataset.has(split, t)
     dataset.write_data(gen_rows(), split, t)
 
+def ensure_create_inverted_tsvs(dataset, splits):
+    # for each data tsv, generate the inverted file, and the labelmap
+    for split in splits:
+        v = 0
+        while True:
+            if not dataset.has(split, 'label', v):
+                break
+            if not dataset.has(split, 'labelmap', v) or \
+                dataset.last_update_time(split, 'labelmap', v) < dataset.last_update_time(split, 'label', v):
+                curr_labelmap = set()
+                update_labelmap(dataset.iter_data(split, 'label', v),
+                        dataset.num_rows(split),
+                        curr_labelmap)
+                curr_labelmap = sorted(list(curr_labelmap))
+                dataset.write_data([[l] for l in curr_labelmap], split, 'labelmap', v)
+            else:
+                curr_labelmap = None
+            inverted_keys = ['inverted.label',
+                    'inverted.label.with_bb',
+                    'inverted.label.no_bb',
+                    'inverted.label.with_bb.verified',
+                    'inverted.label.with_bb.noverified',]
+            if any(not dataset.has(split, k, v) for k in inverted_keys):
+                logging.info('version = {}'.format(v))
+                if curr_labelmap is None:
+                    curr_labelmap = []
+                    for row in dataset.iter_data(split, 'labelmap', v):
+                        assert len(row) == 1
+                        curr_labelmap.append(row[0])
+                def gen_inverted_rows(inv):
+                    for label in inv:
+                        assert label in curr_labelmap
+                    for label in curr_labelmap:
+                        i = inv[label] if label in inv else []
+                        yield label, ' '.join(map(str, i))
+                inverted_result = create_inverted_list(
+                        dataset.iter_data(split, 'label', v))
+                for k in inverted_keys:
+                    dataset.write_data(gen_inverted_rows(inverted_result[k]),
+                            split, k, v)
+            v = v + 1
+
 def populate_dataset_details(data, check_image_details=False):
     logging.info(data)
     dataset = TSVDataset(data)
@@ -1487,46 +1529,7 @@ def populate_dataset_details(data, check_image_details=False):
             logging.info('no lineidx for {}. generating...'.format(split))
             generate_lineidx(full_tsv, lineidx)
 
-    # for each data tsv, generate the inverted file, and the labelmap
-    for split in splits:
-        v = 0
-        while True:
-            if not dataset.has(split, 'label', v):
-                break
-            if not dataset.has(split, 'labelmap', v) or \
-                dataset.last_update_time(split, 'labelmap', v) < dataset.last_update_time(split, 'label', v):
-                curr_labelmap = set()
-                update_labelmap(dataset.iter_data(split, 'label', v),
-                        dataset.num_rows(split),
-                        curr_labelmap)
-                curr_labelmap = sorted(list(curr_labelmap))
-                dataset.write_data([[l] for l in curr_labelmap], split, 'labelmap', v)
-            else:
-                curr_labelmap = None
-            if not dataset.has(split, 'inverted.label', v) or \
-                    not dataset.has(split, 'inverted.label.with_bb', v) or \
-                    not dataset.has(split, 'inverted.label.no_bb', v) or \
-                    dataset.last_update_time(split, 'inverted.label', v) < dataset.last_update_time(split, 'label', v):
-                if curr_labelmap is None:
-                    curr_labelmap = []
-                    for row in dataset.iter_data(split, 'labelmap', v):
-                        assert len(row) == 1
-                        curr_labelmap.append(row[0])
-                def gen_inverted_rows(inv):
-                    for label in inv:
-                        assert label in curr_labelmap
-                    for label in curr_labelmap:
-                        i = inv[label] if label in inv else []
-                        yield label, ' '.join(map(str, i))
-                inverted, inverted_with_bb, inverted_no_bb = create_inverted_list(
-                        dataset.iter_data(split, 'label', v))
-                dataset.write_data(gen_inverted_rows(inverted),
-                        split, 'inverted.label', v)
-                dataset.write_data(gen_inverted_rows(inverted_with_bb),
-                        split, 'inverted.label.with_bb', v)
-                dataset.write_data(gen_inverted_rows(inverted_no_bb),
-                        split, 'inverted.label.no_bb', v)
-            v = v + 1
+    ensure_create_inverted_tsvs(dataset, splits)
     # check if the number of rows from the label tsv are equal to the number of rows in image tsv
     for split in splits:
         v = 0

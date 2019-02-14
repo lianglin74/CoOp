@@ -1,4 +1,5 @@
 import logging
+from pprint import pformat
 import glob
 import json
 import random
@@ -631,10 +632,53 @@ def create_inverted_list2(rows, th=None):
                 inverted[l].append(i)
     return inverted, keys
 
+def is_verified_rect(rect):
+    if 'class' in rect and \
+            'rect' in rect and \
+            'uhrs_confirm' in rect and \
+            rect['uhrs_confirm'] > 0:
+        is_verified = True
+    else:
+        all_verified_keys = [
+                ['class', 'rect'], # voc0712
+                ['class', 'rect', 'diff'], # voc, some rect has diff
+                ['class', 'rect', 'workerId'], # from the labeler
+                ['class', 'rect', 'merge_from'], # we will further evaluate merge_from
+                ]
+        is_verified = any(len(ls) == len(rect) and all(l in rect for l in ls) for ls in all_verified_keys)
+        if is_verified and 'merge_from' in rect:
+            # we need to verify all boxes in teh merge_from
+            if any(not is_verified(r) for r in rect['merge_from']):
+                is_verified = False
+
+    if 'class' in rect and 'rect' in rect and \
+            'uhrs_uncertain' in rect and rect['uhrs_uncertain'] > 0:
+        if 'uhrs_confirm' in rect and rect['uhrs_confirm'] > 0:
+            # sometimes, the verification result is good, sometimes, it is
+            # uncertain. In this case, we just say, it is verified.
+            is_noverified = False
+        else:
+            is_noverified = True
+    else:
+        all_noverified_keys = [['class', 'rect', 'from', 'conf']]
+        is_noverified = any(len(ls) == len(rect) and all(l in rect for l in ls) for ls in all_noverified_keys)
+
+    # the following check is kind of redundant, but just make sure there is no
+    # overlap in all_verified_keys and all_noverified_keys. in that case, it is
+    # confusing, and normally, the reason is typo
+    if is_verified and not is_noverified:
+        return True
+    elif not is_verified and is_noverified:
+        return False
+    else:
+        raise Exception('what it is?\n{}'.format(pformat(rect)))
+
 def create_inverted_list(rows):
     inverted = {}
     inverted_with_bb = {}
     inverted_no_bb = {}
+    inverted_with_bb_verified = {}
+    inverted_with_bb_noverified = {}
     logging.info('creating inverted')
     for i, row in tqdm(enumerate(rows)):
         labels = json.loads(row[1])
@@ -645,6 +689,10 @@ def create_inverted_list(rows):
                 if 'rect' in l and any(x != 0 for x in l['rect'])])
             curr_unique_no_bb_labels = set([l['class'] for l in labels
                 if 'rect' not in l or all(x == 0 for x in l['rect'])])
+            curr_unique_with_bb_verified_labels = set([l['class'] for l in labels
+                if 'rect' in l and any(x != 0 for x in l['rect']) and is_verified_rect(l)])
+            curr_unique_with_bb_noverified_labels = set([l['class'] for l in labels
+                if 'rect' in l and any(x != 0 for x in l['rect']) and not is_verified_rect(l)])
         else:
             assert type(labels) is int
             curr_unique_labels = [str(labels)]
@@ -660,7 +708,13 @@ def create_inverted_list(rows):
         update(curr_unique_labels, inverted)
         update(curr_unique_with_bb_labels, inverted_with_bb)
         update(curr_unique_no_bb_labels, inverted_no_bb)
-    return inverted, inverted_with_bb, inverted_no_bb
+        update(curr_unique_with_bb_verified_labels, inverted_with_bb_verified)
+        update(curr_unique_with_bb_noverified_labels, inverted_with_bb_noverified)
+    return {'inverted.label': inverted,
+            'inverted.label.with_bb': inverted_with_bb,
+            'inverted.label.no_bb': inverted_no_bb,
+            'inverted.label.with_bb.verified': inverted_with_bb,
+            'inverted.label.with_bb.noverified': inverted_with_bb_noverified}
 
 def tsv_shuffle_reader(tsv_file):
     logging.warn('deprecated: using TSVFile to randomly seek')
