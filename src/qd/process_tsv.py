@@ -4058,6 +4058,13 @@ def remove_has_confirmed_colocation_labels(all_data, iou_threshold=0.75):
 
             dataset.update_data(gen_rows(), split, 'label', generate_info=gen_info())
 
+def get_taxonomy_path(data):
+    pattern = 'Tax(.*)V([0-9]*)_(.*)'
+    result = re.match(pattern, data)
+    assert result is not None
+    major, minor, revision = result.groups()
+    return './aux_data/taxonomy10k/Tax{0}/Tax{0}V{1}'.format(major, minor)
+
 def process_tsv_main(**kwargs):
     if kwargs['type'] == 'gen_tsv':
         input_folder = kwargs['input']

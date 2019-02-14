@@ -1,0 +1,114 @@
+- Clock:
+  - Alarm clock
+  - Digital clock
+  - Wall clock
+- Piano
+- Window blind
+- Curtain
+- Pillow
+- Picture frame
+- Mirror
+- vanity mirror
+- water fountain
+- window
+- door
+- hand rail
+- hanger
+- step ladder
+- knob
+- door knob
+- handle
+- Vase
+- light switch
+- Chair:
+  - armchair
+  - task chair
+  - recliner
+  - dinning chair
+  - rocking chair
+  - lounge chair
+  - wheelchair
+- Couch:
+  - Sofa bed
+  - Loveseat
+  - Studio couch
+- Stool:
+  - bar stool
+  - alias_names: tuffet, ottoman
+    footstool: []
+  - step stool
+- bean bag
+- Bench
+- Table:
+  - Desk
+  - Coffee table
+  - Kitchen & dining room table
+  - conference table
+- Nightstand
+- Cabinetry
+- Wine rack
+- Wardrobe
+- Bookcase
+- Bed
+- headboard
+- alias_names: crib
+  Infant bed: []
+- Filing cabinet
+- Chest of drawers
+- Cupboard
+- Drawer
+- Shelf
+- Bathroom cabinet
+- Closet
+- Lamp
+- shoe rack
+- Scissors
+- Poster
+- Calculator
+- Box
+- Stapler
+- Whiteboard
+- Pencil sharpener
+- Eraser
+- Fax
+- Adhesive tape
+- Ring binder
+- Pencil case
+- Plastic bag
+- Paper cutter
+- Envelope
+- Pen
+- Book
+- clip
+- binder clip
+- paperclip
+- sticky notes
+- Sink
+- Shower
+- alias_names: faucet
+  Tap: []
+- Bathtub
+- alias_names: Bidet
+  Toilet: []
+- Towel
+- towel holder
+- Toilet paper
+- Soap dispenser
+- plunger
+- toilet brush
+- shower head
+- shower caddy
+- shampoo/conditioner
+- shower curtain
+- toothpaste
+- Toothbrush
+- soup dish
+- dish soup
+- sponge
+- Facial tissue holder
+- alias_names: napkin
+  tissue: []
+- paper towel
+- broom
+- trash can
+- mat/rug

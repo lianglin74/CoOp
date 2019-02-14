@@ -1,0 +1,200 @@
+- Clock:
+  - Alarm clock
+  - Digital clock
+  - Wall clock
+- piano
+- Window blind
+- Curtain
+- Pillow
+- Picture frame
+- Mirror
+- vanity mirror
+- water fountain
+- window:
+  - bay window
+  - display window
+  - dormer window
+  - French window
+  - lancet window
+  - porthole
+  - rose window
+  - window seat
+  - double-hung window
+  - sliding window
+- door:
+  - barn door
+  - double door
+  - French door
+  - revolving door
+  - sliding door
+- hand rail
+- hanger
+- step ladder
+- knob
+- alias_names: door knob
+  door handle: []
+- handle
+- vase
+- light switch
+- Fireplace
+- Countertop
+- Dog bed
+- Cat furniture
+- Lantern
+- lipstick
+- chair:
+  - armchair
+  - office chair
+  - recliner
+  - dinning chair
+  - rocking chair
+  - lounge chair
+  - wheelchair
+- couch:
+  - Sofa bed
+  - Loveseat
+  - Studio couch
+- Stool:
+  - bar stool
+  - alias_names: tuffet, ottoman
+    footstool: []
+  - step stool
+- bean bag
+- bench
+- table:
+  - Billiard table
+  - gaming table
+  - gueridon
+  - table-tennis table
+  - Desk
+  - Coffee table
+  - alias_names: Kitchen & dining room table
+    dinning table: []
+  - conference table
+- Nightstand
+- cabinetry
+- wine rack
+- Wardrobe
+- bookcase
+- bed
+- headboard
+- alias_names: crib
+  Infant bed: []
+- Filing cabinet
+- chest of drawers
+- Cupboard
+- Drawer
+- Shelf
+- Bathroom cabinet
+- Closet
+- shoe rack
+- Scissors
+- Poster
+- Calculator
+- Box
+- Stapler
+- Whiteboard
+- Pencil sharpener
+- eraser
+- Adhesive tape
+- Ring binder
+- Pencil case
+- Plastic bag
+- Paper cutter
+- Envelope
+- pen
+- book
+- clip
+- binder clip
+- paperclip
+- sticky notes
+- sink
+- Shower
+- alias_names: faucet
+  Tap: []
+- Bathtub
+- alias_names: Bidet
+  Toilet: []
+- Towel
+- towel holder
+- Toilet paper
+- Soap dispenser
+- plunger
+- toilet brush
+- shower head
+- shower caddy
+- shampoo/conditioner
+- shower curtain
+- toothpaste
+- Toothbrush
+- toothbrush holder
+- flosser
+- nail clippers
+- nail polish
+- hair brush
+- makeup brush
+- hand sanitizer
+- soap dish
+- dish soap
+- sponge
+- Facial tissue holder
+- alias_names: napkin
+  tissue: []
+- Paper towel
+- broom
+- trash can
+- recycle bin
+- storage bin
+- mat/rug
+- bucket
+- flower pot
+- lint roller
+- lighter
+- coin bank/piggy bank
+- Ladle
+- Spatula
+- Can opener
+- Cutting board
+- Whisk
+- Drinking straw
+- Knife
+- Bottle opener
+- Measuring cup
+- Pizza cutter
+- Chopsticks
+- Teapot
+- alias_names: mug/teacup
+  Mug: []
+- Coffee cup
+- Salt and pepper shakers
+- Mixing bowl
+- Saucer
+- Cocktail shaker
+- Bottle
+- Bowl
+- Plate
+- Pitcher
+- Kitchen knife
+- Jug
+- Platter
+- Wine glass
+- alias_names: wooden spoon, measuring spoon
+  Spoon: []
+- Fork
+- Serving tray
+- Cake stand
+- Frying pan
+- Wok
+- Spice rack
+- spice bottle
+- pot/pan lid
+- hand mixer
+- peeler
+- tupperware lid
+- tupperware
+- baking pan
+- corkscrew
+- coffee pot
+- coffee filter
+- wine bottle
+- pitcher/carafe
