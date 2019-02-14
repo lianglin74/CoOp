@@ -19,7 +19,7 @@ import evaluation.utils
 from evaluation import eval_utils, generate_task, analyze_task
 
 
-def prop_pred_not_in_gt(model_name, det_expid, gt_cfg_file, conf_thres=0.4):
+def prop_pred_not_in_gt(model_name, det_expid, gt_cfg_file, conf_thres=0.4, label_prefix=""):
     rootpath = "/raid/data/uhrs/"
     uhrs_new_task_dir = "/raid/data/uhrs/status/new/"
 
@@ -35,7 +35,17 @@ def prop_pred_not_in_gt(model_name, det_expid, gt_cfg_file, conf_thres=0.4):
         tsv_dataset, split = gt_cfg.gt_dataset(dataset_key)
         pred_file, _ = yolotrain.yolo_predict(full_expid=det_expid, test_data=tsv_dataset.name, test_split=split, gpus=[6,7])
         _, fname = os.path.split(pred_file)
-        shutil.copyfile(pred_file, os.path.join(rootpath, cfg_dir, fname))
+
+        def gen_rows():
+            for cols in tsv_io.tsv_reader(pred_file):
+                if len(cols) < 2:
+                    continue
+                bboxes = json.loads(cols[1])
+                for b in bboxes:
+                    if not b["class"].startswith(label_prefix):
+                        b["class"] = label_prefix + b["class"]
+                yield cols[0], json.dumps(bboxes, separators=(',', ':'))
+        tsv_io.tsv_writer(gen_rows(), os.path.join(rootpath, cfg_dir, fname))
         task_cfg["pred_files"].append({
             "dataset": dataset_key,
             "result": fname,

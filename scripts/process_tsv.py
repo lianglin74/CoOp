@@ -1396,11 +1396,12 @@ def derive_composite_meta_data(data, split, t):
     assert not dataset.has(split, t)
     dataset.write_data(gen_rows(), split, t)
 
-def populate_dataset_details(data, check_image_details=False):
+def populate_dataset_details(data, check_image_details=False, splits=None):
     logging.info(data)
     dataset = TSVDataset(data)
 
-    splits = ['trainval', 'train', 'test']
+    if not splits:
+        splits = ['trainval', 'train', 'test']
 
     # populate the height and with
     for split in splits:
@@ -1787,7 +1788,6 @@ def create_index_composite_dataset(dataset):
                 len(sourceLabel_to_destLabels))
         source_includedSourceLabels[idxSource][1].extend(
                 sourceLabel_to_destLabels.keys())
-
     dataset.write_data([(n, str(i)) for (n, i) in source_numSourceLabels],
             splitx, 'numCategoriesPerSource')
 
