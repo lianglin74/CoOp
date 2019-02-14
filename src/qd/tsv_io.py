@@ -3,12 +3,12 @@ from pprint import pformat
 import glob
 import json
 import random
-from qd_common import ensure_directory
-from qd_common import load_list_file
+from .qd_common import ensure_directory
+from .qd_common import load_list_file
+from .qd_common import generate_lineidx
 import six
 import os
 import os.path as op
-from qd_common import generate_lineidx
 try:
     from itertools import izip as zip
 except ImportError:

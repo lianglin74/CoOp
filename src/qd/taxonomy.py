@@ -15,8 +15,11 @@ import logging
 from ete3 import Tree
 import nltk
 from nltk.corpus import wordnet as wn
-from qd_common import write_to_file, read_to_buffer
-from qd_common import init_logging, ensure_directory
+from .qd_common import write_to_file, read_to_buffer
+from .qd_common import init_logging, ensure_directory
+from .qd_common import img_from_base64, load_list_file
+from .qd_common import load_from_yaml_file
+from .qd_common import encoded_from_img
 try:
     import Queue
 except:
@@ -26,11 +29,8 @@ import os
 import os.path as op
 import glob
 import tarfile
-from tsv_io import TSVDataset, tsv_reader, tsv_writer
-from qd_common import img_from_base64, load_list_file
-from qd_common import load_from_yaml_file
-from qd_common import encoded_from_img
-from tsv_io import tsv_shuffle_reader
+from .tsv_io import TSVDataset, tsv_reader, tsv_writer
+from .tsv_io import tsv_shuffle_reader
 import base64
 import re
 try:
