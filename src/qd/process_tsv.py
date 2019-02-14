@@ -2462,7 +2462,6 @@ class TSVDatasetSource(TSVDataset):
                     inverted_label_type = 'inverted.label.{}.verified'.format(t)
                 else:
                     inverted_label_type = 'inverted.label.{}'.format(t)
-                import ipdb;ipdb.set_trace(context=15)
                 rows = self.iter_data(split, inverted_label_type,
                         version=self._version)
                 type_to_inverted[t] = {r[0]: map(int, r[1].split(' ')) for r in rows if
