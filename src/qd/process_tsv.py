@@ -1414,11 +1414,12 @@ def ensure_create_inverted_tsv_for_each(args):
             dataset.write_data(gen_inverted_rows(inverted_result[k]),
                     split, k, v)
 
-def populate_dataset_details(data, check_image_details=False):
+def populate_dataset_details(data, check_image_details=False, splits=None):
     logging.info(data)
     dataset = TSVDataset(data)
 
-    splits = ['trainval', 'train', 'test']
+    if not splits:
+        splits = ['trainval', 'train', 'test']
 
     # populate the height and with
     for split in splits:
