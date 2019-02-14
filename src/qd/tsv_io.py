@@ -4,6 +4,7 @@ import json
 import random
 from qd_common import ensure_directory
 from qd_common import load_list_file
+import six
 import os
 import os.path as op
 from qd_common import generate_lineidx
@@ -535,7 +536,7 @@ def tsv_writer(values, tsv_file_name, sep='\t'):
         assert values is not None
         for value in values:
             assert value
-            v = sep.join(map(lambda v: str(v) if type(v) is not str else v, value)) + '\n'
+            v = sep.join(map(lambda v: str(v) if not isinstance(v, six.string_types) else v, value)) + '\n'
             # even when v is str, it is also ok to call encode(); if it is
             # unicode, it is fine. These are under python2. If it is python 3,
             # this is also valid. Do not check if type(v) is unicode since
