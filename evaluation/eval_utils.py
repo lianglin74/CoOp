@@ -446,7 +446,7 @@ def process_prediction_to_verify(gt_config_file, dataset_name, pred_name, pred_t
     return num_bbox_to_submit
 
 
-def merge_gt(dataset_name, gt_config_file, res_files, bbox_matching_iou):
+def merge_gt(dataset_name, gt_config_file, res_files, bbox_matching_iou, info_list=None):
     '''
     Processes human evaluation results to add into existing ground truth labels
     res_file: aggregated results from UHRS. The first column is 1/2/3, which
@@ -466,9 +466,12 @@ def merge_gt(dataset_name, gt_config_file, res_files, bbox_matching_iou):
                     for task in json.loads(parts[1]):
                         yield task["image_url"], task["bboxes"]
 
+    meta_info = [("add labels from", ', '.join(res_files))]
+    if info_list:
+        meta_info.extend(info_list)
     add_label_to_dataset(gt_dataset, gt_split, bbox_matching_iou, gen_labels(),
             label_key_type="url",
-            info_list=[("add labels from", ', '.join(res_files))])
+            info_list=meta_info)
 
 
 def add_label_to_dataset(dataset, split, iou_threshold, labels,

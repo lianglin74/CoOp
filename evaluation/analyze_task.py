@@ -112,6 +112,9 @@ def analyze_verify_box_task(result_files, result_file_type, outfile_res,
             if not consensus_ans:
                 rejudge_tasks.append(task)
             else:
+                bboxes = task["bboxes"]
+                for b in bboxes:
+                    b["uhrs"] =  collections.Counter(answers)
                 consensus_tasks[consensus_ans].append(task)
 
     num_rejudge = len(rejudge_tasks)
@@ -131,16 +134,24 @@ def analyze_verify_box_task(result_files, result_file_type, outfile_res,
                  .format(collections.Counter(ambiguous_categories)))
 
     # write consensus results
-    result_data = [[str(k), json.dumps(v)] for k, v in consensus_tasks.items()]
+    result_data = [[str(k), json.dumps(v, separators=(',', ':'))] for k, v in consensus_tasks.items()]
     write_to_file(result_data, outfile_res)
     logging.info("Writing consensus results to: {}".format(outfile_res))
+
+    # write uhrs answer summary
+    summary = []
+    for uuid in uuid2answers_map:
+        ans = collections.Counter(uuid2answers_map[uuid])
+        task = uuid2task_map[uuid]
+        summary.append([task["image_url"], json.dumps(task["bboxes"], separators=(',', ':')),
+                json.dumps(ans, separators=(',', ':'))])
 
     # write tasks needing re-judge
     if rejudge_tasks:
         rejudge_data = pack_task_with_honey_pot(rejudge_tasks, hp_tasks,
                                                 "hp", 15, 3)
         write_task_file(rejudge_data, outfile_rejudge)
-    return num_rejudge
+    return num_rejudge, summary
 
 
 def get_consensus_answer(answers, consensus_threshold=0.5):

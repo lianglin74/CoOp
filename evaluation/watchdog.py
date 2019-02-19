@@ -40,8 +40,8 @@ class TaskStatus(object):
         logger.setLevel(logging.INFO)
         fh = logging.FileHandler(logpath, 'w')
         logger.addHandler(fh)
-        ch = logging.StreamHandler(sys.stdout)
-        logger.addHandler(ch)
+        # ch = logging.StreamHandler(sys.stdout)
+        # logger.addHandler(ch)
 
     def _change_status(self, target_status):
         assert(target_status in self.TASK_STATUS)

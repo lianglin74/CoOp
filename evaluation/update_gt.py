@@ -98,20 +98,20 @@ def update_gt(args):
             uhrs_client.download_tasks_to_folder(task_group, task_download_dir)
             download_files = list_files_in_dir(task_download_dir)
             rejudge_filename = "rejudge_{}.tsv".format(round_count)
-            num_rejudge = analyze_verify_box_task(
+            num_rejudge, summary = analyze_verify_box_task(
                 download_files, "uhrs", res_file,
                 os.path.join(task_upload_dir, rejudge_filename),
                 worker_quality_file=os.path.join(task_dir, 'all_workers.tsv'),
-                min_num_judges_per_hit=args.num_judges-1)
+                min_num_judges_per_hit=args.num_judges)
             if num_rejudge > 5 and round_count < 6:
                 uhrs_client.upload_tasks_from_folder(
                     task_group, task_upload_dir, prefix=rejudge_filename,
-                    num_judges=1)
+                    num_judges=2)
             else:
                 break
 
         merge_iou = 0 if task_type=="VerifyImage" else MERGE_IOU
-        merge_gt(dataset_name, args.config, [res_file], merge_iou)
+        merge_gt(dataset_name, args.config, [res_file], merge_iou, info_list=summary)
 
 
 def main(args):
