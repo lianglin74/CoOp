@@ -1,0 +1,5240 @@
+- alias_names:
+  - Sunkist
+  - logo of Sunkist
+  display_name: Sunkist
+  uuid: 7f762e193ba64318b21aba0133534993
+- alias_names:
+  - LondonSchoolofEconomicsandPoliticalScience
+  - logo of LondonSchoolofEconomicsandPoliticalScience
+  display_name: London School of Economics
+  uuid: c621ec4318c24d13b8ea62b73ca5fc94
+- alias_names:
+  - Baskin-Robbins
+  - logo of Baskin-Robbins
+  display_name: Baskin-Robbins
+  uuid: 56cd8c40d09240e4b32fd4c4375dbe0f
+- alias_names:
+  - Frontier
+  - logo of Frontier
+  display_name: Frontier
+  uuid: f18394dbcf5e413fa0d3e84aa47a710c
+- alias_names:
+  - PepeJeans
+  - logo of PepeJeans
+  display_name: Pepe Jeans
+  uuid: 68a12cd9ff34409a84614ea5d4114c5e
+- alias_names:
+  - Yoo-Hoo
+  - logo of Yoo-Hoo
+  display_name: Yoo-hoo
+  uuid: f457d13679724e2f8de1bd861ae8568b
+- alias_names:
+  - SUPERVALU
+  - logo of SUPERVALU
+  display_name: SuperValu
+  uuid: 5f46f80fe0c64c95ae7b1cae6d550e98
+- alias_names:
+  - RubyTuesday
+  - logo of RubyTuesday
+  display_name: Ruby Tuesday
+  uuid: a9b537cc3bbc4bc3ad738e3169753d08
+- alias_names:
+  - SwissRe
+  - logo of SwissRe
+  display_name: Swiss Re
+  uuid: b31d6da64dc64ca0bc71c61abf03065b
+- alias_names:
+  - CentryLink
+  - logo of CentryLink
+  display_name: CenturyLink
+  uuid: b5045f3ef01d4862aafd010c98417d3e
+- alias_names:
+  - KansasCityChiefs
+  - logo of KansasCityChiefs
+  display_name: Kansas City Chiefs
+  uuid: 65a2db2b47544d97a5a71897cc603051
+- alias_names:
+  - Fanta
+  - logo of Fanta
+  display_name: Fanta
+  uuid: 0b60c5f1df2240e5ad9cd403d3bd8d61
+- alias_names:
+  - Fuddruckers
+  - logo of Fuddruckers
+  display_name: Fuddruckers
+  uuid: 9b16d35e2892463eb9c83b63a2f55265
+- alias_names:
+  - BarnesNoble
+  - logo of BarnesNoble
+  display_name: Barnes & Noble
+  uuid: 453dfa8abf7f49249c8dc7c699a64ed4
+- alias_names:
+  - Citigroup
+  - logo of Citigroup
+  display_name: Citigroup
+  uuid: f4d74836c1c54b69ab4d60065934d616
+- alias_names:
+  - HomePride
+  - logo of HomePride
+  display_name: Homepride
+  uuid: be8eb7f8772346588cb079b83b7005ee
+- alias_names:
+  - Dodge
+  - logo of Dodge
+  display_name: Dodge
+  uuid: b93a1117952b440b8109f2528a6fbd74
+- alias_names:
+  - Miller'sAleHouse
+  - logo of Miller'sAleHouse
+  display_name: Miller's Ale House
+  uuid: 8768c0ad5da64b28a852b0da9ea92615
+- alias_names:
+  - VancouverCanucks
+  - logo of VancouverCanucks
+  display_name: Vancouver Canucks
+  uuid: c2d1d67edd8d4dfe94f1385ea74c2896
+- alias_names:
+  - PhiladelphiaFlyers
+  - logo of PhiladelphiaFlyers
+  display_name: Philadelphia Flyers
+  uuid: f4971f941829462a8fed968f08414d67
+- alias_names:
+  - TonyRoma's
+  - logo of TonyRoma's
+  display_name: Tony Roma's
+  uuid: 425e2f0b4e6d46a7a20a8463392556c6
+- alias_names:
+  - MelloYello
+  - logo of MelloYello
+  display_name: Mello Yello
+  uuid: cea4b0c653d94c89860eb0549e8a9fcd
+- alias_names:
+  - Honda
+  - logo of Honda
+  display_name: Honda
+  uuid: bbe71bba3b764aa99fc98b5d4fdcede8
+- alias_names:
+  - MasterChef
+  - logo of MasterChef
+  display_name: MasterChef
+  uuid: dc02027f819443df9992c94191499cb3
+- alias_names:
+  - Braun
+  - logo of Braun
+  display_name: Braun
+  uuid: 300e34d384894c4f853d8e0b8bab9852
+- alias_names:
+  - RollsRoyce
+  - logo of RollsRoyce
+  display_name: Rolls-Royce
+  uuid: 3aca8e69deb14e32af5ce7185010cd0c
+- alias_names:
+  - CrackerBarrelOldCountryStore
+  - logo of CrackerBarrelOldCountryStore
+  display_name: Cracker Barrel
+  uuid: efed6687909947cf86d889dbc14d739a
+- alias_names:
+  - NineWest
+  - logo of NineWest
+  display_name: Nine West
+  uuid: 88cf4b72f830422fb04a5dc825ddcb0e
+- alias_names:
+  - Sorel
+  - logo of Sorel
+  display_name: Sorel
+  uuid: 6a9be5d64456417e80d4c7e9e5d698c5
+- alias_names:
+  - ChipsAhoy
+  - logo of ChipsAhoy
+  display_name: Chips Ahoy!
+  uuid: e67ea8aeb8b7444db411c9893806bf27
+- alias_names:
+  - Upland
+  - logo of Upland
+  display_name: Upland
+  uuid: 75bda04fa7b746e89726a7bc62775cf9
+- alias_names:
+  - NewYorkKnicks
+  - logo of NewYorkKnicks
+  display_name: New York Knicks
+  uuid: 9e3ec601d3af40c9bb4b463801816da4
+- alias_names:
+  - Prego
+  - logo of Prego
+  display_name: Prego
+  uuid: caef36d9232e40f1a753e7a8e8bc1cbd
+- alias_names:
+  - GT
+  - logo of GT
+  display_name: GT
+  uuid: 98e7fb235ea043108b3426fdee6c35d6
+- alias_names:
+  - Prudential
+  - logo of Prudential
+  display_name: Prudential
+  uuid: 62c7c144fc064fb4b40a8be9b50ce432
+- alias_names:
+  - Contadina
+  - logo of Contadina
+  display_name: Contadina
+  uuid: 9611d725f7f84cbb950114b73d20243f
+- alias_names:
+  - UniversityofMarylandCollegePark
+  - logo of UniversityofMarylandCollegePark
+  display_name: University of Maryland, College Park
+  uuid: a24d12dc2a9f4745938d94eea6e7cb25
+- alias_names:
+  - Jeep
+  - logo of Jeep
+  display_name: Jeep
+  uuid: 281e4c31ef244d1b937d34aae4a88e5c
+- alias_names:
+  - Cannondale
+  - logo of Cannondale
+  display_name: Cannondale
+  uuid: 4eb16d0c41b14c738b868e5ffda7d481
+- alias_names:
+  - IntesaSanpaolo
+  - logo of IntesaSanpaolo
+  display_name: Intesa Sanpaolo
+  uuid: efe4a6eb690e48f195c1d74485ad6c2b
+- alias_names:
+  - Diadora
+  - logo of Diadora
+  display_name: Diadora
+  uuid: 3914d8fd4bc74e669dfdfcada516786c
+- alias_names:
+  - Mrs.Fields
+  - logo of Mrs.Fields
+  display_name: Mrs. Fields
+  uuid: 7eb9f58c2e4b41c5b40959384ac6f61b
+- alias_names:
+  - OriginalPenguin
+  - logo of OriginalPenguin
+  display_name: Original Penguin
+  uuid: 08f5b3f62c8c47518b5f4d9d508a1534
+- alias_names:
+  - DelTaco
+  - logo of DelTaco
+  display_name: Del Taco
+  uuid: bffbbf9560e34d02b91df1bcfce90415
+- alias_names:
+  - Chesterfield
+  - logo of Chesterfield
+  display_name: Chesterfield
+  uuid: 7ffde3215ebf44a5ace9e9ef555bc56e
+- alias_names:
+  - GiantEagle
+  - logo of GiantEagle
+  display_name: Giant Eagle
+  uuid: ba4896b8ae2f4e3795b61185bb053788
+- alias_names:
+  - JumboKing
+  - logo of JumboKing
+  display_name: Jumbo King
+  uuid: acdf432f535e4248b821a75da2c23665
+- alias_names:
+  - BedBathBeyond
+  - logo of BedBathBeyond
+  display_name: Bed Bath & Beyond
+  uuid: 9d7513583b7a40efa85ce28a8b578125
+- alias_names:
+  - KateSpadeNewYork
+  - logo of KateSpadeNewYork
+  display_name: Kate Spade New York
+  uuid: d8e36ad182434013bd0fc75573092d30
+- alias_names:
+  - BobEvans
+  - logo of BobEvans
+  display_name: Bob Evans
+  uuid: 8e33ca05b5094cc38f0eb21e9bb24ff6
+- alias_names:
+  - Canon
+  - logo of Canon
+  display_name: Canon
+  uuid: b9dcbae37410495ba418e6876e67c3b5
+- alias_names:
+  - Richmond
+  - logo of Richmond
+  display_name: Richmond
+  uuid: 548b6e39740c4140aadf643b7b4927c9
+- alias_names:
+  - NaturalAmericanSpirit
+  - logo of NaturalAmericanSpirit
+  display_name: Natural American Spirit
+  uuid: 22afbc0590ec4b2885c6d2a5bf079af6
+- alias_names:
+  - KeeblerCompany
+  - logo of KeeblerCompany
+  display_name: Keebler Company
+  uuid: ad4ce25d0ee247f784d0c252ca94a2bb
+- alias_names:
+  - Homedepot
+  - logo of Homedepot
+  display_name: The Home Depot
+  uuid: be8ad65836e64cda8cef8ffaecf9f420
+- alias_names:
+  - WheatThins
+  - logo of WheatThins
+  display_name: Wheat Thins
+  uuid: 20f0904f9b884b05a21c151a45001db3
+- alias_names:
+  - Tab
+  - logo of Tab
+  display_name: Tab
+  uuid: cbeb09ed0cba49f389beb1070a227c67
+- alias_names:
+  - Riddell
+  - logo of Riddell
+  display_name: Riddell
+  uuid: c480736bca1d4057912353448013acb7
+- alias_names:
+  - HowardJohnson's
+  - logo of HowardJohnson's
+  display_name: Howard Johnson's
+  uuid: b5e178f44933452e9d4f606b717a038d
+- alias_names:
+  - Manwich
+  - logo of Manwich
+  display_name: Manwich
+  uuid: 88a95470d47449b3a96a1c93c5457904
+- alias_names:
+  - Mountain Dew
+  - logo of Mountain Dew
+  display_name: Mountain Dew
+  uuid: 744089ab812d4426a24543ce15e893bd
+- alias_names:
+  - Umbro
+  - logo of Umbro
+  display_name: Umbro
+  uuid: e27e7874af58471e933f26adb63b1b6c
+- alias_names:
+  - AlimentationCouche-Tard
+  - logo of AlimentationCouche-Tard
+  display_name: Alimentation Couche-Tard
+  uuid: d82ffeee15994e2dbca7edbb31d45555
+- alias_names:
+  - Maggiano'sLittleItaly
+  - logo of Maggiano'sLittleItaly
+  display_name: Maggiano's Little Italy
+  uuid: 3520dec8bbbe44a6a078f0650f356418
+- alias_names:
+  - Wrangler
+  - logo of Wrangler
+  display_name: Wrangler
+  uuid: 666b5356129f42c2a68836bcab40e63d
+- alias_names:
+  - UmamiBurger
+  - logo of UmamiBurger
+  display_name: Umami Burger
+  uuid: 5845adca2277488abb7eae8088927335
+- alias_names:
+  - SanAntonioSpurs
+  - logo of SanAntonioSpurs
+  display_name: San Antonio Spurs
+  uuid: b145d253b59d4f2faed788d29701575e
+- alias_names:
+  - RiteAid
+  - logo of RiteAid
+  display_name: Rite Aid
+  uuid: 4c4f5588e6ed44f3a50a8f3e43e2c174
+- alias_names:
+  - Blaupunkt
+  - logo of Blaupunkt
+  display_name: Blaupunkt
+  uuid: a702da30c29441da9df787c89abf792b
+- alias_names:
+  - TexasAMUniversity
+  - logo of TexasAMUniversity
+  display_name: Texas A&M University
+  uuid: 57a63f0ff0f84c5eb8bbce00b6983253
+- alias_names:
+  - Ricoh
+  - logo of Ricoh
+  display_name: Ricoh
+  uuid: d9ac14d831a34ca5884538b119a3e6fa
+- alias_names:
+  - LittleDebbie
+  - logo of LittleDebbie
+  display_name: Little Debbie
+  uuid: 44028198f815486d852090531c715e4d
+- alias_names:
+  - Mercedes-Benz
+  - logo of Mercedes-Benz
+  display_name: Mercedes-Benz
+  uuid: 7030c4937eea47d39b71c8206ad9c2c9
+- alias_names:
+  - 3M
+  - logo of 3M
+  display_name: 3M
+  uuid: 13bb7213170b4fa9a4d787be62e827fb
+- alias_names:
+  - FudgeRounds
+  - logo of FudgeRounds
+  display_name: Fudge Rounds
+  uuid: c585e21636a3485ab6819b57125b8cdd
+- alias_names:
+  - Orange
+  - logo of Orange
+  display_name: Orange
+  uuid: 50986514a6ac4358b962f29896eeb7cd
+- alias_names:
+  - Parkay
+  - logo of Parkay
+  display_name: Parkay
+  uuid: f3f1d6d50b694d5fbfff130f0985fdd2
+- alias_names:
+  - Albertsons
+  - logo of Albertsons
+  display_name: Albertsons
+  uuid: 1a0319c50f2a4f7fa64a6bb76003933b
+- alias_names:
+  - GameWorks
+  - logo of GameWorks
+  display_name: GameWorks
+  uuid: 01884cb3508e41958aaf9015f4e07c37
+- alias_names:
+  - SunChips
+  - logo of SunChips
+  display_name: Sun Chips
+  uuid: 54ab2ec274c148d49f77657a2d61b1e3
+- alias_names:
+  - DallasStars
+  - logo of DallasStars
+  display_name: Dallas Stars
+  uuid: 7246c263b5d7422abc1fc53637a86f1d
+- alias_names:
+  - Twisties
+  - logo of Twisties
+  display_name: Twisties
+  uuid: 6c6ae8c0ea424e818f244e46bd798c6a
+- alias_names:
+  - Ford
+  - logo of Ford
+  display_name: Ford
+  uuid: 497883b32b4342eaac09b182cc0df5e8
+- alias_names:
+  - Mazda
+  - logo of Mazda
+  display_name: Mazda
+  uuid: 67314c9e93964ab5af8c2b091000df4d
+- alias_names:
+  - Wish-Bone
+  - logo of Wish-Bone
+  display_name: Wish-Bone
+  uuid: 6b044561613141a99db5ef7f35f5436d
+- alias_names:
+  - Amazon
+  - logo of Amazon
+  display_name: Amazon (company)
+  uuid: f8270fbcabcd4d26b2d3389f49c1bbcf
+- alias_names:
+  - WashingtonCapitals
+  - logo of WashingtonCapitals
+  display_name: Washington Capitals
+  uuid: 296a4a7b858b4f888c5ce4a339a51f23
+- alias_names:
+  - FCDallas
+  - logo of FCDallas
+  display_name: FC Dallas
+  uuid: 78c4adc65fc44322b02f19ac58b8840f
+- alias_names:
+  - Bojangles'FamousChicken'nBiscuits
+  - logo of Bojangles'FamousChicken'nBiscuits
+  display_name: Bojangles' Famous Chicken 'n Biscuits
+  uuid: 8fa54c74bf4b408095d5660ece0f5909
+- alias_names:
+  - NVIDIA
+  - logo of NVIDIA
+  display_name: Nvidia
+  uuid: 87d7c40f794b4cb78571703b8c5242ef
+- alias_names:
+  - RoldGold
+  - logo of RoldGold
+  display_name: Rold Gold
+  uuid: 2f5e382a70004de5983a10121281ff06
+- alias_names:
+  - Verizon
+  - logo of Verizon
+  display_name: Verizon
+  uuid: 8e9675f8f9ce44faaef10c5ed01f7d39
+- alias_names:
+  - FullThrottle
+  - logo of FullThrottle
+  display_name: Full Throttle
+  uuid: b94fafe3d5ec4f6fbee1f43c1556c153
+- alias_names:
+  - GapInc.
+  - logo of GapInc.
+  display_name: Gap
+  uuid: 00eae5d8436643b48aa6a950701a6fd5
+- alias_names:
+  - Motorola
+  - logo of Motorola
+  display_name: Motorola
+  uuid: e65af42908b742e5a1267c36007ad6b5
+- alias_names:
+  - Mitchellness
+  - logo of Mitchellness
+  display_name: Mitchell & Ness
+  uuid: f7f13d412daa44918fc663b5ddd5ddbf
+- alias_names:
+  - Reebok
+  - logo of Reebok
+  display_name: Reebok
+  uuid: b4adff6b191a4a74a49854f5b2022c9e
+- alias_names:
+  - CrditAgricole
+  - logo of CrditAgricole
+  display_name: Credit Agricole
+  uuid: fa6a2e42709643159312d0a4457ce2a4
+- alias_names:
+  - Rally's
+  - logo of Rally's
+  display_name: Rally's
+  uuid: eba7f04337204afba7b404a2c8f8c375
+- alias_names:
+  - Ebay
+  - logo of Ebay
+  display_name: eBay
+  uuid: 79726f20f61b4f57bca4a2d8ccaabdbb
+- alias_names:
+  - OReillyAutomotive
+  - logo of OReillyAutomotive
+  display_name: O'Reilly
+  uuid: 866a62990ece4c5f8dbf47ab66011522
+- alias_names:
+  - Armani
+  - logo of Armani
+  display_name: Armani
+  uuid: c4eb45da77c1423aab2f3b9f17ff43b6
+- alias_names:
+  - Ferrari
+  - logo of Ferrari
+  display_name: Ferrari
+  uuid: d5b85bcd165b49ae86667dba7a05be5f
+- alias_names:
+  - CalvinKlein
+  - logo of CalvinKlein
+  display_name: Calvin Klein
+  uuid: 84f31cf458f34840819471540ffb27fc
+- alias_names:
+  - Merida
+  - logo of Merida
+  display_name: Merida Industry Co. Ltd.
+  uuid: 3c8b3866a78944ef8fd00c9952b56463
+- alias_names:
+  - Popsicle
+  - logo of Popsicle
+  display_name: Popsicle
+  uuid: ac738ac1ae0f421682c722d9272e919c
+- alias_names:
+  - Triscuit
+  - logo of Triscuit
+  display_name: Triscuit
+  uuid: 5af4cf151077434a9f4c7bfbe47528d7
+- alias_names:
+  - Tsingtao
+  - logo of Tsingtao
+  display_name: Tsingtao
+  uuid: 11a7678135ab4271a45b8ca50dabffa3
+- alias_names:
+  - MiracleWhip
+  - logo of MiracleWhip
+  display_name: Miracle Whip
+  uuid: ae15ef596e434fbca77703fc6f6f3b9a
+- alias_names:
+  - TampaBayLightning
+  - logo of TampaBayLightning
+  display_name: Tampa Bay Lightning
+  uuid: 6ec2f81711c349e0aa43df808a428b11
+- alias_names:
+  - MizunoCorporation
+  - logo of MizunoCorporation
+  display_name: Mizuno Corporation
+  uuid: df7704bfc59341e29d8f313147eabf4b
+- alias_names:
+  - Cheetos
+  - logo of Cheetos
+  display_name: Cheetos
+  uuid: 5daf327834004862b5531098773f7ab4
+- alias_names:
+  - RomanMeal
+  - logo of RomanMeal
+  display_name: Roman Meal
+  uuid: 7ef279821a5344aab1ae8e437ed86012
+- alias_names:
+  - Claro
+  - logo of Claro
+  display_name: Claro
+  uuid: ed6007509563440baec2091491de2561
+- alias_names:
+  - Guiness
+  - logo of Guiness
+  display_name: Guinness
+  uuid: 7b5cbf7d71434643b427218edfb9de8d
+- alias_names:
+  - Zest
+  - logo of Zest
+  display_name: Zest
+  uuid: 9c25fde324714c649020e49e3dea173a
+- alias_names:
+  - LloydsBankingGroup
+  - logo of LloydsBankingGroup
+  display_name: Lloyds Banking Group
+  uuid: 604f4a732c284844a28455655f42a17a
+- alias_names:
+  - crackerjack
+  - logo of crackerjack
+  display_name: Cracker Jack
+  uuid: fe467ba34c6a4e37b8356d2c082ba3ec
+- alias_names:
+  - RoyalBankofCanada
+  - logo of RoyalBankofCanada
+  display_name: Royal Bank of Canada
+  uuid: cd6b3cf78dd847da8a702a1810861db6
+- alias_names:
+  - TravelersCos
+  - logo of TravelersCos
+  display_name: The Travelers Companies
+  uuid: e1fb3c6a3f1448deb45c84c1165ba4cf
+- alias_names:
+  - AustralianNationalUniversity
+  - logo of AustralianNationalUniversity
+  display_name: Australian National University
+  uuid: f3db749914704841ac43475f7da3549b
+- alias_names:
+  - SunbeamBread
+  - logo of SunbeamBread
+  display_name: Sunbeam Bread
+  uuid: 24c9f3e487ca493a808c5e68b1ff6d14
+- alias_names:
+  - RomaiSports
+  - logo of RomaiSports
+  display_name: Romai Sports
+  uuid: f7442fb350fe4e139acce195e823cb93
+- alias_names:
+  - BallyShoe
+  - logo of BallyShoe
+  display_name: Bally Shoe
+  uuid: 63e5a537df3143179ed31dc0acf89353
+- alias_names:
+  - WinCoFoods
+  - logo of WinCoFoods
+  display_name: WinCo Foods
+  uuid: c47c4f7b79384dea99e82165d97f7bf3
+- alias_names:
+  - ING
+  - logo of ING
+  display_name: ING
+  uuid: bae7f0a365c147cdb34f307945a4a230
+- alias_names:
+  - WashingtonRedskins
+  - logo of WashingtonRedskins
+  display_name: Washington Redskins
+  uuid: 0ca70a208f4446b69de28db3a4584730
+- alias_names:
+  - SeikoInstrumentsInc
+  - logo of SeikoInstrumentsInc
+  display_name: Seiko Instruments
+  uuid: ac66400f35cd42e2b1900d474f3b6b11
+- alias_names:
+  - Audi
+  - logo of Audi
+  display_name: Audi
+  uuid: 00cc0ef71f2b4e908de65450b0fcc804
+- alias_names:
+  - Viacom
+  - logo of Viacom
+  display_name: Viacom
+  uuid: 5fdd9b6a11d44678b9e0a88a63cf5686
+- alias_names:
+  - Starburst
+  - logo of Starburst
+  display_name: Starburst
+  uuid: 1a2ae69803a84252831aff2fe3bb0d91
+- alias_names:
+  - AlexanderMcQueen
+  - logo of AlexanderMcQueen
+  display_name: Alexander McQueen
+  uuid: ae73134a358240a6a726813f67994077
+- alias_names:
+  - Ritz
+  - logo of Ritz
+  display_name: Ritz
+  uuid: 3528b0a374da4d28a791a3282a69c9e5
+- alias_names:
+  - DenverNuggets
+  - logo of DenverNuggets
+  display_name: Denver Nuggets
+  uuid: 208802725a474300a1dca171843afeff
+- alias_names:
+  - Olyhmpus
+  - logo of Olyhmpus
+  display_name: Olympus
+  uuid: 51e018f6b2c94b7782cbaee9ab700bb6
+- alias_names:
+  - Scott'sPorageOats
+  - logo of Scott'sPorageOats
+  display_name: Scott's Porage Oats
+  uuid: b85cf7a4fe07456e82be772db4682141
+- alias_names:
+  - Pirma
+  - logo of Pirma
+  display_name: Pirma
+  uuid: cedb659e7a14485dbff1710ef66a2ad6
+- alias_names:
+  - ChristianLacroix
+  - logo of ChristianLacroix
+  display_name: Christian Lacroix
+  uuid: e1367b55438640db986c9797ad973809
+- alias_names:
+  - Leed
+  - logo of Leed
+  display_name: Leed Lemonade
+  uuid: b4ebffa822874255877d9f5d2f72d889
+- alias_names:
+  - Barq's
+  - logo of Barq's
+  display_name: Barq's
+  uuid: f7029d94c8ba439b9694a6151716a85e
+- alias_names:
+  - Breyers
+  - logo of Breyers
+  display_name: Breyers
+  uuid: eb2614c5635a45a79864d6006e0c0621
+- alias_names:
+  - KitKat
+  - logo of KitKat
+  display_name: Kit Kat
+  uuid: 027d512d1d07487299f0bb24643e83d0
+- alias_names:
+  - Basic
+  - logo of Basic
+  display_name: BASIC
+  uuid: e4c695d92e9745948b40dd5bc751843e
+- alias_names:
+  - JiffyPop
+  - logo of JiffyPop
+  display_name: Jiffy Pop
+  uuid: f5458b36756f444180612eb4c7e137c8
+- alias_names:
+  - SunMicrosystems
+  - logo of SunMicrosystems
+  display_name: Sun Microsystems
+  uuid: c50f01ba87c84c6686bda7c20c20b9f2
+- alias_names:
+  - WakefernShopRite
+  - logo of WakefernShopRite
+  display_name: Wakefern ShopRite
+  uuid: b56143e015254eda9e881a70f6369c14
+- alias_names:
+  - Pixar
+  - logo of Pixar
+  display_name: Pixar
+  uuid: 17f59d0802654f169b8240f00c61268e
+- alias_names:
+  - TampaBayBuccaneers
+  - logo of TampaBayBuccaneers
+  display_name: Tampa Bay Buccaneers
+  uuid: e542d7c8cf6f465cbfbbe6926b54909a
+- alias_names:
+  - marathonSports
+  - logo of marathonSports
+  display_name: Marathon Sports
+  uuid: 72d0156f6ac943bc9b422f98db439451
+- alias_names:
+  - Mr Kipling
+  - logo of Mr Kipling
+  display_name: Mr Kipling
+  uuid: d3209d4584f84ebd9df294c3af107b45
+- alias_names:
+  - SeanJohnFashion
+  - logo of SeanJohnFashion
+  display_name: Sean John
+  uuid: 69697579583c42eea0579eeb87a10b7f
+- alias_names:
+  - Charley'sGrilledSubs
+  - logo of Charley'sGrilledSubs
+  display_name: Charleys Philly Steaks
+  uuid: f367049b9e9e4828a9d4a3cd4535e52e
+- alias_names:
+  - Cadillac
+  - logo of Cadillac
+  display_name: Cadillac
+  uuid: aa1ffa805059438fbfcd115218592c6f
+- alias_names:
+  - QuakerOatsCompany
+  - logo of QuakerOatsCompany
+  display_name: Quaker Oats Company
+  uuid: 84a9d85785b14097bc6565eb12eb96ae
+- alias_names:
+  - Express
+  - logo of Express
+  display_name: Express
+  uuid: 528d8cf779644dcc9c3410e2dd3edc56
+- alias_names:
+  - NewBalance
+  - logo of NewBalance
+  display_name: New Balance
+  uuid: 0c1c55ebac654433ab40cc506e16ba87
+- alias_names:
+  - Mitsubishi
+  - logo of Mitsubishi
+  display_name: Mitsubishi
+  uuid: 2930cf92f938410a8396494e99a73092
+- alias_names:
+  - Microsoft
+  - logo of Microsoft
+  display_name: Microsoft
+  uuid: e26b7e6fe02c427cbb1d3859ac4dc5cb
+- alias_names:
+  - Nikon
+  - logo of Nikon
+  display_name: Nikon
+  uuid: a2f34dd0fd1542e9bd286f2f80743352
+- alias_names:
+  - Casio
+  - logo of Casio
+  display_name: Casio
+  uuid: 9ecd256e9e464d01bbd207e9cc486c78
+- alias_names:
+  - MiamiHeat
+  - logo of MiamiHeat
+  display_name: Miami Heat
+  uuid: d9f61cf89c4c4b58b4b0966575d21436
+- alias_names:
+  - PittsburghSteelers
+  - logo of PittsburghSteelers
+  display_name: Pittsburgh Steelers
+  uuid: 16f0fdfd77ce44eab2671066a97bea4b
+- alias_names:
+  - UniversityofOxford
+  - logo of UniversityofOxford
+  display_name: University of Oxford
+  uuid: 97ea1a06f54a4aba801d90756bc014fc
+- alias_names:
+  - KangaRoos
+  - logo of KangaRoos
+  display_name: Kangaroo
+  uuid: 5d3d40d1ceaf418bb6f5709cde167dc1
+- alias_names:
+  - TechCrunch
+  - logo of TechCrunch
+  display_name: TechCrunch
+  uuid: ba3f53ceccb5410cb290bb81643e729f
+- alias_names:
+  - MemphisGrizzlies
+  - logo of MemphisGrizzlies
+  display_name: Memphis Grizzlies
+  uuid: a84c626bb54c4c82890cb920df6c606f
+- alias_names:
+  - Vaseline
+  - logo of Vaseline
+  display_name: Vaseline
+  uuid: f77ff11f21ee44b287d70047648f7165
+- alias_names:
+  - JacobsCreamCrackers
+  - logo of JacobsCreamCrackers
+  display_name: Jacobs Cream Crackers
+  uuid: 9d45d3f721144e928c2d0635879bea4b
+- alias_names:
+  - Intel
+  - logo of Intel
+  display_name: Intel
+  uuid: 123ebe7651ae4554815c179ba599ab23
+- alias_names:
+  - AgriculturalBankofChina
+  - logo of AgriculturalBankofChina
+  display_name: Agricultural Bank of China
+  uuid: 5e82b74cad6a44bbb195c78900e11748
+- alias_names:
+  - WarnerBros.
+  - logo of WarnerBros.
+  display_name: Warner Bros.
+  uuid: 2ef004668d884578ae9293ac603a24a7
+- alias_names:
+  - NewYorkRedBulls
+  - logo of NewYorkRedBulls
+  display_name: New York Red Bulls
+  uuid: 6dca29aac233430584e1593a87f108c0
+- alias_names:
+  - 7Forallmankind
+  - logo of 7Forallmankind
+  display_name: 7 for All Mankind
+  uuid: d8c2e1c51dd7415bbcb5753a19ff5750
+- alias_names:
+  - AmericanInternationalGroup
+  - logo of AmericanInternationalGroup
+  display_name: American International Group
+  uuid: bf03bf5636ea4c349d2641ea2d29b47b
+- alias_names:
+  - BrooklynNets
+  - logo of BrooklynNets
+  display_name: Brooklyn Nets
+  uuid: e08666db36304ba2a7af1e007488d178
+- alias_names:
+  - DelMonte
+  - logo of DelMonte
+  display_name: Del Monte Foods
+  uuid: 615809870ecb491bbee80e1a287f8d28
+- alias_names:
+  - PurdueUniversity
+  - logo of PurdueUniversity
+  display_name: Purdue University
+  uuid: 7fc495524313463e85ef2e4d790781fe
+- alias_names:
+  - Cisco Systems
+  - logo of Cisco Systems
+  display_name: Cisco Systems
+  uuid: a937790fc85a4e47977b5a20d54c5bdd
+- alias_names:
+  - TimTars
+  - logo of TimTars
+  display_name: Tim Tam
+  uuid: 57c2206c4ecf4dcdad26962a2217c343
+- alias_names:
+  - Bertolli
+  - logo of Bertolli
+  display_name: Bertolli
+  uuid: e40895741dae46a19fe8ecaf8fe70d50
+- alias_names:
+  - CanterburyofNewZealand
+  - logo of CanterburyofNewZealand
+  display_name: Canterbury, New Zealand
+  uuid: 739df47b111445e8a142892e2c5f3f35
+- alias_names:
+  - SilkCut
+  - logo of SilkCut
+  display_name: Silk Cut
+  uuid: cf28884e29e44c7595f54647933c4c9f
+- alias_names:
+  - Seattle'sBestCoffee
+  - logo of Seattle'sBestCoffee
+  display_name: Seattle's Best Coffee
+  uuid: d91b364b4c3d4eba8d8afdcf2fa5c3ce
+- alias_names:
+  - RedBull
+  - logo of RedBull
+  display_name: Red Bull
+  uuid: 91439bddc7714723b003a663fa6cbddb
+- alias_names:
+  - Adidas
+  - logo of Adidas
+  display_name: Adidas
+  uuid: 6e606c63cb1f49b4b5702fa3eac32557
+- alias_names:
+  - Church's
+  - logo of Church's
+  display_name: Church's
+  uuid: 0d6ac70a75ec43bbb3b216211378260e
+- alias_names:
+  - MaxMara
+  - logo of MaxMara
+  display_name: Max Mara
+  uuid: 029491339d484a6db7850e3f47a775f9
+- alias_names:
+  - PaulMitchell
+  - logo of PaulMitchell
+  display_name: Paul Mitchell
+  uuid: 9c107eb82d284415828735b690d76c77
+- alias_names:
+  - BestBuy
+  - logo of BestBuy
+  display_name: Best Buy
+  uuid: 6a69329c3d0a4a9892d8b49947f45d5e
+- alias_names:
+  - Mevius
+  - logo of Mevius
+  display_name: Mevius
+  uuid: 3013fdea9d4c43c284c2f86d355d749a
+- alias_names:
+  - ManoloBlahnik
+  - logo of ManoloBlahnik
+  display_name: Manolo Blahnik
+  uuid: b3fc06f2de76421faacfc7601967765a
+- alias_names:
+  - U.S.Cellular
+  - logo of U.S.Cellular
+  display_name: U.S. Cellular
+  uuid: 23c8c33f14a54b5f983eb0ced87346bd
+- alias_names:
+  - Barclays
+  - logo of Barclays
+  display_name: Barclays
+  uuid: 14bd3b65bd3e4f638ec7a5ddafe08775
+- alias_names:
+  - WashingtonUniversityinStLouis
+  - logo of WashingtonUniversityinStLouis
+  display_name: Washington University in St. Louis
+  uuid: cbd5211e37d34957a3c5a35d586ca6ee
+- alias_names:
+  - SeattleSoundersFC
+  - logo of SeattleSoundersFC
+  display_name: Seattle Sounders FC
+  uuid: 7d189774f8cb4f0481e39deb7880fcdc
+- alias_names:
+  - DolceGabbana
+  - logo of DolceGabbana
+  display_name: Dolce & Gabbana
+  uuid: 7ed5aa833c6f403aabb7b99afe6ad073
+- alias_names:
+  - PetSmart
+  - logo of PetSmart
+  display_name: PetSmart
+  uuid: c1ea5ad6998b46b58ebde30d9235d28d
+- alias_names:
+  - UniversityofCaliforniaDavis
+  - logo of UniversityofCaliforniaDavis
+  display_name: University of California, Davis
+  uuid: 985924bd9dc1467dbb970c8a6a1d1f8e
+- alias_names:
+  - ECCO
+  - logo of ECCO
+  display_name: ECCO
+  uuid: a858a7dd836648b6b0f14c00d46e4335
+- alias_names:
+  - AutoZone
+  - logo of AutoZone
+  display_name: AutoZone
+  uuid: 86f0ab12d66f4aba9230f46ad0813b7f
+- alias_names:
+  - Sherrin
+  - logo of Sherrin
+  display_name: Sherrin
+  uuid: a7fe142996b3463482608bff68bc3121
+- alias_names:
+  - IBM
+  - logo of IBM
+  display_name: IBM
+  uuid: 416186135a7845b7a7b3e4abbf598e36
+- alias_names:
+  - Crest
+  - logo of Crest
+  display_name: Crest
+  uuid: 0826f174cf614107bcc5576a4bdf5d36
+- alias_names:
+  - DetroitPistons
+  - logo of DetroitPistons
+  display_name: Detroit Pistons
+  uuid: 0c63794492fd4bcb93b20b2b77276a7d
+- alias_names:
+  - TheOriginalPancakeHouse
+  - logo of TheOriginalPancakeHouse
+  display_name: The Original Pancake House
+  uuid: 14c8f5587a3c4ffba698f553edc7e9a8
+- alias_names:
+  - Keds
+  - logo of Keds
+  display_name: Keds
+  uuid: 46813b1da1c84b67a5cd572b66c109de
+- alias_names:
+  - Ritter Sport
+  - logo of Ritter Sport
+  display_name: Ritter Sport
+  uuid: 1bb976b203eb4c53bcd2827a36db74cc
+- alias_names:
+  - BancoSantander
+  - logo of BancoSantander
+  display_name: Banco Santander
+  uuid: ed0cd9a1817c41e782d01cce4e9c5b31
+- alias_names:
+  - CheezWhiz
+  - logo of CheezWhiz
+  display_name: Cheez Whiz
+  uuid: 0f252e6bdbab4727bdff44650c13ae58
+- alias_names:
+  - MorganStanley
+  - logo of MorganStanley
+  display_name: Morgan Stanley
+  uuid: 9349dba242a9411a82361f9a641cfd37
+- alias_names:
+  - Aldi
+  - logo of Aldi
+  display_name: Aldi
+  uuid: 6e677deb39534c018c9438e93577c7e6
+- alias_names:
+  - Prada
+  - logo of Prada
+  display_name: Prada
+  uuid: f6157d123da340fd95bb0a2744c7162c
+- alias_names:
+  - Mossimo
+  - logo of Mossimo
+  display_name: Mossimo
+  uuid: 270c68170dae47f79adafbae93eb3ffe
+- alias_names:
+  - TennesseeTitans
+  - logo of TennesseeTitans
+  display_name: Tennessee Titans
+  uuid: 94f343b10dac4b40b05abda717120c5e
+- alias_names:
+  - HobNob
+  - logo of HobNob
+  display_name: Hobnob
+  uuid: 5328ccbb47c6494f8eadf675fb7f3181
+- alias_names:
+  - LG
+  - logo of LG
+  display_name: LG
+  uuid: 0b60c59084ec4b6198ccccb8a8bc6284
+- alias_names:
+  - Parliament
+  - logo of Parliament
+  display_name: Parliament
+  uuid: 0c05b6479fc14c81a22e3f5e95b0495d
+- alias_names:
+  - Fruitbythefoot
+  - logo of Fruitbythefoot
+  display_name: Fruit by the Foot
+  uuid: c56a76b516484724b5989dad0312224c
+- alias_names:
+  - Unicef
+  - logo of Unicef
+  display_name: Unicef
+  uuid: 7bcd5767e55940ee83c8e4b0099229bf
+- alias_names:
+  - ChipotleMexicanGrill
+  - logo of ChipotleMexicanGrill
+  display_name: Chipotle Mexican Grill
+  uuid: 55c3ced8a5404c05b06d9e40e96738bd
+- alias_names:
+  - BurlingtonStores
+  - logo of BurlingtonStores
+  display_name: Burlington
+  uuid: 393198324197404f985507a16d5c1a38
+- alias_names:
+  - OldMutual
+  - logo of OldMutual
+  display_name: Old Mutual
+  uuid: 2624ffb539ec4271a592c0863b03e7e1
+- alias_names:
+  - McLaren
+  - logo of McLaren
+  display_name: McLaren
+  uuid: 825be89a86d14d6a835eb7fff5801f79
+- alias_names:
+  - Dell
+  - logo of Dell
+  display_name: Dell
+  uuid: 281918357318456abab52e2bd2fcdf64
+- alias_names:
+  - WessonCookingoil
+  - logo of WessonCookingoil
+  display_name: Wesson Cooking Oil
+  uuid: a4014c9a832f40859360289ddcc0bcb5
+- alias_names:
+  - In-N-OutBurger
+  - logo of In-N-OutBurger
+  display_name: In-N-Out Burger
+  uuid: 057ca8904008440ca4f498d9067382b9
+- alias_names:
+  - PortlandTrailBlazers
+  - logo of PortlandTrailBlazers
+  display_name: Portland Trail Blazers
+  uuid: 7c9027a0814a4dc4be2427e8f97d8857
+- alias_names:
+  - CreditSuisseGroup
+  - logo of CreditSuisseGroup
+  display_name: Credit Suisse
+  uuid: 34a34889004d4b0bbadb56c40af26ce4
+- alias_names:
+  - Luxottica
+  - logo of Luxottica
+  display_name: Luxottica
+  uuid: 1c433341ce6f481ebbb59585f66b6884
+- alias_names:
+  - UniCredit
+  - logo of UniCredit
+  display_name: UniCredit
+  uuid: 6387f72a1527417aa5d909e83921dff2
+- alias_names:
+  - Chanel
+  - logo of Chanel
+  display_name: Chanel
+  uuid: 7479303815794108874264e2e37e634a
+- alias_names:
+  - ClaimJumper
+  - logo of ClaimJumper
+  display_name: Claim Jumper
+  uuid: 9df8da28b55b4940915e2db469222d1d
+- alias_names:
+  - JuicyCourture
+  - logo of JuicyCourture
+  display_name: Juicy Couture
+  uuid: 810c18044ddb42899cebf72c0778416b
+- alias_names:
+  - Sodastream
+  - logo of Sodastream
+  display_name: SodaStream
+  uuid: 236f6c23c769445bb6b49d20605faa7c
+- alias_names:
+  - Acura
+  - logo of Acura
+  display_name: Acura
+  uuid: e697d0a74ef54ab8a08e093b6f682635
+- alias_names:
+  - Renault
+  - logo of Renault
+  display_name: Renault
+  uuid: 338ccc9bba4a41b88f885ad6116bc571
+- alias_names:
+  - Heineken
+  - logo of Heineken
+  display_name: Heineken
+  uuid: 0ebfa3a6fb8c4313a6a2e851bb1a7481
+- alias_names:
+  - Nissan
+  - logo of Nissan
+  display_name: Nissan
+  uuid: ef76ecfb08b2443799a42a70eb3b70d4
+- alias_names:
+  - Koenigsegg
+  - logo of Koenigsegg
+  display_name: Koenigsegg
+  uuid: 6818c0d0b24242a5ae343fee4a96cba8
+- alias_names:
+  - Cline(brand)
+  - logo of Cline(brand)
+  display_name: Celine
+  uuid: 85ae4275e78e4fdba5910a6d730060e5
+- alias_names:
+  - Pop-Tarts
+  - logo of Pop-Tarts
+  display_name: Pop-Tarts
+  uuid: d4c6871cf51044a985cc047ef9516e36
+- alias_names:
+  - Tombstone
+  - logo of Tombstone
+  display_name: Tombstone
+  uuid: ae4c5475f34440c5aed005f71ee95231
+- alias_names:
+  - Blackberry
+  - logo of Blackberry
+  display_name: Blackberry
+  uuid: 93e72a9dd74e4e3db23c784a6b47ea45
+- alias_names:
+  - Norco
+  - logo of Norco
+  display_name: Norco
+  uuid: 3f32d661f1184aceb5412430c34309a2
+- alias_names:
+  - Doral
+  - logo of Doral
+  display_name: Doral
+  uuid: 02fd3f1512704b24918325ce13d6769b
+- alias_names:
+  - NewYorkRangers
+  - logo of NewYorkRangers
+  display_name: New York Rangers
+  uuid: 5158bb345f184946a53f56c945300e67
+- alias_names:
+  - davidsunflowerseeds
+  - logo of davidsunflowerseeds
+  display_name: David Sunflower Seeds
+  uuid: ab46b788dc6e41e18f8f35766e93ccfe
+- alias_names:
+  - Cadbury
+  - logo of Cadbury
+  display_name: Cadbury
+  uuid: 4b53518292ba493ebbda822a9a19a0f3
+- alias_names:
+  - Kempa
+  - logo of Kempa
+  display_name: Kempa
+  uuid: 47a87e9f25ad4da5956f4932fb7f0ce5
+- alias_names:
+  - HamburgerHelper
+  - logo of HamburgerHelper
+  display_name: Hamburger Helper
+  uuid: 5c21f9d0798744f6a285d6c787a9506f
+- alias_names:
+  - SKYYvodka
+  - logo of SKYYvodka
+  display_name: SKYY vodka
+  uuid: eea44e154abc47e0b3ccdf152e6f146c
+- alias_names:
+  - Libby's
+  - logo of Libby's
+  display_name: Libby's
+  uuid: 4d36181d6dcd45a2b9e4c3560ca37bec
+- alias_names:
+  - Apple
+  - logo of Apple
+  display_name: Apple
+  uuid: 357aec3be63b4a89824365f43ea34298
+- alias_names:
+  - Cinnabon
+  - logo of Cinnabon
+  display_name: Cinnabon
+  uuid: b8e25ec15ed64781a281e55711fbff84
+- alias_names:
+  - Logan'sRoadhouse
+  - logo of Logan'sRoadhouse
+  display_name: Logan's Roadhouse
+  uuid: a231c9fa8de34f8aa73c355644b94697
+- alias_names:
+  - Hi-Tec
+  - logo of Hi-Tec
+  display_name: Hi-Tec
+  uuid: e88f1cbfd8974099b0bc0c611726dc53
+- alias_names:
+  - Hunt's
+  - logo of Hunt's
+  display_name: Hunt's
+  uuid: 5a2556b628974415a5d3fef3be06e3a9
+- alias_names:
+  - TimeInc.
+  - logo of TimeInc.
+  display_name: Time Inc.
+  uuid: 61741a894baf4c0f93cf7172f11c75bb
+- alias_names:
+  - LAClippers
+  - logo of LAClippers
+  display_name: Los Angeles Clippers
+  uuid: 4ffd059883574585a5fbf3fce671d975
+- alias_names:
+  - Fila
+  - logo of Fila
+  display_name: Fila
+  uuid: a8a9e3b364aa400e92e28695251d1edd
+- alias_names:
+  - Becks
+  - logo of Becks
+  display_name: Beck's Brewery
+  uuid: 937f04945cf941f9bfc26aa659d27950
+- alias_names:
+  - PhiladelphiaEagles
+  - logo of PhiladelphiaEagles
+  display_name: Philadelphia Eagles
+  uuid: c9b0db52c1c54a5a808acb72fe1fb864
+- alias_names:
+  - TrueReligionBrandJeans
+  - logo of TrueReligionBrandJeans
+  display_name: True Religion Brand Jeans
+  uuid: 2de9a867c71a400b9953ad405e35b25d
+- alias_names:
+  - HudsonsBaySaksFifthAvenue
+  - logo of HudsonsBaySaksFifthAvenue
+  display_name: Hudson's Bay Company
+  uuid: bb706fa89d0145fca1448a5b8de52cfe
+- alias_names:
+  - DukeUniversity
+  - logo of DukeUniversity
+  display_name: Duke University
+  uuid: e351555f93b34f538bc317718ddac992
+- alias_names:
+  - Dial
+  - logo of Dial
+  display_name: Dial
+  uuid: e0f961b33e804998b4e24e12770caa5b
+- alias_names:
+  - Slurpee
+  - logo of Slurpee
+  display_name: Slurpee
+  uuid: c52dcb1eb5304e289169d0167d077d22
+- alias_names:
+  - Mayfair
+  - logo of Mayfair
+  display_name: Mayfair
+  uuid: 0380c4d932ac44cb8caf9189fbb98ab3
+- alias_names:
+  - AnaheimDucks
+  - logo of AnaheimDucks
+  display_name: Anaheim Ducks
+  uuid: 22e2a31cd35b4e7985587ced530e8e0c
+- alias_names:
+  - HarvardUniversity
+  - logo of HarvardUniversity
+  display_name: Harvard University
+  uuid: cae17191633941dcb3d5211fa0adb1aa
+- alias_names:
+  - TorontoRaptors
+  - logo of TorontoRaptors
+  display_name: Toronto Raptors
+  uuid: 04e97d82b13f48cbac368f5e87d27c7c
+- alias_names:
+  - Bently
+  - logo of Bently
+  display_name: Bentley
+  uuid: 2abbb9c6acf944fbb6838d4e3299ccf4
+- alias_names:
+  - Bianchi
+  - logo of Bianchi
+  display_name: Bianchi
+  uuid: d324e694e5fb45e0a9a63536f058aeff
+- alias_names:
+  - ColumbusBlueJackets
+  - logo of ColumbusBlueJackets
+  display_name: Columbus Blue Jackets
+  uuid: 58528ba177bd4494a65bdd77c150b685
+- alias_names:
+  - HealthMartSystems
+  - logo of HealthMartSystems
+  display_name: Health Mart
+  uuid: 846b7341b0174aff96526f1d729a6127
+- alias_names:
+  - McVitie's
+  - logo of McVitie's
+  display_name: McVitie's
+  uuid: 230bb9892c4d4c679eb3ee01aae22fd6
+- alias_names:
+  - GoodNeighborPharmacy
+  - logo of GoodNeighborPharmacy
+  display_name: Good Neighbor Pharmacy
+  uuid: 6dc0cbd2210d4d7e9b474f67f33e99bc
+- alias_names:
+  - LongHornSteakhouse
+  - logo of LongHornSteakhouse
+  display_name: LongHorn Steakhouse
+  uuid: a8889136ea8a4e0f969c2c48ed4ffc99
+- alias_names:
+  - Shell
+  - logo of Shell
+  display_name: Shell
+  uuid: b211f6a8b9414df6be52cfd0ff514032
+- alias_names:
+  - Maserati
+  - logo of Maserati
+  display_name: Maserati
+  uuid: 072f816c0ef54a73b526c15fa7c6bfec
+- alias_names:
+  - StateExpress555
+  - logo of StateExpress555
+  display_name: State Express 555
+  uuid: c2a8dc09ccd54d3ebe4df9968127b874
+- alias_names:
+  - UniversityofChicago
+  - logo of UniversityofChicago
+  display_name: University of Chicago
+  uuid: fd71befc3e7745d38d106823304e6cd2
+- alias_names:
+  - SOURCE
+  - logo of SOURCE
+  display_name: Source
+  uuid: cb0943d115b04f97b8441a1fa6e16440
+- alias_names:
+  - Bennigan's
+  - logo of Bennigan's
+  display_name: Bennigan's
+  uuid: fcbcce4a39cf4d66a10a802f7a0a0429
+- alias_names:
+  - Rdio
+  - logo of Rdio
+  display_name: Rdio
+  uuid: b9463be10500426b9736317025b5444c
+- alias_names:
+  - MonsterEnergy
+  - logo of MonsterEnergy
+  display_name: Monster Energy
+  uuid: 34895172175f4f58a373a53118e9e77b
+- alias_names:
+  - cornNuts
+  - logo of cornNuts
+  display_name: Corn Nuts
+  uuid: 643c8dffeb1a437d89c36be83aec3c00
+- alias_names:
+  - Dillards
+  - logo of Dillards
+  display_name: Dillard's
+  uuid: e691d13cf3b24226b5f7bd63d1133773
+- alias_names:
+  - Everlast
+  - logo of Everlast
+  display_name: Everlast
+  uuid: 102ba86aa7844f07becc9ea8a28bcefb
+- alias_names:
+  - Rip Curl
+  - logo of Rip Curl
+  display_name: Rip Curl
+  uuid: fed3839e717e40a794ca907c5622c60a
+- alias_names:
+  - CarolinaPanthers
+  - logo of CarolinaPanthers
+  display_name: Carolina Panthers
+  uuid: 60827a5f1098416f96519fe860a764ca
+- alias_names:
+  - Hostess
+  - logo of Hostess
+  display_name: Hostess Brands
+  uuid: d3d4d28cd2a14ed5b9d4c0d013ccc243
+- alias_names:
+  - StanfordUniversity
+  - logo of StanfordUniversity
+  display_name: Stanford University
+  uuid: 11d8a99f550544a2a73fe0ed223771a8
+- alias_names:
+  - PaneraBread
+  - logo of PaneraBread
+  display_name: Panera Bread
+  uuid: 22bb92d09666431885f0e2a10f985cb0
+- alias_names:
+  - Nestl
+  - logo of Nestl
+  display_name: Nestle
+  uuid: 3a191dfd4ff24937850fa8223ff64685
+- alias_names:
+  - ChinaMobile
+  - logo of ChinaMobile
+  display_name: China Mobile
+  uuid: e60357299ff04075a791da75bcaf4109
+- alias_names:
+  - StellaArtois
+  - logo of StellaArtois
+  display_name: Stella Artois
+  uuid: 407c21c6482f458cbab05d1183146ed2
+- alias_names:
+  - OutbackSteakhouse
+  - logo of OutbackSteakhouse
+  display_name: Outback Steakhouse
+  uuid: 4bb7fe72c72244429b671be5d5019942
+- alias_names:
+  - Volvo
+  - logo of Volvo
+  display_name: Volvo
+  uuid: 500bf721543a42bda3a7f2442d710a72
+- alias_names:
+  - WestminsterCrackerCompany
+  - logo of WestminsterCrackerCompany
+  display_name: Westminster Cracker Company
+  uuid: d3e947c99cba45c7b04420d7950e3fd6
+- alias_names:
+  - Balmain
+  - logo of Balmain
+  display_name: Balmain
+  uuid: f6b011b60d6a4a8782f20cb9ff465205
+- alias_names:
+  - TysonFoods
+  - logo of TysonFoods
+  display_name: Tyson Foods
+  uuid: 3b5fb87da2fc4d86a748b6c074efbe11
+- alias_names:
+  - Specialized
+  - logo of Specialized
+  display_name: Specialized
+  uuid: 9fe1f0041f3f4dd4be8cbfaccd972faf
+- alias_names:
+  - Hooters
+  - logo of Hooters
+  display_name: Hooters
+  uuid: 7e0b9268f65746d9a79385f4b56c93c4
+- alias_names:
+  - MinnesotaVikings
+  - logo of MinnesotaVikings
+  display_name: Minnesota Vikings
+  uuid: 680434258f974f77a17ecaa7388c46a2
+- alias_names:
+  - P.F.Chang'sChinaBistro
+  - logo of P.F.Chang'sChinaBistro
+  display_name: P. F. Chang's China Bistro
+  uuid: cee66bfe4a614f7dbb10510bcb5c66db
+- alias_names:
+  - Drake's
+  - logo of Drake's
+  display_name: Drake's
+  uuid: f3bfd4060179429eb1c007c3cbcb7b28
+- alias_names:
+  - BankofAmerica
+  - logo of BankofAmerica
+  display_name: Bank of America
+  uuid: 5a1e562555fb455f8f4786e8df1baf0e
+- alias_names:
+  - Nordstorm
+  - logo of Nordstorm
+  display_name: Nordstrom
+  uuid: e4e48bc62ef744fc82d0ba6226e32a9a
+- alias_names:
+  - Fla-Vor-Ice
+  - logo of Fla-Vor-Ice
+  display_name: Fla-Vor-Ice
+  uuid: 990f4119c14d4711bcd05858634a97bb
+- alias_names:
+  - Ram
+  - logo of Ram
+  display_name: Ram
+  uuid: 4da90318f91449e19ba7f5962d706e93
+- alias_names:
+  - BerkshireHathaway
+  - logo of BerkshireHathaway
+  display_name: Berkshire Hathaway
+  uuid: c42c5a7bbb7a466ba54e7de685b14d7f
+- alias_names:
+  - BeefeaterGin
+  - logo of BeefeaterGin
+  display_name: Beefeater Gin
+  uuid: d19cd792aa064e9d943a99662b45c300
+- alias_names:
+  - Gordon'sGin
+  - logo of Gordon'sGin
+  display_name: Gordon's Gin
+  uuid: 52d4ef0fbb1d44d193665a1bf10051d4
+- alias_names:
+  - TorontoFC
+  - logo of TorontoFC
+  display_name: Toronto FC
+  uuid: 74afd78813ef425486f2d9b6c715ebe7
+- alias_names:
+  - BankofCommunications
+  - logo of BankofCommunications
+  display_name: Bank of Communications
+  uuid: 788b99a401754464bb1133424397cfbc
+- alias_names:
+  - Timberland
+  - logo of Timberland
+  display_name: Timberland
+  uuid: 5385a36e26f94407860b87a68449946f
+- alias_names:
+  - ParamountPictures
+  - logo of ParamountPictures
+  display_name: Paramount Pictures
+  uuid: 8b4a8524a4c745ccb513c1217ae17f84
+- alias_names:
+  - TheKrogerCo.
+  - logo of TheKrogerCo.
+  display_name: Kroger
+  uuid: 3f5697ff88c043c9973a258074fc0df7
+- alias_names:
+  - JimmyJohn's
+  - logo of JimmyJohn's
+  display_name: Jimmy John's
+  uuid: c7dfac02017d410aa1f37a99677f1494
+- alias_names:
+  - FamousAmos
+  - logo of FamousAmos
+  display_name: Famous Amos
+  uuid: 601737ff218c4f83bf5a4a4ec16c9930
+- alias_names:
+  - CarolinaHurricanes
+  - logo of CarolinaHurricanes
+  display_name: Carolina Hurricanes
+  uuid: ef6ee99aee784478911c18db1e0369e6
+- alias_names:
+  - IrishSpring
+  - logo of IrishSpring
+  display_name: Irish Spring
+  uuid: 48629642f65042eabc08520df9f389d9
+- alias_names:
+  - Lux
+  - logo of Lux
+  display_name: Lux
+  uuid: 3317162721134821b907dca89f0109aa
+- alias_names:
+  - Planet Hollywood
+  - logo of Planet Hollywood
+  display_name: Planet Hollywood
+  uuid: 5600e3bce2e5465fa008281beba5e496
+- alias_names:
+  - ClevelandBrowns
+  - logo of ClevelandBrowns
+  display_name: Cleveland Browns
+  uuid: b765669e8559466db3ae2f39f1db53a4
+- alias_names:
+  - OtterPops
+  - logo of OtterPops
+  display_name: Otter Pops
+  uuid: 34c9d80f5e55419a8e5361a1238ff351
+- alias_names:
+  - Crunch'nMunch
+  - logo of Crunch'nMunch
+  display_name: Crunch 'n Munch
+  uuid: eb75319253eb46cc84040754e3a153ab
+- alias_names:
+  - OrvilleRedenbacher's
+  - logo of OrvilleRedenbacher's
+  display_name: Orville Redenbacher's
+  uuid: 87b4e6e303cd4bd1849950a575225cb0
+- alias_names:
+  - Fedex
+  - logo of Fedex
+  display_name: FedEx
+  uuid: eeca027b10284420bd7491d0b8d6b869
+- alias_names:
+  - Herms
+  - logo of Herms
+  display_name: Hermes
+  uuid: 89130c730a454b3cbd9864c29e5ee110
+- alias_names:
+  - StandardChartered
+  - logo of StandardChartered
+  display_name: Standard Chartered
+  uuid: e89288c3582b43a58a21f97f46e3fee4
+- alias_names:
+  - Suzuki
+  - logo of Suzuki
+  display_name: Suzuki
+  uuid: ba0766e847c840c1baa75d2f4560c754
+- alias_names:
+  - EdHardyClothing
+  - logo of EdHardyClothing
+  display_name: Ed Hardy Clothing
+  uuid: 2a83b317b2e54fea8c0aded691fce66b
+- alias_names:
+  - Unisys
+  - logo of Unisys
+  display_name: Unisys
+  uuid: 6a6f942098da40e0a05a90c6fe9aa999
+- alias_names:
+  - Volkswagen
+  - logo of Volkswagen
+  display_name: Volkswagen
+  uuid: d5e159ed55f84b09aab80063bfc71726
+- alias_names:
+  - WellsFargo
+  - logo of WellsFargo
+  display_name: Wells Fargo
+  uuid: 97c49c78db3141a78e6ce56728f4d605
+- alias_names:
+  - DonPablo's
+  - logo of DonPablo's
+  display_name: Don Pablo's
+  uuid: 547ec016e3714565abbcdf748f86813e
+- alias_names:
+  - UniversityofMichigan
+  - logo of UniversityofMichigan
+  display_name: University of Michigan
+  uuid: c48907805607400e84c8ae6e1667c40d
+- alias_names:
+  - H-E-BGrocery
+  - logo of H-E-BGrocery
+  display_name: H-E-B
+  uuid: 9a414c11297b44ae9eb47e9c840d10fe
+- alias_names:
+  - Bosch
+  - logo of Bosch
+  display_name: Bosch
+  uuid: 3555475cb2154c18bd67844fc5cd770b
+- alias_names:
+  - WolfBrandChili
+  - logo of WolfBrandChili
+  display_name: Wolf Brand Chili
+  uuid: 3f7b5cdc33ba4c96943ce91f105e9331
+- alias_names:
+  - GeneralMills
+  - logo of GeneralMills
+  display_name: General Mills
+  uuid: 796c17773e8e4d8680d41924f35e0b39
+- alias_names:
+  - BigBoy
+  - logo of BigBoy
+  display_name: Big Boy Restaurants
+  uuid: 0648ee5e7900461db46e8d79f091609a
+- alias_names:
+  - L.K.Bennett
+  - logo of L.K.Bennett
+  display_name: L.K.Bennett
+  uuid: 825742e4c33f4599817760233751f404
+- alias_names:
+  - CharlotteHornets
+  - logo of CharlotteHornets
+  display_name: Charlotte Hornets
+  uuid: 8c1d0db97f4c4bd092caab46778d320d
+- alias_names:
+  - Joe'sCrabShack
+  - logo of Joe'sCrabShack
+  display_name: Joe's Crab Shack
+  uuid: 694029b71b1e4cd3bf8db20c810b820a
+- alias_names:
+  - BMW
+  - logo of BMW
+  display_name: BMW
+  uuid: cff62695c33546499a34bb840bac7519
+- alias_names:
+  - Dior
+  - logo of Dior
+  display_name: Dior
+  uuid: 0bc1db7c03054755b12956c5396935aa
+- alias_names:
+  - CiCi'sPizza
+  - logo of CiCi'sPizza
+  display_name: Cicis
+  uuid: ffa8b280475d44b4b3d002ad0cffd333
+- alias_names:
+  - Sprite
+  - logo of Sprite
+  display_name: Sprite
+  uuid: a60d93af20e24811a92bd8a3c9088fde
+- alias_names:
+  - beernuts
+  - logo of beernuts
+  display_name: Beer Nuts
+  uuid: 8d623536543c4cb498f9cb99176a924b
+- alias_names:
+  - Std-Liege
+  - logo of Std-Liege
+  display_name: Standard Liege
+  uuid: b9326a5720604fa68e2de1fccde4c726
+- alias_names:
+  - Bugatti
+  - logo of Bugatti
+  display_name: Bugatti
+  uuid: 59965d6de3dd452c837075e0b78a3c1c
+- alias_names:
+  - Dr.Martens
+  - logo of Dr.Martens
+  display_name: Dr. Martens
+  uuid: 1dc53837f20a47dcb198fae60976081d
+- alias_names:
+  - Philadelphia76ers
+  - logo of Philadelphia76ers
+  display_name: Philadelphia 76ers
+  uuid: e8c65c0a3d394b44889ea2dca2d8f11c
+- alias_names:
+  - eMachines
+  - logo of eMachines
+  display_name: eMachines
+  uuid: 8d92712396e245f288bd4d44fa43e488
+- alias_names:
+  - PonderosaSteakhouseandBonanzaSteakhouse
+  - logo of PonderosaSteakhouseandBonanzaSteakhouse
+  display_name: Ponderosa Steakhouse
+  uuid: 0c00b6cbfa4f4842b2611df475da27e7
+- alias_names:
+  - Samsung
+  - logo of Samsung
+  display_name: Samsung
+  uuid: 0270c6843a2040aabd0d274670eacb9a
+- alias_names:
+  - Toyota
+  - logo of Toyota
+  display_name: Toyota
+  uuid: 42a2e2412148438fa1ac35be57afb4e7
+- alias_names:
+  - GuyLaroche
+  - logo of GuyLaroche
+  display_name: Guy Laroche
+  uuid: 895bbccc326342579c8c0736e875e6d6
+- alias_names:
+  - RussianStandard(vodka)
+  - logo of RussianStandard(vodka)
+  display_name: Russian Standard
+  uuid: 8aef88573eaf42098e33f3e0930470c2
+- alias_names:
+  - Surge
+  - logo of Surge
+  display_name: Surge
+  uuid: 781eef32ea7e4893bbd087a515eaa7e5
+- alias_names:
+  - Pioneer
+  - logo of Pioneer
+  display_name: Pioneer
+  uuid: 0f95559202eb40e994f7c41051014762
+- alias_names:
+  - Qualcomm
+  - logo of Qualcomm
+  display_name: Qualcomm
+  uuid: 02feda3e82924c7597aff11e33f939b0
+- alias_names:
+  - Beeline
+  - logo of Beeline
+  display_name: Beeline
+  uuid: 7475c679ae484c0dacf5a9a5e1c8ecf9
+- alias_names:
+  - AuntieAnne's
+  - logo of AuntieAnne's
+  display_name: Auntie Anne's
+  uuid: 71781a3e1cbd41fba48e500f89632465
+- alias_names:
+  - WilsonSportingGoods
+  - logo of WilsonSportingGoods
+  display_name: Wilson Sporting Goods
+  uuid: 1d798fe5043d4f9a9e1adfc0a392087c
+- alias_names:
+  - Skippy
+  - logo of Skippy
+  display_name: Skippy
+  uuid: 959234a34df14363899a5f7c4fdd8ece
+- alias_names:
+  - BensonHedges
+  - logo of BensonHedges
+  display_name: Benson & Hedges
+  uuid: b33fa34fed0c427c92603c6ef76a1785
+- alias_names:
+  - zebracakes
+  - logo of zebracakes
+  display_name: Zebra Cakes
+  uuid: 1a597482ed154ec8ae117a8ce3d9354c
+- alias_names:
+  - JeanPaulGaultier
+  - logo of JeanPaulGaultier
+  display_name: Jean-Paul Gaultier
+  uuid: 20ad223211fd4762b6b1a5553e32018c
+- alias_names:
+  - MitsubishiUFJFinancial
+  - logo of MitsubishiUFJFinancial
+  display_name: Mitsubishi UFJ Financial Group
+  uuid: e0bbb5098e53400aaa8f8f670c08ba89
+- alias_names:
+  - SunDrop
+  - logo of SunDrop
+  display_name: Sun Drop
+  uuid: 99160c864f604f1f8fcfaca03929467f
+- alias_names:
+  - RoundTablePizza
+  - logo of RoundTablePizza
+  display_name: Round Table Pizza
+  uuid: 1252dc6f438b4420b883bcfc599c2190
+- alias_names:
+  - StateBankofIndia
+  - logo of StateBankofIndia
+  display_name: State Bank of India
+  uuid: 8b39928707cd423f8bff47ae95195d48
+- alias_names:
+  - Wendy's
+  - logo of Wendy's
+  display_name: Wendy's
+  uuid: d1cc06adf45e478196043bd34d1ade68
+- alias_names:
+  - Paulaner
+  - logo of Paulaner
+  display_name: Paulaner
+  uuid: 3e8c8e44edf9475daf3128c22487bbe3
+- alias_names:
+  - Embassy
+  - logo of Embassy
+  display_name: Embassy
+  uuid: 95527c74e297408e948d6bb5551cadd4
+- alias_names:
+  - TacoBell
+  - logo of TacoBell
+  display_name: Taco Bell
+  uuid: cf07dd93326f4e16a729e86800aa3437
+- alias_names:
+  - LongJohnSilver's
+  - logo of LongJohnSilver's
+  display_name: Long John Silver
+  uuid: 76d9aa51c96b46629b9c46d1246cf7af
+- alias_names:
+  - Acer
+  - logo of Acer
+  display_name: Acer Inc.
+  uuid: dfa58fb76c794c3ab8bb692ec4a0ddda
+- alias_names:
+  - HoustonTexans
+  - logo of HoustonTexans
+  display_name: Houston Texans
+  uuid: 65280b5ea2bd4b4d9bd6569660e7bf3c
+- alias_names:
+  - Hobee'sRestaurant
+  - logo of Hobee'sRestaurant
+  display_name: Hobee's Restaurant Chain
+  uuid: fedd66919d884bf9b294229ab926cf1b
+- alias_names:
+  - Sobranie
+  - logo of Sobranie
+  display_name: Sobranie
+  uuid: c2bf8d0d320446d4a44d47e4a2217fc2
+- alias_names:
+  - Giant
+  - logo of Giant
+  display_name: Giant
+  uuid: 8b59404347d34176a743f8f01ed22c34
+- alias_names:
+  - Dunhill
+  - logo of Dunhill
+  display_name: Dunhill
+  uuid: 61712b9bb7e7430e9d943db50b263013
+- alias_names:
+  - Checkers
+  - logo of Checkers
+  display_name: Checkers
+  uuid: e30c81a14dcd4d539dea9f2a564ec504
+- alias_names:
+  - 7-Eleven
+  - logo of 7-Eleven
+  display_name: 7-Eleven
+  uuid: 6884b7099f394502835eaa65a791ae8e
+- alias_names:
+  - PierreCardin
+  - logo of PierreCardin
+  display_name: Pierre Cardin
+  uuid: 83a54b3874a0412b913d823093ace9de
+- alias_names:
+  - Neutrogena
+  - logo of Neutrogena
+  display_name: Neutrogena
+  uuid: e79e5410772743d4a6a962c01bb3ff01
+- alias_names:
+  - ATT
+  - logo of ATT
+  display_name: AT&T
+  uuid: 23a91e8a6d034be7b581d71b0ebe0713
+- alias_names:
+  - GreenBayPackers
+  - logo of GreenBayPackers
+  display_name: Green Bay Packers
+  uuid: 61105217472447e5bd036351de8dbd86
+- alias_names:
+  - ObeyClothing
+  - logo of ObeyClothing
+  display_name: Obey
+  uuid: a63e82f32df04223a2e4b6c5742f4e1e
+- alias_names:
+  - Winfield
+  - logo of Winfield
+  display_name: Winfield
+  uuid: 62dc9423bd2d455cbbf24c94e362326b
+- alias_names:
+  - NoodlesCompany
+  - logo of NoodlesCompany
+  display_name: Noodles & Company
+  uuid: d0a24d00ea6c4083a6fa92da3e22cb6d
+- alias_names:
+  - JBL
+  - logo of JBL
+  display_name: JBL
+  uuid: 5b51d7333e424740aaa4ea32f4a198af
+- alias_names:
+  - Saab
+  - logo of Saab
+  display_name: Saab
+  uuid: 729c227f45a9445d98550fd925e39685
+- alias_names:
+  - Moe'sSouthwestGrill
+  - logo of Moe'sSouthwestGrill
+  display_name: Moe's Southwest Grill
+  uuid: f5d36b775f4d46f8a85a31f9e838d41c
+- alias_names:
+  - Bridgestone
+  - logo of Bridgestone
+  display_name: Bridgestone
+  uuid: 2033b328b92c42dda2fe3323ab8bdf7f
+- alias_names:
+  - NewEnglandRevolution
+  - logo of NewEnglandRevolution
+  display_name: New England Revolution
+  uuid: a762afbb199d492199bea3aa1692e4b6
+- alias_names:
+  - CupNoodles
+  - logo of CupNoodles
+  display_name: Cup Noodles
+  uuid: 4727a80bb37b4f5b9ed23fcf0f488aac
+- alias_names:
+  - Electrolux
+  - logo of Electrolux
+  display_name: Electrolux
+  uuid: 52617af6a5154f2fa55101043f0a1991
+- alias_names:
+  - Reusch
+  - logo of Reusch
+  display_name: Reusch
+  uuid: 473b9598a1b4480eb0269bdce643053e
+- alias_names:
+  - BostonUniversity
+  - logo of BostonUniversity
+  display_name: Boston University
+  uuid: 9cd7e00a062a4e46a51acf6a5ad5e430
+- alias_names:
+  - McDonald's
+  - logo of McDonald's
+  display_name: McDonald's
+  uuid: 3d2d7d71cdb345a1be1027e90a85fc07
+- alias_names:
+  - Avaya
+  - logo of Avaya
+  display_name: Avaya
+  uuid: ec5135e0fbf34963b6477aad8589febd
+- alias_names:
+  - Bi-Lo
+  - logo of Bi-Lo
+  display_name: BI-LO
+  uuid: 4fa292625d0c4eb9882ec675faad4a28
+- alias_names:
+  - Coast
+  - logo of Coast
+  display_name: Coast
+  uuid: 5e1276b32bc546ae91826c2404167564
+- alias_names:
+  - FrenchConnection
+  - logo of FrenchConnection
+  display_name: French Connection
+  uuid: 96aedd4d47e24cf08a4a215e384108c0
+- alias_names:
+  - PandaExpress
+  - logo of PandaExpress
+  display_name: Panda Express
+  uuid: 9e98ba72eef44c2290f89200cbc475dc
+- alias_names:
+  - Nintendo
+  - logo of Nintendo
+  display_name: Nintendo
+  uuid: c9fb89cbdbfc4b3eb87efaace0b68a0b
+- alias_names:
+  - Infiniti
+  - logo of Infiniti
+  display_name: Infiniti
+  uuid: c91918f7068f4b5dbb2e4655b77caa64
+- alias_names:
+  - Xerox
+  - logo of Xerox
+  display_name: Xerox
+  uuid: afabfdb80b904411a7d743f4eff52183
+- alias_names:
+  - Havaianas
+  - logo of Havaianas
+  display_name: Havaianas
+  uuid: 48381813f9174604b277381b21d7667c
+- alias_names:
+  - Dove
+  - logo of Dove
+  display_name: Dove
+  uuid: d70249772014489b835c6391d0b282ad
+- alias_names:
+  - PepperidgeFarm
+  - logo of PepperidgeFarm
+  display_name: Pepperidge Farm
+  uuid: 5072fb93c3644d4fa0b2058f7747958f
+- alias_names:
+  - DCShoes
+  - logo of DCShoes
+  display_name: DC Shoes
+  uuid: 264eb3a62fba41bbac953ab768101ef5
+- alias_names:
+  - EspritHoldings
+  - logo of EspritHoldings
+  display_name: Esprit Holdings
+  uuid: 4df0fb7197a243e5a3ea13f1b96bfee8
+- alias_names:
+  - Fortuna
+  - logo of Fortuna
+  display_name: Fortuna
+  uuid: fbd61de8907247be998e95edbffbd941
+- alias_names:
+  - Houlihan's
+  - logo of Houlihan's
+  display_name: Houlihan's
+  uuid: fb815ed3acdb4905a396db7ef08ed303
+- alias_names:
+  - MetroPCS
+  - logo of MetroPCS
+  display_name: MetroPCS Communications, Inc.
+  uuid: 3b4a03ab1cc24e46b8aef1c2d23ba1b5
+- alias_names:
+  - PhiladelphiaUnion
+  - logo of PhiladelphiaUnion
+  display_name: Philadelphia Union
+  uuid: 094aa21a7c4c4e57abe24c159b875d44
+- alias_names:
+  - TiltedKilt
+  - logo of TiltedKilt
+  display_name: Tilted Kilt Pub & Eatery
+  uuid: 2ce8e4e46c1640f38901f59f0c2a75af
+- alias_names:
+  - Bing
+  - logo of Bing
+  display_name: Bing
+  uuid: d7fb7005f8ba4fc588abfb4759eb7964
+- alias_names:
+  - DKNY
+  - logo of DKNY
+  display_name: DKNY
+  uuid: 0766f591b9dc42499473cfdbb2edbd10
+- alias_names:
+  - Heelys
+  - logo of Heelys
+  display_name: Heelys
+  uuid: e2587b9e03994367a438df9de8d38919
+- alias_names:
+  - Colgate-Palmolive
+  - logo of Colgate-Palmolive
+  display_name: Colgate-Palmolive
+  uuid: 125750539a964960bb49493eab9f6056
+- alias_names:
+  - UnoChicagoGrill
+  - logo of UnoChicagoGrill
+  display_name: Uno Pizzeria & Grill
+  uuid: 6de3452da648447cb6ca14fbe479923a
+- alias_names:
+  - LAGear
+  - logo of LAGear
+  display_name: LA Gear
+  uuid: 53439c8e1772447a87f305cea25b7f30
+- alias_names:
+  - BirdsEye
+  - logo of BirdsEye
+  display_name: Birds Eye
+  uuid: aa2fcd59474148008fde17d98ef2a358
+- alias_names:
+  - Sherwin-Williams
+  - logo of Sherwin-Williams
+  display_name: Sherwin-Williams
+  uuid: 8e57e6b9a5824b7bb17dd1b7b73bac48
+- alias_names:
+  - Telcel
+  - logo of Telcel
+  display_name: Telcel
+  uuid: bf08abfad5324d869003c9bfeef918e6
+- alias_names:
+  - PitaPit
+  - logo of PitaPit
+  display_name: Pita Pit
+  uuid: 740623de2f794c20a069275f16cf6cdf
+- alias_names:
+  - CalgaryFlames
+  - logo of CalgaryFlames
+  display_name: Calgary Flames
+  uuid: 57bae75e5ba34b73874f4d6e08d7811c
+- alias_names:
+  - HummelInternational
+  - logo of HummelInternational
+  display_name: Hummel International
+  uuid: dc063e694adc48d7a7fa1e9592e17eff
+- alias_names:
+  - McGillUniversity
+  - logo of McGillUniversity
+  display_name: McGill University
+  uuid: 6294d0e7b90d4c30968c364b6a9482a6
+- alias_names:
+  - MaviJeans
+  - logo of MaviJeans
+  display_name: Mavi Jeans
+  uuid: 10de6195e8b8437c8119366fc2b415a5
+- alias_names:
+  - FUBUApparel
+  - logo of FUBUApparel
+  display_name: FUBU
+  uuid: 069d9039ed0f4568b23781ee9e561eb8
+- alias_names:
+  - Spalding
+  - logo of Spalding
+  display_name: Spalding
+  uuid: 3a4f2b9873654fb2b6a07a97a4f14254
+- alias_names:
+  - ArizonaStateUniversity
+  - logo of ArizonaStateUniversity
+  display_name: Arizona State University
+  uuid: ac5b546a445741ec8c287f1cda9fe84a
+- alias_names:
+  - Ovaltine
+  - logo of Ovaltine
+  display_name: Ovaltine
+  uuid: 0876f6864ef94befaf5f1d852a96c8bb
+- alias_names:
+  - AldoGroup
+  - logo of AldoGroup
+  display_name: Aldo Group
+  uuid: 57d775b8ab5a4221a39d13473b8af015
+- alias_names:
+  - Ruffles
+  - logo of Ruffles
+  display_name: Ruffles
+  uuid: 2816d60bb7cb460aaf3b7c8afb53d730
+- alias_names:
+  - HSBC
+  - logo of HSBC
+  display_name: HSBC
+  uuid: 2c5474573791438089b2aff521cc5e78
+- alias_names:
+  - Maxis
+  - logo of Maxis
+  display_name: Maxis
+  uuid: 5aedc3e58e204ac7bbe2f0ea9e0f96ab
+- alias_names:
+  - Kenzo
+  - logo of Kenzo
+  display_name: Kenzo
+  uuid: c93e8b702c9a4915a210ac5c2fbff650
+- alias_names:
+  - Nautica
+  - logo of Nautica
+  display_name: Nautica
+  uuid: 91ab18b52d2f4b529ac85bbf87a4d939
+- alias_names:
+  - KT
+  - logo of KT
+  display_name: kT
+  uuid: 37784e97d70f4426b4069de028ea26d0
+- alias_names:
+  - TacoTime
+  - logo of TacoTime
+  display_name: Taco Time
+  uuid: 15c9cea068a14f35bcbc3e8dd66c7160
+- alias_names:
+  - Hormel
+  - logo of Hormel
+  display_name: Hormel
+  uuid: 36ff082cf72345a6b0bc21727a2c2482
+- alias_names:
+  - PapaMurphy'sTake'N'BakePizza
+  - logo of PapaMurphy'sTake'N'BakePizza
+  display_name: Papa Murphy's Pizza
+  uuid: 4b8228ec8eb945bc82a48d3a6a562024
+- alias_names:
+  - Schweppestonicwater
+  - logo of Schweppestonicwater
+  display_name: Schweppes
+  uuid: f2d68d2632a947adab8084537eb0e0e7
+- alias_names:
+  - PittsburghPenguins
+  - logo of PittsburghPenguins
+  display_name: Pittsburgh Penguins
+  uuid: b5f50fd03c8d4c958e72dc5ffda852d8
+- alias_names:
+  - HotPockets
+  - logo of HotPockets
+  display_name: Hot Pockets
+  uuid: b5d7cf9fb4254840bf87f0faf0e4ab9e
+- alias_names:
+  - Chaco
+  - logo of Chaco
+  display_name: Gran Chaco
+  uuid: 64931422fbc1410e922f2840f21e7f38
+- alias_names:
+  - Spam
+  - logo of Spam
+  display_name: Spam
+  uuid: 1a83d9e4dab443a0845ff15ecef4d5d1
+- alias_names:
+  - MichaelsStores
+  - logo of MichaelsStores
+  display_name: Michaels
+  uuid: f393a0ab082a46fd88d12b101a5a71ea
+- alias_names:
+  - HellyHansen
+  - logo of HellyHansen
+  display_name: Helly Hansen
+  uuid: d3cc5170160f4b68899bd20f9a66d798
+- alias_names:
+  - BrooksSports
+  - logo of BrooksSports
+  display_name: Brooks Sports
+  uuid: 57faa0efad6d48fbb80d086932d88307
+- alias_names:
+  - Donnay
+  - logo of Donnay
+  display_name: Donnay
+  uuid: f502cd59c8b64ad082ff99df881b435d
+- alias_names:
+  - Hy-Vee
+  - logo of Hy-Vee
+  display_name: Hy-Vee
+  uuid: cea0983629674cb8aa30972ef47ee8c1
+- alias_names:
+  - CarolinaHerrera
+  - logo of CarolinaHerrera
+  display_name: Carolina Herrera
+  uuid: d9b1dbdc3c9c4c50bba1c98fcc481a6c
+- alias_names:
+  - ERKE
+  - logo of ERKE
+  display_name: ERKE
+  uuid: 036bf9fe6eeb46149d46f47ace48e2dd
+- alias_names:
+  - Chimay
+  - logo of Chimay
+  display_name: Chimay
+  uuid: 8249baf4ee11417f8959dddbf53b08a7
+- alias_names:
+  - Dave'sKillerBread
+  - logo of Dave'sKillerBread
+  display_name: Dave's Killer Bread
+  uuid: 94504608b9e645c98d729d4bb6c1be4b
+- alias_names:
+  - LittleCaesars
+  - logo of LittleCaesars
+  display_name: Little Caesars
+  uuid: 865ca0d69502450292c1383c5dd9c001
+- alias_names:
+  - TCBY
+  - logo of TCBY
+  display_name: TCBY
+  uuid: 2b5462f4d5dd402ab9908bf361794a19
+- alias_names:
+  - Abbott'sFrozenCustard
+  - logo of Abbott'sFrozenCustard
+  display_name: Abbott's Frozen Custard
+  uuid: daff8142fb844b0e9dd36c3116dc9055
+- alias_names:
+  - Close-Up
+  - logo of Close-Up
+  display_name: Close-up
+  uuid: 7184e52fbebf4b8ba4316b176338b287
+- alias_names:
+  - Fendi
+  - logo of Fendi
+  display_name: Fendi
+  uuid: 567ecc6c58d549af8888534ff96410cb
+- alias_names:
+  - JohnsHopkinsUniversity
+  - logo of JohnsHopkinsUniversity
+  display_name: Johns Hopkins University
+  uuid: 8ade961929fa4d5396306333c3121b75
+- alias_names:
+  - CommedesGarons
+  - logo of CommedesGarons
+  display_name: Comme des Garcons
+  uuid: b91eedcf72414d9b8e2292db5ee73cbf
+- alias_names:
+  - Hard Rock Cafe
+  - logo of Hard Rock Cafe
+  display_name: Hard Rock Cafe
+  uuid: fc38b91fa90b49469909eb7951d2e518
+- alias_names:
+  - Hardee's
+  - logo of Hardee's
+  display_name: Hardee's
+  uuid: dbf9e816f96646a89b49c9d3cc93c1da
+- alias_names:
+  - Walmart
+  - logo of Walmart
+  display_name: Walmart
+  uuid: d31a164819ea4ab284714ab02d815451
+- alias_names:
+  - KettleFoods
+  - logo of KettleFoods
+  display_name: Kettle Foods
+  uuid: 40c4a7c06ca44e9e97c1fb003e2a1a1b
+- alias_names:
+  - BlueBonnet
+  - logo of BlueBonnet
+  display_name: Blue Bonnet
+  uuid: 2b3744be8a13472b887a561ce6138090
+- alias_names:
+  - Kia
+  - logo of Kia
+  display_name: Kia Motors
+  uuid: 2433c08895cd47948fba960240cfb08d
+- alias_names:
+  - Camille'sSidewalkcaf
+  - logo of Camille'sSidewalkcaf
+  display_name: Camille's Sidewalk Cafe
+  uuid: c2449e94ab0141e3ad9a6f96beabc62b
+- alias_names:
+  - Wetzel'sPretzels
+  - logo of Wetzel'sPretzels
+  display_name: Wetzel's Pretzels
+  uuid: ccd5c9ce425c42508bd132dcf4885dc5
+- alias_names:
+  - GoldmanSachs
+  - logo of GoldmanSachs
+  display_name: Goldman Sachs
+  uuid: de373d9a4c8e4a33abf307e345fa3853
+- alias_names:
+  - DHL
+  - logo of DHL
+  display_name: DHL
+  uuid: 559b3d275068492685f63b315bdf9dc7
+- alias_names:
+  - Asprey
+  - logo of Asprey
+  display_name: Asprey
+  uuid: 9f4fbced1a254dc8b247cdd8378d29cd
+- alias_names:
+  - EurekaSports
+  - logo of EurekaSports
+  display_name: Eureka Sports
+  uuid: 136571a3f55d4dccbc7ff5b656fff201
+- alias_names:
+  - LambertButler
+  - logo of LambertButler
+  display_name: Lambert & Butler
+  uuid: 6d692e4980554d3b960791096b3805e4
+- alias_names:
+  - Limca
+  - logo of Limca
+  display_name: Limca
+  uuid: ad84a0cfe33a4981b652a4665c59b6e6
+- alias_names:
+  - ArmHammer
+  - logo of ArmHammer
+  display_name: Arm & Hammer
+  uuid: e1e3d80025f0467280d9b7bd9d3393a1
+- alias_names:
+  - Pandora
+  - logo of Pandora
+  display_name: Pandora
+  uuid: c198abf79a614175b8bb93281024905d
+- alias_names:
+  - Citroen
+  - logo of Citroen
+  display_name: Citroen
+  uuid: e0ae0d7d8d46472c90f42037a06ddbc5
+- alias_names:
+  - Aviva
+  - logo of Aviva
+  display_name: Aviva
+  uuid: 3d8b78096ffe40f692bb01491f15b79e
+- alias_names:
+  - AdvanceAutoParts
+  - logo of AdvanceAutoParts
+  display_name: Advance Auto Parts
+  uuid: 0a12c8a533ee4a71ab403f5e386a26ef
+- alias_names:
+  - Windstream
+  - logo of Windstream
+  display_name: Windstream
+  uuid: ee72323446dd4c1ea09066fe88b54eef
+- alias_names:
+  - AtlantaUnitedFC
+  - logo of AtlantaUnitedFC
+  display_name: Atlanta United FC
+  uuid: 1b9f82e7c0914cbb9ce0345be1519fcf
+- alias_names:
+  - Google
+  - logo of Google
+  display_name: Google
+  uuid: 69b3d924086243b4be3e87e9d4d76ad0
+- alias_names:
+  - Domino
+  - logo of Domino
+  display_name: Domino's
+  uuid: ccb88fbacef54aa8846fa3faf106a124
+- alias_names:
+  - BostonCeltics
+  - logo of BostonCeltics
+  display_name: Boston Celtics
+  uuid: 8d8d88b1c55d408b8c8064e84f682513
+- alias_names:
+  - PublixSuperMarkets
+  - logo of PublixSuperMarkets
+  display_name: Publix
+  uuid: a96659f1bcee4a94ad24663a88ca77f8
+- alias_names:
+  - Mirinda
+  - logo of Mirinda
+  display_name: Mirinda
+  uuid: 85bce145f55843bea3a7d99f3bc81595
+- alias_names:
+  - TomsShoes
+  - logo of TomsShoes
+  display_name: Toms Shoes
+  uuid: e7f7317ec3ff4d54b9520c4e7c15fc41
+- alias_names:
+  - BaltimoreRavens
+  - logo of BaltimoreRavens
+  display_name: Baltimore Ravens
+  uuid: bcbc48f1392b4740b1faeaba369d5091
+- alias_names:
+  - IndianapolisColts
+  - logo of IndianapolisColts
+  display_name: Indianapolis Colts
+  uuid: d99554dabc8c4565bd0c90f16fdd0724
+- alias_names:
+  - RobertoCavalli
+  - logo of RobertoCavalli
+  display_name: Roberto Cavalli
+  uuid: 47136fcd118c43ffbe6a58d3beeffdfa
+- alias_names:
+  - Pog
+  - logo of Pog
+  display_name: Pog
+  uuid: 4314b09c7c5d4f47b5dfe038df222cca
+- alias_names:
+  - MM's
+  - logo of MM's
+  display_name: M&M's
+  uuid: e9bb9efa42a64f4aa35b1d5890d80466
+- alias_names:
+  - T-Mobile
+  - logo of T-Mobile
+  display_name: T-Mobile
+  uuid: f3bd42f1cc44440fbbc6da744e25428e
+- alias_names:
+  - ChamppsAmericana
+  - logo of ChamppsAmericana
+  display_name: Champps
+  uuid: e0330b50ed08466a83c3926f524b9b54
+- alias_names:
+  - GianfrancoFerr
+  - logo of GianfrancoFerr
+  display_name: Gianfranco Ferre
+  uuid: e377271015784e67a013321f8dd4f840
+- alias_names:
+  - Sberbank
+  - logo of Sberbank
+  display_name: Sberbank
+  uuid: cd22e604cc1047768d1362113bcae547
+- alias_names:
+  - iTunes
+  - logo of iTunes
+  display_name: iTunes
+  uuid: 1470ee87a3e4426894097640240009c0
+- alias_names:
+  - Huawei
+  - logo of Huawei
+  display_name: Huawei
+  uuid: 78cb5a3c9dcf4110991b8c174814c83a
+- alias_names:
+  - AXA
+  - logo of AXA
+  display_name: AXA
+  uuid: 8166bc452c3945cc86a9d3ccbf7288b8
+- alias_names:
+  - OscarDeLaRenta
+  - logo of OscarDeLaRenta
+  display_name: Oscar de la Renta
+  uuid: 45c4bd93ef36473082180cbe404d4ea5
+- alias_names:
+  - Sbarro
+  - logo of Sbarro
+  display_name: Sbarro
+  uuid: 902755f8300a4c1ea6d76cb414b39310
+- alias_names:
+  - Kent
+  - logo of Kent
+  display_name: Kent
+  uuid: 027036b1504d428bb735c709ec472d64
+- alias_names:
+  - JohnGalliano
+  - logo of JohnGalliano
+  display_name: John Galliano
+  uuid: 34b7edd2fcdd4b76aaf9c217d9ef4dc8
+- alias_names:
+  - VejaSneakers
+  - logo of VejaSneakers
+  display_name: Veja Sneakers
+  uuid: d084de059775460c8ca51c2ac0166979
+- alias_names:
+  - PAM
+  - logo of PAM
+  display_name: PAM
+  uuid: ba729726126a477d9d6fab12d68aecdf
+- alias_names:
+  - Aflac
+  - logo of Aflac
+  display_name: Aflac
+  uuid: 4d8f2ac69694464194193ad782e4e53c
+- alias_names:
+  - TelUS
+  - logo of TelUS
+  display_name: Telus
+  uuid: ab037f07869d4048837a6e2e32ce1511
+- alias_names:
+  - Miele
+  - logo of Miele
+  display_name: Miele
+  uuid: 73d69864ec92469bab20e672ef2e5553
+- alias_names:
+  - UniversityofWashington
+  - logo of UniversityofWashington
+  display_name: University of Washington
+  uuid: 33c900a7e2a64c559dfba3c21dcc43e2
+- alias_names:
+  - Bik
+  - logo of Bik
+  display_name: Bik
+  uuid: 28344219909e48d4a2ffe1bf83b41152
+- alias_names:
+  - Dunkin'Donuts
+  - logo of Dunkin'Donuts
+  display_name: Dunkin' Donuts
+  uuid: 83ef4b7bfeee4346b74bfe49e4a7c565
+- alias_names:
+  - NewOrleansPelicans
+  - logo of NewOrleansPelicans
+  display_name: New Orleans Pelicans
+  uuid: ece011d211184f98878973ad0b7b0cbf
+- alias_names:
+  - SwissMiss
+  - logo of SwissMiss
+  display_name: Swiss Miss
+  uuid: 4e67b7a483de47268509b827240510a9
+- alias_names:
+  - Campbells
+  - logo of Campbells
+  display_name: Campbells
+  uuid: b3c6944493c34115989826b500230f7c
+- alias_names:
+  - CincinnatiBengals
+  - logo of CincinnatiBengals
+  display_name: Cincinnati Bengals
+  uuid: 4819b4427cdd4cb98367d006538308c5
+- alias_names:
+  - GoldenCorral
+  - logo of GoldenCorral
+  display_name: Golden Corral
+  uuid: d9de5d807a5b49a581e34a520a1e2e59
+- alias_names:
+  - VlasicPickles
+  - logo of VlasicPickles
+  display_name: Vlasic Pickles
+  uuid: 0c2962bf1e7f463b959b35789fe13e71
+- alias_names:
+  - Merrell(company)
+  - logo of Merrell(company)
+  display_name: Merrell
+  uuid: 5be09c006616453885fc9105ebacf85f
+- alias_names:
+  - TomFord
+  - logo of TomFord
+  display_name: Tom Ford
+  uuid: 7107924b407d47679d53ddfac4978847
+- alias_names:
+  - Base
+  - logo of Base
+  display_name: Base
+  uuid: cdce49e36dce4d8aaf1e088646b9af94
+- alias_names:
+  - TheBodyShop
+  - logo of TheBodyShop
+  display_name: The Body Shop
+  uuid: 47f173e9f58e469289f3d62452f87dc2
+- alias_names:
+  - Perry'sIceCream
+  - logo of Perry'sIceCream
+  display_name: Perry's Ice Cream
+  uuid: 3923df83d9e44c718e220a022e7c158e
+- alias_names:
+  - Allstate
+  - logo of Allstate
+  display_name: Allstate
+  uuid: b43c04d5356e4c76926c87cd559e6acb
+- alias_names:
+  - Vodafone
+  - logo of Vodafone
+  display_name: Vodafone
+  uuid: a04b7a904092486ab77edcc7d18a76f0
+- alias_names:
+  - Fiat
+  - logo of Fiat
+  display_name: Fiat
+  uuid: 3851466885db40339b719118597c869a
+- alias_names:
+  - NewYorkGiants
+  - logo of NewYorkGiants
+  display_name: New York Giants
+  uuid: 6979ba60be9e4090b9ce15afbed5c13b
+- alias_names:
+  - Speedo
+  - logo of Speedo
+  display_name: Speedo
+  uuid: 7e22707ecfe14582a12c23d0ab75416f
+- alias_names:
+  - Lamborghini
+  - logo of Lamborghini
+  display_name: Lamborghini
+  uuid: 41d78cdad6884aa781e7ceef8d85a002
+- alias_names:
+  - Panasonic
+  - logo of Panasonic
+  display_name: Panasonic
+  uuid: 72c3e54469604393aba23ac91919955a
+- alias_names:
+  - Pepsi
+  - logo of Pepsi
+  display_name: Pepsi
+  uuid: 91d08169e6ba49a89fc4eb4df30efb95
+- alias_names:
+  - NorthwesternUniversity
+  - logo of NorthwesternUniversity
+  display_name: Northwestern University
+  uuid: 694542fc9163481a8c91fbd8a258e6b3
+- alias_names:
+  - Liebherr
+  - logo of Liebherr
+  display_name: Liebherr Group
+  uuid: 33dbb46672d34e9cad5ef78e5837f3a8
+- alias_names:
+  - BadgleyMischka
+  - logo of BadgleyMischka
+  display_name: Badgley Mischka
+  uuid: 903cb7f95fdd4514b9f4f8dd68cb26a4
+- alias_names:
+  - Ping
+  - logo of Ping
+  display_name: PING
+  uuid: fa7f0b32b87244238a3fb3d097ce9134
+- alias_names:
+  - Sam'sClub
+  - logo of Sam'sClub
+  display_name: Sam's Club
+  uuid: fae9340a750446d4b77288e9990a484e
+- alias_names:
+  - cheez-it
+  - logo of cheez-it
+  display_name: Cheez-It
+  uuid: 3b0c7acabb924333be670a378fbe1199
+- alias_names:
+  - BancodoBrasil
+  - logo of BancodoBrasil
+  display_name: Banco do Brasil
+  uuid: 3eef7b2a313c4688b9785bd662f55f58
+- alias_names:
+  - LuckyStrike
+  - logo of LuckyStrike
+  display_name: Lucky Strike
+  uuid: c39091f1df124cf78fd89a0e231000a3
+- alias_names:
+  - SergioTacchini
+  - logo of SergioTacchini
+  display_name: Sergio Tacchini
+  uuid: ce46dc57d71e47bdb8e151138a1810dc
+- alias_names:
+  - TheWeinsteinCompany
+  - logo of TheWeinsteinCompany
+  display_name: The Weinstein Company
+  uuid: 131ea9a69d394012adf6f835b64205e4
+- alias_names:
+  - Newport
+  - logo of Newport
+  display_name: Newport
+  uuid: d5dff2193dc1462eb1ab9d6cafac0ac0
+- alias_names:
+  - KrispyKreme
+  - logo of KrispyKreme
+  display_name: Krispy Kreme
+  uuid: 813353512c9c4faeb42825fef166917e
+- alias_names:
+  - Quick
+  - logo of Quick
+  display_name: Quick
+  uuid: 128c94cb7a604a63800117d876e53b62
+- alias_names:
+  - Pizza Hut
+  - logo of Pizza Hut
+  display_name: Pizza Hut
+  uuid: 07e16cc3a46448c7b660e06a454e4122
+- alias_names:
+  - GeneralElectric
+  - logo of GeneralElectric
+  display_name: General Electric
+  uuid: 3940c26458574b2aa22368c2376ceea8
+- alias_names:
+  - Pinkberry
+  - logo of Pinkberry
+  display_name: Pinkberry
+  uuid: acb85afb3d2f4e72a7617dff97493c99
+- alias_names:
+  - Crocs
+  - logo of Crocs
+  display_name: Crocs
+  uuid: 27823a72c97440789cd250ae43acf835
+- alias_names:
+  - Williams-Sonoma
+  - logo of Williams-Sonoma
+  display_name: Williams-Sonoma
+  uuid: 5a2ecbeadd1146adac44c252ebc25d50
+- alias_names:
+  - CaterpillarInc.
+  - logo of CaterpillarInc.
+  display_name: Caterpillar Inc.
+  uuid: b7144a0dac304d4e82d91dfe5e76d010
+- alias_names:
+  - ChinaLifeInsurance
+  - logo of ChinaLifeInsurance
+  display_name: China Life Insurance Company
+  uuid: c9aed019cd554738b52d818a704c0074
+- alias_names:
+  - Shazam
+  - logo of Shazam
+  display_name: Shazam
+  uuid: 5806749821144fbaad5b5e6f56c4b9aa
+- alias_names:
+  - Instagram
+  - logo of Instagram
+  display_name: Instagram
+  uuid: 56cdee0c26b946a280c9ad06d9e39063
+- alias_names:
+  - SeattleSeahawks
+  - logo of SeattleSeahawks
+  display_name: Seattle Seahawks
+  uuid: fd04e78c22be4bc785771cad67e290c7
+- alias_names:
+  - Peugeot
+  - logo of Peugeot
+  display_name: Peugeot
+  uuid: 6044c93423874ac59257f72576a915c6
+- alias_names:
+  - Knorr
+  - logo of Knorr
+  display_name: Knorr
+  uuid: 24743e6257a1456a88be9fd51afd4cf9
+- alias_names:
+  - Generalmotors
+  - logo of Generalmotors
+  display_name: General Motors
+  uuid: afb354bbc2b84c8ca547bd71de3ef834
+- alias_names:
+  - DetroitLions
+  - logo of DetroitLions
+  display_name: Detroit Lions
+  uuid: 6bed5fa852774c61afdf44d60e5c6e61
+- alias_names:
+  - MunichRe
+  - logo of MunichRe
+  display_name: Munich Re
+  uuid: 850cd96765ea4a249c12d252a4d02016
+- alias_names:
+  - Smartfood
+  - logo of Smartfood
+  display_name: Smartfood
+  uuid: 958768cc721b497488f7083086ffcfad
+- alias_names:
+  - Chick-fil-A
+  - logo of Chick-fil-A
+  display_name: Chick-fil-A
+  uuid: 29b75af13e284b03bb8b87264ddf15b4
+- alias_names:
+  - OscarMeyer
+  - logo of OscarMeyer
+  display_name: Oscar Mayer
+  uuid: e188a87395ed45029cef83bcf09fccc8
+- alias_names:
+  - Srirachasauce(HuyFongFoods)
+  - logo of Srirachasauce(HuyFongFoods)
+  display_name: Sriracha Sauce
+  uuid: 43021d0548ff411ebb4e9cce8249dafd
+- alias_names:
+  - Bulgari
+  - logo of Bulgari
+  display_name: Bulgari
+  uuid: 5f4c6fa0edb74fb29aa13c38dae8d802
+- alias_names:
+  - ZurichInsuranceGroup
+  - logo of ZurichInsuranceGroup
+  display_name: Zurich Insurance Group
+  uuid: c682754a82b84a958eeb44cfb0e7c4b1
+- alias_names:
+  - ZooYork
+  - logo of ZooYork
+  display_name: Zoo York
+  uuid: 5cadfd0c41c543baa62266fd8cec726b
+- alias_names:
+  - CNPAssurances
+  - logo of CNPAssurances
+  display_name: CNP Assurances
+  uuid: ed1e8e080e4245e6aa5a4884e5637869
+- alias_names:
+  - JackintheBox
+  - logo of JackintheBox
+  display_name: Jack in the Box
+  uuid: d7e582214756489e94be29f09e1befa4
+- alias_names:
+  - ThomMcAn
+  - logo of ThomMcAn
+  display_name: Thom McAn
+  uuid: 05051f8dcdb14e778e3985e6066e6127
+- alias_names:
+  - Fosters
+  - logo of Fosters
+  display_name: Fosters
+  uuid: 32e499288583402a8f5914105d3773c9
+- alias_names:
+  - SKTelecom
+  - logo of SKTelecom
+  display_name: SK Telecom
+  uuid: 2ab09c145ee44c7185c9f74d10b23c19
+- alias_names:
+  - Trek
+  - logo of Trek
+  display_name: Trek
+  uuid: efa2d4066d45478db3d92bba65587542
+- alias_names:
+  - Velveeta
+  - logo of Velveeta
+  display_name: Velveeta
+  uuid: bd82da1d1b7440369b6b7b66730b73df
+- alias_names:
+  - NationalAustraliaBank
+  - logo of NationalAustraliaBank
+  display_name: National Australia Bank
+  uuid: f533e57766d8491a83ca4be366e8eb7f
+- alias_names:
+  - ColdStone
+  - logo of ColdStone
+  display_name: Cold Stone
+  uuid: 3b05a8ebdd1c4236845664d2549d2c3c
+- alias_names:
+  - Carnation
+  - logo of Carnation
+  display_name: Carnation
+  uuid: 42628c3dbf2f4fa29b50bb25b90f235f
+- alias_names:
+  - BajaFresh
+  - logo of BajaFresh
+  display_name: Baja Fresh
+  uuid: 335ab0f8612f40cda4d5b70a902abd41
+- alias_names:
+  - bugles
+  - logo of bugles
+  display_name: Bugles
+  uuid: d3cb5cd37bca4a5ca6d89426a38275a7
+- alias_names:
+  - WegmansFoodMarket
+  - logo of WegmansFoodMarket
+  display_name: Wegmans
+  uuid: 8b79d4a3acbe439282b0efc44a3c119a
+- alias_names:
+  - AmericanEagle
+  - logo of AmericanEagle
+  display_name: American Eagle (airline brand)
+  uuid: 0b9b5087461e4f6d9dcf9ff11c710e9f
+- alias_names:
+  - ShiekhShoes
+  - logo of ShiekhShoes
+  display_name: Shiekh Shoes
+  uuid: 6a150e0c08cb4d768216c9ea8841923e
+- alias_names:
+  - Tabascosauce
+  - logo of Tabascosauce
+  display_name: Tabasco sauce
+  uuid: 076fdd22b9484410b770de5f7af0bf64
+- alias_names:
+  - RoyalBankofScotland
+  - logo of RoyalBankofScotland
+  display_name: Royal Bank of Scotland
+  uuid: 13537e68badd4c46adfa60c474775be9
+- alias_names:
+  - MiskeenOriginals
+  - logo of MiskeenOriginals
+  display_name: Miskeen Originals Clothing
+  uuid: 84f82c43371f4d2ebd8baaf0c1365e4f
+- alias_names:
+  - Funyuns
+  - logo of Funyuns
+  display_name: Funyuns
+  uuid: 146d0e7a4d70497bac65a293014d2af6
+- alias_names:
+  - NewJerseyDevils
+  - logo of NewJerseyDevils
+  display_name: New Jersey Devils
+  uuid: c8a7efe2aad04378b7bad56cb66ea598
+- alias_names:
+  - Carlsberg
+  - logo of Carlsberg
+  display_name: Carlsberg
+  uuid: 28a083df64de4b949afe909419c9ea1b
+- alias_names:
+  - LucasFilm
+  - logo of LucasFilm
+  display_name: Lucasfilm
+  uuid: a60c2641a79a460fb75fc10dbe6dcfd2
+- alias_names:
+  - ArizonaCoyotes
+  - logo of ArizonaCoyotes
+  display_name: Arizona Coyotes
+  uuid: 14b0d03368ca4b4b9f399acda40feb63
+- alias_names:
+  - Mapfre
+  - logo of Mapfre
+  display_name: Mapfre
+  uuid: 81faba8a809d4744bb52c9e7120c6433
+- alias_names:
+  - Menard
+  - logo of Menard
+  display_name: Menards
+  uuid: 9ed5e2e8916847e598eeb0d21601cdb9
+- alias_names:
+  - AtlantaHawks
+  - logo of AtlantaHawks
+  display_name: Atlanta Hawks
+  uuid: 71053db54b034ba4915251ec7e84a5c8
+- alias_names:
+  - CafRio
+  - logo of CafRio
+  display_name: Cafe Rio
+  uuid: d1845585295647c084c89554e406cad1
+- alias_names:
+  - Costco
+  - logo of Costco
+  display_name: Costco
+  uuid: 060fc8dfb87e4bd4a0ba4b3f089ced59
+- alias_names:
+  - Commerzbank
+  - logo of Commerzbank
+  display_name: Commerzbank
+  uuid: 1a8656ee34ed4986bb0c5ba14a02f9e7
+- alias_names:
+  - JimBeam
+  - logo of JimBeam
+  display_name: Jim Beam
+  uuid: ffd6c10e612a4a91ae0c9c8be0bdee96
+- alias_names:
+  - BuffaloSabres
+  - logo of BuffaloSabres
+  display_name: Buffalo Sabres
+  uuid: fcbee9578f7b4d6f874b42dbc519b72b
+- alias_names:
+  - SumitomoMitsuiFinancial
+  - logo of SumitomoMitsuiFinancial
+  display_name: Sumitomo Mitsui Financial Group
+  uuid: e6209b91e63e4f3cad41ba1004fac524
+- alias_names:
+  - Erima
+  - logo of Erima
+  display_name: Erima
+  uuid: 287d452d137a4884b8bef6f3916a6753
+- alias_names:
+  - Lugz
+  - logo of Lugz
+  display_name: Lugz
+  uuid: 14f87329eb784a00ae1ca806915ebd85
+- alias_names:
+  - Sony
+  - logo of Sony
+  display_name: Sony
+  uuid: c82b80c56123470083da4828c6ec4f6b
+- alias_names:
+  - Target
+  - logo of Target
+  display_name: Target Corporation
+  uuid: dd7c259c80a644b4a36e4f9ff2dd15c0
+- alias_names:
+  - Nature'sOwn
+  - logo of Nature'sOwn
+  display_name: Nature's Own
+  uuid: fc1ab91f274c4e3a9dda2453bfb5bd8f
+- alias_names:
+  - JacksonvilleJaguars
+  - logo of JacksonvilleJaguars
+  display_name: Jacksonville Jaguars
+  uuid: d04335ec27ae45fa9ad5213fa826f155
+- alias_names:
+  - Applebottomclothing
+  - logo of Applebottomclothing
+  display_name: Apple Bottoms
+  uuid: e36a81b4da964c079fdfd24d6facaa93
+- alias_names:
+  - BBVA
+  - logo of BBVA
+  display_name: Banco Bilbao Vizcaya Argentaria
+  uuid: 39384a7eed9d410b87e98ce9e59bda4c
+- alias_names:
+  - UniversityofHongKong
+  - logo of UniversityofHongKong
+  display_name: University of Hong Kong
+  uuid: 9159b1c038ce4674931a000534b28cd8
+- alias_names:
+  - ChuckE.Cheese's
+  - logo of ChuckE.Cheese's
+  display_name: Chuck E. Cheese's
+  uuid: 06afc0f09e484ea49a8ce846e085eeb5
+- alias_names:
+  - Nbc
+  - logo of Nbc
+  display_name: NBC
+  uuid: dc20607a73104c42a0aaa6bda7a17767
+- alias_names:
+  - Subway
+  - logo of Subway
+  display_name: Subway
+  uuid: 33cbba4b2b7a46f0b3188e93285667c4
+- alias_names:
+  - TexasInstruments
+  - logo of TexasInstruments
+  display_name: Texas Instruments
+  uuid: d3dd62121d094fb5b62619a71c2545b1
+- alias_names:
+  - Tieks
+  - logo of Tieks
+  display_name: Tieks
+  uuid: e87632273d60453588ccf5ec12182441
+- alias_names:
+  - CaliforniaPizzaKitchen
+  - logo of CaliforniaPizzaKitchen
+  display_name: California Pizza Kitchen
+  uuid: b7663a608ab141bc9f7f7382b3c931a3
+- alias_names:
+  - Marshalls
+  - logo of Marshalls
+  display_name: Marshalls
+  uuid: 9756f940203842a484a788d900f1866a
+- alias_names:
+  - Skechers
+  - logo of Skechers
+  display_name: Skechers
+  uuid: e6d0c4b640384f818729a9d992e60b0c
+- alias_names:
+  - Denny's
+  - logo of Denny's
+  display_name: Denny's
+  uuid: af0cf7264fd844d4910d4bcab35cc33a
+- alias_names:
+  - T.G.I.Friday's
+  - logo of T.G.I.Friday's
+  display_name: TGI Friday's
+  uuid: a0a00605e62e449d963ee9256fa5ee43
+- alias_names:
+  - Hugo Boss
+  - logo of Hugo Boss
+  display_name: Hugo Boss
+  uuid: 4df9c1389ae4435f973923419343a027
+- alias_names:
+  - EdmontonOilers
+  - logo of EdmontonOilers
+  display_name: Edmonton Oilers
+  uuid: 95ec90c8e639410e884fc13647d4570c
+- alias_names:
+  - Telstra
+  - logo of Telstra
+  display_name: Telstra
+  uuid: e2f270510ef747a4a6644c9fc49f1d6a
+- alias_names:
+  - StaterBros.Holdings
+  - logo of StaterBros.Holdings
+  display_name: Stater Bros. Holdings
+  uuid: 38988fd2cc504656931135039bb27e6a
+- alias_names:
+  - Totino's
+  - logo of Totino's
+  display_name: Totino's
+  uuid: b0f30b2d661249d4bc605a859f975a70
+- alias_names:
+  - TractorSupplyCo.
+  - logo of TractorSupplyCo.
+  display_name: Tractor Supply Company
+  uuid: e4f506e1bb394eacbf9aded8c28f1058
+- alias_names:
+  - Speedway
+  - logo of Speedway
+  display_name: Speedway
+  uuid: cb3a911efe3d47d2b49a1f48c694eb7b
+- alias_names:
+  - HoustonRockets
+  - logo of HoustonRockets
+  display_name: Houston Rockets
+  uuid: e33c055aabb14290b2178ad5cefa0860
+- alias_names:
+  - Brine
+  - logo of Brine
+  display_name: Brine
+  uuid: d61349d491c14ca5815b2948b879f720
+- alias_names:
+  - FarmerBoy's
+  - logo of FarmerBoy's
+  display_name: Farmer Boys
+  uuid: f6e2fcfc90e8432ba3689c2a7f897c08
+- alias_names:
+  - Chili's
+  - logo of Chili's
+  display_name: Chili's
+  uuid: 2f0eaa0a3d8445c381bc0c6ec9cf39d7
+- alias_names:
+  - EasyCheese
+  - logo of EasyCheese
+  display_name: Easy Cheese
+  uuid: d5eb8a0c3cc04a56adc6104d11332d0a
+- alias_names:
+  - ShakeShack
+  - logo of ShakeShack
+  display_name: Shake Shack
+  uuid: 84e68efcf92341598946f9eb7108928b
+- alias_names:
+  - Arby's
+  - logo of Arby's
+  display_name: Arby's
+  uuid: ff0d91b463ba4e53b1274f071c88cc5b
+- alias_names:
+  - BuffaloWildWings
+  - logo of BuffaloWildWings
+  display_name: Buffalo Wild Wings
+  uuid: 61d8d2d7472e4216ab2d318a87a9e850
+- alias_names:
+  - Geox
+  - logo of Geox
+  display_name: Geox
+  uuid: b1af180b161e494ca116e8c19678eb03
+- alias_names:
+  - FootLocker
+  - logo of FootLocker
+  display_name: Foot Locker
+  uuid: 72094c6e55d44dfb977724e49afc1bc5
+- alias_names:
+  - Copeland's
+  - logo of Copeland's
+  display_name: Copeland's
+  uuid: 1ed75a917bdf4f4096c0b0941faf4da2
+- alias_names:
+  - SonicDrive-In
+  - logo of SonicDrive-In
+  display_name: Sonic Drive-In
+  uuid: 800b7621814343c1904a0096090e7876
+- alias_names:
+  - KonicaMinolta
+  - logo of KonicaMinolta
+  display_name: Konica Minolta
+  uuid: 00c867774bee4066b7233d5e94662297
+- alias_names:
+  - ManulifeFinancial
+  - logo of ManulifeFinancial
+  display_name: Manulife
+  uuid: 0c99bc5a6c0842f99888395b7d4a9b7b
+- alias_names:
+  - Smashburger
+  - logo of Smashburger
+  display_name: Smashburger
+  uuid: a7c3baa922784e1994621a0cb38c9895
+- alias_names:
+  - CymaWatches
+  - logo of CymaWatches
+  display_name: Cyma Watches
+  uuid: cdc2e0898df240b1b24c553bdf490277
+- alias_names:
+  - Karhu
+  - logo of Karhu
+  display_name: Karhu
+  uuid: 9260213489e143d6b51a85407091d40b
+- alias_names:
+  - UtahJazz
+  - logo of UtahJazz
+  display_name: Utah Jazz
+  uuid: 41df90cad10441d1bdb1eca0ff44eb95
+- alias_names:
+  - Mr.Hero
+  - logo of Mr.Hero
+  display_name: Mr.Hero
+  uuid: c5e39f00c2f448c197ca374b47ee3c69
+- alias_names:
+  - Pears
+  - logo of Pears
+  display_name: Pears
+  uuid: 836bc6f842ee4c459f29051e8a37ed4c
+- alias_names:
+  - Victoria'sSecret
+  - logo of Victoria'sSecret
+  display_name: Victoria's Secret
+  uuid: 6b7ce17cf9a04b1f9ab9a538e6f22e77
+- alias_names:
+  - UMG
+  - logo of UMG
+  display_name: UMG
+  uuid: 10886957a76f41738c4150acf3dde1f3
+- alias_names:
+  - Mr. Pibb
+  - logo of Mr. Pibb
+  display_name: Pibb Xtra
+  uuid: 5460e1817799416082c367299d20b719
+- alias_names:
+  - Nesquick
+  - logo of Nesquick
+  display_name: Nesquik
+  uuid: 26c36a530566404f9b5a63a116116657
+- alias_names:
+  - WashingtonWizards
+  - logo of WashingtonWizards
+  display_name: Washington Wizards
+  uuid: cc943d422a1241d6a6698b63227a0427
+- alias_names:
+  - CountryCrock
+  - logo of CountryCrock
+  display_name: Country Crock
+  uuid: 5e4909a789144abf9ff6899e6f682a6a
+- alias_names:
+  - MetLife
+  - logo of MetLife
+  display_name: MetLife
+  uuid: 213d496a907a4d4eb8f45b86ac0d9f46
+- alias_names:
+  - Stolichnaya
+  - logo of Stolichnaya
+  display_name: Stolichnaya
+  uuid: 71c9be78a4334130a8fa8076081328af
+- alias_names:
+  - Disney
+  - logo of Disney
+  display_name: Disney
+  uuid: 0ad456ac344241b6af64743512a372c7
+- alias_names:
+  - Fazoli's
+  - logo of Fazoli's
+  display_name: Fazoli's
+  uuid: 23ca53d7b197405da451f438e608522a
+- alias_names:
+  - Oreo
+  - logo of Oreo
+  display_name: Oreo
+  uuid: af856af125df4af2b9ff6266b408599c
+- alias_names:
+  - Klondike
+  - logo of Klondike
+  display_name: Klondike
+  uuid: 94518dde1885429499cbe5c8ba9494a6
+- alias_names:
+  - Duarig
+  - logo of Duarig
+  display_name: Duarig
+  uuid: 0085030cd0ea4ebab11fd82a6ad842d0
+- alias_names:
+  - Marlboro
+  - logo of Marlboro
+  display_name: Marlboro
+  uuid: 7b1b7beeb7de41dd9e05d637a060ef83
+- alias_names:
+  - Xiaomo
+  - logo of Xiaomo
+  display_name: Xiaomi
+  uuid: 07ef2e59b99d48ac8e04007000c0508c
+- alias_names:
+  - PortlandTimbers
+  - logo of PortlandTimbers
+  display_name: Portland Timbers
+  uuid: 87d960497c79438c90b4df9f4aba8ec2
+- alias_names:
+  - Tapatohotsauce
+  - logo of Tapatohotsauce
+  display_name: Tapatio Hot Sauce
+  uuid: 4c2ade19249d4c008316f59cd846f06d
+- alias_names:
+  - Meyba
+  - logo of Meyba
+  display_name: Meyba
+  uuid: feb72b526d374a898d5912521fac3fbd
+- alias_names:
+  - SacramentoKings
+  - logo of SacramentoKings
+  display_name: Sacramento Kings
+  uuid: e6450fdc47a14760ae2433d888b62c0b
+- alias_names:
+  - Sterling
+  - logo of Sterling
+  display_name: Sterling
+  uuid: 2210a39783db4e25a68db65c9d4be235
+- alias_names:
+  - NewYorkUniversity
+  - logo of NewYorkUniversity
+  display_name: New York University
+  uuid: 23a7d297eda8420a92bd0363746ba837
+- alias_names:
+  - BonefishGrill
+  - logo of BonefishGrill
+  display_name: Bonefish Grill
+  uuid: 6e08d0e557324b3eab2c7e2ebfdbee45
+- alias_names:
+  - MilwaukeeBucks
+  - logo of MilwaukeeBucks
+  display_name: Milwaukee Bucks
+  uuid: 3bf74fdb95d04db48b7c0de43a8a6ab8
+- alias_names:
+  - Sobieski(vodka)
+  - logo of Sobieski(vodka)
+  display_name: Sobieski
+  uuid: 701d2015238546c1a402dbe4eb5d7d12
+- alias_names:
+  - GameStop
+  - logo of GameStop
+  display_name: GameStop
+  uuid: 04e198a7f7114e888425256bafe7f9d8
+- alias_names:
+  - Staples
+  - logo of Staples
+  display_name: Staples Inc.
+  uuid: 378ada12252444289a3e83b84ffbec5f
+- alias_names:
+  - Topman
+  - logo of Topman
+  display_name: Topman
+  uuid: f4d6b28610904305a0133b2268173984
+- alias_names:
+  - ZTE
+  - logo of ZTE
+  display_name: ZTE
+  uuid: 0e9c9e93f3e54c5eba116861ca17d5ad
+- alias_names:
+  - Sargento
+  - logo of Sargento
+  display_name: Sargento
+  uuid: 0eb4c20a1936444aa9ffe1da835e5e71
+- alias_names:
+  - NTTDocomo
+  - logo of NTTDocomo
+  display_name: NTT DoCoMo
+  uuid: 668c700d8cbf4186ab39e9a7dc8cadb2
+- alias_names:
+  - BancoBradesco
+  - logo of BancoBradesco
+  display_name: Banco Bradesco
+  uuid: 173494f063fc4f5987c7257412c9c1cf
+- alias_names:
+  - Djarum
+  - logo of Djarum
+  display_name: Djarum
+  uuid: 6f624d217d414425825f37de948e5779
+- alias_names:
+  - Johnstonmurphy
+  - logo of Johnstonmurphy
+  display_name: Johnston & Murphy
+  uuid: 768568e29cfc4c0685e8e1a892e7fa28
+- alias_names:
+  - Edy's
+  - logo of Edy's
+  display_name: Dreyer's
+  uuid: cc978ffde6874b6a8fb867670525a2af
+- alias_names:
+  - AND1
+  - logo of AND1
+  display_name: AND1
+  uuid: b1536b666354434a934f634901877b3a
+- alias_names:
+  - barcel
+  - logo of barcel
+  display_name: Barcel
+  uuid: f6ab802389b44fb0ba619c95ae43cef9
+- alias_names:
+  - TorontoMapleLeafs
+  - logo of TorontoMapleLeafs
+  display_name: Toronto Maple Leafs
+  uuid: dfb342d4a2524feeb0204e39d3ebb016
+- alias_names:
+  - GoldenStateWarriors
+  - logo of GoldenStateWarriors
+  display_name: Golden State Warriors
+  uuid: 2e2e2502cdbe427aa42ea945fb116b1b
+- alias_names:
+  - Heinz
+  - logo of Heinz
+  display_name: Heinz
+  uuid: f4906512c01845f8bd4653e22af8e223
+- alias_names:
+  - Tesla
+  - logo of Tesla
+  display_name: Tesla
+  uuid: 6a1b4aaf15014add83ebc53363289b79
+- alias_names:
+  - UniversityofCaliforniaLosAngeles
+  - logo of UniversityofCaliforniaLosAngeles
+  display_name: University of California, Los Angeles
+  uuid: 2a1514f867464164b300d2a898bf3cab
+- alias_names:
+  - Winston
+  - logo of Winston
+  display_name: Winston
+  uuid: 069377cc7793446ab232d595378bc1b6
+- alias_names:
+  - Whataburger
+  - logo of Whataburger
+  display_name: Whataburger
+  uuid: a0b7c613e6d34414bce85e43e8036686
+- alias_names:
+  - Quiznos
+  - logo of Quiznos
+  display_name: Quiznos
+  uuid: e569618be407441193d9699f0aa41f68
+- alias_names:
+  - ActII
+  - logo of ActII
+  display_name: Act II (popcorn)
+  uuid: db74b4bd5c4d4b658bb30304bc9cdaab
+- alias_names:
+  - SteveMadden
+  - logo of SteveMadden
+  display_name: Steve Madden
+  uuid: 53161e395a8a4157b8f332548205cd8a
+- alias_names:
+  - Avintequila
+  - logo of Avintequila
+  display_name: Avion tequila
+  uuid: 4edae23e4a71426cb16593f932539e8b
+- alias_names:
+  - Goyard
+  - logo of Goyard
+  display_name: Goyard
+  uuid: 3aa449f0858a4f90a7ad7f86bd2637b2
+- alias_names:
+  - 20thCenturyFoxHomeEntertainment
+  - logo of 20thCenturyFoxHomeEntertainment
+  display_name: 20th Century Fox Home Entertainment
+  uuid: 6ef57c34d7bf4baba48216e6b024fb60
+- alias_names:
+  - OliveGarden
+  - logo of OliveGarden
+  display_name: Olive Garden
+  uuid: d57b965ce5cd4044b4dac4c04badfb7d
+- alias_names:
+  - StuartWeitzman
+  - logo of StuartWeitzman
+  display_name: Stuart Weitzman
+  uuid: 26bec64b1563428bbee48237fd96e7b6
+- alias_names:
+  - PrincetonUniversity
+  - logo of PrincetonUniversity
+  display_name: Princeton University
+  uuid: d337221b575b4dafa127d11c09930b3e
+- alias_names:
+  - CaptainMorgan
+  - logo of CaptainMorgan
+  display_name: Captain Morgan
+  uuid: 4429550ad4d94f5bbfb792812bd86c9f
+- alias_names:
+  - SergioValente
+  - logo of SergioValente
+  display_name: Sergio Valente
+  uuid: 02e67276107440c9927f730e1f57025f
+- alias_names:
+  - Warburtons
+  - logo of Warburtons
+  display_name: Warburtons
+  uuid: d630c93c5d694204be6e43a20e20764d
+- alias_names:
+  - Sensodyne
+  - logo of Sensodyne
+  display_name: Sensodyne
+  uuid: 1028d81a112a46b48986db8c1b5d1c2c
+- alias_names:
+  - Macys
+  - logo of Macys
+  display_name: Macy's
+  uuid: e57196566199442ba925e4d0ca62ccc5
+- alias_names:
+  - Buckle
+  - logo of Buckle
+  display_name: Buckle
+  uuid: c6a6b661515c4f52b28f82e16bf7f9f3
+- alias_names:
+  - BuffaloBills
+  - logo of BuffaloBills
+  display_name: Buffalo Bills
+  uuid: dbf88f7b6729442c856159477240a0a3
+- alias_names:
+  - ColaCao
+  - logo of ColaCao
+  display_name: Cola Cao
+  uuid: 6b50ec85d287471aa35d305ed8d83249
+- alias_names:
+  - TrueValueCo.
+  - logo of TrueValueCo.
+  display_name: True Value
+  uuid: bcbf44e4670049f7981883213f69e942
+- alias_names:
+  - MiamiDolphins
+  - logo of MiamiDolphins
+  display_name: Miami Dolphins
+  uuid: a5f7336a4bc24e18b6f286b5fd2ab35a
+- alias_names:
+  - TokioMarineHoldings
+  - logo of TokioMarineHoldings
+  display_name: Tokio Marine
+  uuid: 42bfaf29cba04fd7b6642bb5820cf113
+- alias_names:
+  - DrPepper
+  - logo of DrPepper
+  display_name: Dr Pepper
+  uuid: 5d8a6964f36c47cba627877ff2f8d022
+- alias_names:
+  - Johndeer
+  - logo of Johndeer
+  display_name: John Deere
+  uuid: e2d8f11b7ab3485295f6f94b27e729c9
+- alias_names:
+  - ICBC
+  - logo of ICBC
+  display_name: ICBC
+  uuid: f70f88e1c24d46c49a9e56b41b39b361
+- alias_names:
+  - Mrs.Smith's
+  - logo of Mrs.Smith's
+  display_name: Mrs. Smith's
+  uuid: 33d630386cc948a2ad1af0b277c1b99f
+- alias_names:
+  - JambaJuice
+  - logo of JambaJuice
+  display_name: Jamba Juice
+  uuid: 1c024cb4955a49a2a7e9699b079eb0ed
+- alias_names:
+  - Loacker
+  - logo of Loacker
+  display_name: Loacker
+  uuid: dfb5f0b0480145818ac9baa68dc33ab4
+- alias_names:
+  - RCA
+  - logo of RCA
+  display_name: RCA
+  uuid: fe57fbb15d804a44bccbf5524277029e
+- alias_names:
+  - UniversityofMinnesota
+  - logo of UniversityofMinnesota
+  display_name: University of Minnesota
+  uuid: e6d61f2d8ade4b999d46dc953620be96
+- alias_names:
+  - JPMorganChase
+  - logo of JPMorganChase
+  display_name: JPMorgan Chase
+  uuid: c2e58028307f42e5af0fdc32bcbf5781
+- alias_names:
+  - Epson
+  - logo of Epson
+  display_name: Epson
+  uuid: d48b454129c64f4f9ebcaed84a5f925f
+- alias_names:
+  - Rogers
+  - logo of Rogers
+  display_name: Rogers
+  uuid: 5cfeddde84b042e5bde0dbd377094f8e
+- alias_names:
+  - ColumbiaUniversity
+  - logo of ColumbiaUniversity
+  display_name: Columbia University
+  uuid: 96310e5b8ef345009d0fe26c628f814b
+- alias_names:
+  - AstonMartin
+  - logo of AstonMartin
+  display_name: Aston Martin
+  uuid: 0500d1a0d5f7473284bc7a79b5952aa7
+- alias_names:
+  - TimeWarnercable
+  - logo of TimeWarnercable
+  display_name: Time Warner Cable
+  uuid: 98d8d04db21d4b9f8ebe37a75b63bdc2
+- alias_names:
+  - Dreyer's
+  - logo of Dreyer's
+  display_name: Dreyer's
+  uuid: aae924d04d574bd48da5252224d553c9
+- alias_names:
+  - RocawearClothing
+  - logo of RocawearClothing
+  display_name: Rocawear
+  uuid: 658dbae09ac94456a37908ec69bb3c64
+- alias_names:
+  - Blimpie
+  - logo of Blimpie
+  display_name: Blimpie
+  uuid: f704f53e23d04847970665c12b65c490
+- alias_names:
+  - Longchamp
+  - logo of Longchamp
+  display_name: Longchamp
+  uuid: 3d1415f9b5fe455d9f0d65f0eb939334
+- alias_names:
+  - GeneraliGroup
+  - logo of GeneraliGroup
+  display_name: Generali
+  uuid: 3f09abbcc4794dea93f1b1fedba1b560
+- alias_names:
+  - RainforestCafe
+  - logo of RainforestCafe
+  display_name: Rainforest Cafe
+  uuid: f70dcd4a113949a0bc19092ae7994cd8
+- alias_names:
+  - Twinkie
+  - logo of Twinkie
+  display_name: Twinkie
+  uuid: fc143d3be7114d3dbea6f930284ae1f8
+- alias_names:
+  - Faygo
+  - logo of Faygo
+  display_name: Faygo
+  uuid: 65f460a8bceb49d9ac58057d67a97b45
+- alias_names:
+  - MugRootBeer
+  - logo of MugRootBeer
+  display_name: Mug Root Beer
+  uuid: d3b2d758fe7b4fefb262f3740916d093
+- alias_names:
+  - Allianz
+  - logo of Allianz
+  display_name: Allianz
+  uuid: 006695d2b6d44622b8d3a9d3e263e4a7
+- alias_names:
+  - MontrealImpact
+  - logo of MontrealImpact
+  display_name: Montreal Impact
+  uuid: 73d68024d60e4c4e8d4cd4681734789c
+- alias_names:
+  - UniversityofSouthernCalifornia
+  - logo of UniversityofSouthernCalifornia
+  display_name: University of Southern California
+  uuid: 58085528656641a0bbe6539fc94ca07d
+- alias_names:
+  - MTV
+  - logo of MTV
+  display_name: MTV
+  uuid: 1eae117b696140dbad0203904a40e235
+- alias_names:
+  - 1800Tequila
+  - logo of 1800Tequila
+  display_name: 1800 Tequila
+  uuid: 5e9d00309a4b474b8763b1b832fef8c0
+- alias_names:
+  - Puma
+  - logo of Puma
+  display_name: Puma
+  uuid: 117c45f543a448c69bc94ca07dd75a54
+- alias_names:
+  - Pringles
+  - logo of Pringles
+  display_name: Pringles
+  uuid: 1e9716414c4c448098a0a87f50187d97
+- alias_names:
+  - DeutscheBank
+  - logo of DeutscheBank
+  display_name: Deutsche Bank
+  uuid: bb86d74dbb064b81aed6d7f978d567a9
+- alias_names:
+  - TommyHilfiger
+  - logo of TommyHilfiger
+  display_name: Tommy Hilfiger
+  uuid: 253ef852704b4afdb424cc5d0777e185
+- alias_names:
+  - Raleigh
+  - logo of Raleigh
+  display_name: Raleigh
+  uuid: 9bfa35bdf4d1479090c390bae1d49eb6
+- alias_names:
+  - Swanson
+  - logo of Swanson
+  display_name: Swanson
+  uuid: 618c67f58e19426c8b301f323486cfdb
+- alias_names:
+  - FamousDave's
+  - logo of FamousDave's
+  display_name: Famous Dave's
+  uuid: d962091b14204ac68b772867105757f7
+- alias_names:
+  - DonJulio
+  - logo of DonJulio
+  display_name: Don Julio
+  uuid: 6085ee0d68ce4db69fff64bd0414efa7
+- alias_names:
+  - SocitGnrale
+  - logo of SocitGnrale
+  display_name: Societe Generale
+  uuid: c69f0062ae3e49d8993c5d85f2323441
+- alias_names:
+  - Singha
+  - logo of Singha
+  display_name: Singha
+  uuid: f492a85d27214aa68e87c69f65822c71
+- alias_names:
+  - MinnesotaWild
+  - logo of MinnesotaWild
+  display_name: Minnesota Wild
+  uuid: 6a9a7f1b34d14f2f9017b032d3a5bdc4
+- alias_names:
+  - Mini
+  - logo of Mini
+  display_name: Mini
+  uuid: f3bc7ec5f03b4a73b0c1438b6f97283e
+- alias_names:
+  - JimmyDean
+  - logo of JimmyDean
+  display_name: Jimmy Dean
+  uuid: 0b52232b750241a1ab93618762063aae
+- alias_names:
+  - J.CrewClothing
+  - logo of J.CrewClothing
+  display_name: J.Crew
+  uuid: 06e22d34ac094af085b21c65f2228040
+- alias_names:
+  - Patron
+  - logo of Patron
+  display_name: Patron
+  uuid: 89d91fc29b414f37930f98a3a7157bf0
+- alias_names:
+  - Camel
+  - logo of Camel
+  display_name: Camel
+  uuid: c673258b5ed746efa0ff3e8f46508f21
+- alias_names:
+  - Swensons
+  - logo of Swensons
+  display_name: Swensons
+  uuid: 6a99971cd4eb45d7bc6e534ffbcaaae9
+- alias_names:
+  - Proactiv
+  - logo of Proactiv
+  display_name: Proactiv
+  uuid: de1e463e147a43148bd88e58d2e631cb
+- alias_names:
+  - Ro-Tel
+  - logo of Ro-Tel
+  display_name: Ro-Tel
+  uuid: 409ba45d588a496d9ae539d1dbef7374
+- alias_names:
+  - Applebee's
+  - logo of Applebee's
+  display_name: Applebee's
+  uuid: 1522969ce4c6406bae0cc137e507799f
+- alias_names:
+  - Friendly's
+  - logo of Friendly's
+  display_name: Friendly's
+  uuid: 4ca3ff9221214a069d18a63c4a25f6d1
+- alias_names:
+  - FiveGuysFamousBurgersandFries
+  - logo of FiveGuysFamousBurgersandFries
+  display_name: Five Guys
+  uuid: ea503aaea85b4fefae3981fc893bbaae
+- alias_names:
+  - DiGiorno
+  - logo of DiGiorno
+  display_name: DiGiorno
+  uuid: e005d33dfe7847929b1e26e39ff6d3c7
+- alias_names:
+  - HurleyInternational
+  - logo of HurleyInternational
+  display_name: Hurley International
+  uuid: 5de2899e31674f0086cdb904bdcedf55
+- alias_names:
+  - ANZ
+  - logo of ANZ
+  display_name: ANZ
+  uuid: 8e668031cb5541b5b7e12a9c293dc8dc
+- alias_names:
+  - BurgerKing
+  - logo of BurgerKing
+  display_name: Burger King
+  uuid: 0b89f0d91c5c44a195ae5d1314903e19
+- alias_names:
+  - Romano'sMacaroniGrill
+  - logo of Romano'sMacaroniGrill
+  display_name: Romano's Macaroni Grill
+  uuid: 5299759e7e93458a9270495b27db1363
+- alias_names:
+  - Sprint
+  - logo of Sprint
+  display_name: Sprint
+  uuid: 43f7a3d5ae5946b79e6d7d2615aa461f
+- alias_names:
+  - Total
+  - logo of Total
+  display_name: Total
+  uuid: af6f574dd8ff444e9883d4d63e10d213
+- alias_names:
+  - MizuhoFinancial
+  - logo of MizuhoFinancial
+  display_name: Mizuho Financial Group
+  uuid: 271a916bc7104b669312e485850b85c9
+- alias_names:
+  - Cocacola
+  - logo of Cocacola
+  display_name: Coca-Cola
+  uuid: 708dfa02d7fc48048b03d0dde8da9673
+- alias_names:
+  - CadburySnaps
+  - logo of CadburySnaps
+  display_name: Cadbury Snaps
+  uuid: dc5f7fe4a1c44cdf8afc3b794f5068a1
+- alias_names:
+  - WhiteCastle
+  - logo of WhiteCastle
+  display_name: White Castle
+  uuid: a39ab477a3bf41bea1047725949be49a
+- alias_names:
+  - Carl'sJr.
+  - logo of Carl'sJr.
+  display_name: Carl's Jr.
+  uuid: 447d2098963c46fc9a4fc00de26098da
+- alias_names:
+  - Meijer
+  - logo of Meijer
+  display_name: Meijer
+  uuid: 344b8dda69d04addb53e3c0e5c27de17
+- alias_names:
+  - OaklandRaiders
+  - logo of OaklandRaiders
+  display_name: Oakland Raiders
+  uuid: 681c0be295374d8e95e35f5f4d2213c4
+- alias_names:
+  - Spotify
+  - logo of Spotify
+  display_name: Spotify
+  uuid: 2e20a71dc2ce4903bd05aade059617e4
+- alias_names:
+  - KFC
+  - logo of KFC
+  display_name: KFC
+  uuid: 9d2e806a7f054ac7bbc7cad39a38c3c5
+- alias_names:
+  - Porsche
+  - logo of Porsche
+  display_name: Porsche
+  uuid: 5ff67d8444ac421f8f48b977018005da
+- alias_names:
+  - Diesel
+  - logo of Diesel
+  display_name: Diesel
+  uuid: c33e47aff51b47e19ddfcb84253157c5
+- alias_names:
+  - Guess
+  - logo of Guess
+  display_name: Guess
+  uuid: ef46cc29ad9349ef9281a17eb8235e4d
+- alias_names:
+  - SanFrancisco49ers
+  - logo of SanFrancisco49ers
+  display_name: San Francisco 49ers
+  uuid: 9374c606118c4354bd39681c857cd567
+- alias_names:
+  - BT
+  - logo of BT
+  display_name: BT Group
+  uuid: 0c0912e1b0f64a2e9ca883e243876a48
+- alias_names:
+  - TheOldSpaghettiFactory
+  - logo of TheOldSpaghettiFactory
+  display_name: The Old Spaghetti Factory
+  uuid: 95bc4ba857624e77a159b096b121a490
+- alias_names:
+  - Entenmann's
+  - logo of Entenmann's
+  display_name: Entenmann's
+  uuid: d284511a03884beca3fc81afc61f3c99
+- alias_names:
+  - Johnson'sbaby
+  - logo of Johnson'sbaby
+  display_name: Johnson's Baby
+  uuid: 4c2292d5ba65436fb3956eb232ef1505
+- alias_names:
+  - RealSaltLake
+  - logo of RealSaltLake
+  display_name: Real Salt Lake
+  uuid: 62518c18665a40c6b147d252b668b82c
+- alias_names:
+  - Lacoste
+  - logo of Lacoste
+  display_name: Lacoste
+  uuid: 0878547c039943b2a580d239f267414a
+- alias_names:
+  - O2
+  - logo of O2
+  display_name: O2
+  uuid: 8079805976e34e2e87c723984569dc16
+- alias_names:
+  - SoundCloud
+  - logo of SoundCloud
+  display_name: SoundCloud
+  uuid: 937b11bbfd594fd08338e7ee20e05371
+- alias_names:
+  - AtlantaFalcons
+  - logo of AtlantaFalcons
+  display_name: Atlanta Falcons
+  uuid: adbe055d73db4f0790a486a0b3736e5a
+- alias_names:
+  - CanadaDry
+  - logo of CanadaDry
+  display_name: Canada Dry
+  uuid: 6f3acee0c8034c6e8c8adf234f1a6350
+- alias_names:
+  - SlimJim
+  - logo of SlimJim
+  display_name: Slim Jim
+  uuid: 9ee2d13a02d1467da82090c96156672e
+- alias_names:
+  - OhioStateUniversity
+  - logo of OhioStateUniversity
+  display_name: Ohio State University
+  uuid: bc711c10862e43ed8ccbcefaf4e2f31a
+- alias_names:
+  - ChicagoBulls
+  - logo of ChicagoBulls
+  display_name: Chicago Bulls
+  uuid: 950cf6c37d804191a76eba137530aca9
+- alias_names:
+  - Reese's
+  - logo of Reese's
+  display_name: Reese's
+  uuid: 43255b2a93e44cbb8a0271902de0569e
+- alias_names:
+  - Nokia
+  - logo of Nokia
+  display_name: Nokia
+  uuid: 9740bdf747e94af996c0fe51a6e38de0
+- alias_names:
+  - ChinaMerchantsBank
+  - logo of ChinaMerchantsBank
+  display_name: China Merchants Bank
+  uuid: fb73bb8421c4475dab68c128bc08f5de
+- alias_names:
+  - OneTrueSaxon
+  - logo of OneTrueSaxon
+  display_name: One True Saxon
+  uuid: 97870103029146dc9770abc3319116ee
+- alias_names:
+  - Papa John's Pizza
+  - logo of Papa John's Pizza
+  display_name: Papa John's Pizza
+  uuid: f18e47b1a9d24d46a9511514e60e385e
+- alias_names:
+  - UniversityofMelbourne
+  - logo of UniversityofMelbourne
+  display_name: University of Melbourne
+  uuid: bebef36f1b77406784965abe39662d90
+- alias_names:
+  - NewYorkIslanders
+  - logo of NewYorkIslanders
+  display_name: New York Islanders
+  uuid: d485dbdaa8b5488589eee06aa6a30289
+- alias_names:
+  - PallMall
+  - logo of PallMall
+  display_name: Pall Mall
+  uuid: efcc6f47cb534ea9916361c37d16ad37
+- alias_names:
+  - Starbucks
+  - logo of Starbucks
+  display_name: Starbucks
+  uuid: 0ca3e156f2384a63b725b3e361edadff
+- alias_names:
+  - Eggo
+  - logo of Eggo
+  display_name: Eggo
+  uuid: 0786f84166d54c45895dad3ab67120c8
+- alias_names:
+  - Bose
+  - logo of Bose
+  display_name: Bose
+  uuid: e8ee04939ef140998cf90e7cb5d4e588
+- alias_names:
+  - Kraft
+  - logo of Kraft
+  display_name: Kraft Foods
+  uuid: ce04227f79694329968f9d80403f0d33
+- alias_names:
+  - OrlandoMagic
+  - logo of OrlandoMagic
+  display_name: Orlando Magic
+  uuid: 65e6f07728c0406fb2f70ad34bfb8cf6
+- alias_names:
+  - Esso
+  - logo of Esso
+  display_name: Esso
+  uuid: 335cfc5b45384b448a8e10fbdd6022cc
+- alias_names:
+  - Swix
+  - logo of Swix
+  display_name: Swix
+  uuid: 9efcc56fde7048c39df62ba326f15f3e
+- alias_names:
+  - BahamaBreeze
+  - logo of BahamaBreeze
+  display_name: Bahama Breeze
+  uuid: 80fad72969b4400b947d13d361418ce8
+- alias_names:
+  - RedLobster
+  - logo of RedLobster
+  display_name: Red Lobster
+  uuid: a8f2b500b97c4f7392b0b684cc577e55
+- alias_names:
+  - zingers
+  - logo of zingers
+  display_name: Zingers
+  uuid: d3fa6a1c4ab4471391450f84ef97564d
+- alias_names:
+  - Kohls
+  - logo of Kohls
+  display_name: Kohl's
+  uuid: 128511d50550463582ea253b8e0e39ac
+- alias_names:
+  - YaleUniversity
+  - logo of YaleUniversity
+  display_name: Yale University
+  uuid: a7480e7492014b40a00225e1604d66a0
+- alias_names:
+  - BeefO'Bradys
+  - logo of BeefO'Bradys
+  display_name: Beef O'Brady's
+  uuid: 34da208c596444e2904145e09c63cca8
+- alias_names:
+  - WaffleHouse
+  - logo of WaffleHouse
+  display_name: Waffle House
+  uuid: e9a316277e3e42c59e4e8eab95101989
+- alias_names:
+  - Tod's
+  - logo of Tod's
+  display_name: Tod's
+  uuid: 6bb78d9cce4544fb8dfff2ac4b8f0cd6
+- alias_names:
+  - Corona
+  - logo of Corona
+  display_name: Corona
+  uuid: 52f9f70c308142ed87dc739145ed2d08
+- alias_names:
+  - DollarGeneral
+  - logo of DollarGeneral
+  display_name: Dollar General
+  uuid: d4ae8384a0654d438c807ce10c1ed841
+- alias_names:
+  - BankofChina
+  - logo of BankofChina
+  display_name: Bank of China
+  uuid: b0378ecd799743e2a00cb2e7dc85ce33
+- alias_names:
+  - IndianaPacers
+  - logo of IndianaPacers
+  display_name: Indiana Pacers
+  uuid: 0ce976e452c84c1ab0669ec3e0637075
+- alias_names:
+  - KraftDinner
+  - logo of KraftDinner
+  display_name: Kraft Dinner
+  uuid: 7e78e142897b47b39d58f3b4d685fd42
+- alias_names:
+  - Chrysler
+  - logo of Chrysler
+  display_name: Chrysler
+  uuid: 3f64c0aebc7346598edc438f83d37d63
+- alias_names:
+  - O'Charley's
+  - logo of O'Charley's
+  display_name: O'Charley's
+  uuid: 2a67335a4cd9488b96d5756695252439
+- alias_names:
+  - Asus
+  - logo of Asus
+  display_name: Asus
+  uuid: 0b895b0c6a36461294e1a122e69a9b5c
+- alias_names:
+  - NewYorkJets
+  - logo of NewYorkJets
+  display_name: New York Jets
+  uuid: 301f2e51e1e84bae81e3298ea154132e
+- alias_names:
+  - Sizzler
+  - logo of Sizzler
+  display_name: Sizzler
+  uuid: 1cb95dd654184c189086a029fc542e2e
+- alias_names:
+  - ChinaPacificInsurance
+  - logo of ChinaPacificInsurance
+  display_name: China Pacific Insurance Company
+  uuid: 8c1b375cc415425cb6b6ec2d29239ee4
+- alias_names:
+  - Englishlaundry
+  - logo of Englishlaundry
+  display_name: Englishlaundry
+  uuid: 6c2913e55c1349fa9df5ad25eec8a98a
+- alias_names:
+  - Koh-Kae
+  - logo of Koh-Kae
+  display_name: Koh-Kae
+  uuid: 936867c52dcd4842ae9806e6187fd995
+- alias_names:
+  - DenverBroncos
+  - logo of DenverBroncos
+  display_name: Denver Broncos
+  uuid: 7d1de82c75784738a00cacd012a50aba
+- alias_names:
+  - Carrabba'sItalianGrill
+  - logo of Carrabba'sItalianGrill
+  display_name: Carrabba's Italian Grill
+  uuid: 704e97912d2b466f9c467866f588b5a0
+- alias_names:
+  - ChinaConstructionBank
+  - logo of ChinaConstructionBank
+  display_name: China Construction Bank
+  uuid: 5eba4a7e31934a74a89f8658503a1caf
+- alias_names:
+  - Toshiba
+  - logo of Toshiba
+  display_name: Toshiba
+  uuid: fccf9a655c714a159cb257db68896bbe
+- alias_names:
+  - UBS
+  - logo of UBS
+  display_name: UBS
+  uuid: 00f7bb5070d84342b8dc4d13c9ba5942
+- alias_names:
+  - Moschino
+  - logo of Moschino
+  display_name: Moschino
+  uuid: 28ae57addc854871a70504c03c479a6d
+- alias_names:
+  - Stouffer's
+  - logo of Stouffer's
+  display_name: Stouffer's
+  uuid: dabd73bc9e4d4990a3e5020f8c146f6b
+- alias_names:
+  - Hitachi
+  - logo of Hitachi
+  display_name: Hitachi
+  uuid: 694f0e0b7d354f57833a8a69d402a288
+- alias_names:
+  - RossStores
+  - logo of RossStores
+  display_name: Ross Stores
+  uuid: f2d1c1d687b5435889be4b8c0d82f7f5
+- alias_names:
+  - ElPolloLoco
+  - logo of ElPolloLoco
+  display_name: El Pollo Loco
+  uuid: 8797d1e918774411b26c057bce5ab5f4
+- alias_names:
+  - KingsCollegeLondon
+  - logo of KingsCollegeLondon
+  display_name: King's College London
+  uuid: d4d1c5662e6c4424820d0e14f1595b34
+- alias_names:
+  - ChicagoBlackhawks
+  - logo of ChicagoBlackhawks
+  display_name: Chicago Blackhawks
+  uuid: 244b6f9206e74f35b71138a732843b9c
+- alias_names:
+  - Sharp
+  - logo of Sharp
+  display_name: Sharp Corporation
+  uuid: 4ea0ae89b31249739ea5bcecb708e043
+- alias_names:
+  - MichaelKors
+  - logo of MichaelKors
+  display_name: Michael Kors
+  uuid: d33f8514d53545b0b90bce931869f951
+- alias_names:
+  - browniebrittle
+  - logo of browniebrittle
+  display_name: Brownie Brittle
+  uuid: 54e861d854ac45b5b4d4f479db1ef809
+- alias_names:
+  - AceHardware
+  - logo of AceHardware
+  display_name: Ace Hardware
+  uuid: bcea09dd69e0491eb23247832a7f1cb5
+- alias_names:
+  - BostonMarket
+  - logo of BostonMarket
+  display_name: Boston Market
+  uuid: 27c4e62cc88540dc899cb43c160852d3
+- alias_names:
+  - ChicagoBears
+  - logo of ChicagoBears
+  display_name: Chicago Bears
+  uuid: e5f575c31402480eb6403611645585a6
+- alias_names:
+  - Munchies
+  - logo of Munchies
+  display_name: Munchies
+  uuid: ab3ec9b5b3e64cceb72c83488cc1e8ab
+- alias_names:
+  - SaveMartSupermarkets
+  - logo of SaveMartSupermarkets
+  display_name: Save Mart Supermarkets
+  uuid: be3d8b908b004b769a73494d788f42ec
+- alias_names:
+  - PennsylvaniaStateUniversity
+  - logo of PennsylvaniaStateUniversity
+  display_name: Pennsylvania State University
+  uuid: 0ac913d55fef4d4fa63bc847abd04929
+- alias_names:
+  - LeanCuisine
+  - logo of LeanCuisine
+  display_name: Lean Cuisine
+  uuid: 7d256092625b48caa9e15c75445c0f64
+- alias_names:
+  - Rock Bottom
+  - logo of Rock Bottom
+  display_name: Rock Bottom
+  uuid: e3ed262c30e3418caac3f2af4bcbf653
+- alias_names:
+  - Texaco
+  - logo of Texaco
+  display_name: Texaco
+  uuid: a3da18fecf944c8f9e74d441f8f11f3b
+- alias_names:
+  - Chevrolet
+  - logo of Chevrolet
+  display_name: Chevrolet
+  uuid: e8da588a0077429f88b68e79235d2b7c
+- alias_names:
+  - HP
+  - logo of HP
+  display_name: HP
+  uuid: 1da8f544fee54b9ea841c64d1aaa6c63
+- alias_names:
+  - Kinder
+  - logo of Kinder
+  display_name: Kinder Chocolate
+  uuid: 8fd9b54650dc401eb1223345d9b94771
+- alias_names:
+  - Jordache
+  - logo of Jordache
+  display_name: Jordache
+  uuid: fcaad52d86444da88c803775f2db6ec5
+- alias_names:
+  - St.LouisBlues
+  - logo of St.LouisBlues
+  display_name: St. Louis Blues
+  uuid: fd9c0277020b41288769208a6309b3c5
+- alias_names:
+  - Yonex
+  - logo of Yonex
+  display_name: Yonex
+  uuid: bf31149cf54146dcbc246687ffd19b31
+- alias_names:
+  - Skis Rossignol
+  - logo of Skis Rossignol
+  display_name: Skis Rossignol
+  uuid: 857f51815f7046d9afc7e8cf58b87b16
+- alias_names:
+  - HM
+  - logo of HM
+  display_name: H&M
+  uuid: 06f65bd81efe453bbb6c71f064991205
+- alias_names:
+  - FossilGroup
+  - logo of FossilGroup
+  display_name: Fossil
+  uuid: 8c17ad818125477485f945fa543445a6
+- alias_names:
+  - TheEllenShow
+  - logo of TheEllenShow
+  display_name: The Ellen Show
+  uuid: d40e2742c4d14b3fbd53c21bd2b0c160
+- alias_names:
+  - Squirt
+  - logo of Squirt
+  display_name: Squirt
+  uuid: 00757d71a55542dd86bcfaa5e3b28de9
+- alias_names:
+  - VandanelSports
+  - logo of VandanelSports
+  display_name: Vandanel Sports
+  uuid: bb710af68a1849c89ba32ef440e62bfe
+- alias_names:
+  - UPS
+  - logo of UPS
+  display_name: UPS
+  uuid: b8a2310c16c545b38a935c33f106cdd0
+- alias_names:
+  - OldDutchFoods
+  - logo of OldDutchFoods
+  display_name: Old Dutch Foods
+  uuid: 6f5a4e915f10437dadfaf4bccbcb7238
+- alias_names:
+  - Geely
+  - logo of Geely
+  display_name: Geely
+  uuid: 162549d10174473985a42267325b7242
+- alias_names:
+  - NewEnglandPatriots
+  - logo of NewEnglandPatriots
+  display_name: New England Patriots
+  uuid: e8553174a18f4eb984c1c3e52a564c9d
+- alias_names:
+  - TDBankGroup
+  - logo of TDBankGroup
+  display_name: TD Bank Group
+  uuid: 420975e975de4e3fb17c3a464ff8d141
+- alias_names:
+  - AMD
+  - logo of AMD
+  display_name: AMD
+  uuid: 45c235cae0d54dd294741fcc164a0c81
+- alias_names:
+  - ASICS
+  - logo of ASICS
+  display_name: ASICS
+  uuid: f97c5015c8a644ea99de024d2c0042f4
+- alias_names:
+  - QVC
+  - logo of QVC
+  display_name: QVC
+  uuid: a5b53de9853c480c882350a4c1e1100b
+- alias_names:
+  - NeimanMarcus
+  - logo of NeimanMarcus
+  display_name: Neiman Marcus
+  uuid: f5e2f06079674fb5ba3694a8d1c2d270
+- alias_names:
+  - Facebook
+  - logo of Facebook
+  display_name: Facebook
+  uuid: 8c2a71b5eaaa47f099e5d3da86d8f5ab
+- alias_names:
+  - AWRestaurants
+  - logo of AWRestaurants
+  display_name: A&W Restaurants
+  uuid: f6be4d2794e2494ebe52c8f697704e19
+- alias_names:
+  - IHOP
+  - logo of IHOP
+  display_name: IHOP
+  uuid: 115a5cdaa2f44ca58b2d0261fe27668b
+- alias_names:
+  - DairyQueen
+  - logo of DairyQueen
+  display_name: Dairy Queen
+  uuid: 8798110d08624f34ad1e04cf3799b8e6
+- alias_names:
+  - MassachusettsInstituteoftechnology
+  - logo of MassachusettsInstituteoftechnology
+  display_name: Massachusetts Institute of Technology
+  uuid: ab1fa2c0cadb45e5b13847ea277db26c
+- alias_names:
+  - OrlandoCitySC
+  - logo of OrlandoCitySC
+  display_name: Orlando City SC
+  uuid: a005b820c6e44c5e80c2a699abea7445
+- alias_names:
+  - IkeaNorthAmericaSvcs.
+  - logo of IkeaNorthAmericaSvcs.
+  display_name: IKEA
+  uuid: 0f660b71692b4be685c74f6dd89b540f
+- alias_names:
+  - Dexia
+  - logo of Dexia
+  display_name: Dexia
+  uuid: f2dba369ae494c21b568c19e2d2762a3
+- alias_names:
+  - Doritos
+  - logo of Doritos
+  display_name: Doritos
+  uuid: 856d8c0cc7934e5b861223a5b0c17036
+- alias_names:
+  - DelhaizeAmerica
+  - logo of DelhaizeAmerica
+  display_name: Delhaize America
+  uuid: 8dcea751663e446282eadbf07208f826
+- alias_names:
+  - AmericanApparel
+  - logo of AmericanApparel
+  display_name: American Apparel
+  uuid: 4048b1f8d2e4402c9a7cd01a562ff573
+- alias_names:
+  - Tom'sofMaine
+  - logo of Tom'sofMaine
+  display_name: Tom's of Maine
+  uuid: 9de8ae853a7d465e8e474176887f026c
+- alias_names:
+  - UGG(brand)
+  - logo of UGG(brand)
+  display_name: UGG
+  uuid: 4dad8db36f1d494ba18a97c39de3eff4
+- alias_names:
+  - Fujitsu
+  - logo of Fujitsu
+  display_name: Fujitsu
+  uuid: f30ac5fb56114fe8962a3a67eb2fcab9
+- alias_names:
+  - Cartier
+  - logo of Cartier
+  display_name: Cartier
+  uuid: c0af5d40f4484bbe98c147186bd60d09
+- alias_names:
+  - NashvillePredators
+  - logo of NashvillePredators
+  display_name: Nashville Predators
+  uuid: 24a698c743094b8ab0b2b4a42fb7f991
+- alias_names:
+  - AholdUSARoyalAhold
+  - logo of AholdUSARoyalAhold
+  display_name: Ahold
+  uuid: c3bcef94a3024e70a5c500db29d11a0f
+- alias_names:
+  - Lay's
+  - logo of Lay's
+  display_name: Lay's
+  uuid: d4f3b96f4fc64a91af8517b1e6acfabc
+- alias_names:
+  - Milka
+  - logo of Milka
+  display_name: Milka
+  uuid: 3d312957b54845b5ba6712aac1d1fc9e
+- alias_names:
+  - JerseyMike'sSubs
+  - logo of JerseyMike'sSubs
+  display_name: Jersey Mike's Subs
+  uuid: e08c485996b24c3d92bb4878c16bf109
+- alias_names:
+  - OldCountryBuffet
+  - logo of OldCountryBuffet
+  display_name: Old Country Buffet
+  uuid: 62f11bed815e4a5eadbf18d26f7b6ebc
+- alias_names:
+  - HTC
+  - logo of HTC
+  display_name: HTC
+  uuid: e56838a91f78403d97a6c9727de10857
+- alias_names:
+  - TheCapitalGrille
+  - logo of TheCapitalGrille
+  display_name: The Capital Grille
+  uuid: 4feec7cede2e46a7a6e75ef17ad4b4d1
+- alias_names:
+  - ExxonMobilCorp.
+  - logo of ExxonMobilCorp.
+  display_name: ExxonMobil
+  uuid: f9c4c727623e40d498e3a80f2019dd8f
+- alias_names:
+  - Lexus
+  - logo of Lexus
+  display_name: Lexus
+  uuid: 87a64fafb6cb44c9a64010c47b0ca740
+- alias_names:
+  - TurkeyHill
+  - logo of TurkeyHill
+  display_name: Turkey Hill
+  uuid: d57c34b747ef45d79adfa87076463782
+- alias_names:
+  - OntheBorderMexicanGrillCantina
+  - logo of OntheBorderMexicanGrillCantina
+  display_name: On the Border Mexican Grill & Cantina
+  uuid: 9468af11c86349b3938db9513381d26d
+- alias_names:
+  - Buick
+  - logo of Buick
+  display_name: Buick
+  uuid: f1caa8836bd24f189c6d672177f64ea8
+- alias_names:
+  - CarvelIceCream
+  - logo of CarvelIceCream
+  display_name: Carvel
+  uuid: 3daccb293ff541539080ef2bd53be54a
+- alias_names:
+  - UniversityofWisconsin-Madison
+  - logo of UniversityofWisconsin-Madison
+  display_name: University of WisconsinMadison
+  uuid: ef2e6b45d3b94524af9d29b2380a83e9
+- alias_names:
+  - ClevelandCavaliers
+  - logo of ClevelandCavaliers
+  display_name: Cleveland Cavaliers
+  uuid: ba21687e0f4c416abd48c8575aabcb51
+- alias_names:
+  - RedRobin
+  - logo of RedRobin
+  display_name: Red Robin
+  uuid: e30377d4fa2d4a6fafaf94de5d1b331a
+- alias_names:
+  - Nike
+  - logo of Nike
+  display_name: Nike
+  uuid: 42847678fd0943f9bc0fd1136151254f
+- alias_names:
+  - Godfather'sPizza
+  - logo of Godfather'sPizza
+  display_name: Godfather's Pizza
+  uuid: f7b86579d78a4f6baac4d2e04a1fd6d1
+- alias_names:
+  - Olympikus
+  - logo of Olympikus
+  display_name: Olympikus
+  uuid: 13c3b86c43ce49a2814603c9ffd5a970
+- alias_names:
+  - Ragu
+  - logo of Ragu
+  display_name: Ragu
+  uuid: c6566b2b93a847f18e01d8a7a2a2e185
+- alias_names:
+  - NEC
+  - logo of NEC
+  display_name: NEC
+  uuid: 5ab0aed5615f4729ab3b48ee963f547e
+- alias_names:
+  - MarvelStudios
+  - logo of MarvelStudios
+  display_name: Marvel Studios
+  uuid: b749edf08ff242f7afea0393881300ba
+- alias_names:
+  - TiffanyCo.
+  - logo of TiffanyCo.
+  display_name: Tiffany & Co.
+  uuid: 1bea33437fa7484b85155f5162502a48
+- alias_names:
+  - AMPEnergy
+  - logo of AMPEnergy
+  display_name: Amp Energy
+  uuid: 6018861a18964d03b64cd7ec7e3b0a1e
+- alias_names:
+  - Cofidis
+  - logo of Cofidis
+  display_name: Cofidis
+  uuid: 25a2fc67bc1849cb9e494b2f4d42e067
+- alias_names:
+  - Finta
+  - logo of Finta
+  display_name: Finta
+  uuid: 1811a1b74ff64595b6981cac563843c5
+- alias_names:
+  - Ivory
+  - logo of Ivory
+  display_name: Ivory
+  uuid: ae7b077dd6fc40be9d007b8d68cf91ee
+- alias_names:
+  - BJsWholesaleClub
+  - logo of BJsWholesaleClub
+  display_name: BJ's Wholesale Club
+  uuid: 64d829d3e64a474a97b1367075e345bf
+- alias_names:
+  - UnderArmour
+  - logo of UnderArmour
+  display_name: Under Armour
+  uuid: 071aa4a5acd8404ca96d7e3540faa4bf
+- alias_names:
+  - Haagen-Dazs
+  - logo of Haagen-Dazs
+  display_name: Haagen-Dazs
+  uuid: 14af5e16a01a4bd1b2696cf1a462bdb3
+- alias_names:
+  - Versace
+  - logo of Versace
+  display_name: Versace
+  uuid: 3c8dfbf334774801b7c24855d14bc506
+- alias_names:
+  - Fatburger
+  - logo of Fatburger
+  display_name: Fatburger
+  uuid: fd1f32060e0142778bba34593273c3f8
+- alias_names:
+  - Koolaid
+  - logo of Koolaid
+  display_name: Kool-Aid
+  uuid: 21ed120028344fd5acfce3d96325ef1a
+- alias_names:
+  - FruitGushers
+  - logo of FruitGushers
+  display_name: Fruit Gushers
+  uuid: 6b1b423721264149995865c0c7fbc57b
+- alias_names:
+  - ColumbiaSportswear
+  - logo of ColumbiaSportswear
+  display_name: Columbia Sportswear
+  uuid: 515864e74f724a0eaa06b012b4a71b18
+- alias_names:
+  - GeorgiaInstituteofTechnology
+  - logo of GeorgiaInstituteofTechnology
+  display_name: Georgia Institute of Technology
+  uuid: 59538fb34ec84074b30e0aaa95dc126a
+- alias_names:
+  - Newman'sOwn
+  - logo of Newman'sOwn
+  display_name: Newman's Own
+  uuid: affe4c2a30944561906f5cb2f0039284
+- alias_names:
+  - Chico's
+  - logo of Chico's
+  display_name: Chico's
+  uuid: 0cbc541504c741c4a23417507e6c72cc
+- alias_names:
+  - CornellUniversity
+  - logo of CornellUniversity
+  display_name: Cornell University
+  uuid: 73a863a33ca145588063b8e99e423928
+- alias_names:
+  - Escada
+  - logo of Escada
+  display_name: Escada
+  uuid: fad6d0977b4e4dada676e2b3c2783803
+- alias_names:
+  - AlfaRomeo
+  - logo of AlfaRomeo
+  display_name: Alfa Romeo
+  uuid: ed3f5430b86b4807a08d8f03be82e78f
+- alias_names:
+  - clifbar
+  - logo of clifbar
+  display_name: Clif Bar
+  uuid: 51f514bd68404bb999a8371669168347
+- alias_names:
+  - LosAngelesLakers
+  - logo of LosAngelesLakers
+  display_name: Los Angeles Lakers
+  uuid: 30751e2bfd1f44b4b89f014cd3c32535
+- alias_names:
+  - Tostitos
+  - logo of Tostitos
+  display_name: Tostitos
+  uuid: 2904c42bda664a0d8a7ad43118338cdd
+- alias_names:
+  - GMC
+  - logo of GMC
+  display_name: GMC
+  uuid: e4a82f56113748ddbd561878d7f10017
+- alias_names:
+  - HoustonDynamo
+  - logo of HoustonDynamo
+  display_name: Houston Dynamo
+  uuid: 0a787f3dc4bc4efaaa8bba7dbcf706f8
+- alias_names:
+  - CheesecakeFactory
+  - logo of CheesecakeFactory
+  display_name: The Cheesecake Factory
+  uuid: 23bbd5e0baf14ac0b748ea43b412b775
+- alias_names:
+  - ItaUnibancoHolding
+  - logo of ItaUnibancoHolding
+  display_name: Itau Unibanco
+  uuid: 1583c74bd92e407092edde30e03b01d2
+- alias_names:
+  - Pentax
+  - logo of Pentax
+  display_name: Pentax
+  uuid: 1cefb3e67bda44e393c10ed6d138c71a
+- alias_names:
+  - Gucci
+  - logo of Gucci
+  display_name: Gucci
+  uuid: b70f6041828a48f2b5272eba0f3983ef
+- alias_names:
+  - Healthychoice
+  - logo of Healthychoice
+  display_name: Healthy Choice
+  uuid: e45ac58ec9a840e287b65d9ba1a663c9
+- alias_names:
+  - CommonwealthBank
+  - logo of CommonwealthBank
+  display_name: Commonwealth Bank
+  uuid: 858ad9efd4334f1f9ed841d539ce3db4
+- alias_names:
+  - Belk
+  - logo of Belk
+  display_name: Belk
+  uuid: 91f44afd534f466a89908722dbabccb7
+- alias_names:
+  - KinneyShoes
+  - logo of KinneyShoes
+  display_name: Kinney Shoes
+  uuid: fe427ee23a7a4bd08dc54295a566c9db
+- alias_names:
+  - 7Up
+  - logo of 7Up
+  display_name: 7 Up
+  uuid: 8edd5b8060394a6b908dab636f6702cd
+- alias_names:
+  - LosAngelesKings
+  - logo of LosAngelesKings
+  display_name: Los Angeles Kings
+  uuid: 0515be3f5dc3432db78892c327b6fa4e
+- alias_names:
+  - Bell
+  - logo of Bell
+  display_name: Bell
+  uuid: 6e2c140182d64b2796cffb9fb71d32b0
+- alias_names:
+  - BostonBruins
+  - logo of BostonBruins
+  display_name: Boston Bruins
+  uuid: 3401556cf8764910ad03682bb76a0d79
+- alias_names:
+  - CrackerJack
+  - logo of CrackerJack
+  display_name: Cracker Jack
+  uuid: b92d421c6fac4f9cbcace372660378fb
+- alias_names:
+  - Twitter
+  - logo of Twitter
+  display_name: Twitter
+  uuid: d329ad7819ec4007a4643fbb760326a2
+- alias_names:
+  - ArizonaCardinals
+  - logo of ArizonaCardinals
+  display_name: Arizona Cardinals
+  uuid: 2d70a80117894bb487e74b75b1729abd
+- alias_names:
+  - Cauldron
+  - logo of Cauldron
+  display_name: Cauldron
+  uuid: bb93883d13164a89be57926c3ffcfe99
+- alias_names:
+  - Subaru
+  - logo of Subaru
+  display_name: Subaru
+  uuid: 34a4029624eb45f8809887716b2abf1f
+- alias_names:
+  - Brio
+  - logo of Brio
+  display_name: Brio
+  uuid: 1a04e019205d430ab2404446f2ddeb17
+- alias_names:
+  - BubbaGumpShrimpCompany
+  - logo of BubbaGumpShrimpCompany
+  display_name: Bubba Gump Shrimp Company
+  uuid: bce38887dca6444ba3b36556e4ab35c8
+- alias_names:
+  - DallasCowboys
+  - logo of DallasCowboys
+  display_name: Dallas Cowboys
+  uuid: b83e0f601ce14144be388bda5ff1e4fe
+- alias_names:
+  - Mongoose
+  - logo of Mongoose
+  display_name: Mongoose
+  uuid: ba8b8ae2aea849568e69cd8b21469a42
+- alias_names:
+  - DicksSportingGoods
+  - logo of DicksSportingGoods
+  display_name: Dick's Sporting Goods
+  uuid: ac8152ccd211435da112c5e5a9b4d8a1
+- alias_names:
+  - Bobcat
+  - logo of Bobcat
+  display_name: Bobcat
+  uuid: 76556049a8c2401ca56d97befaf053b4
+- alias_names:
+  - Swisscom
+  - logo of Swisscom
+  display_name: Swisscom
+  uuid: 9872aed863364353b64f33e89314da23
+- alias_names:
+  - Burt'sBees
+  - logo of Burt'sBees
+  display_name: Burt's Bees
+  uuid: 16d6ca411fbb4ffb92a36eba17f0af29
+- alias_names:
+  - BNPParibas
+  - logo of BNPParibas
+  display_name: BNP Paribas
+  uuid: df7c2a7612fd48adb18511571b760cde
+- alias_names:
+  - DaveBuster's
+  - logo of DaveBuster's
+  display_name: Dave & Buster's
+  uuid: fcfc68d29f1240dc94e77541f9e93c06
+- alias_names:
+  - Smirnoff
+  - logo of Smirnoff
+  display_name: Smirnoff
+  uuid: f1f39880a8dd4f1299a3b9b46f9eba28
+- alias_names:
+  - MistTwist
+  - logo of MistTwist
+  display_name: Sierra Mist
+  uuid: e1fb2cc0bf8d4f9dad5b3601497cb993
+- alias_names:
+  - GreenGiant
+  - logo of GreenGiant
+  display_name: Green Giant
+  uuid: b124f27898194c4a89e77c3d6d4dbcff
+- alias_names:
+  - Kingston
+  - logo of Kingston
+  display_name: Kingston
+  uuid: 9f24a4d3bbee4d8c974d1b3a7adedb6e
+- alias_names:
+  - Aveeno
+  - logo of Aveeno
+  display_name: Aveeno
+  uuid: 69ba4ee2ee5e43c79f8c6423fb25cbe6
+- alias_names:
+  - NewOrleansSaints
+  - logo of NewOrleansSaints
+  display_name: New Orleans Saints
+  uuid: 6367dfe4d12b496081e0a221fe6badc0
+- alias_names:
+  - Avia
+  - logo of Avia
+  display_name: Avia
+  uuid: c788f3fa9c7e4941a1f2a3033ec9a805
+- alias_names:
+  - West
+  - logo of West
+  display_name: West
+  uuid: 99b7e592d7b54dfab0e31f726f1be1d8
+- alias_names:
+  - Nutella
+  - logo of Nutella
+  display_name: Nutella
+  uuid: df7844391c3a4ab184c57ec820d6e274
+- alias_names:
+  - Crush
+  - logo of Crush
+  display_name: Crush
+  uuid: 3c9f72d382a942969f2d48b5cfa0380f
+- alias_names:
+  - RussellAthletic
+  - logo of RussellAthletic
+  display_name: Russell Athletic
+  uuid: 9f97d02636e149ddabf146e34d150122
+- alias_names:
+  - Fritos
+  - logo of Fritos
+  display_name: Fritos
+  uuid: 02e30056ea824a5580d797505a567b21
+- alias_names:
+  - UniversityofPittsburgh
+  - logo of UniversityofPittsburgh
+  display_name: University of Pittsburgh
+  uuid: f9ce624cf0bd42e6b1a7e43c9bfb1701
+- alias_names:
+  - Nabisco3
+  - logo of Nabisco3
+  display_name: Nabisco
+  uuid: 9a63548c6c644fc59c8c5b42ef84c68d
+- alias_names:
+  - PotbellySandwichWorks
+  - logo of PotbellySandwichWorks
+  display_name: Potbelly Sandwich Shop
+  uuid: 56c907edf30047299902678fb9924da8
+- alias_names:
+  - Ican'tbelieveIt'snotbutter
+  - logo of Ican'tbelieveIt'snotbutter
+  display_name: I Can't Believe It's Not Butter!
+  uuid: 96a05dc0c419405bb45d5624b52e8810
+- alias_names:
+  - MontrealCanadiens
+  - logo of MontrealCanadiens
+  display_name: Montreal Canadiens
+  uuid: 5cf4aa3adabd4460acb8ffea3dec0a32
+- alias_names:
+  - Cerruti
+  - logo of Cerruti
+  display_name: Cerruti
+  uuid: 734e032d8f1549cf88668daa4d329067
+- alias_names:
+  - SalomonGroup
+  - logo of SalomonGroup
+  display_name: Salomon Group
+  uuid: 72f5639ee6cb421991b2adc6f22e78b4
+- alias_names:
+  - Vans
+  - logo of Vans
+  display_name: Vans
+  uuid: 8e3a5469d2ec4af996b217124a268589
+- alias_names:
+  - UniversityofBritishColumbia
+  - logo of UniversityofBritishColumbia
+  display_name: University of British Columbia
+  uuid: b3c88c3c8a1942649f5ee6bb9efb7455
+- alias_names:
+  - TheIceeCompany
+  - logo of TheIceeCompany
+  display_name: The Icee Company
+  uuid: 056c7e41b3de4c869208f242c5e26148
+- alias_names:
+  - tastyKakes
+  - logo of tastyKakes
+  display_name: Tastykake
+  uuid: 829ced316b1847cc81235cef2d478007
+- alias_names:
+  - ToysRUs
+  - logo of ToysRUs
+  display_name: Toys "R" Us
+  uuid: d716d923bd9245ba89d54d8532824b64
+- alias_names:
+  - BigLots
+  - logo of BigLots
+  display_name: Big Lots
+  uuid: de0cf3536182427599ab75f7ee00d8a3
+- alias_names:
+  - DollarTree
+  - logo of DollarTree
+  display_name: Dollar Tree
+  uuid: 6767d02a368b4fbaacdc6a69326ee7b0
+- alias_names:
+  - Hyundai
+  - logo of Hyundai
+  display_name: Hyundai
+  uuid: 5b6ca30f8aa6442bb7e6565ed8deaf5d
+- alias_names:
+  - dingdong
+  - logo of dingdong
+  display_name: Ding Dong
+  uuid: 1551deaac35f4a65a3c41f132da59d9e
+- alias_names:
+  - Givenchy
+  - logo of Givenchy
+  display_name: Givenchy
+  uuid: 0d777300f77d4e52a5b3bbb7084b2bb3
+- alias_names:
+  - QdobaMexicanGrill
+  - logo of QdobaMexicanGrill
+  display_name: Qdoba
+  uuid: e55c2f1f3cd84a8990a80dc6be00d83e
+- alias_names:
+  - PopeyesChickenBiscuits
+  - logo of PopeyesChickenBiscuits
+  display_name: Popeyes
+  uuid: c8880b7eccc74506be09c9ac4f531477
+- alias_names:
+  - LuckyBrandjeans
+  - logo of LuckyBrandjeans
+  display_name: Lucky Brand Jeans
+  uuid: 129ab1fa91d5464d8f6df5a38cfe3098
+- alias_names:
+  - Humanic
+  - logo of Humanic
+  display_name: Humanic
+  uuid: d06845c0fdfe426488b0a4ec1b7eea39
+- alias_names:
+  - OfficeDepot
+  - logo of OfficeDepot
+  display_name: Office Depot
+  uuid: 7645d6b7c0c847148584084f81ba5fe2
+- alias_names:
+  - UniversityofColoradoBoulder
+  - logo of UniversityofColoradoBoulder
+  display_name: University of Colorado Boulder
+  uuid: b70e873814be473aae134e1369129fc8
+- alias_names:
+  - BenJerry's
+  - logo of BenJerry's
+  display_name: Ben & Jerry's
+  uuid: 8dc1205a89b54917b4f9ac36a4598053
+- alias_names:
+  - Benihana
+  - logo of Benihana
+  display_name: Benihana
+  uuid: 0146ed628d9e4931b6dac0380c6f4ffe
+- alias_names:
+  - StefanoBemer
+  - logo of StefanoBemer
+  display_name: Stefano Bemer
+  uuid: e37c3857c73648e696b6e9b43d909cef
+- alias_names:
+  - WonderBread
+  - logo of WonderBread
+  display_name: Wonder Bread
+  uuid: ba7980acfea946e1ad86ab8cfd28eca2
+- alias_names:
+  - FloridaPanthers
+  - logo of FloridaPanthers
+  display_name: Florida Panthers
+  uuid: 36a5d2315ca24c76a10c11122d067289
+- alias_names:
+  - Case
+  - logo of Case
+  display_name: Case
+  uuid: 598fc70221814948a1ebc00e1bb4abf0
+- alias_names:
+  - TNT
+  - logo of TNT
+  display_name: TNT
+  uuid: 077aeedead394e55a67ed6204c232ced
+- alias_names:
+  - Jaguar
+  - logo of Jaguar
+  display_name: Jaguar
+  uuid: 524fddb173b34e52a021a2a6d8ef1a99
+- alias_names:
+  - handi-snacks
+  - logo of handi-snacks
+  display_name: Handi-Snacks
+  uuid: 2f5eea6014884adbb2c58eca03ba1fbd
+- alias_names:
+  - WinnipegJets
+  - logo of WinnipegJets
+  display_name: Winnipeg Jets
+  uuid: 7e9d0ba0b02c4ba58af70167ef8771d4
+- alias_names:
+  - TheMeltingPot
+  - logo of TheMeltingPot
+  display_name: The Melting Pot
+  uuid: 547d147731254c3ebc83f0cc495f67a9
+- alias_names:
+  - Erdinger
+  - logo of Erdinger
+  display_name: Erdinger
+  uuid: f102ad99c2994dc9ba736308897f50c6
+- alias_names:
+  - ColoradoAvalanche
+  - logo of ColoradoAvalanche
+  display_name: Colorado Avalanche
+  uuid: e889fe7978b54636b5f667fb8ec3cb7b
+- alias_names:
+  - DallasMavericks
+  - logo of DallasMavericks
+  display_name: Dallas Mavericks
+  uuid: 646655529f484955bd3f8f641e0b5e93
+- alias_names:
+  - Mott's
+  - logo of Mott's
+  display_name: Mott's
+  uuid: 8149181d1fdd4c16baf19c17912ee42d
+- alias_names:
+  - Steak'nShake
+  - logo of Steak'nShake
+  display_name: Steak 'n Shake
+  uuid: b31bccd1ce034714bb3382848844ab4c
+- alias_names:
+  - Komatsu
+  - logo of Komatsu
+  display_name: Komatsu
+  uuid: e297ebc4df494c62a5b2f9d77dbe3788
+- alias_names:
+  - ColumbusCrewSC
+  - logo of ColumbusCrewSC
+  display_name: Columbus Crew SC
+  uuid: e27b5b36cb6f43bd93b03dc5161a24fb
+- alias_names:
+  - FredPerry
+  - logo of FredPerry
+  display_name: Fred Perry
+  uuid: 8e0e1ca2de2b407bb249239946ab0a30
+- alias_names:
+  - CNN
+  - logo of CNN
+  display_name: CNN
+  uuid: 0cc08a0bd73048538c003db88a4ca674
+- alias_names:
+  - JimmyChooLtd
+  - logo of JimmyChooLtd
+  display_name: Jimmy Choo Ltd
+  uuid: 7927c04a73ed4dfbbb41ceaa88bd372c
+- alias_names:
+  - Aeropostale
+  - logo of Aeropostale
+  display_name: Aeropostale (clothing)
+  uuid: 260ed273033b49ef9b5515fa19d2d359
+- alias_names:
+  - familyDollar
+  - logo of familyDollar
+  display_name: Family Dollar
+  uuid: 1f5d7260152c4119ab99780c45ac9ecb
+- alias_names:
+  - SlimFast
+  - logo of SlimFast
+  display_name: SlimFast
+  uuid: c5c3e686216a4ccf9427fc1996869543
+- alias_names:
+  - Ruth'sChrisSteakHouse
+  - logo of Ruth'sChrisSteakHouse
+  display_name: Ruth's Chris Steak House
+  uuid: 8df514b158b245e1a7929b22a26d13a0
+- alias_names:
+  - Vizio
+  - logo of Vizio
+  display_name: Vizio
+  uuid: 0b2a5aa717f24e7091f1161c96ec7dc4
+- alias_names:
+  - Coach
+  - logo of Coach
+  display_name: Coach
+  uuid: 6cae5f81c5d2423f9ccd000e83095678
+- alias_names:
+  - Roxy
+  - logo of Roxy
+  display_name: Roxy
+  uuid: 30264685fb2d41c682e765612ddc58a4
+- alias_names:
+  - ChristianLouboutin
+  - logo of ChristianLouboutin
+  display_name: Christian Louboutin
+  uuid: e29f9e57ace74efeb732b974c4c6fef0
+- alias_names:
+  - BFGoodrich
+  - logo of BFGoodrich
+  display_name: BFGoodrich
+  uuid: 90c55930ae514f609b99d1d4f47a11cc
+- alias_names:
+  - TataMotors
+  - logo of TataMotors
+  display_name: Tata Motors
+  uuid: 3412529f0d4547c1b7439efa17b8dad1
+- alias_names:
+  - LowesCompanies
+  - logo of LowesCompanies
+  display_name: Lowe's
+  uuid: 355bc4f661404055b625639e50e87eaa
+- alias_names:
+  - Tropicana
+  - logo of Tropicana
+  display_name: Tropicana
+  uuid: a5c261c4bfaa4e12bca3e4adceeed750
+- alias_names:
+  - Comcast
+  - logo of Comcast
+  display_name: Comcast
+  uuid: d1982f560adf467792b0a3082831069e
+- alias_names:
+  - Husqvarna
+  - logo of Husqvarna
+  display_name: Husqvarna
+  uuid: 908d40ae9f744d68807a5066b6f08507
+- alias_names:
+  - Starbury
+  - logo of Starbury
+  display_name: Starbury
+  uuid: 0c9b3d06501642f7ae9f750f43e638c5
+- alias_names:
+  - Scott
+  - logo of Scott
+  display_name: Scott
+  uuid: 960a2549b38745d899320d520df7d4aa
+- alias_names:
+  - JohnnyRockets
+  - logo of JohnnyRockets
+  display_name: Johnny Rockets
+  uuid: 3728938a2c3043b39744edfc29d4f29f
+- alias_names:
+  - WholeFoodsMarket
+  - logo of WholeFoodsMarket
+  display_name: Whole Foods Market
+  uuid: 68c6d8d5958e415eaab3905ff5475193
+- alias_names:
+  - LAGalaxy
+  - logo of LAGalaxy
+  display_name: LA Galaxy
+  uuid: 3f8f0225092e43b18d0fcba951474c3b
+- alias_names:
+  - AmericanExpress
+  - logo of AmericanExpress
+  display_name: American Express
+  uuid: 025e42ea46cc44e689de50f018d9fcf5
