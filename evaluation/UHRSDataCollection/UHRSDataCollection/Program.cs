@@ -70,9 +70,11 @@ namespace CVUHRS
 
         public static void Authenticate()
         {
+            const int retryIntervalSec = 10;
+            const int numMaxTries = 50;
             int count = 0;
             bool isSuccess = false;
-            while (!isSuccess && count++ < 10)
+            while (!isSuccess && count++ < numMaxTries)
             {
                 try
                 {
@@ -82,6 +84,7 @@ namespace CVUHRS
                 }
                 catch (Exception ex)
                 {
+                    Thread.Sleep(1000 * retryIntervalSec);
                     Console.Error.WriteLine("An error occurred when trying to log in using current credentials!");
                     Console.Error.WriteLine(ex);
                 }

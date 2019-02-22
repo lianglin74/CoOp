@@ -1,3 +1,4 @@
+import argparse
 import logging
 import os
 import sys
@@ -10,7 +11,7 @@ from scripts.qd_common import load_from_yaml_file, init_logging
 
 class TaskStatus(object):
     def __init__(self, fpath):
-        self.TASK_STATUS = ["running", "completed", "fail"]
+        self.TASK_STATUS = ["new", "running", "completed", "fail"]
         self.cur_path = fpath
         self.rootpath = os.path.dirname(os.path.dirname(fpath))
         for status in self.TASK_STATUS:
@@ -45,26 +46,30 @@ class TaskStatus(object):
 
     def _change_status(self, target_status):
         assert(target_status in self.TASK_STATUS)
-        logging.info("task status moves to: {}".format(target_status))
-        fname = os.path.split(self.cur_path)[1]
-        dest_path = os.path.join(self.rootpath, target_status, fname)
-        if os.path.isfile(dest_path):
-            fname = str(time.time()) + '-' + fname
+        fdir, fname = os.path.split(self.cur_path)
+        cur_status = os.path.split(fdir)[1]
+        assert(cur_status in self.TASK_STATUS)
+        if cur_status != target_status:
+            logging.info("task status moves to: {}".format(target_status))
             dest_path = os.path.join(self.rootpath, target_status, fname)
-        os.rename(self.cur_path, dest_path)
-        self.cur_path = dest_path
+            if os.path.isfile(dest_path):
+                fname = str(time.time()) + '-' + fname
+                dest_path = os.path.join(self.rootpath, target_status, fname)
+            os.rename(self.cur_path, dest_path)
+            self.cur_path = dest_path
 
 
 def main():
     rootpath = "//vigdgx02/raid_data/uhrs/"
     task_dir = "//vigdgx02/raid_data/uhrs/status/new/"
 
-    # sweep new task config files
+    # pick up one task from task_dir
     task_yaml_list = [os.path.join(task_dir, f) for f in os.listdir(task_dir)
         if f.endswith(".yaml") and os.path.isfile(os.path.join(task_dir, f))]
     if len(task_yaml_list) == 0:
-        return
+        return None
     task_yaml = task_yaml_list[0]
+
     task_status = TaskStatus(task_yaml)
     task_config = load_from_yaml_file(task_yaml)
     gt_config_file = task_config["gt_config"]
@@ -79,6 +84,7 @@ def main():
         cur_dataset = pred_file["dataset"]
         if cur_dataset in dataset_list:
             task_status.fail()
+            # terminate
             raise ValueError("Do not submit multiple files for one dataset: {}. Split them into different tasks".format(cur_dataset))
         dataset_list.append(cur_dataset)
         if model_name not in gt_cfg.baselines(cur_dataset):
@@ -86,7 +92,7 @@ def main():
 
     task_status.start()
     task_root = os.path.dirname(os.path.dirname(gt_config_file))
-    task_dir = os.path.join(task_root, "tasks")
+    uhrs_task_dir = os.path.join(task_root, "tasks")
     hp_dir = os.path.join(task_root, "honeypot")
     hp_files = [f for f in os.listdir(hp_dir) if f.endswith(".txt")]
     hp_file = os.path.join(hp_dir, hp_files[0])
@@ -97,7 +103,7 @@ def main():
             args = [model_name, task_config["task_type"],
                     "--datasets", dataset,
                     "--config", gt_config_file,
-                    "--taskdir", task_dir, "--honeypot", hp_file]
+                    "--taskdir", uhrs_task_dir, "--honeypot", hp_file]
             logging.info("update ground truth with arguments: {}".format(str(args)))
             update_gt(args)
     except Exception as e:
@@ -106,7 +112,28 @@ def main():
 
     # finished updating gt
     task_status.complete()
+    return task_status
+
+
+def run_forever():
+    while True:
+        try:
+            task_status = main()
+        except Exception as e:
+            if task_status is None:
+                print("task does not exist")
+            else:
+                print("error in task: {}".format(task_status.cur_path))
+                task_status.fail()
+        finally:
+            time.sleep(300)
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--repeat', action="store_true", help="use this flag to run forever")
+    args = parser.parse_args()
+    if args.repeat:
+        run_forever()
+    else:
+        main()
