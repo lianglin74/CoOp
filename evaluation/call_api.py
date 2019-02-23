@@ -1,6 +1,5 @@
 from __future__ import print_function
 
-import boto3
 from google.cloud import vision
 from google.cloud.vision import types
 
@@ -11,6 +10,7 @@ import json
 import logging
 import os
 import sys
+import time
 
 import _init_paths
 from evaluation import eval_utils
@@ -52,13 +52,19 @@ def call_aws(imgfile, det_file, response_file, tag_file, key_col=0, img_col=2):
     response_file: tsv file of imgkey, original response from aws
     post_process_file: tsv file of imgkey, list of bboxes
     """
+    import boto3
     client=boto3.client('rekognition')
     all_det = []
     all_tag = []
+    time_elapsed = 0
+    num_imgs = 0
     with open(response_file, 'w') as fresponse:
         for idx, cols in enumerate(tsv_io.tsv_reader(imgfile)):
+            num_imgs += 1
             imgkey = cols[key_col]
+            tic = time.time()
             response = client.detect_labels(Image={'Bytes': base64.b64decode(cols[img_col])})
+            time_elapsed += time.time() - tic
             fresponse.write("{}\t{}\n".format(imgkey, json.dumps(response)))
             print("Processed {}".format(idx+1), end='\r')
             sys.stdout.flush()
@@ -74,6 +80,7 @@ def call_aws(imgfile, det_file, response_file, tag_file, key_col=0, img_col=2):
             all_tag.append([imgkey, json.dumps([b for b in res if "rect" not in b])])
     tsv_io.tsv_writer(all_det, det_file)
     tsv_io.tsv_writer(all_tag, tag_file)
+    logging.info("#imgs: {}, avg time: {}s per image".format(num_imgs, time_elapsed/num_imgs))
 
 
 def post_process_aws(response, im_height, im_width, prop_parents=True):
@@ -113,12 +120,16 @@ def call_gcloud(imgfile, det_file, key_col=0, img_col=2, detection="object"):
     """
     client = vision.ImageAnnotatorClient()
     all_det = []
+    time_elapsed = 0
+    num_imgs = 0
     for idx, cols in enumerate(tsv_io.tsv_reader(imgfile)):
         imgkey = cols[key_col]
+        num_imgs += 1
         img = types.Image(content=base64.b64decode(cols[img_col]))
         try:
             img_arr = qd_common.img_from_base64(cols[img_col])
             im_h, im_w, im_c = img_arr.shape
+            tic = time.time()
             if detection == "object":
                 resp = client.object_localization(image=img).localized_object_annotations
                 res = post_process_gcloud(resp, im_h, im_w)
@@ -127,6 +138,7 @@ def call_gcloud(imgfile, det_file, key_col=0, img_col=2, detection="object"):
                 res = post_process_gcloud_logo(resp)
             else:
                 raise ValueError("Invalid detection type: {}".format(detection))
+            time_elapsed += time.time() - tic
             print("Processed {}".format(idx+1), end='\r')
             sys.stdout.flush()
         except ValueError as e:
@@ -137,6 +149,7 @@ def call_gcloud(imgfile, det_file, key_col=0, img_col=2, detection="object"):
 
         all_det.append([imgkey, json.dumps(res)])
     tsv_io.tsv_writer(all_det, det_file)
+    logging.info("#imgs: {}, avg time: {}s per image".format(num_imgs, time_elapsed/num_imgs))
 
 
 def post_process_gcloud(response, im_height, im_width):
@@ -152,7 +165,7 @@ def post_process_gcloud(response, im_height, im_width):
     return all_res
 
 
-def post_process_gcloud_logo(response):
+def post_process_gcloud_logo(response, prefix="logo of "):
     all_res = []
     for obj in response:
         vertices = obj.bounding_poly.vertices
@@ -160,6 +173,9 @@ def post_process_gcloud_logo(response):
         top = vertices[0].y
         right = vertices[2].x
         bot = vertices[2].y
-        all_res.append({"class": obj.description, "conf": obj.score,
+        c = obj.description
+        if not c.lower().startswith(prefix):
+            c = prefix + c
+        all_res.append({"class": c, "conf": obj.score,
                         "rect": [left, top, right, bot]})
     return all_res

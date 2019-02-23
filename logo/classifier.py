@@ -83,7 +83,9 @@ class CropTaggingWrapper(object):
         # get feature for gt/canonical
         prototype_dataset = "logo40"
         prototype_split = "train"
-        data_yaml = self._write_data_yaml(prototype_dataset, prototype_split, "test")
+        proto_tsv = TSVDataset(prototype_dataset)
+        data_yaml = self._write_data_yaml(prototype_dataset, prototype_split, "test",
+                labelfile=proto_tsv.get_data(prototype_split, 'label', version=-1))
         gt_fea_file = self.extract_feature(data_yaml)
 
         # compare similarity

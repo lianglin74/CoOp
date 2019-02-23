@@ -66,10 +66,12 @@ def evaluate_two_stage(det_expid, tag_expid):
     eval_res = []
     # pretrained
     pred_file = croptagger.predict_on_known_class(trained_dataset, data_split)
-    eval_file = evaluate_detection(trained_dataset, data_split, pred_file, os.path.join(outdir, "{}.{}.pretrained.region.eval".format(trained_dataset, data_split)), region_only=True)
+    eval_file = evaluate_detection(trained_dataset, data_split, pred_file,
+            os.path.join(outdir, "{}.{}.pretrained.region.eval".format(trained_dataset, data_split)),
+            region_only=True, version=2)
     eval_res.extend(parse_eval_file(eval_file))
     fname = os.path.join(outdir, "{}.{}.pretrained.det.eval".format(trained_dataset, data_split))
-    eval_file = evaluate_detection(trained_dataset, data_split, pred_file, fname)
+    eval_file = evaluate_detection(trained_dataset, data_split, pred_file, fname, version=2)
     eval_res.extend(parse_eval_file(eval_file))
 
     calc_map_vs_speed(trained_dataset, data_split, pred_file, fname)
