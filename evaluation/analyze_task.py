@@ -52,7 +52,7 @@ def analyze_draw_box_task(result_files, result_file_type, outfile_res):
 def analyze_verify_box_task(result_files, result_file_type, outfile_res,
                             outfile_rejudge, worker_quality_file=None,
                             min_num_judges_per_hit=4, min_num_hp=5,
-                            accuracy_threshold=0.9, neg_threshold=None):
+                            accuracy_threshold=0.8, neg_threshold=None):
     """Parses result files from verify_box tasks, where workers are ask to
     verify if a single bbox is good: 1-Yes, 2-No, 3-Can't judge.
     Consensus answers will be written to outfile_res, tasks that don't reach
@@ -170,15 +170,22 @@ def get_consensus_answer(answers, consensus_threshold=0.5):
 def load_task_results(result_files, result_file_type):
     logging.info('\n'.join(['Merging Labeling result file:{:s}\t'.format(a)
                             for a in result_files]))
+    filtered_files = []
+    for f in result_files:
+        if os.stat(f).st_size == 0:
+            logging.info("empty file: {}".format(f))
+        else:
+            filtered_files.append(f)
+
     results = pd.DataFrame()
     if result_file_type == "mturk":
-        for resultfile in result_files:
+        for resultfile in filtered_files:
             results = results.append(pd.read_csv(resultfile))
         logging.info('{:d} lines loaded.'.format(len(results)))
         df_records = results[['HITId', 'WorkerId', 'Answer.output',
                               'Input.input_content']]
     elif result_file_type == "uhrs":
-        for resultfile in result_files:
+        for resultfile in filtered_files:
             results = results.append(pd.read_csv(resultfile, sep='\t'))
         logging.info('{:d} lines loaded.'.format(len(results)))
         df_records = results[['HitID', 'JudgeID', 'output',

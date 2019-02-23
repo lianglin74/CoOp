@@ -95,7 +95,7 @@ class UhrsTaskManager():
                 pbar.update(num_done - pbar.n)
                 # terminate if almost done and stuck for too long
                 tic = time.time()
-                if (float(num_done)/num_total > 0.95 or num_total < 10) \
+                if (float(num_done)/num_total > 0.95 or num_total < 3) \
                         and num_done==last_done and tic-last_tic>1800:
                     break
                 if num_done != last_done:

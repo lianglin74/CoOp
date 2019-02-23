@@ -59,16 +59,32 @@ class TaskStatus(object):
             self.cur_path = dest_path
 
 
+def pick_task(task_dir):
+    all_tasks = []
+    for f in os.listdir(task_dir):
+        fpath = os.path.join(task_dir, f)
+        if f.endswith(".yaml") and os.path.isfile(fpath):
+            try:
+                task_config = load_from_yaml_file(fpath)
+                score = task_config.get("priority", sys.maxint)
+                all_tasks.append((score, fpath))
+            except Exception as e:
+                logging.info("invalid task file: {}".format(fpath))
+
+    if len(all_tasks) == 0:
+        return None
+    all_tasks = sorted(all_tasks, key=lambda t: t[0])
+
+    return all_tasks[0][1]
+
 def main():
     rootpath = "//vigdgx02/raid_data/uhrs/"
     task_dir = "//vigdgx02/raid_data/uhrs/status/new/"
 
     # pick up one task from task_dir
-    task_yaml_list = [os.path.join(task_dir, f) for f in os.listdir(task_dir)
-        if f.endswith(".yaml") and os.path.isfile(os.path.join(task_dir, f))]
-    if len(task_yaml_list) == 0:
+    task_yaml = pick_task(task_dir)
+    if task_yaml is None:
         return None
-    task_yaml = task_yaml_list[0]
 
     task_status = TaskStatus(task_yaml)
     task_config = load_from_yaml_file(task_yaml)
@@ -117,6 +133,7 @@ def main():
 
 def run_forever():
     while True:
+        task_status = None
         try:
             task_status = main()
         except Exception as e:
