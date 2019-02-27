@@ -66,15 +66,17 @@ def analyze_verify_box_task(result_files, result_file_type, outfile_res,
                                             min_num_hp, accuracy_threshold,
                                             neg_threshold, False)
 
-    # block bad workers
-    uhrs_client = UhrsTaskManager(None)
-    for w in bad_worker_ids:
-        uhrs_client.block_worker(w)
+    # block bad workers, only support exe
+    if os.name == "nt":
+        uhrs_client = UhrsTaskManager(None)
+        for w in bad_worker_ids:
+            uhrs_client.block_worker(w)
 
     # remove bad worker results
     df_valid_records = df_records[~df_records.WorkerId.isin(bad_worker_ids)]
 
     hp_tasks = []
+    hp_agreement = 0
     rejudge_tasks = []
     consensus_tasks = collections.defaultdict(list)
     # remove honey pot tasks, and reformat remaining results
@@ -95,6 +97,8 @@ def analyze_verify_box_task(result_files, result_file_type, outfile_res,
             # skip honey pot tasks
             if "expected_output" in task:
                 hp_tasks.append(task)
+                if get_consensus_answer(answers) == task["expected_output"]:
+                    hp_agreement += 1
                 continue
             task_uuid = task["uuid"]
             uuid2task_map[task_uuid] = task
@@ -120,7 +124,7 @@ def analyze_verify_box_task(result_files, result_file_type, outfile_res,
     num_rejudge = len(rejudge_tasks)
     num_consensus = sum(len(v) for k, v in consensus_tasks.items())
     num_total = num_rejudge + num_consensus
-    logging.info('#honey pot: {}'.format(len(hp_tasks)))
+    logging.info('#honey pot: {}, agreement: {:.2f}%'.format(len(hp_tasks), float(hp_agreement)/len(hp_tasks)*100))
     logging.info('#total hits: {}, #need re-judge: {}({:.2f}%)'
                  .format(num_total, num_rejudge,
                          float(num_rejudge)/num_total*100))

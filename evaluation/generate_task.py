@@ -38,11 +38,11 @@ class HoneyPotGenerator(object):
             raise Exception("data cannot be empty")
         self.hp_neg_prob = hp_neg_prob
         if not class_candidates:
-            self.class_candidates = set()
+            class_candidates = set()
             for d in self._data:
-                self.class_candidates.add(d["objects_to_find"])
-        else:
-            self.class_candidates = set(class_candidates)
+                class_candidates.add(d["objects_to_find"])
+
+        self.class_candidates = list(class_candidates)
 
     def next(self):
         self._cur_idx = (self._cur_idx + 1) % self._count
@@ -53,10 +53,10 @@ class HoneyPotGenerator(object):
             # convert gt label to honey pot format
             hp = copy.deepcopy(self._data[self._cur_idx])
             if self.hp_neg_prob > 0 and np.random.rand() < self.hp_neg_prob:
-                false_class = np.random.choice(
-                    list(self.class_candidates - set(hp["objects_to_find"])),
-                    size=1)
-                hp["objects_to_find"] = false_class[0]
+                false_class = hp["objects_to_find"]
+                while false_class.lower() == hp["objects_to_find"].lower():
+                    false_class = np.random.choice(self.class_candidates, size=1)[0]
+                hp["objects_to_find"] = false_class
                 hp["expected_output"] = OPT_NEG
             else:
                 hp["expected_output"] = OPT_POS
