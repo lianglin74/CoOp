@@ -29,6 +29,27 @@ import shutil
 import argparse
 import subprocess as sp
 
+def iter_swap_param(swap_params):
+    num = len(swap_params)
+    counts = [len(p[1]) for p in swap_params]
+    assert all(c > 0 for c in counts)
+    assert all(type(p[1]) is list or type(p[1]) is tuple for p in swap_params)
+    idx = [0] * num
+
+    while True:
+        result = {}
+        for p, i in zip(swap_params, idx):
+            result[p[0]] = p[1][i]
+        yield result
+
+        for i in range(num - 1, -1, -1):
+            idx[i] = idx[i] + 1
+            if idx[i] < counts[i]:
+                break
+            else:
+                idx[i] = 0
+                if i == 0:
+                    return
 
 def gen_uuid():
     import uuid
@@ -48,13 +69,16 @@ def hash_sha1(s):
         s = pformat(s)
     return hashlib.sha1(s.encode('utf-8')).hexdigest()
 
+def copy_file(src, dest):
+    tmp = dest + '.tmp'
+    # we use rsync because it could output the progress
+    cmd_run('rsync {} {} --progress'.format(src, tmp).split(' '))
+    os.rename(tmp, dest)
+
 def ensure_copy_file(src, dest):
     ensure_directory(op.dirname(dest))
     if not op.isfile(dest):
-        tmp = dest + '.tmp'
-        # we use rsync because it could output the progress
-        cmd_run('rsync {} {} --progress'.format(src, tmp).split(' '))
-        os.rename(tmp, dest)
+        copy_file(src, dest)
 
 def cmd_run(list_cmd, return_output=False, env=None,
         working_dir=None,

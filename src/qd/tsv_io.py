@@ -318,9 +318,10 @@ class TSVDataset(object):
         if not op.isfile(fname):
             return {}
         elif label is None:
-            rows = tsv_reader(fname)
+            tsv = TSVFile(fname)
+            num_rows = len(tsv)
             result = {}
-            for row in rows:
+            for row in tqdm(tsv, total=num_rows):
                 assert row[0] not in result
                 assert len(row) == 2
                 ss = row[1].split(' ')
@@ -424,7 +425,7 @@ class TSVDataset(object):
             unique=False, filter_idx=None, progress=False):
         if progress:
             if filter_idx is None:
-                num_rows = self.num_rows(split, version)
+                num_rows = self.num_rows(split)
             else:
                 num_rows = len(filter_idx)
             pbar = progressbar.ProgressBar(maxval=num_rows).start()
@@ -636,11 +637,15 @@ def is_verified_rect(rect):
     allowed_keys = set(['class', 'rect', 'uhrs_confirm', 'uhrs_uncertain',
             'conf', 'merge_from', 'class_from', 'change_from', 'from', 'diff',
             'IsInside', 'IsGroupOf', 'IsDepiction', 'IsOccluded',
-            'IsTruncated', 'workerId', 'class_propagate_from'])
-    unkonwn_keys = [k for k in rect if k not in allowed_keys]
-    if len(unkonwn_keys) > 0:
-        import ipdb;ipdb.set_trace(context=15)
-        logging.info('unknown keys = {}\n'.format(pformat(unkonwn_keys)))
+            'IsTruncated', 'workerId', 'class_propagate_from', 'obj', 'uhrs'])
+    unknown_keys = [k for k in rect if k not in allowed_keys]
+    if len(unknown_keys) > 0:
+        logging.info('unknown keys = {}\n'.format(pformat(unknown_keys)))
+
+    if 'uhrs' in rect:
+        judge_result = rect['uhrs']
+        assert judge_result.get('1', 0) > judge_result.get('2', 0)
+        return True
 
     if 'class' not in rect or 'rect' not in rect:
         return False
@@ -697,7 +702,7 @@ def create_inverted_list(rows):
     return {'inverted.label': inverted,
             'inverted.label.with_bb': inverted_with_bb,
             'inverted.label.no_bb': inverted_no_bb,
-            'inverted.label.with_bb.verified': inverted_with_bb,
+            'inverted.label.with_bb.verified': inverted_with_bb_verified,
             'inverted.label.with_bb.noverified': inverted_with_bb_noverified}
 
 def tsv_shuffle_reader(tsv_file):

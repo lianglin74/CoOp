@@ -73,8 +73,6 @@ def get_data_distribution(data, split, version):
     result = {}
 
     populate_dataset_details(data)
-    source_to_num_image = {}
-    source_to_num_bb = {}
     dataset = TSVDataset(data)
     tsvsource_to_imageratio = {src[5:]:
             (float(numdestimages) / float(numsrcimages))
@@ -106,6 +104,13 @@ def get_data_distribution(data, split, version):
 
     result['num_labels_with_neg'] = len([l for l, (pos, neg) in all_label_pos_negs if neg != 0])
     result['num_labels_with_pos'] = len([l for l, (pos, neg) in all_label_pos_negs if pos != 0])
+
+    label_to_count = {l: int(c) for l, c in dataset.iter_data(split, 'inverted.label.count',
+            version=version)}
+    _, c = next(dataset.iter_data(split, 'inverted.background.count',
+        version=version))
+    label_to_count['__background'] = int(c)
+    result['label_to_count'] = label_to_count
 
     return result
 
@@ -1372,10 +1377,68 @@ def ensure_create_inverted_tsvs(dataset, splits):
                 assert dataset.has(split, 'label', v)
                 ensure_create_inverted_tsv_for_each((dataset, split, v))
         else:
-            import multiprocessing as mp
-            p = mp.Pool()
-            param = [(dataset, split, v) for v in range(latest + 1)]
-            p.map(ensure_create_inverted_tsv_for_each, param)
+            params = [(dataset, split, v) for v in range(latest + 1)]
+            params = [param for param in params if
+                    not has_inverted(param)]
+            if len(params) > 0:
+                import multiprocessing as mp
+                p = mp.Pool()
+                p.map(ensure_create_inverted_tsv_for_each, params)
+
+    # generate the inverted tsv for background images without any labels
+    for split in splits:
+        if not dataset.has(split):
+            continue
+        latest = dataset.get_latest_version(split, 'label')
+        if not is_parallel:
+            for v in range(latest + 1):
+                assert dataset.has(split, 'label', v)
+                ensure_create_inverted_tsv_background_for_each((dataset, split, v))
+        else:
+            params = [(dataset, split, v) for v in range(latest + 1)]
+            params = [param for param in params if
+                    not has_inverted_background(param)]
+            if len(params) > 0:
+                import multiprocessing as mp
+                p = mp.Pool()
+                p.map(ensure_create_inverted_tsv_background_for_each, params)
+
+def has_inverted(param):
+    dataset, split, v = param
+    inverted_keys = ['inverted.label',
+            'inverted.label.with_bb',
+            'inverted.label.no_bb',
+            'inverted.label.with_bb.verified',
+            'inverted.label.with_bb.noverified',]
+    return all(dataset.has(split, k, v) for k in inverted_keys)
+
+def has_inverted_background(args):
+    dataset, split, v = args
+    if dataset.has(split, 'inverted.background', version=v) and \
+            dataset.has(split, 'inverted.background.count'):
+        return True
+    else:
+        return False
+
+def ensure_create_inverted_tsv_background_for_each(args):
+    dataset, split, v = args
+    if dataset.has(split, 'inverted.background', version=v) and \
+            dataset.has(split, 'inverted.background.count'):
+        return
+    label_to_indices = dataset.load_inverted_label(split, version=v)
+    all_idx = [i for l in label_to_indices for i in label_to_indices[l]]
+    all_idx = set(all_idx)
+    num = dataset.num_rows(split)
+    background_idx = set(range(num)).difference(all_idx)
+
+    def gen_rows():
+        yield 'background', ' '.join(map(str, background_idx))
+    dataset.write_data(gen_rows(), split, 'inverted.background', version=v)
+
+    def gen_row_count():
+        yield 'background', len(background_idx)
+    dataset.write_data(gen_row_count(), split, 'inverted.background.count',
+            version=v)
 
 def ensure_create_inverted_tsv_for_each(args):
     dataset, split, v = args
@@ -2388,8 +2451,8 @@ def collect_label(row, stat, **kwargs):
     stat.append((is_remove, labels))
 
 class TSVDatasetSource(TSVDataset):
-    def __init__(self, name, root=None, version=-1,
-            valid_splits=['train', 'trainval', 'test'],
+    def __init__(self, name, root=None,
+            split_infos=None,
             cleaness=10,
             use_all=False,
             use_negative_label=False,
@@ -2405,12 +2468,27 @@ class TSVDatasetSource(TSVDataset):
         self._type_to_datasetlabel_to_split_idx = None
         self._type_to_datasetlabel_to_count = None
         self._type_to_split_label_idx = None
-        self._version = version
-        self._valid_splits = valid_splits
+        if split_infos is not None:
+            self._split_infos = split_infos
+        else:
+            self._split_infos = [{'split': s, 'version': -1}
+                    for s in ['train', 'trainval', 'test']]
+        assert len(set([split_info['split'] for split_info in
+            self._split_infos])) == len(self._split_infos)
         self._use_all = use_all
         self._select_by_verified = select_by_verified
         self.cleaness = cleaness
         self.use_negative_label = use_negative_label
+
+    def get_label_tsv(self, split_name):
+        def get_version_by_split(split_name):
+            for split_info in self._split_infos:
+                if split_info['split'] == split_name:
+                    return split_info['version']
+            return -1
+        version_by_config = get_version_by_split(split_name)
+        return super(TSVDatasetSource, self).get_data(split_name, 'label',
+                version_by_config)
 
     def populate_info(self, root):
         self._ensure_initialized()
@@ -2450,10 +2528,12 @@ class TSVDatasetSource(TSVDataset):
         # make sure self.update_label_mapper() is called
         types = ['with_bb', 'no_bb']
         self._type_split_label_idx = []
-        for split in self._valid_splits:
+        for split_info in self._split_infos:
+            split = split_info['split']
+            version = split_info['version']
             logging.info('loading the inverted file: {}-{}'.format(self.name,
                 split))
-            if not self.has(split, 'label', version=self._version):
+            if not self.has(split, 'label', version=version):
                 continue
             # load inverted list
             type_to_inverted = {}
@@ -2463,7 +2543,7 @@ class TSVDatasetSource(TSVDataset):
                 else:
                     inverted_label_type = 'inverted.label.{}'.format(t)
                 rows = self.iter_data(split, inverted_label_type,
-                        version=self._version)
+                        version=version)
                 type_to_inverted[t] = {r[0]: map(int, r[1].split(' ')) for r in rows if
                     r[0] in self._sourcelabel_to_targetlabels and
                     len(r[1]) > 0}
@@ -2505,17 +2585,18 @@ class TSVDatasetSource(TSVDataset):
                     datasetlabel_to_split_idx}
             self._type_to_datasetlabel_to_count[t] = datasetlabel_to_count
 
-        self._split_to_num_image = {split: self.num_rows(split) for split in
-                self._valid_splits if self.has(split)}
+        self._split_to_num_image = {split: self.num_rows(split_info['split']) for split_info in
+                self._split_infos if self.has(split_info['split'])}
 
     def update_label_mapper(self):
         root = self._root
         # load the labelmap for all splits, self.load_labelmap is not correct,
         # since we will update the label and will not update the labelmap
         labelmap = []
-        for split in self._valid_splits:
-            if self.has(split, 'labelmap', self._version):
-                for row in self.iter_data(split, 'labelmap', self._version):
+        for split_info in self._split_infos:
+            split, version = split_info['split'], split_info['version']
+            if self.has(split, 'labelmap', version):
+                for row in self.iter_data(split, 'labelmap', version):
                     labelmap.append(row[0])
         # if it has a prefix of -, it means it has no that tag.
         labelmap = [l for l in labelmap if not l.startswith('-')]
@@ -2619,21 +2700,30 @@ class TSVDatasetSource(TSVDataset):
                 if datasetlabel in self._sourcelabel_to_targetlabels:
                     split_idxes = datasetlabel_to_splitidx[datasetlabel]
                     targetlabels = self._sourcelabel_to_targetlabels[datasetlabel]
-                    for rootlabel in targetlabels:
-                        result.extend([(rootlabel, split, idx) for split, idx in
+                    for targetlabel in targetlabels:
+                        result.extend([(targetlabel, split, idx) for split, idx in
                             split_idxes])
+        # must_have_indices
+        for split_info in self._split_infos:
+            split = split_info['split']
+            must_have_indices = split_info.get('must_have_indices', [])
+            # we set the target label here as None so that the post-processing
+            # will not ignore it. The real labels will also be converted
+            # corrected since we do not depend on this target label only.
+            result.extend((None, split, i) for i in must_have_indices)
         if self._use_all:
-            split_to_rootlabel_idx = list_to_dict(result, 1)
-            for s in split_to_rootlabel_idx:
-                rootlabel_idxes = split_to_rootlabel_idx[s]
+            split_to_targetlabel_idx = list_to_dict(result, 1)
+            for s in split_to_targetlabel_idx:
+                rootlabel_idxes = split_to_targetlabel_idx[s]
                 idx_to_rootlabel = list_to_dict(rootlabel_idxes, 1)
                 num_image = self._split_to_num_image[s]
                 idxes = set(range(num_image)).difference(set(idx_to_rootlabel.keys()))
                 for i in idxes:
                     # for these images, the root label is hard-coded as None
                     result.append((None, s, i))
-            for s in self._valid_splits:
-                if s in split_to_rootlabel_idx:
+            for split_info in self._split_infos:
+                s = split_info['split']
+                if s in split_to_targetlabel_idx:
                     continue
                 if s not in self._split_to_num_image:
                     continue
@@ -2939,12 +3029,11 @@ def parallel_map_to_array(func, all_task, num_worker=128):
     return result
 
 def create_trainX(train_ldtsi, extra_dtsi, tax, out_dataset,
-        version=-1, lift_train=False):
+        lift_train=False):
     t_to_ldsi = list_to_dict(train_ldtsi, 2)
     extra_t_to_ldsi = list_to_dict(extra_dtsi, 1)
     train_ldtsik = []
     extra_dtsik = []
-    shuffle_idx = []
     for label_type in t_to_ldsi:
         ldsi = t_to_ldsi[label_type]
         extra_ldsi = extra_t_to_ldsi.get(label_type, [])
@@ -2973,13 +3062,10 @@ def create_trainX(train_ldtsi, extra_dtsi, tax, out_dataset,
                 extra_dtsik.extend([(dataset, label_type, split, i, k)
                     for l, i in extra_li])
                 k = k + 1
-                dest = out_dataset[label_type].get_data(
-                        out_split)
                 sources.append(source)
                 logging.info('converting labels: {}-{}'.format(
                     dataset.name, split))
-                source_origin_label = dataset.get_data(split,
-                    'label', version=version)
+                source_origin_label = dataset.get_label_tsv(split)
 
                 converted_label = convert_label(source_origin_label,
                         idx, dataset._sourcelabel_to_targetlabels,
@@ -3024,7 +3110,7 @@ def create_trainX(train_ldtsi, extra_dtsi, tax, out_dataset,
 
     populate_output_num_images(train_ldtsik, 'toTrain', tax.root)
 
-def create_testX(test_ldtsi, tax, out_dataset, version):
+def create_testX(test_ldtsi, tax, out_dataset):
     t_to_ldsi = list_to_dict(test_ldtsi, 2)
     for label_type in t_to_ldsi:
         sources = []
@@ -3044,9 +3130,7 @@ def create_testX(test_ldtsi, tax, out_dataset, version):
                 out_split = 'test{}'.format(k)
                 s_file = dataset.get_data(split)
                 sources.append(s_file)
-                src_img_tsv = TSVFile(s_file)
-                source_origin_label = dataset.get_data(split, 'label',
-                        version=version)
+                source_origin_label = dataset.get_label_tsv(split)
                 sources_origin_label.append(source_origin_label)
                 converted_label = convert_label(source_origin_label,
                         idx, dataset._sourcelabel_to_targetlabels,
@@ -3249,10 +3333,7 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
 
     data_infos = regularize_data_sources(kwargs['datas'])
 
-    logging.info('extract the images from: {}'.format(pformat(data_infos)))
-
-    label_version = kwargs.get('version', -1)
-    data_sources = [TSVDatasetSource(root=tax.root, version=label_version, **d)
+    data_sources = [TSVDatasetSource(root=tax.root, **d)
             for d in data_infos]
 
     for s in data_sources:
@@ -3356,7 +3437,7 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
 
     logging.info('creating the train data')
     create_trainX(train_ldtsi, extra_dtsi, tax, out_dataset,
-            version=label_version, lift_train=kwargs.get('lift_train', False))
+            lift_train=kwargs.get('lift_train', False))
 
     populate_output_num_images(test_ldtsi, 'toTest', tax.root)
 
@@ -3369,7 +3450,7 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
         ensure_directory(op.dirname(target_file))
         shutil.copy(dest, target_file)
 
-    create_testX(test_ldtsi, tax, out_dataset, version=label_version)
+    create_testX(test_ldtsi, tax, out_dataset)
 
     logging.info('done')
 
@@ -3528,281 +3609,7 @@ def standarize_crawled(tsv_input, tsv_output):
     tsv_writer(gen_rows(), tsv_output)
 
 def get_data_sources(version):
-    if version=='exclude_golden_test':
-        return [
-                {
-                    'name': 'coco2017',
-                    'valid_splits': ['train', 'trainval'],
-                    'cleaness': 10
-                },
-                {
-                    'name': 'voc0712',
-                    'valid_splits': ['train', 'trainval'],
-                    'cleaness': 10
-                },
-                {
-                    'name': 'OpenImageV4_448',
-                    'valid_splits': ['train', 'trainval'],
-                    'cleaness': 10
-                },
-                ('Naturalist', 10),
-                ('elder', 10),
-                ('imagenet200Diff', 10),
-                ('open_images_clean_1', 9),
-                ('open_images_clean_2', 9),
-                ('open_images_clean_3', 9),
-                ('imagenet1kLocClean', 9),
-                ('imagenet3k_448Clean', 9),
-                ('VisualGenomeClean', 9),
-                ('brand1048Clean', 8),
-                ('mturk700_url_as_keyClean', 8),
-                ('crawl_office_v1', 8),
-                ('crawl_office_v2', 8),
-                ('Materialist', 8),
-                ('MSLogoClean', 8),
-                ('clothingClean', 8),
-                ('imagenet22k_448', 7),
-                ('4000_Full_setClean', 7),
-        ]
-    elif version == 'exclude_golden_use_voc_coco_all':
-        return [
-                {
-                    'name': 'coco2017',
-                    'valid_splits': ['train', 'trainval'],
-                    'cleaness': 10,
-                    'use_all': True,
-                },
-                {
-                    'name': 'voc0712',
-                    'valid_splits': ['train', 'trainval'],
-                    'cleaness': 10,
-                    'use_all': True,
-                },
-                {
-                    'name': 'OpenImageV4_448',
-                    'valid_splits': ['train', 'trainval'],
-                    'cleaness': 9
-                },
-                {
-                    'name': 'Naturalist',
-                    'cleaness': 9,
-                },
-                {
-                    'name': 'elder',
-                    'cleaness': 9,
-                },
-                {
-                    'name': 'imagenet200Diff',
-                    'cleaness': 9,
-                },
-                {
-                    'name': 'open_images_clean_1',
-                    'cleaness': 8,
-                },
-                {
-                    'name': 'open_images_clean_2',
-                    'cleaness': 8,
-                },
-                {
-                    'name': 'open_images_clean_3',
-                    'cleaness': 8,
-                },
-                {
-                    'name': 'imagenet1kLocClean',
-                    'cleaness': 8,
-                },
-                {
-                    'name': 'imagenet3k_448Clean',
-                    'cleaness': 8,
-                },
-                {
-                    'name': 'VisualGenomeClean',
-                    'cleaness': 8,
-                },
-                {
-                    'name': 'brand1048Clean',
-                    'cleaness': 7,
-                },
-                {
-                    'name': 'mturk700_url_as_keyClean',
-                    'cleaness': 7,
-                },
-                {
-                    'name': 'crawl_office_v1',
-                    'cleaness': 7,
-                },
-                {
-                    'name': 'crawl_office_v2',
-                    'cleaness': 7,
-                },
-                {
-                    'name': 'Materialist',
-                    'cleaness': 7,
-                },
-                {
-                    'name': 'MSLogoClean',
-                    'cleaness': 7,
-                },
-                {
-                    'name': 'clothingClean',
-                    'cleaness': 7,
-                },
-                {
-                    'name': 'imagenet22k_448',
-                    'cleaness': 6,
-                },
-                {
-                    'name': '4000_Full_setClean',
-                    'cleaness': 6,
-                },
-        ]
-    elif version == 'logo':
-        return [
-                {
-                    'name': 'coco2017',
-                    'valid_splits': ['train', 'trainval'],
-                    'cleaness': 10,
-                    'use_all': True,
-                },
-                {
-                    'name': 'voc0712',
-                    'valid_splits': ['train', 'trainval'],
-                    'cleaness': 10,
-                    'use_all': True,
-                },
-                {
-                    'name': 'brand1048Clean',
-                    'valid_splits': ['train', 'trainval'],
-                    'cleaness': 7,
-                    'use_all': True,
-                },
-        ]
-    elif version == 'logo2':
-        return [
-                {
-                    'name': 'coco2017',
-                    'valid_splits': ['train', 'trainval'],
-                    'cleaness': 10,
-                    'use_all': True,
-                },
-                {
-                    'name': 'voc0712',
-                    'valid_splits': ['train', 'trainval'],
-                    'cleaness': 10,
-                    'use_all': True,
-                },
-                {
-                    'name': 'brand1048',
-                    'valid_splits': ['train', 'trainval'],
-                    'cleaness': 7,
-                    'use_all': True,
-                },
-                {
-                    'name': 'FlickrLogos-32',
-                    'cleaness': 10,
-                    'use_all': True,
-                },
-                {
-                    'name': 'BelgaLogos',
-                    'cleaness': 10,
-                    'use_all': True,
-                },
-                {
-                    'name': 'FlickrLogos_47',
-                    'cleaness': 10,
-                    'use_all': True,
-                },
-                {
-                    'name': 'LogosInTheWild-v2Clean',
-                    'cleaness': 10,
-                    'use_all': True,
-                },
-                {
-                    'name': 'openlogo',
-                    'cleaness': 10,
-                    'use_all': True,
-                },
-        ]
-    elif version == 'logo2_novoccoco':
-        return [
-                {
-                    'name': 'brand1048',
-                    'valid_splits': ['train', 'trainval'],
-                    'cleaness': 7,
-                    'use_all': True,
-                },
-                {
-                    'name': 'FlickrLogos-32',
-                    'cleaness': 10,
-                    'use_all': True,
-                },
-                {
-                    'name': 'BelgaLogos',
-                    'cleaness': 10,
-                    'use_all': True,
-                },
-                {
-                    'name': 'FlickrLogos_47',
-                    'cleaness': 10,
-                    'use_all': True,
-                },
-                {
-                    'name': 'LogosInTheWild-v2Clean',
-                    'cleaness': 10,
-                    'use_all': True,
-                },
-                {
-                    'name': 'openlogo',
-                    'cleaness': 10,
-                    'use_all': True,
-                },
-        ]
-    elif version == 'extra_furniture':
-        return [
-                {
-                    'name': 'SeeingAISplit',
-                    'valid_splits': ['train'],
-                },
-                {
-                    'name': 'FurnitureMissing',
-                },
-            ]
-    elif version == 'logo_db_only':
-        return [
-                {
-                    'name': 'brand1048',
-                    'valid_splits': ['train', 'trainval'],
-                    'cleaness': 7,
-                    'use_all': True,
-                },
-                {
-                    'name': 'FlickrLogos-32',
-                    'cleaness': 10,
-                    'use_all': True,
-                },
-                {
-                    'name': 'BelgaLogos',
-                    'cleaness': 10,
-                    'use_all': True,
-                },
-                {
-                    'name': 'FlickrLogos_47',
-                    'cleaness': 10,
-                    'use_all': True,
-                },
-                {
-                    'name': 'LogosInTheWild-v2Clean',
-                    'cleaness': 10,
-                    'use_all': True,
-                },
-                {
-                    'name': 'openlogo',
-                    'cleaness': 10,
-                    'use_all': True,
-                },
-        ]
-    else:
-        raise ValueError('Unknown version = {}'.format(version))
+    return load_from_yaml_file('./aux_data/data_sources/{}.yaml'.format(version))
 
 def get_img_url2(img_key):
     # don't use get_image_url
