@@ -1,6 +1,7 @@
 import argparse
 import logging
 import os
+import re
 import sys
 import time
 
@@ -108,7 +109,13 @@ def main():
 
     task_status.start()
     task_root = os.path.dirname(os.path.dirname(gt_config_file))
-    uhrs_task_dir = os.path.join(task_root, "tasks")
+
+    def get_task_name(task_yaml):
+        task_name = os.path.split(task_yaml)[1]
+        task_name = task_name.rsplit('.', 1)[0]
+        return re.sub('[^0-9a-zA-Z_]+', '', task_name)
+
+    uhrs_task_dir = os.path.join(task_root, "tasks", get_task_name(task_yaml))
     hp_dir = os.path.join(task_root, "honeypot")
     hp_files = [f for f in os.listdir(hp_dir) if f.endswith(".txt")]
     hp_file = os.path.join(hp_dir, hp_files[0])

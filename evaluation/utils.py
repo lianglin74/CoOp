@@ -65,7 +65,7 @@ def search_bbox_in_list(new_bbox, existing_list, iou_threshold):
             if iou_threshold == 0:
                 return idx
             else:
-                if calculate_iou(new_bbox, cur_bbox) > iou_threshold:
+                if is_valid_bbox(cur_bbox) and calculate_iou(new_bbox, cur_bbox) > iou_threshold:
                     return idx
     return -1
 
