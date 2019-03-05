@@ -172,6 +172,48 @@ namespace CVUHRS
             return false;
         }
 
+        public class ArgsUploadSingleTask
+        {
+            [Argument(ArgumentType.Required, HelpText = "Task group Id")]
+            public int taskGroupId = -1;
+            [Argument(ArgumentType.Required, HelpText = "Path of task files to be uploaded")]
+            public string filePath = null;
+            [Argument(ArgumentType.Required, HelpText = "Number of judgments required per HIT")]
+            public int numJudgment = 0;
+            [Argument(ArgumentType.AtMostOnce, HelpText = "Specify if want to use consensus mode (default: 0.0)")]
+            public double consensusThreshold = 0.0;
+        }
+        public static void UploadSingleTask(ArgsUploadSingleTask cmd)
+        {
+            string taskName;
+            int taskId = 0;
+            taskName = Path.GetFileNameWithoutExtension(cmd.filePath);
+            if (!TryUploadTaskWrapped(cmd.filePath, cmd.consensusThreshold, cmd.numJudgment, cmd.taskGroupId,
+                taskName, out taskId))
+            {
+                throw new Exception($"Failed to upload {cmd.taskGroupId}: {cmd.filePath}");
+            }
+            Console.WriteLine($"{taskId}");
+        }
+
+        public class ArgsDownloadSingleTask
+        {
+            [Argument(ArgumentType.Required, HelpText = "Task group Id")]
+            public int taskGroupId = -1;
+            [Argument(ArgumentType.Required, HelpText = "Task Id")]
+            public int taskId = -1;
+            [Argument(ArgumentType.Required, HelpText = "Output path for downloaded file")]
+            public string filePath = null;
+        }
+
+        public static void DownloadSingleTask(ArgsDownloadSingleTask cmd)
+        {
+            if (!TryDownloadTaskWrapped(cmd.taskGroupId, cmd.taskId, cmd.filePath))
+            {
+                throw new Exception($"Fail to download {cmd.taskId}: {cmd.filePath}");
+            }
+        }
+
         public class ArgsUploadFromFolder
         {
             [Argument(ArgumentType.Required, HelpText = "Task group Id")]
@@ -302,6 +344,8 @@ namespace CVUHRS
             //use my windows sign in to sign into the UHRS portal
             Authenticate();
 
+            ParserX.AddTask<ArgsUploadSingleTask>(UploadSingleTask, "Upload a single task file, prints task id");
+            ParserX.AddTask<ArgsDownloadSingleTask>(DownloadSingleTask, "Download a task (even it's not completedly done)");
             ParserX.AddTask<ArgsUploadFromFolder>(UploadTasksFromFolder, "Upload tasks from folder, write task ids and names");
             ParserX.AddTask<ArgsDownloadToFolder>(DownloadTasksToFolder, "Download tasks to folder");
             ParserX.AddTask<ArgsBlockSingleJudge>(BlockSingleJudge, "Block a single judge/worker on all HitApp");
