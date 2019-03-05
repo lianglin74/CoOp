@@ -2,6 +2,7 @@ from .qd_common import load_from_yaml_file
 from pymongo import MongoClient
 import pymongo
 import copy
+from bson import ObjectId
 
 def create_mongodb_client():
     config = load_from_yaml_file('./aux_data/configs/mongodb_credential.yaml')
@@ -10,6 +11,16 @@ def create_mongodb_client():
 
 def create_bbverification_db():
     return BoundingBoxVerificationDB()
+
+def objectid_to_str(result):
+    # convert the type of ObjectId() to string
+    for r in result:
+        r['_id'] = str(r['_id'])
+
+def ensure_objectid(result):
+    for r in result:
+        if type(r['_id']) is str:
+            r['_id'] = ObjectId(r['_id'])
 
 class BoundingBoxVerificationDB(object):
     status_requested = 'requested'
@@ -49,16 +60,20 @@ class BoundingBoxVerificationDB(object):
         # retrieve && submit
         self.update_status([r['_id'] for r in result],
                 self.status_retrieved)
-        # convert the type of ObjectId() to string
-        for r in result:
-            r['_id'] = str(r['_id'])
-        return result
+        return objectid_to_str(result)
 
     def update_status(self, all_id, new_status):
         from datetime import datetime
+        for i in range(len(all_id)):
+            if type(all_id[i]) is str:
+                all_id[i] = ObjectId(all_id[i])
         self.collection.update_many(filter={'_id': {'$in': all_id}},
                 update={'$set': {'status': new_status,
                                  'last_update_time': datetime.now()}})
+
+    def reset_status_to_requested(self, all_bb_task):
+        self.update_status([b['_id'] for b in all_bb_task],
+                self.status_requested)
 
     def submitted(self, submitted):
         self.adjust_status(submitted, 'uhrs_submitted_result',
@@ -71,10 +86,7 @@ class BoundingBoxVerificationDB(object):
             assert uhrs_result_field in s
             assert '_id' in s
 
-        from bson import ObjectId
-        for r in uhrs_results:
-            r['_id'] = ObjectId(r['_id'])
-
+        ensure_objectid(uhrs_results)
         all_id = [s['_id'] for s in uhrs_results]
 
         # save the result from uhrs
@@ -93,7 +105,7 @@ class BoundingBoxVerificationDB(object):
         if topk:
             pipeline.append({'$limit': topk})
         result = self.query_by_pipeline(pipeline)
-        return result
+        return objectid_to_str(result)
 
     def complete(self, completed):
         self.adjust_status(completed, 'uhrs_completed_result',
