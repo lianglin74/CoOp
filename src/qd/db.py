@@ -55,8 +55,10 @@ class BoundingBoxVerificationDB(object):
         return result
 
     def update_status(self, all_id, new_status):
+        from datetime import datetime
         self.collection.update_many(filter={'_id': {'$in': all_id}},
-                update={'$set': {'status': new_status}})
+                update={'$set': {'status': new_status,
+                                 'last_update_time': datetime.now()}})
 
     def submitted(self, submitted):
         self.adjust_status(submitted, 'uhrs_submitted_result',
@@ -75,16 +77,13 @@ class BoundingBoxVerificationDB(object):
 
         all_id = [s['_id'] for s in uhrs_results]
 
-        query = {'_id': {'$in': all_id}}
-
         # save the result from uhrs
         for s in uhrs_results:
             self.collection.update_one(filter={'_id': s['_id']},
                     update={'$set': {db_field: s[uhrs_result_field]}})
 
         # update the status
-        self.collection.update_many(filter=query,
-                update={'$set': {'status': new_status}})
+        self.update_status(all_id, new_status)
 
     def query_submitted(self, topk=None):
         self._ensure_client_opened()
@@ -106,4 +105,5 @@ class BoundingBoxVerificationDB(object):
             self.collection = self.client[self.db_name][self.collection_name]
             self.collection.create_index([('data', pymongo.ASCENDING)])
             self.collection.create_index([('status', pymongo.ASCENDING)])
+            self.collection.create_index([('priority', pymongo.ASCENDING)])
 
