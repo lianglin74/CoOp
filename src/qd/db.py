@@ -49,7 +49,9 @@ class BoundingBoxVerificationDB(object):
         # retrieve && submit
         self.update_status([r['_id'] for r in result],
                 self.status_retrieved)
-
+        # convert the type of ObjectId() to string
+        for r in result:
+            r['_id'] = str(r['_id'])
         return result
 
     def update_status(self, all_id, new_status):
@@ -66,6 +68,10 @@ class BoundingBoxVerificationDB(object):
         for s in uhrs_results:
             assert uhrs_result_field in s
             assert '_id' in s
+
+        from bson import ObjectId
+        for r in uhrs_results:
+            r['_id'] = ObjectId(r['_id'])
 
         all_id = [s['_id'] for s in uhrs_results]
 
@@ -98,4 +104,6 @@ class BoundingBoxVerificationDB(object):
         if self.client is None or self.collection is None:
             self.client = create_mongodb_client()
             self.collection = self.client[self.db_name][self.collection_name]
+            self.collection.create_index([('data', pymongo.ASCENDING)])
+            self.collection.create_index([('status', pymongo.ASCENDING)])
 
