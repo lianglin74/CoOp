@@ -139,22 +139,25 @@ def analyze_verify_box_task(result_files, result_file_type, outfile_res,
 
     # write consensus results
     result_data = [[str(k), json.dumps(v, separators=(',', ':'))] for k, v in consensus_tasks.items()]
-    write_to_file(result_data, outfile_res)
-    logging.info("Writing consensus results to: {}".format(outfile_res))
+    if outfile_res:
+        write_to_file(result_data, outfile_res)
+        logging.info("Writing consensus results to: {}".format(outfile_res))
 
     # write uhrs answer summary
     summary = []
     for uuid in uuid2answers_map:
         ans = collections.Counter(uuid2answers_map[uuid])
         task = uuid2task_map[uuid]
-        summary.append([task["image_url"], json.dumps(task["bboxes"], separators=(',', ':')),
+        summary.append([task["image_info"], task["image_url"],
+                json.dumps(task["bboxes"], separators=(',', ':')),
                 json.dumps(ans, separators=(',', ':'))])
 
     # write tasks needing re-judge
     if rejudge_tasks:
         rejudge_data = pack_task_with_honey_pot(rejudge_tasks, hp_tasks,
                                                 "hp", 15, 3)
-        write_task_file(rejudge_data, outfile_rejudge)
+        if outfile_rejudge:
+            write_task_file(rejudge_data, outfile_rejudge)
     return num_rejudge, summary
 
 

@@ -109,30 +109,26 @@ def write_task_file(data, filepath):
 
 
 def generate_task_files(task_type, label_file, hp_file, outbase,
-                        num_tasks_per_hit=10, num_hp_per_hit=2):
+                        num_tasks_per_hit=10, num_hp_per_hit=2, num_hits_per_file=2000):
     if task_type == "VerifyImage":
         hp_type = "hp"
-        _generate_task_files_helper(task_type, label_file, hp_file, outbase, hp_type,
-                                description_file=None, num_tasks_per_hit=num_tasks_per_hit,
-                                num_hp_per_hit=num_hp_per_hit, hp_neg_prob=0.5, box_per_img="one")
+        box_per_img="one"
     elif task_type == "VerifyBox":
         hp_type = "gt"
-        _generate_task_files_helper(task_type, label_file, hp_file, outbase, hp_type,
-                                description_file=None, num_tasks_per_hit=num_tasks_per_hit,
-                                num_hp_per_hit=num_hp_per_hit, hp_neg_prob=0.5, box_per_img="one")
+        box_per_img="one"
     elif task_type == "VerifyCover":
         hp_type = "hp"
-        _generate_task_files_helper(task_type, label_file, hp_file, outbase, hp_type,
-                                description_file=None, num_tasks_per_hit=num_tasks_per_hit,
-                                num_hp_per_hit=num_hp_per_hit, hp_neg_prob=0.5, box_per_img="class")
+        box_per_img="class"
     elif task_type == "DrawBox":
         hp_type = "hp"
-        _generate_task_files_helper(task_type, label_file, hp_file, outbase, hp_type,
-                                description_file=None, num_tasks_per_hit=num_tasks_per_hit,
-                                num_hp_per_hit=num_hp_per_hit, hp_neg_prob=0.5, box_per_img="class")
+        box_per_img="class"
     else:
         raise Exception("invalid task type: {}".format(task_type))
 
+    return _generate_task_files_helper(task_type, label_file, hp_file, outbase, hp_type,
+                                description_file=None, num_tasks_per_hit=num_tasks_per_hit,
+                                num_hp_per_hit=num_hp_per_hit, hp_neg_prob=0.5,
+                                box_per_img=box_per_img, num_hits_per_file=num_hits_per_file)
 
 def generate_box_honeypot(dataset_name, imgfiles, labelfiles, outfile=None, easy_area_thres=0.2):
     """ Load ground truth data from specified dataset, split, version.
@@ -246,7 +242,7 @@ def generate_draw_box_honeypot(dataset_name, split, outfile=None, version=0,
 
 def _generate_task_files_helper(task_type, label_file, hp_file, outbase, hp_type,
                                 description_file, num_tasks_per_hit,
-                                num_hp_per_hit, hp_neg_prob, box_per_img):
+                                num_hp_per_hit, hp_neg_prob, box_per_img, num_hits_per_file):
     """
     Params:
         task_type: choose from VerifyBox, VerifyImage
@@ -324,7 +320,7 @@ def _generate_task_files_helper(task_type, label_file, hp_file, outbase, hp_type
                  .format(len(task_data),
                          len(task_data)*num_hp_per_hit/num_tasks_per_hit))
 
-    num_hits_per_file = 2000  # task file must not exceed 10MB
+    # task file must not exceed 10MB
     file_idx = 0
     outfiles = []
     for start_idx in np.arange(0, len(output_data), num_hits_per_file):

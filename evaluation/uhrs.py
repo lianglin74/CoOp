@@ -5,7 +5,6 @@ import subprocess
 import time
 from tqdm import tqdm
 
-
 class State(Enum):
     IDLE = 1
     UPLOAD_START = 2
@@ -18,10 +17,11 @@ class State(Enum):
 class UhrsTaskManager():
     '''Python wrapper of UHRS API
     '''
-    def __init__(self, task_log):
+    rootpath = os.path.dirname(os.path.realpath(__file__))
+    UHRS_EXE = os.path.join(rootpath, "./UHRSDataCollection/bin/Release/UHRSDataCollection.exe")
+
+    def __init__(self, task_log=None):
         self._task_log = task_log  # tsv file to store task id and name
-        rootpath = os.path.dirname(os.path.realpath(__file__))
-        self._uhrs_exe_path = os.path.join(rootpath, "./UHRSDataCollection/bin/Release/UHRSDataCollection.exe")
         if task_log and os.path.isfile(task_log):
             logging.info("tasks already uploaded at {}".format(task_log))
             self.state = State.UPLOAD_FINISH
@@ -30,23 +30,52 @@ class UhrsTaskManager():
         else:
             self.state = State.IDLE
 
+    @classmethod
+    def block_worker(cls, worker_id):
+        args = [cls.UHRS_EXE, "BlockSingleJudge",
+                "-judgeId", repr(int(worker_id))]
+        subprocess.check_call(args)
+
+    @classmethod
+    def block_workers(cls, worker_id_file):
+        if not os.path.isfile(worker_id_file):
+            raise Exception("file does not exist: {}".format(worker_id_file))
+        args = [cls.UHRS_EXE, "BlockJudges",
+                "-filepath", worker_id_file]
+        subprocess.check_call(args)
+
+    @classmethod
+    def upload_task(cls, task_group_id, filepath, num_judgment, consensus_thres=0.0):
+        ret = subprocess.check_output([cls.UHRS_EXE, "UploadSingleTask",
+                                        "-taskGroupId", repr(task_group_id),
+                                        "-filePath", filepath,
+                                        "-numJudgment", repr(num_judgment),
+                                        "-consensusThreshold", repr(consensus_thres)])
+
+        task_id = cls._parse_subprocess_output(ret)
+        return int(task_id)
+
+    @classmethod
+    def download_task(cls, task_group_id, task_id, filepath):
+        subprocess.check_call([cls.UHRS_EXE, "DownloadSingleTask",
+                                       "-taskGroupId", repr(task_group_id),
+                                       "-taskId", repr(task_id),
+                                       "-filePath", filepath])
+
+    @classmethod
+    def is_task_completed(cls, task_group_id, task_id):
+        state = cls._get_task_state(task_group_id, task_id)[0]
+        if state == 1:
+            return False
+        if state == 0:
+            raise Exception("task id {} is disabled".format(task_id))
+        return True
+
     def is_task_exist(self):
         if self.state == State.IDLE or self.state == State.UPLOAD_START:
             return False
         else:
             return True
-
-    def block_worker(self, worker_id):
-        args = [self._uhrs_exe_path, "BlockSingleJudge",
-                "-judgeId", repr(int(worker_id))]
-        subprocess.check_call(args)
-
-    def block_workers(self, worker_id_file):
-        if not os.path.isfile(worker_id_file):
-            raise Exception("file does not exist: {}".format(worker_id_file))
-        args = [self._uhrs_exe_path, "BlockJudges",
-                "-filepath", worker_id_file]
-        subprocess.check_call(args)
 
     def upload_tasks_from_folder(self, task_group, dirpath, prefix="",
                                  consensus_thresh=0.0, num_judges=5):
@@ -57,7 +86,7 @@ class UhrsTaskManager():
             raise Exception("cannot upload from state {}".format(self.state))
         self.state = State.UPLOAD_START
         task_group_id = self._get_task_group_id(task_group)
-        args = [self._uhrs_exe_path, "UploadTasksFromFolder",
+        args = [self.UHRS_EXE, "UploadTasksFromFolder",
                 "-taskGroupId", repr(task_group_id),
                 "-folderPath", dirpath,
                 "-taskIdNameFile", self._task_log,
@@ -73,7 +102,7 @@ class UhrsTaskManager():
             raise Exception("cannot download from state {}".format(self.state))
         self.state = State.DOWNLOAD_START
         task_group_id = self._get_task_group_id(task_group)
-        args = [self._uhrs_exe_path, "DownloadTasksToFolder",
+        args = [self.UHRS_EXE, "DownloadTasksToFolder",
                 "-taskGroupId", repr(task_group_id),
                 "-folderPath", dirpath,
                 "-taskIdFile", self._task_log]
@@ -108,21 +137,20 @@ class UhrsTaskManager():
         self.state = State.WAIT_FINISH
 
     def _is_task_finished(self, task_group, logfile):
+        task_group_id = self._get_task_group_id(task_group)
         task_ids = self._read_task_ids_from_log(logfile)
         for i in task_ids:
-            state = self._get_task_state(task_group, i)[0]
-            if state == 1:
+            if not self.is_task_completed(task_group_id, i):
                 return False
-            if state == 0:
-                raise Exception("task id {} is disabled".format(i))
         return True
 
     def _count_task_progress(self, task_group, logfile):
+        task_group_id = self._get_task_group_id(task_group)
         task_ids = self._read_task_ids_from_log(logfile)
         num_done = 0
         num_total = 0
         for i in task_ids:
-            d, t = self._get_task_state(task_group, i)[1:3]
+            d, t = self._get_task_state(task_group_id, i)[1:3]
             num_done += d
             num_total += t
         return num_done, num_total
@@ -134,18 +162,24 @@ class UhrsTaskManager():
                 task_ids.append(int(line.split('\t')[0]))
         return task_ids
 
-    def _get_task_state(self, task_group, task_id):
+    @classmethod
+    def _get_task_state(cls, task_group_id, task_id):
         """ Gets task state, judgments done, judgments total
         The state of the task: 0 - Disabled, 1 - Active, 2 - ManualCompleted,
         3 - Completed
         """
-        task_group_id = self._get_task_group_id(task_group)
-        ret = subprocess.check_output([self._uhrs_exe_path, "GetTaskState",
+        ret = subprocess.check_output([cls.UHRS_EXE, "GetTaskState",
                                        "-taskGroupId", repr(task_group_id),
                                        "-taskId", repr(task_id)])
-        return [int(r) for r in ret.decode().split('\r\n', 1)[0].split(' ')]
+        return [int(r) for r in cls._parse_subprocess_output(ret).split(' ')]
 
-    def _get_task_group_id(self, task_group):
+    @staticmethod
+    def _parse_subprocess_output(ret):
+        # print output at the end of program
+        return ret.decode().strip('\r\n').rsplit('\r\n')[-1]
+
+    @classmethod
+    def _get_task_group_id(cls, task_group):
         if task_group == "verify_box":
             return 86314
         elif task_group == "verify_cover":

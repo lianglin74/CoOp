@@ -16,6 +16,7 @@ def objectid_to_str(result):
     # convert the type of ObjectId() to string
     for r in result:
         r['_id'] = str(r['_id'])
+    return result
 
 def ensure_objectid(result):
     for r in result:

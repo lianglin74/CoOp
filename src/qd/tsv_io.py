@@ -547,6 +547,11 @@ def tsv_writer(values, tsv_file_name, sep='\t'):
             fp.write(v)
             fpidx.write(str(idx) + '\n')
             idx = idx + len(v)
+
+    if os.path.isfile(tsv_file_name):
+        os.remove(tsv_file_name)
+    if os.path.isfile(tsv_lineidx_file):
+        os.remove(tsv_lineidx_file)
     os.rename(tsv_file_name_tmp, tsv_file_name)
     os.rename(tsv_lineidx_file_tmp, tsv_lineidx_file)
 

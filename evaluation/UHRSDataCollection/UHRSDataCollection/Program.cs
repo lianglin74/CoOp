@@ -354,10 +354,7 @@ namespace CVUHRS
 
             if (ParserX.ParseArgumentsWithUsage(args))
             {
-                Stopwatch timer = Stopwatch.StartNew();
                 ParserX.RunTask();
-                timer.Stop();
-                Console.WriteLine("Time used: {0}", timer.Elapsed);
             }
             return 0;
         }
