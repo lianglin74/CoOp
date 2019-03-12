@@ -24,10 +24,13 @@ import sys
 import time
 import unicodedata
 import yaml
+from deprecated import deprecated
 
 from datetime import datetime
 from pprint import pformat
 from pymongo import MongoClient
+from StringIO import StringIO
+from .cloud_storage import CloudStorage
 from .process_image import draw_bb, show_image, save_image
 from .process_image import show_images
 from .qd_common import calculate_image_ap
@@ -177,7 +180,8 @@ def ensure_inject_dataset(data):
 
 def ensure_inject_decorate(func):
     def func_wrapper(*args, **kwargs):
-        client = get_mongodb_client()
+        from .db import create_mongodb_client
+        client = create_mongodb_client()
         db = client['qd']
         task = db['task']
         # .func_name is ok for python2, but not for python3. .__name__ is ok
@@ -252,9 +256,6 @@ def ensure_composite_key_url(data, split):
     dataset.write_data(gen_rows(), split, 'key.url')
 
 def upload_image_to_blob(data, split):
-    from cloud_storage import CloudStorage
-    from StringIO import StringIO
-    s = CloudStorage()
     dataset = TSVDataset(data)
     if not dataset.has(split):
         logging.info('{} - {} does not exist'.format(data, split))
@@ -265,14 +266,48 @@ def upload_image_to_blob(data, split):
         ensure_composite_key_url(data, split)
         logging.info('ignore to upload images for composite dataset')
         return
+    parallel = True
+    if not parallel:
+        s = CloudStorage()
+        def gen_rows():
+            for key, _, str_im in tqdm(dataset.iter_data(split)):
+                url_key = map_image_key_to_url_key((data, split, key))
+                url = s.upload_stream(StringIO(base64.b64decode(str_im)),
+                        'images/' + url_key)
+                yield key, url
+        dataset.write_data(gen_rows(), split, 'key.url')
+    else:
+        from .qd_common import split_to_chunk
+        num_rows = dataset.num_rows(split)
+        num_chunk = num_rows // 1000
+        num_chunk = max(0, num_chunk)
+        tasks = split_to_chunk(range(num_rows), num_chunk)
+        tasks = [(data, split, t, i, len(tasks)) for i, t in enumerate(tasks)]
+        from .qd_common import parallel_map
+        parallel_map(upload_image_to_blob_by_idx, tasks)
+        # merge the result
+        def gen_rows():
+            for idx_task in range(len(tasks)):
+                for key, url in dataset.iter_data(split,
+                        'key.url.{}.{}'.format(idx_task, len(tasks))):
+                    yield key, url
+        dataset.write_data(gen_rows(), split, 'key.url')
+
+def upload_image_to_blob_by_idx(args):
+    data, split, idxes, idx_task, num_task = args
+    t = 'key.url.{}.{}'.format(idx_task, num_task)
+    dataset = TSVDataset(data)
+    if dataset.has(split, t):
+        logging.info('return since exist')
+        return
+    s = CloudStorage()
     def gen_rows():
-        for key, _, str_im in tqdm(dataset.iter_data(split)):
-            key = parse_combine(key)[-1]
-            clean_name = _map_img_key_to_name2(key)
+        for key, _, str_im in tqdm(dataset.iter_data(split, filter_idx=idxes)):
+            url_key = map_image_key_to_url_key(data, split, key)
             url = s.upload_stream(StringIO(base64.b64decode(str_im)),
-                    clean_name)
+                    'images/' + url_key)
             yield key, url
-    dataset.write_data(gen_rows(), split, 'key.url')
+    dataset.write_data(gen_rows(), split, t)
 
 @ensure_inject_decorate
 def ensure_upload_image_to_blob(data, split):
@@ -333,9 +368,6 @@ def ensure_inject_image(data, split):
     if len(all_data) > 0:
         images.insert_many(all_data)
         all_data = []
-
-def get_mongodb_client():
-    return MongoClient()
 
 @ensure_inject_decorate
 def ensure_update_pred_with_correctness(data, split,
@@ -3623,6 +3655,10 @@ def get_img_url(img_key):
     url = _get_url_from_name(clean_name)
     return url
 
+def map_image_key_to_url_key(data, split, key):
+    return hash_sha1(str((data, split, key)))
+
+@deprecated(reason='need to incoroprate the data split info')
 def _map_img_key_to_name2(key):
     assert len(key) > 0
     ext = '.jpg'
