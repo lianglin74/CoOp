@@ -6,6 +6,7 @@ import random
 from .qd_common import ensure_directory
 from .qd_common import load_list_file
 from .qd_common import generate_lineidx
+from .qd_common import copy_file
 import six
 import os
 import os.path as op
@@ -17,6 +18,19 @@ except ImportError:
 import progressbar
 from tqdm import tqdm
 
+def tsv_copy(src_tsv, dst_tsv):
+    copy_file(src_tsv, dst_tsv)
+    src_idx = op.splitext(src_tsv)[0] + '.lineidx'
+    if op.isfile(src_idx):
+        dst_idx = op.splitext(dst_tsv)[0] + '.lineidx'
+        copy_file(src_idx, dst_idx)
+
+def tsv_mv(src_file, dst_file):
+    os.rename(src_file, dst_file)
+    src_idx = op.splitext(src_file)[0] + '.lineidx'
+    if op.isfile(src_idx):
+        dst_idx = op.splitext(dst_file)[0] + '.lineidx'
+        os.rename(src_idx, dst_idx)
 
 def reorder_tsv_keys(in_tsv_file, ordered_keys, out_tsv_file):
     tsv = TSVFile(in_tsv_file)
@@ -500,12 +514,14 @@ class TSVDataset(object):
         '''
         if the data are the same, we will not do anything.
         '''
-        rows = list(rows)
         assert t is not None
         v = self.get_latest_version(split, t)
-        is_equal = True
         if self.has(split, t, v):
-            for origin_row, new_row in zip(self.iter_data(split, t, v), rows):
+            is_equal = True
+            # we first save it to a tmp tsv file
+            self.write_data(rows, split, t + '.tmp', v + 1)
+            for origin_row, new_row in zip(self.iter_data(split, t, v),
+                    self.iter_data(split, t + '.tmp', v + 1)):
                 if len(origin_row) != len(new_row):
                     is_equal = False
                     break
@@ -515,18 +531,23 @@ class TSVDataset(object):
                         break
                 if not is_equal:
                     break
+            if not is_equal:
+                logging.info('creating {} for {}'.format(v + 1, self.name))
+                if generate_info:
+                    self.write_data(generate_info, split, '{}.generate.info'.format(t), v + 1)
+                tsv_mv(self.get_data(split, t + '.tmp', v + 1),
+                        self.get_data(split, t, v + 1))
+                return v + 1
+            else:
+                logging.info('ignore to create since the label matches the latest')
         else:
             assert v == 0
             v = -1
-            is_equal = False
-        if not is_equal:
             logging.info('creating {} for {}'.format(v + 1, self.name))
             if generate_info:
                 self.write_data(generate_info, split, '{}.generate.info'.format(t), v + 1)
-            self.write_data(rows, split, t, v + 1)
+            self.write_data(rows, split, t, version=v + 1)
             return v + 1
-        else:
-            logging.info('ignore to create since the label matches the latest')
 
 def tsv_writer(values, tsv_file_name, sep='\t'):
     ensure_directory(os.path.dirname(tsv_file_name))
@@ -649,7 +670,7 @@ def is_verified_rect(rect):
 
     if 'uhrs' in rect:
         judge_result = rect['uhrs']
-        assert judge_result.get('1', 0) > judge_result.get('2', 0)
+        assert judge_result.get('1', 0) >= judge_result.get('2', 0)
         return True
 
     if 'class' not in rect or 'rect' not in rect:

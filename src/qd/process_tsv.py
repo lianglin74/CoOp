@@ -280,7 +280,7 @@ def upload_image_to_blob(data, split):
         from .qd_common import split_to_chunk
         num_rows = dataset.num_rows(split)
         num_chunk = num_rows // 1000
-        num_chunk = max(0, num_chunk)
+        num_chunk = max(1, num_chunk)
         tasks = split_to_chunk(range(num_rows), num_chunk)
         tasks = [(data, split, t, i, len(tasks)) for i, t in enumerate(tasks)]
         from .qd_common import parallel_map
@@ -3286,6 +3286,11 @@ def regularize_data_sources(data_infos):
             result.append(r)
         else:
             raise Exception('unkwown data_info = {}'.format(data_info))
+    for r in result:
+        if 'data' in r:
+            assert 'name' not in r
+            r['name'] = r['data']
+            del r['data']
     return result
 
 def parse_data_clean_splits(data_infos):

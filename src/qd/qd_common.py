@@ -28,6 +28,10 @@ import cv2
 import shutil
 import argparse
 import subprocess as sp
+from datetime import datetime
+
+def get_current_time_as_str():
+    return datetime.now().strftime('%Y_%m_%d_%H_%M_%S')
 
 def iter_swap_param(swap_params):
     num = len(swap_params)
@@ -61,6 +65,22 @@ def remove_dir(d):
 def ensure_remove_dir(d):
     if op.isdir(d):
         shutil.rmtree(d)
+
+def split_to_chunk(all_task, num_chunk=None, num_task_each_chunk=None):
+    if num_task_each_chunk is None:
+        num_task_each_chunk = (len(all_task) + num_chunk - 1) // num_chunk
+    result = []
+    i = 0
+    while True:
+        start = i * num_task_each_chunk
+        end = start + num_task_each_chunk
+        if start >= len(all_task):
+            break
+        if end > len(all_task):
+            end = len(all_task)
+        result.append(all_task[start:end])
+        i = i + 1
+    return result
 
 def hash_sha1(s):
     import hashlib
@@ -580,13 +600,13 @@ def list_to_dict_unique(l, idx):
         result[key] = list(set(result[key]))
     return result
 
-def list_to_dict(l, idx):
+def list_to_dict(l, idx, keep_one=False):
     result = OrderedDict()
     for x in l:
         if x[idx] not in result:
             result[x[idx]] = []
         y = x[:idx] + x[idx + 1:]
-        if len(y) == 1:
+        if not keep_one and len(y) == 1:
             y = y[0]
         result[x[idx]].append(y)
     return result
@@ -803,10 +823,17 @@ def setup_yaml():
 
 def init_logging():
     np.seterr(divide = "raise", over="warn", under="warn",  invalid="raise")
-    logging.basicConfig(level=logging.INFO,
-            format='%(asctime)s.%(msecs)03d %(process)d %(filename)s:%(lineno)s %(funcName)10s(): %(message)s',
-            datefmt='%m-%d %H:%M:%S',
-            )
+
+    ch = logging.StreamHandler(stream=sys.stdout)
+    ch.setLevel(logging.INFO)
+    logger_fmt = logging.Formatter('%(asctime)s.%(msecs)03d %(filename)s:%(lineno)s %(funcName)10s(): %(message)s')
+    ch.setFormatter(logger_fmt)
+
+    root = logging.getLogger()
+    root.handlers = []
+    root.addHandler(ch)
+    root.setLevel(logging.INFO)
+
     setup_yaml()
 
 def ensure_directory(path):
