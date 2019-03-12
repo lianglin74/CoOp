@@ -33,15 +33,12 @@ class BoundingBoxVerificationDB(object):
         self.client = None
         self.db_name = 'qd'
         self.collection_name = 'uhrs_bounding_box_verification'
-        self.collection = None
 
     def query_by_pipeline(self, pipeline):
-        self._ensure_client_opened()
         result = self.collection.aggregate(pipeline, allowDiskUse=True)
-        return list(result)
+        return result
 
     def request_by_insert(self, all_box_task):
-        self._ensure_client_opened()
         all_box_task = copy.deepcopy(all_box_task)
         for b in all_box_task:
             assert 'status' not in b
@@ -50,7 +47,6 @@ class BoundingBoxVerificationDB(object):
 
     def retrieve(self, max_box):
         assert max_box > 0
-        self._ensure_client_opened()
         pipeline = [
                 {'$match': {'status': self.status_requested}},
                 {'$sort': {'priority': pymongo.ASCENDING}},
@@ -63,14 +59,19 @@ class BoundingBoxVerificationDB(object):
                 self.status_retrieved)
         return objectid_to_str(result)
 
-    def update_status(self, all_id, new_status):
+    def update_status(self, all_id, new_status, allowed_original_statuses=None):
         from datetime import datetime
+        all_id = list(set(all_id))
         for i in range(len(all_id)):
             if type(all_id[i]) is str:
                 all_id[i] = ObjectId(all_id[i])
-        self.collection.update_many(filter={'_id': {'$in': all_id}},
+        query = {'_id': {'$in': all_id}}
+        if allowed_original_statuses:
+            query['status'] = {'$in': allowed_original_statuses}
+        result = self.collection.update_many(filter=query,
                 update={'$set': {'status': new_status,
                                  'last_update_time': datetime.now()}})
+        assert result.modified_count == len(all_id)
 
     def reset_status_to_requested(self, all_bb_task):
         self.update_status([b['_id'] for b in all_bb_task],
@@ -82,7 +83,6 @@ class BoundingBoxVerificationDB(object):
 
     def adjust_status(self, uhrs_results, uhrs_result_field, db_field,
             new_status):
-        self._ensure_client_opened()
         for s in uhrs_results:
             assert uhrs_result_field in s
             assert '_id' in s
@@ -99,7 +99,6 @@ class BoundingBoxVerificationDB(object):
         self.update_status(all_id, new_status)
 
     def query_submitted(self, topk=None):
-        self._ensure_client_opened()
         pipeline = [
                 {'$match': {'status': self.status_submitted}},
                 ]
@@ -110,13 +109,16 @@ class BoundingBoxVerificationDB(object):
 
     def complete(self, completed):
         self.adjust_status(completed, 'uhrs_completed_result',
-                'uhrs_completed_result', self.status_completed)
+                'uhrs_completed_result',
+                self.status_completed,
+                allowed_original_statuses=[self.status_submitted])
 
-    def _ensure_client_opened(self):
-        if self.client is None or self.collection is None:
+    @property
+    def collection(self):
+        if self.client is None:
             self.client = create_mongodb_client()
-            self.collection = self.client[self.db_name][self.collection_name]
             self.collection.create_index([('data', pymongo.ASCENDING)])
             self.collection.create_index([('status', pymongo.ASCENDING)])
             self.collection.create_index([('priority', pymongo.ASCENDING)])
-
+            self.collection.create_index([('rects.0.from', pymongo.ASCENDING)])
+        return self.client[self.db_name][self.collection_name]
