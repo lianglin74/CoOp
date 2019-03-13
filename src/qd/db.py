@@ -3,6 +3,8 @@ from pymongo import MongoClient
 import pymongo
 import copy
 from bson import ObjectId
+from datetime import datetime
+from collections import OrderedDict
 
 def create_mongodb_client():
     config = load_from_yaml_file('./aux_data/configs/mongodb_credential.yaml')
@@ -39,17 +41,26 @@ class BoundingBoxVerificationDB(object):
         return result
 
     def request_by_insert(self, all_box_task):
+        def get_bb_task_id(rect_info):
+            from .qd_common import hash_sha1
+            rect = rect_info['rects'][0]
+            return hash_sha1([rect_info['url'], rect['class'], rect['rect']])
         all_box_task = copy.deepcopy(all_box_task)
         for b in all_box_task:
             assert 'status' not in b
             b['status'] = self.status_requested
+            b['bb_task_id'] = get_bb_task_id(b)
+            b['last_update_time'] = datetime.now()
         self.collection.insert_many(all_box_task)
 
     def retrieve(self, max_box):
         assert max_box > 0
+        sort_config = OrderedDict()
+        sort_config['priority_tier'] = pymongo.ASCENDING
+        sort_config['priority'] = pymongo.ASCENDING
         pipeline = [
                 {'$match': {'status': self.status_requested}},
-                {'$sort': {'priority': pymongo.ASCENDING}},
+                {'$sort': sort_config},
                 {'$limit': max_box},
                 ]
         result = self.query_by_pipeline(pipeline)
@@ -60,7 +71,6 @@ class BoundingBoxVerificationDB(object):
         return objectid_to_str(result)
 
     def update_status(self, all_id, new_status, allowed_original_statuses=None):
-        from datetime import datetime
         all_id = list(set(all_id))
         for i in range(len(all_id)):
             if type(all_id[i]) is str:
@@ -117,7 +127,11 @@ class BoundingBoxVerificationDB(object):
     def collection(self):
         if self.client is None:
             self.client = create_mongodb_client()
+            self.collection.create_index([('data', pymongo.ASCENDING),
+                ('split', pymongo.ASCENDING),
+                ('key', pymongo.ASCENDING)])
             self.collection.create_index([('data', pymongo.ASCENDING)])
+            self.collection.create_index([('priority_tier', pymongo.ASCENDING)])
             self.collection.create_index([('status', pymongo.ASCENDING)])
             self.collection.create_index([('priority', pymongo.ASCENDING)])
             self.collection.create_index([('rects.0.from', pymongo.ASCENDING)])
