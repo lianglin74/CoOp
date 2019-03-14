@@ -18,7 +18,7 @@ def objectid_to_str(result):
     # convert the type of ObjectId() to string
     for r in result:
         r['_id'] = str(r['_id'])
-    return result
+        yield r
 
 def ensure_objectid(result):
     for r in result:
@@ -51,6 +51,8 @@ class BoundingBoxVerificationDB(object):
             b['status'] = self.status_requested
             b['bb_task_id'] = get_bb_task_id(b)
             b['last_update_time'] = datetime.now()
+            if 'rect' not in b:
+                b['rect'] = b['rects'][0]
         self.collection.insert_many(all_box_task)
 
     def retrieve(self, max_box):
@@ -93,6 +95,7 @@ class BoundingBoxVerificationDB(object):
 
     def adjust_status(self, uhrs_results, uhrs_result_field, db_field,
             new_status):
+        uhrs_results = list(uhrs_results)
         for s in uhrs_results:
             assert uhrs_result_field in s
             assert '_id' in s
@@ -130,9 +133,32 @@ class BoundingBoxVerificationDB(object):
             self.collection.create_index([('data', pymongo.ASCENDING),
                 ('split', pymongo.ASCENDING),
                 ('key', pymongo.ASCENDING)])
+            self.collection.create_index([('data', pymongo.ASCENDING),
+                ('rects.0.class', pymongo.ASCENDING),
+                ('rects.0.from', pymongo.ASCENDING),
+                ('status', pymongo.ASCENDING),
+                ])
+            self.collection.create_index([('data', pymongo.ASCENDING),
+                ('rect.class', pymongo.ASCENDING),
+                ('rect.from', pymongo.ASCENDING),
+                ('status', pymongo.ASCENDING),
+                ])
+            self.collection.create_index([('data', pymongo.ASCENDING),
+                ('rects.0.class', pymongo.ASCENDING),
+                ('rects.0.from', pymongo.ASCENDING),
+                ('status', pymongo.ASCENDING),
+                ('priority', pymongo.ASCENDING),
+                ])
+            self.collection.create_index([('data', pymongo.ASCENDING),
+                ('rect.class', pymongo.ASCENDING),
+                ('rect.from', pymongo.ASCENDING),
+                ('status', pymongo.ASCENDING),
+                ('priority', pymongo.ASCENDING),
+                ])
             self.collection.create_index([('data', pymongo.ASCENDING)])
             self.collection.create_index([('priority_tier', pymongo.ASCENDING)])
             self.collection.create_index([('status', pymongo.ASCENDING)])
             self.collection.create_index([('priority', pymongo.ASCENDING)])
             self.collection.create_index([('rects.0.from', pymongo.ASCENDING)])
+            self.collection.create_index([('rect.from', pymongo.ASCENDING)])
         return self.client[self.db_name][self.collection_name]
