@@ -94,7 +94,7 @@ class BoundingBoxVerificationDB(object):
                 'uhrs_submitted_result', self.status_submitted)
 
     def adjust_status(self, uhrs_results, uhrs_result_field, db_field,
-            new_status):
+            new_status, allowed_original_statuses=None):
         uhrs_results = list(uhrs_results)
         for s in uhrs_results:
             assert uhrs_result_field in s
@@ -109,7 +109,7 @@ class BoundingBoxVerificationDB(object):
                     update={'$set': {db_field: s[uhrs_result_field]}})
 
         # update the status
-        self.update_status(all_id, new_status)
+        self.update_status(all_id, new_status, allowed_original_statuses)
 
     def query_submitted(self, topk=None):
         pipeline = [
