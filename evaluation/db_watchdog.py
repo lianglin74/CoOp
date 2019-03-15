@@ -19,7 +19,7 @@ class VerificationConfig():
     num_hp_per_hit = 2
     max_hits_per_file = 2000
     num_judgment = 4
-    max_tasks_running = 20
+    max_tasks_running = 5
 
 def get_working_dir():
     dirpath = op.join(tempfile.gettempdir(), "uhrs")
@@ -40,7 +40,8 @@ def verify_bbox_db(cur_db, args):
         ids = t[db_uhrs_submitted_task_key]
         assert(len(ids) == 2)
         all_task_ids.add((ids[0], ids[1]))
-    logging.info("{} tasks running".format(len(all_task_ids)))
+    num_running_tasks = len(all_task_ids)
+    logging.info("{} tasks running".format(num_running_tasks))
 
     # complete task if already finished
     for ids in all_task_ids:
@@ -63,11 +64,11 @@ def verify_bbox_db(cur_db, args):
                     t[db_uhrs_completed_task_key] = id2ans[_id][0]
                     completed_tasks.append(t)
             cur_db.complete(completed_tasks)
-            all_task_ids.remove(ids)
+            num_running_tasks -= 1
             logging.info("completed {} bboxes".format(len(completed_tasks)))
 
     # retrieve tasks to submit
-    if len(all_task_ids) < args.max_tasks_running:
+    if num_running_tasks < args.max_tasks_running:
         bb_tasks = cur_db.retrieve(args.num_tasks_per_hit * args.max_hits_per_file)
         bb_tasks = list(bb_tasks)
         print len(bb_tasks)
