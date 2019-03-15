@@ -1,7 +1,8 @@
 import os.path as op
 from azure.storage.blob import BlockBlobService
 from azure.storage.common.storageclient import logger
-from qd_common import load_from_yaml_file
+from .qd_common import load_from_yaml_file
+from .qd_common import cmd_run
 import logging
 logger.propagate = False
 
@@ -26,7 +27,6 @@ def azcopy_upload(src, dest_url, dest_key):
     cmd.append(resume_file)
     if op.isdir(src):
         cmd.append('--recursive')
-    from qd.qd_common import cmd_run
     cmd_run(cmd, shell=True)
 
 class CloudStorage(object):
@@ -36,11 +36,11 @@ class CloudStorage(object):
             config = load_from_yaml_file(config_file)
         account_name = config['account_name']
         account_key = config.get('account_key')
-        sas_token = config.get('sas_token')
+        self.sas_token = config.get('sas_token')
         self.container_name = config['container_name']
 
         self.block_blob_service = BlockBlobService(account_name=account_name,
-                account_key=account_key, sas_token=sas_token)
+                account_key=account_key, sas_token=self.sas_token)
 
         self.account_name = account_name
         self.account_key = account_key
@@ -107,6 +107,21 @@ class CloudStorage(object):
             azcopy_upload(src_dir, dest_url, self.account_key)
         else:
             raise Exception
+
+    def az_upload2(self, src_dir, dest_dir):
+        assert self.sas_token
+        cmd = []
+        cmd.append(op.expanduser('~/code/azcopy/azcopy'))
+        cmd.append('cp')
+        cmd.append(src_dir)
+        url = 'https://{}.blob.core.windows.net'.format(self.account_name)
+        url = op.join(url, self.container_name, dest_dir)
+        assert self.sas_token.startswith('?')
+        url = url + self.sas_token
+        cmd.append(url)
+        if op.isdir(src_dir):
+            cmd.append('--recursive')
+        cmd_run(cmd)
 
     def download_to_path(self, blob_name, local_path):
         self.block_blob_service.get_blob_to_path(self.container_name,

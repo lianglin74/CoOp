@@ -29,6 +29,14 @@ import shutil
 import argparse
 import subprocess as sp
 from datetime import datetime
+try:
+    # py3
+    from urllib.request import urlopen
+    from urllib.request import HTTPError
+except ImportError:
+    # py2
+    from urllib2 import urlopen
+    from urllib2 import HTTPError
 
 def get_current_time_as_str():
     return datetime.now().strftime('%Y_%m_%d_%H_%M_%S')
@@ -162,15 +170,7 @@ def parallel_map(func, all_task, isDebug=False):
 
 def url_to_str(url):
     try:
-        # py3
-        from urllib.request import urlopen
-        from urllib.request import HTTPError
-    except ImportError:
-        # py2
-        from urllib2 import urlopen
-        from urllib2 import HTTPError
-    try:
-        fp = urlopen(url, timeout=10)
+        fp = urlopen(url, timeout=30)
         buf = fp.read()
         real_url = fp.geturl()
         if real_url != url and (not real_url.startswith('https') or

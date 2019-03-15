@@ -305,7 +305,7 @@ def upload_image_to_blob_by_idx(args):
         for key, _, str_im in tqdm(dataset.iter_data(split, filter_idx=idxes)):
             url_key = map_image_key_to_url_key(data, split, key)
             url = s.upload_stream(StringIO(base64.b64decode(str_im)),
-                    'images/' + url_key)
+                    'images/' + url_key + '.jpg')
             yield key, url
     dataset.write_data(gen_rows(), split, t)
 
