@@ -66,6 +66,7 @@ class BoundingBoxVerificationDB(object):
                 {'$limit': max_box},
                 ]
         result = self.query_by_pipeline(pipeline)
+        result = list(result)
         # we need to update the status to status_retrieved to avoid duplicate
         # retrieve && submit
         self.update_status([r['_id'] for r in result],

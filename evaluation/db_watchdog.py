@@ -31,30 +31,16 @@ def verify_bbox_db(cur_db, args):
     db_uhrs_completed_task_key = "uhrs_completed_result"
     db_bbox_id_key = "_id"
     db_url_key = "url"
-    db_rects_key = "rects"
+    db_rects_key = "rect"
 
     # scan existing tasks
-    submitted_tasks = cur_db.query_submitted()
+    submitted_tasks = list(cur_db.query_submitted())
     all_task_ids = set()
     for t in submitted_tasks:
         ids = t[db_uhrs_submitted_task_key]
         assert(len(ids) == 2)
         all_task_ids.add((ids[0], ids[1]))
     logging.info("{} tasks running".format(len(all_task_ids)))
-
-    # retrieve tasks to submit
-    if len(all_task_ids) < args.max_tasks_running:
-        bb_tasks = cur_db.retrieve(args.num_tasks_per_hit * args.max_hits_per_file)
-        if len(bb_tasks) > 0:
-            def gen_labels():
-                for bb_task in bb_tasks:
-                    yield bb_task[db_bbox_id_key], json.dumps(bb_task[db_rects_key]), bb_task[db_url_key]
-            task_group_id, task_id = create_new_task(gen_labels(), args)
-
-            for t in bb_tasks:
-                t[db_uhrs_submitted_task_key] = [task_group_id, task_id]
-            cur_db.submitted(bb_tasks)
-            logging.info("submitted {} bboxes".format(len(bb_tasks)))
 
     # complete task if already finished
     for ids in all_task_ids:
@@ -68,16 +54,35 @@ def verify_bbox_db(cur_db, args):
                 _id = t[db_bbox_id_key]
                 if _id in id2ans:
                     assert id2ans[_id][1] == t[db_url_key]
-                    old_bb = id2ans[_id][2]
+                    assert len(id2ans[_id][2]) == 1
+                    old_bb = id2ans[_id][2][0]
                     new_bb = t[db_rects_key]
-                    assert len(old_bb) == 1 and len(new_bb) == 1
-                    assert old_bb[0]["class"] == old_bb[0]["class"]
-                    assert all(i==j for i, j in zip(old_bb[0]["rect"], new_bb[0]["rect"]))
+                    assert old_bb["class"] == old_bb["class"]
+                    assert all(i==j for i, j in zip(old_bb["rect"], new_bb["rect"]))
 
                     t[db_uhrs_completed_task_key] = id2ans[_id][0]
                     completed_tasks.append(t)
             cur_db.complete(completed_tasks)
+            all_task_ids.remove(ids)
             logging.info("completed {} bboxes".format(len(completed_tasks)))
+
+    # retrieve tasks to submit
+    if len(all_task_ids) < args.max_tasks_running:
+        bb_tasks = cur_db.retrieve(args.num_tasks_per_hit * args.max_hits_per_file)
+        bb_tasks = list(bb_tasks)
+        print len(bb_tasks)
+        if len(bb_tasks) > 0:
+            def gen_labels():
+                for bb_task in bb_tasks:
+                    bbox = bb_task[db_rects_key]
+                    assert all([k in bbox for k in ["class", "rect"]])
+                    yield bb_task[db_bbox_id_key], json.dumps([bbox]), bb_task[db_url_key]
+            task_group_id, task_id = create_new_task(gen_labels(), args)
+
+            for t in bb_tasks:
+                t[db_uhrs_submitted_task_key] = [task_group_id, task_id]
+            cur_db.submitted(bb_tasks)
+            logging.info("submitted {} bboxes".format(len(bb_tasks)))
 
 def create_new_task(label_enumerator, args):
     # write task files
