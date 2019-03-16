@@ -16,9 +16,10 @@ def create_bbverification_db():
 
 def objectid_to_str(result):
     # convert the type of ObjectId() to string
+    result = list(result)
     for r in result:
         r['_id'] = str(r['_id'])
-        yield r
+    return result
 
 def ensure_objectid(result):
     for r in result:
@@ -38,19 +39,21 @@ class BoundingBoxVerificationDB(object):
 
     def query_by_pipeline(self, pipeline):
         result = self.collection.aggregate(pipeline, allowDiskUse=True)
-        return result
+        return list(result)
 
     def request_by_insert(self, all_box_task):
         def get_bb_task_id(rect_info):
             from .qd_common import hash_sha1
-            rect = rect_info['rects'][0]
+            rect = rect_info['rect']
             return hash_sha1([rect_info['url'], rect['class'], rect['rect']])
         all_box_task = copy.deepcopy(all_box_task)
         for b in all_box_task:
             assert 'status' not in b
+            assert 'priority_tier' in b, 'priority' in b
             b['status'] = self.status_requested
             b['bb_task_id'] = get_bb_task_id(b)
-            b['last_update_time'] = datetime.now()
+            b['last_update_time'] = {'last_{}'.format(self.status_requested):
+                    datetime.now()}
             if 'rect' not in b:
                 b['rect'] = b['rects'][0]
         self.collection.insert_many(all_box_task)
@@ -81,9 +84,10 @@ class BoundingBoxVerificationDB(object):
         query = {'_id': {'$in': all_id}}
         if allowed_original_statuses:
             query['status'] = {'$in': allowed_original_statuses}
+        time_key = 'last_update_time.last_{}'.format(new_status)
         result = self.collection.update_many(filter=query,
                 update={'$set': {'status': new_status,
-                                 'last_update_time': datetime.now()}})
+                                 time_key: datetime.now()}})
         assert result.modified_count == len(all_id)
 
     def reset_status_to_requested(self, all_bb_task):
