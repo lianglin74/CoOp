@@ -126,7 +126,8 @@ def main():
             args = [model_name, task_config["task_type"],
                     "--datasets", dataset,
                     "--config", gt_config_file,
-                    "--taskdir", uhrs_task_dir, "--honeypot", hp_file]
+                    "--taskdir", uhrs_task_dir, "--honeypot", hp_file,
+                    "--priority", repr(2000)]  # HACK: make higher priority to skip the long waiting queue
             logging.info("update ground truth with arguments: {}".format(str(args)))
             update_gt(args)
     except Exception as e:

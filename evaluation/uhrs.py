@@ -45,12 +45,13 @@ class UhrsTaskManager():
         subprocess.check_call(args)
 
     @classmethod
-    def upload_task(cls, task_group_id, filepath, num_judgment, consensus_thres=0.0):
+    def upload_task(cls, task_group_id, filepath, num_judgment, consensus_thres=0.0, priority=1000):
         ret = subprocess.check_output([cls.UHRS_EXE, "UploadSingleTask",
                                         "-taskGroupId", repr(task_group_id),
                                         "-filePath", filepath,
                                         "-numJudgment", repr(num_judgment),
-                                        "-consensusThreshold", repr(consensus_thres)])
+                                        "-consensusThreshold", repr(consensus_thres),
+                                        "-priority", repr(priority)])
 
         task_id = cls._parse_subprocess_output(ret)
         return int(task_id)
@@ -78,7 +79,7 @@ class UhrsTaskManager():
             return True
 
     def upload_tasks_from_folder(self, task_group, dirpath, prefix="",
-                                 consensus_thresh=0.0, num_judges=5):
+                                 consensus_thresh=0.0, num_judges=5, priority=1000):
         """Uploads task files in dirpath with prefix to UHRS, each hit will be
         judged by num_judges workers
         """
@@ -91,7 +92,8 @@ class UhrsTaskManager():
                 "-folderPath", dirpath,
                 "-taskIdNameFile", self._task_log,
                 "-consensusThreshold", repr(consensus_thresh),
-                "-numJudgment", repr(num_judges)]
+                "-numJudgment", repr(num_judges),
+                "-priority", repr(priority)]
         if prefix:
             args.extend(["-filePrefix", prefix])
         subprocess.check_call(args)

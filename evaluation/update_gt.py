@@ -33,6 +33,8 @@ parser.add_argument('--honeypot', default='./honeypot/voc20_easy_gt.txt',
                     help='''path to the honey pot label file, each line is a
                     json dict of a positive ground truth label, including keys:
                     objects_to_find, image_url, bboxes''')
+parser.add_argument('--priority', default=1000, type=int,
+                    help='''priority of tasks, larger number indicates higher priority''')
 
 # prediction file
 parser.add_argument('--iou_threshold', default=0.5, type=float,
@@ -88,7 +90,7 @@ def update_gt(args):
             generate_task_files(task_type, label_file, hp_file,
                                 os.path.join(task_upload_dir, source))
             uhrs_client.upload_tasks_from_folder(task_group, task_upload_dir,
-                                                prefix=source, num_judges=args.num_judges)
+                                                prefix=source, num_judges=args.num_judges, priority=args.priority)
             ensure_dir_empty(task_download_dir)
 
         round_count = 0
@@ -106,7 +108,7 @@ def update_gt(args):
             if num_rejudge > 5 and round_count < 6:
                 uhrs_client.upload_tasks_from_folder(
                     task_group, task_upload_dir, prefix=rejudge_filename,
-                    num_judges=2)
+                    num_judges=2, priority=args.priority)
             else:
                 break
 

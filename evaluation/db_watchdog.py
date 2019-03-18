@@ -52,16 +52,23 @@ def verify_bbox_db(cur_db, args):
             id2ans = analyze_completed_task(res_file)
             completed_tasks = []
             for t in submitted_tasks:
-                _id = t[db_bbox_id_key]
-                if _id in id2ans:
-                    assert id2ans[_id][1] == t[db_url_key]
-                    assert len(id2ans[_id][2]) == 1
-                    old_bb = id2ans[_id][2][0]
-                    new_bb = t[db_rects_key]
-                    assert old_bb["class"] == old_bb["class"]
-                    assert all(i==j for i, j in zip(old_bb["rect"], new_bb["rect"]))
+                cur_id = t[db_uhrs_submitted_task_key]
+                if cur_id[0] == task_group_id and cur_id[1] == task_id:
+                    _id = t[db_bbox_id_key]
+                    if _id in id2ans:
+                        assert id2ans[_id][1] == t[db_url_key]
+                        assert len(id2ans[_id][2]) == 1
+                        old_bb = id2ans[_id][2][0]
+                        new_bb = t[db_rects_key]
+                        assert old_bb["class"] == old_bb["class"]
+                        assert all(i==j for i, j in zip(old_bb["rect"], new_bb["rect"]))
+                        worker_ans = id2ans[_id][0]
+                    else:
+                        # some bb_tasks may not get any valid answers, because answers
+                        # from low-quality workers are removed
+                        worker_ans = {}
 
-                    t[db_uhrs_completed_task_key] = id2ans[_id][0]
+                    t[db_uhrs_completed_task_key] = worker_ans
                     completed_tasks.append(t)
             cur_db.complete(completed_tasks)
             num_running_tasks -= 1
@@ -118,7 +125,10 @@ def main():
     cur_db = db.create_bbverification_db()
 
     while True:
-        verify_bbox_db(cur_db, args)
+        try:
+            verify_bbox_db(cur_db, args)
+        except Exception as e:
+            logging.info(e.message)
         time.sleep(300)
 
 if __name__ == "__main__":

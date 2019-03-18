@@ -125,7 +125,7 @@ namespace CVUHRS
         }
 
         public static bool TryUploadTaskWrapped(string taskFilePath, double consensusThreshold,
-            int numJudgements, int taskGroupId, string taskName, out int taskId)
+            int numJudgements, int taskGroupId, string taskName, out int taskId, int priority = 1000)
         {
             int minConsensus = 0;
             int maxConsensus = 0;
@@ -145,7 +145,7 @@ namespace CVUHRS
                 {
                     using (Stream reader = new FileStream(UHRSServiceClientSetup.CheckFileForIllegalCharacters(taskFilePath), FileMode.Open))
                     {
-                        taskId = Streaming.SubmitPlainTask(false, true, false, false, -1, 1.0, numJudgements, null, 1000,
+                        taskId = Streaming.SubmitPlainTask(false, true, false, false, -1, 1.0, numJudgements, null, priority,
                             false, taskGroupId, taskName, true, minConsensus, maxConsensus,
                             PlainTaskUploadType.Normal, null, false, 0.0, reader);
                     }
@@ -182,6 +182,8 @@ namespace CVUHRS
             public int numJudgment = 0;
             [Argument(ArgumentType.AtMostOnce, HelpText = "Specify if want to use consensus mode (default: 0.0)")]
             public double consensusThreshold = 0.0;
+            [Argument(ArgumentType.AtMostOnce, HelpText = "Priority of the task, larger number indicates higher priority (default: 1000)")]
+            public int priority = 1000;
         }
         public static void UploadSingleTask(ArgsUploadSingleTask cmd)
         {
@@ -189,7 +191,7 @@ namespace CVUHRS
             int taskId = 0;
             taskName = Path.GetFileNameWithoutExtension(cmd.filePath);
             if (!TryUploadTaskWrapped(cmd.filePath, cmd.consensusThreshold, cmd.numJudgment, cmd.taskGroupId,
-                taskName, out taskId))
+                taskName, out taskId, cmd.priority))
             {
                 throw new Exception($"Failed to upload {cmd.taskGroupId}: {cmd.filePath}");
             }
@@ -228,6 +230,8 @@ namespace CVUHRS
             public int numJudgment = 0;
             [Argument(ArgumentType.AtMostOnce, HelpText = "Specify if want to use consensus mode (default: 0.0)")]
             public double consensusThreshold = 0.0;
+            [Argument(ArgumentType.AtMostOnce, HelpText = "Priority of the task, larger number indicates higher priority (default: 1000)")]
+            public int priority = 1000;
         }
 
         public static void UploadTasksFromFolder(ArgsUploadFromFolder cmd)
@@ -242,7 +246,7 @@ namespace CVUHRS
                 {
                     taskName = Path.GetFileNameWithoutExtension(filePath);
                     if (!TryUploadTaskWrapped(filePath, cmd.consensusThreshold, cmd.numJudgment, cmd.taskGroupId,
-                        taskName, out taskId))
+                        taskName, out taskId, cmd.priority))
                     {
                         throw new Exception($"Failed to upload {cmd.taskGroupId}: {cmd.folderPath}");
                     }
