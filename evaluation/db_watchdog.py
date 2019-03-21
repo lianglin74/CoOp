@@ -125,10 +125,7 @@ def main():
     cur_db = db.create_bbverification_db()
 
     while True:
-        try:
-            verify_bbox_db(cur_db, args)
-        except Exception as e:
-            logging.info(e.message)
+        verify_bbox_db(cur_db, args)
         time.sleep(300)
 
 if __name__ == "__main__":

@@ -16,6 +16,17 @@ from scripts.tsv_io import TSVFile, TSVDataset, tsv_writer
 OPT_POS = 1
 OPT_NEG = 2
 
+# required fields in task file
+CLASS_DISPLAY_NAME_KEY = "objects_to_find"
+URL_KEY = "image_url"
+BBOXES_KEY = "bboxes"               # json list of dict
+
+# optional fields in task file
+QUESTION_TYPE_KEY = "question_type" # default is VerifyBox
+HP_KEY = "expected_output"
+INFO_KEY = "image_info"             # used to store self-defined info, e.g., id of bbox_task
+UUID_KEY = "uuid"                   # auto-generated for each question
+
 class HoneyPotGenerator(object):
     """ Generate honey pot from ground truth or honey pot data
     """
@@ -32,16 +43,18 @@ class HoneyPotGenerator(object):
         if data_type not in ["gt", "hp"]:
             raise Exception("invalid data type: {}".format(data_type))
         self._data_type = data_type
-        self._cur_idx = -1
         self._count = len(data)
+        self._cur_idx = np.random.randint(0, self._count)
         if self._count == 0:
             raise Exception("data cannot be empty")
         self.hp_neg_prob = hp_neg_prob
+
         if not class_candidates:
             class_candidates = set()
-            for d in self._data:
-                class_candidates.add(d["objects_to_find"])
-
+        else:
+            class_candidates = set(class_candidates)
+        for d in self._data:
+            class_candidates.add(d[CLASS_DISPLAY_NAME_KEY])
         self.class_candidates = list(class_candidates)
 
     def next(self):
@@ -53,13 +66,13 @@ class HoneyPotGenerator(object):
             # convert gt label to honey pot format
             hp = copy.deepcopy(self._data[self._cur_idx])
             if self.hp_neg_prob > 0 and np.random.rand() < self.hp_neg_prob:
-                false_class = hp["objects_to_find"]
-                while false_class.lower() == hp["objects_to_find"].lower():
+                false_class = hp[CLASS_DISPLAY_NAME_KEY]
+                while false_class.lower() == hp[CLASS_DISPLAY_NAME_KEY].lower():
                     false_class = np.random.choice(self.class_candidates, size=1)[0]
-                hp["objects_to_find"] = false_class
-                hp["expected_output"] = OPT_NEG
+                hp[CLASS_DISPLAY_NAME_KEY] = false_class
+                hp[HP_KEY] = OPT_NEG
             else:
-                hp["expected_output"] = OPT_POS
+                hp[HP_KEY] = OPT_POS
             return hp
 
 
@@ -70,7 +83,8 @@ def pack_task_with_honey_pot(task_data, hp_data, hp_type, num_tasks_per_hit,
     output_content = []
     num_total_task = len(task_data)
     if num_hp_per_hit > 0:
-        hp_gen = HoneyPotGenerator(hp_data, hp_type, hp_neg_prob=hp_neg_prob)
+        class_candidates = set(t[CLASS_DISPLAY_NAME_KEY])
+        hp_gen = HoneyPotGenerator(hp_data, hp_type, hp_neg_prob=hp_neg_prob, class_candidates=class_candidates)
     else:
         hp_gen = None
 
@@ -163,9 +177,9 @@ def generate_box_honeypot(dataset_name, imgfiles, labelfiles, outfile=None, easy
                     num_easy_bboxes += 1
                     term = bbox["class"]
                     hp_data.append(
-                        {"image_info": dataset_name, "image_url": image_url,
-                            "objects_to_find": term,
-                            "bboxes": [bbox]})
+                        {INFO_KEY: dataset_name, URL_KEY: image_url,
+                            CLASS_DISPLAY_NAME_KEY: term,
+                            BBOXES_KEY: [bbox]})
 
     print("#total bboxes: {:d}\t#easy bboxes:{:d}".format(num_total_bboxes,
                                                           num_easy_bboxes))
@@ -187,13 +201,13 @@ def generate_tag_honeypot(dataset_name, split, outfile=None):
         neg_tags = all_cls - pos_tags
         neg_tags = np.random.choice(list(neg_tags), size=min(len(pos_tags), len(neg_tags)))
         for tag in pos_tags:
-            hp_data.append({"image_info": dataset_name, "image_url": image_url,
-                            "objects_to_find": tag, "expected_output": OPT_POS,
-                            "question_type": "VerifyImage"})
+            hp_data.append({INFO_KEY: dataset_name, URL_KEY: image_url,
+                            CLASS_DISPLAY_NAME_KEY: tag, HP_KEY: OPT_POS,
+                            QUESTION_TYPE_KEY: "VerifyImage"})
         for tag in neg_tags:
-            hp_data.append({"image_info": dataset_name, "image_url": image_url,
-                            "objects_to_find": tag, "expected_output": OPT_NEG,
-                            "question_type": "VerifyImage"})
+            hp_data.append({INFO_KEY: dataset_name, URL_KEY: image_url,
+                            CLASS_DISPLAY_NAME_KEY: tag, HP_KEY: OPT_NEG,
+                            QUESTION_TYPE_KEY: "VerifyImage"})
     if outfile:
         tsv_writer([[json.dumps(d)] for d in hp_data], outfile)
     return hp_data
@@ -233,7 +247,7 @@ def generate_draw_box_honeypot(dataset_name, split, outfile=None, version=0,
                     if b_area / float(im_h*im_w) <= easy_area_thres:
                         is_hard = True
             if not is_hard:
-                hp_data.append({"objects_to_find": term, "expected_output": bboxes, "image_url": image_url})
+                hp_data.append({CLASS_DISPLAY_NAME_KEY: term, HP_KEY: bboxes, URL_KEY: image_url})
     logging.info("#total candidates: {}\t #easy: {}".format(num_total_candidates, len(hp_data)))
     if outfile:
         tsv_writer([[json.dumps(d)] for d in hp_data], outfile)
@@ -286,19 +300,19 @@ def _generate_task_files_helper(task_type, label_file, hp_file, outbase, hp_type
         if box_per_img == "one":
             for term in term_bbox_map:
                 for bbox in term_bbox_map[term]:
-                    task_data.append({"uuid": str(uuid.uuid4()), "image_info": parts[0],
-                              "question_type": task_type, "image_url": image_url,
-                              "objects_to_find": term, "bboxes": [bbox]})
+                    task_data.append({UUID_KEY: str(uuid.uuid4()), INFO_KEY: parts[0],
+                              QUESTION_TYPE_KEY: task_type, URL_KEY: image_url,
+                              CLASS_DISPLAY_NAME_KEY: term, BBOXES_KEY: [bbox]})
         elif box_per_img == "class":
             for term in term_bbox_map:
-                task_data.append({"uuid": str(uuid.uuid4()), "image_info": parts[0],
-                              "question_type": task_type, "image_url": image_url,
-                              "objects_to_find": term, "bboxes": term_bbox_map[term]})
+                task_data.append({UUID_KEY: str(uuid.uuid4()), INFO_KEY: parts[0],
+                              QUESTION_TYPE_KEY: task_type, URL_KEY: image_url,
+                              CLASS_DISPLAY_NAME_KEY: term, BBOXES_KEY: term_bbox_map[term]})
         elif box_per_img == "all":
             all_terms = ' ;'.join([t for t in term_bbox_map])
-            task_data.append({"uuid": str(uuid.uuid4()), "image_info": parts[0],
-                              "question_type": task_type, "image_url": image_url,
-                              "objects_to_find": all_terms, "bboxes":bbox_list})
+            task_data.append({UUID_KEY: str(uuid.uuid4()), INFO_KEY: parts[0],
+                              QUESTION_TYPE_KEY: task_type, URL_KEY: image_url,
+                              CLASS_DISPLAY_NAME_KEY: all_terms, BBOXES_KEY:bbox_list})
         else:
             raise ValueError("Invalid box_per_img type: {}. Choose from: one, class, all".format(box_per_img))
 
