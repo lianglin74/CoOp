@@ -4,6 +4,7 @@ from __future__ import division
 import json
 import numpy as np
 import os
+import re
 import shutil
 
 import _init_paths
@@ -142,3 +143,11 @@ def calculate_bbox_area(bbox):
 
 def truncate_rect(rect, im_h, im_w):
     return [np.clip(rect[0], 0, im_w), np.clip(rect[1], 0, im_h), np.clip(rect[2], 0, im_w), np.clip(rect[3], 0, im_h)]
+
+
+def is_same_class(c1, c2):
+        def clean(s):
+            return re.sub('[^0-9a-z]+', '', s.lower())
+        c1 = clean(c1)
+        c2 = clean(c2)
+        return c1==c2 or c1 in c2 or c2 in c1

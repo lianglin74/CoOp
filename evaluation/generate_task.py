@@ -4,6 +4,7 @@ import copy
 import cv2
 import json
 import logging
+import math
 import numpy as np
 import os
 import uuid
@@ -11,7 +12,9 @@ import uuid
 import evaluation.utils
 from evaluation.utils import read_from_file, write_to_file, escape_json_obj, calculate_bbox_area
 from scripts.process_tsv import get_img_url2
-from scripts.tsv_io import TSVFile, TSVDataset, tsv_writer
+from scripts import deteval
+from qd.tsv_io import TSVFile, TSVDataset, tsv_writer
+from qd import process_tsv
 
 OPT_POS = 1
 OPT_NEG = 2
@@ -67,7 +70,7 @@ class HoneyPotGenerator(object):
             hp = copy.deepcopy(self._data[self._cur_idx])
             if self.hp_neg_prob > 0 and np.random.rand() < self.hp_neg_prob:
                 false_class = hp[CLASS_DISPLAY_NAME_KEY]
-                while false_class.lower() == hp[CLASS_DISPLAY_NAME_KEY].lower():
+                while evaluation.utils.is_same_class(false_class, hp[CLASS_DISPLAY_NAME_KEY]):
                     false_class = np.random.choice(self.class_candidates, size=1)[0]
                 hp[CLASS_DISPLAY_NAME_KEY] = false_class
                 hp[HP_KEY] = OPT_NEG
@@ -83,7 +86,7 @@ def pack_task_with_honey_pot(task_data, hp_data, hp_type, num_tasks_per_hit,
     output_content = []
     num_total_task = len(task_data)
     if num_hp_per_hit > 0:
-        class_candidates = set(t[CLASS_DISPLAY_NAME_KEY])
+        class_candidates = set(t[CLASS_DISPLAY_NAME_KEY] for t in task_data)
         hp_gen = HoneyPotGenerator(hp_data, hp_type, hp_neg_prob=hp_neg_prob, class_candidates=class_candidates)
     else:
         hp_gen = None
@@ -190,6 +193,81 @@ def generate_box_honeypot(dataset_name, imgfiles, labelfiles, outfile=None, easy
                 fout.write('\n')
     return hp_data
 
+def generate_verify_box_hp_wrong_loc(gt_dataset_name, split, version,
+        outfile=None, neg_iou_thres=0.1, replace_label=None):
+    all_hp_data = []
+    process_tsv.populate_dataset_details(gt_dataset_name, check_image_details=True)
+    dataset = TSVDataset(gt_dataset_name)
+
+    def get_url(key):
+        parts = dataset.seek_by_key(key, split, t="key.url")
+        assert(parts[0] == key)
+        return parts[1]
+    def get_hw(key):
+        parts = dataset.seek_by_key(key, split, t="hw")
+        assert(parts[0] == key)
+        h, w = parts[1].split(' ')
+        return int(h), int(w)
+
+    for key, coded_rects in dataset.iter_data(split, 'label', version=version):
+        gt_rects = json.loads(coded_rects)
+        all_labels = [b["class"] for b in gt_rects]
+        im_h, im_w = get_hw(key)
+        url = get_url(key)
+        num_correct = len(gt_rects)
+        num_wrong = int(np.random.uniform(0.2, 5) * num_correct) + 1
+        neg_rects = []
+        while len(neg_rects) < num_wrong:
+            cur_box = gen_random_box(im_h, im_w)
+            is_overlap_gt = False
+            for gt_box in gt_rects:
+                if deteval.IoU(gt_box["rect"], cur_box) > neg_iou_thres:
+                    is_overlap_gt = True
+                    break
+            if not is_overlap_gt:
+                neg_rects.append({"class": np.random.choice(all_labels),
+                                  "rect": cur_box, "from": "hp_loc_gen"})
+
+        cur_hp_list = [bbox_to_hp(b, url, info=gt_dataset_name,
+                        is_neg=False, display_name=replace_label)
+                        for b in gt_rects]
+        cur_hp_list.extend([bbox_to_hp(b, url, info=gt_dataset_name,
+                        is_neg=True, display_name=replace_label)
+                        for b in neg_rects])
+        np.random.shuffle(cur_hp_list)
+        all_hp_data.extend(cur_hp_list)
+
+    if outfile:
+        tsv_writer([[json.dumps(d)] for d in all_hp_data], outfile)
+    return all_hp_data
+
+
+def gen_random_box(im_h, im_w, area_thres=0.08, min_pixel=5):
+    if im_h <= min_pixel or im_w <= min_pixel or im_h*im_w*area_thres <= min_pixel*min_pixel:
+        return None
+    while True:
+        x = np.random.randint(0, im_w - min_pixel)
+        y = np.random.randint(0, im_h - min_pixel)
+        max_h = im_h - y
+        min_w = max(min_pixel, math.ceil(area_thres * im_w * im_h / max_h))
+        max_w = im_w - x
+        if min_w >= max_w:
+            continue
+        w = np.random.randint(min_w, max_w + 1)
+        min_h = max(min_pixel, math.ceil(area_thres * im_w * im_h / w))
+        h = np.random.randint(min_h, max_h + 1)
+        return [x, y, x+w, y+h]
+
+def bbox_to_hp(bbox, image_url, info=None, is_neg=False, display_name=None):
+    assert('class' in bbox and "rect" in bbox)
+    if not display_name:
+        display_name = bbox["class"]
+    hp = {URL_KEY: image_url, CLASS_DISPLAY_NAME_KEY: display_name, BBOXES_KEY: [bbox]}
+    if info:
+        hp[INFO_KEY] = info
+    exp_ans = OPT_NEG if is_neg else OPT_POS
+    hp[HP_KEY] = exp_ans
+    return hp
 
 def generate_tag_honeypot(dataset_name, split, outfile=None):
     dataset = TSVDataset(dataset_name)
