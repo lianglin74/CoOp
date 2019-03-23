@@ -12,20 +12,19 @@ from qd.qd_common import ensure_directory
 from qd.tsv_io import tsv_reader, tsv_writer, TSVDataset
 
 
-def get_wrong_pred(pred_file, gt_file, labelmap=None, outfile=None, min_conf=0.5, iou=0.5):
+def get_wrong_pred(pred_file, gt_file, labelmap=None, outfile=None, min_conf=0.5, iou=0.5, gt_conf=0.0):
     if labelmap:
         target_classes = set(cols[0].lower() for cols in read_from_file(labelmap))
     else:
         target_classes = None
-    pred = DetectionFile(pred_file, min_conf=min_conf)
-    gt = DetectionFile(gt_file)
+    pred = DetectionFile(pred_file, conf_threshold=min_conf, labelmap=target_classes)
+    gt = DetectionFile(gt_file, conf_threshold=gt_conf, labelmap=target_classes)
+
     all_wrong_pred = []  # imgkey, pred_bboxes, gt_bboxes
     num_gt, num_pred, num_false_pos, num_missing = 0, 0, 0, 0
     for imgkey in pred:
-        pred_bboxes = _thresholding_detection(pred[imgkey], thres_dict=None, display_dict=None, obj_threshold=0,
-                            conf_threshold=min_conf, blacklist=None, labelmap=target_classes)
-        gt_bboxes = _thresholding_detection(gt[imgkey], thres_dict=None, display_dict=None, obj_threshold=0,
-                            conf_threshold=0, blacklist=None, labelmap=target_classes)
+        pred_bboxes = pred[imgkey]
+        gt_bboxes = gt[imgkey]
         visited = set()
         false_pos = []
         missing = []

@@ -19,6 +19,7 @@ from scripts.yolotrain import yolo_predict
 from scripts.pytablemd import write_tablemd
 
 trained_dataset = "brand1048"
+trained_dataset_version = 2
 new_dataset = "logo40"
 pair_dataset = "logo40_pair"
 data_split = "test"
@@ -101,15 +102,16 @@ def evaluate_detector(det_expid):
 
     eval_res = []
     file_dict = {}
+
     # pretrained
     pred_file, _ = yolo_predict(full_expid=det_expid, test_data=trained_dataset, test_split=data_split)
     fname = "{}.{}.pretrained.region.eval".format(trained_dataset, data_split)
     eval_file = evaluate_detection(trained_dataset, data_split, pred_file,
-            os.path.join(outdir, fname), region_only=True, version=2)
+            os.path.join(outdir, fname), region_only=True, version=trained_dataset_version)
     eval_res.extend(parse_eval_file(eval_file))
     file_dict[fname] = eval_file
     eval_file = evaluate_detection(trained_dataset, data_split, pred_file,
-            os.path.join(outdir, "{}.{}.pretrained.det.eval".format(trained_dataset, data_split)), version=2)
+            os.path.join(outdir, "{}.{}.pretrained.det.eval".format(trained_dataset, data_split)), version=trained_dataset_version)
     eval_res.extend(parse_eval_file(eval_file))
 
     # logo/non-logo
@@ -124,6 +126,12 @@ def evaluate_detector(det_expid):
     draw_pr_curve(file_dict, [0.3, 0.5], os.path.join(outdir, "pr_curve.png"))
     return eval_res
 
+def _eval_helper(pred_file, dataset, split, version, is_region_only, outdir):
+    eval_method = "region" if is_region_only else "det"
+    fname = "{}.{}.v{}.{}.eval".format(dataset, split, version, eval_method)
+    eval_file = evaluate_detection(dataset, split, pred_file,
+            os.path.join(outdir, fname), region_only=is_region_only, version=version)
+    return eval_file
 
 def evaluate_detection(dataset_name, split, pred_file, outfile, region_only=False, version=-1):
     """ Calculates mAP for detection results (label+bbox or bbox only)
@@ -163,7 +171,8 @@ def draw_pr_curve(eval_dict, iou_list, outfile):
     fig.savefig(outfile)
 
 
-def calc_map_vs_speed(dataset_name, split, pred_file, outbase):
+def calc_map_vs_speed(dataset_name, split, pred_file, outbase,
+            version=0, iou_thres=[0.5]):
     """
     pred_file: TSV file of image_key, list of bboxes. Each bbox must contain: class, rect,
             obj (proposed by Stage-1), conf (classification_conf * obj)
@@ -173,7 +182,6 @@ def calc_map_vs_speed(dataset_name, split, pred_file, outbase):
     if not worth_create(pred_file, res_file) and not worth_create(pred_file, figure_file):
         return
 
-    iou_thres=[0.5]
     multiscale=False
     num_images = 0
     num_gt = 0
@@ -182,13 +190,13 @@ def calc_map_vs_speed(dataset_name, split, pred_file, outbase):
     # load ground truth
     dataset = TSVDataset(dataset_name)
     # region + class
-    truth_iter = dataset.iter_data(split, 'label', version=0)
+    truth_iter = dataset.iter_data(split, 'label', version=version)
     truths_dict = deteval.load_truths_iter(truth_iter)
     if deteval.has_negative_labels(truths_dict):
         assert label_to_keys is None
         label_to_keys = deteval.remove_negative_labels(truths_dict)
     # merge all classes, keep region only
-    truth_iter = dataset.iter_data(split, 'label', version=0)
+    truth_iter = dataset.iter_data(split, 'label', version=version)
     region_truths_dict = deteval.load_truths_iter(truth_iter, region_only=True)
 
     for label in region_truths_dict:
@@ -240,16 +248,42 @@ def calc_map_vs_speed(dataset_name, split, pred_file, outbase):
 
     fig, ax = plt.subplots()
     for iou in iou_thres:
-        x = [float(p)/num_images for p in all_stats[iou]["num_proposal"]]
+        # x = [float(p)/num_images for p in all_stats[iou]["num_proposal"]]
+        x = all_stats[iou]["region_threshold"]
         ax.plot(x, all_stats[iou]["region_precision"], label="region precision@{}".format(iou))
         ax.plot(x, all_stats[iou]["region_recall"], label="region recall@{}".format(iou))
         ax.plot(x, all_stats[iou]["map"], label="TwoStage mAP@{}".format(iou))
 
     ax.legend(loc=0, fontsize="small")
-    plt.xlabel("#region proposal per image")
+    # plt.xlabel("#region proposal per image")
+    plt.xlabel("#region obj threshold")
     plt.title("{} ({})  #img:{}  #gt:{}".format(dataset_name, split, num_images, num_gt))
     ax.grid()
     fig.savefig(figure_file)
+
+def tune_threshold(eval_file, iou, target="recall", target_num=0.75):
+    eval_res = json.loads(qd_common.read_to_buffer(eval_file))
+    all_recalls = eval_res["overall"][str(iou)]["recall"]
+    all_precisions = eval_res["overall"][str(iou)]["precision"]
+    all_thresholds = eval_res["overall"][str(iou)]["thresholds"]
+    assert len(all_recalls) == len(all_precisions) and len(all_recalls) == len(all_thresholds)
+
+    num_total = len(all_recalls)
+    target_idx = None
+    if target == "recall":
+        for i in range(num_total):
+            if all_recalls[i] < target_num:
+                target_idx = max(i-1, 0)
+                break
+    elif target == "precision":
+        for i in range(num_total):
+            if all_precisions[i] > target_num:
+                target_idx = max(i-1, 0)
+                break
+    if target_idx is None:
+        target_idx = num_total - 1
+    print(target_idx)
+    print(all_recalls[target_idx], all_precisions[target_idx], all_thresholds[target_idx])
 
 
 if __name__ == "__main__":

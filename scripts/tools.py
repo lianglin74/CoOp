@@ -44,16 +44,16 @@ def adjust_hier_tree_by_action(in_yaml, out_yaml):
 
 def extract_remove_replace_labels(main_tree, target_tree):
     trees = [main_tree, target_tree]
-    
+
     all_tax = [Taxonomy(load_from_yaml_file(t)) for t in trees]
     all_lower_to_name = [{n.name.lower(): n.name
-        for n in t.root.iter_search_nodes() if n != t.root} 
+        for n in t.root.iter_search_nodes() if n != t.root}
         for t in all_tax]
 
     main_lowers = set(all_lower_to_name[0].keys())
     target_lower = set(all_lower_to_name[1].keys())
     common_lower = main_lowers.intersection(target_lower)
-    
+
     main_tax = all_tax[0]
     main_lower_to_name = all_lower_to_name[0]
     remove_label_lower_to_reason = {}
@@ -73,7 +73,7 @@ def extract_remove_replace_labels(main_tree, target_tree):
 
 def patch_prediction_result_by_expid(main_full_expid, patch_full_expid, data):
     '''
-    e.g. 
+    e.g.
     main_full_expid = 'Tax1300V14.4_0.0_0.0_darknet19_448_C_Init.best_model6933_maxIter.10eEffectBatchSize128LR7580_bb_only'
     patch_full_expid = 'TaxInsideV2_1_darknet19_448_C_Init.best_model9748_maxIter.100eEffectBatchSize128_FixParam.dark6a.leaky_bb_only'
     data = 'SeeingAIFurnitureTest'
@@ -91,27 +91,27 @@ def patch_prediction_result_by_expid(main_full_expid, patch_full_expid, data):
     patch_prediction_file = c._predict_file(m)
     patch_tree_file = 'data/{}/root.yaml'.format(c._data)
 
-    main_remove_labels = extract_remove_replace_labels(main_tree_file, 
+    main_remove_labels = extract_remove_replace_labels(main_tree_file,
             patch_tree_file)
     logging.info(', '.join(main_remove_labels))
-    
+
     from process_tsv import hash_sha1
     output_prediction_file = '{}.{}.predict.tsv'.format(main_prediction_file,
             hash_sha1(patch_full_expid)[-5:])
 
     logging.info('output file: {}'.format(output_prediction_file))
-    
+
     patch_prediction_result(main_prediction_file, main_tree_file,
             main_remove_labels,
             patch_prediction_file, patch_tree_file, output_prediction_file)
 
 def patch_prediction_result(main_prediction_file, main_tree_file,
         main_remove_labels,
-        patch_prediction_file, 
-        patch_tree_file, 
+        patch_prediction_file,
+        patch_tree_file,
         output_prediction_file):
     main_tax = Taxonomy(load_from_yaml_file(main_tree_file))
-    
+
     # we need to add all its children
     all_remove_labels = []
     for target_label in main_remove_labels:
@@ -124,7 +124,7 @@ def patch_prediction_result(main_prediction_file, main_tree_file,
 
     from process_tsv import load_labels
     key_to_patch_rects, _ = load_labels(patch_prediction_file)
-    
+
     def gen_rows():
         for key, json_rects in tsv_reader(main_prediction_file):
             main_rects = json.loads(json_rects)
@@ -159,7 +159,7 @@ def visualize_fp_fn_result(key_fp_fn_pred_gt_result, data, out_folder):
 
         total = total + len(false_pos)
 
-        from process_image import draw_bb, save_image
+        from qd.process_image import draw_bb, save_image
         draw_bb(im_false_pos, [r['rect'] for r in false_pos], [r['class'] for r in
             false_pos])
 
@@ -182,7 +182,7 @@ def visualize_fp_fn_result(key_fp_fn_pred_gt_result, data, out_folder):
             data, key + '.jpg' if not key.endswith('.jpg') else key))
     logging.info(total)
 
-        
+
 def resize_dataset(data, short=480, out_data=None):
     dataset = TSVDataset(data)
     if out_data is None:
@@ -257,9 +257,9 @@ def convert_full_gpu_yolo_to_non_full_gpu_yolo(full_expid):
 def extract_full_taxonomy_to_vso_format(full_taxonomy_yaml, hier_tax_yaml,
         property_yaml):
     tax = Taxonomy(load_from_yaml_file(full_taxonomy_yaml))
-    write_to_yaml_file(tax.dump(feature_name='name', for_train=True), 
+    write_to_yaml_file(tax.dump(feature_name='name', for_train=True),
             hier_tax_yaml)
-    
+
     ps = []
     for n in tax.root.traverse('preorder'):
         if n == tax.root:
@@ -279,7 +279,7 @@ def create_taxonomy_based_on_vso(hier_tax_yaml, property_yaml,
     tax = Taxonomy(load_from_yaml_file(hier_tax_yaml))
     property_tax = Taxonomy(load_from_yaml_file(property_yaml))
     from process_tsv import attach_properties
-    attach_properties([n for n in property_tax.root.iter_search_nodes() 
+    attach_properties([n for n in property_tax.root.iter_search_nodes()
                             if n != property_tax.root], tax.root)
     from qd_common import ensure_directory
     ensure_directory(op.dirname(full_taxonomy_yaml))
@@ -368,16 +368,16 @@ def evaluate_tax_fullexpid(full_expid, **kwargs):
         out_with_bb = out_golden_data + '_with_bb'
         populate_dataset_details(out_with_bb)
         all_test_data.append({'test_data': out_with_bb, 'test_split': 'train'})
-    
+
     all_eval_file = []
     for test_data_info in all_test_data:
         curr_param = copy.deepcopy(kwargs)
         for k in test_data_info:
             curr_param[k] = test_data_info[k]
-        eval_file = yolo_predict(full_expid=full_expid, 
+        eval_file = yolo_predict(full_expid=full_expid,
                 **curr_param)
         all_eval_file.append(eval_file)
-    
+
     report_table = {'mAP': {}, 'person': {}}
     for eval_file, test_data_info in zip(all_eval_file, all_test_data):
         test_data = test_data_info['test_data']
@@ -390,7 +390,7 @@ def evaluate_tax_fullexpid(full_expid, **kwargs):
         else:
             report_table['mAP'][test_data] = -1
             report_table['person'][test_data] = -1
-    
+
     html_output = op.join('output', full_expid, 'snapshot', 'maps', 'index.html')
     print_as_html(report_table, html_output)
 

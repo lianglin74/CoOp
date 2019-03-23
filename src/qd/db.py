@@ -32,10 +32,10 @@ class BoundingBoxVerificationDB(object):
     status_submitted = 'submitted'
     status_completed = 'completed'
     status_merged = 'merged'
-    def __init__(self):
+    def __init__(self, db_name='qd', collection_name='uhrs_bounding_box_verification'):
         self.client = None
-        self.db_name = 'qd'
-        self.collection_name = 'uhrs_bounding_box_verification'
+        self.db_name = db_name
+        self.collection_name = collection_name
 
     def query_by_pipeline(self, pipeline):
         result = self.collection.aggregate(pipeline, allowDiskUse=True)
@@ -51,11 +51,11 @@ class BoundingBoxVerificationDB(object):
             assert 'status' not in b
             assert 'priority_tier' in b, 'priority' in b
             b['status'] = self.status_requested
-            b['bb_task_id'] = get_bb_task_id(b)
             b['last_update_time'] = {'last_{}'.format(self.status_requested):
                     datetime.now()}
             if 'rect' not in b:
                 b['rect'] = b['rects'][0]
+            b['bb_task_id'] = get_bb_task_id(b)
         self.collection.insert_many(all_box_task)
 
     def retrieve(self, max_box):

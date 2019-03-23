@@ -7,14 +7,16 @@ from scripts.tsv_io import TSVFile, tsv_reader
 from scripts.qd_common import img_from_base64, generate_lineidx, load_from_yaml_file
 from scripts.qd_common import FileProgressingbar
 
-import multiprocessing as mp
-import pathos.multiprocessing
-import numpy as np
-import yaml
 import base64
 from collections import OrderedDict, defaultdict
 import json
+import math
+import multiprocessing as mp
+import numpy as np
+import pathos.multiprocessing
 import time
+import yaml
+
 
 class TSVDataset(Dataset):
     """ TSV dataset for ImageNet 1K training
@@ -442,12 +444,12 @@ def gen_index(imgfile, labelfile, label_to_idx, for_test,
 
 def int_rect(rect, enlarge_factor=1.0):
     left, top, right, bot = rect
-    w = (right - left) * enlarge_factor / 2.0
-    h = (bot - top) * enlarge_factor / 2.0
-    cx = (left+right)/2.0
-    cy = (top+bot)/2.0
-    left = cx - w
-    right = cx + w
-    top = cy - h
-    bot = cy + h
-    return int(np.floor(left)), int(np.floor(top)), int(np.ceil(right)), int(np.ceil(bot))
+    rw = right - left
+    rh = bot - top
+
+    new_x = int(left + (1.0-enlarge_factor) * rw / 2.0)
+    new_y = int(top + (1.0 - enlarge_factor) * rh / 2.0)
+    new_w = int(math.ceil(enlarge_factor * rw))
+    new_h = int(math.ceil(enlarge_factor * rh))
+
+    return new_x, new_y, new_x + new_w, new_y + new_h

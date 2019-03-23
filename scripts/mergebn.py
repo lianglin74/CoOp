@@ -1,5 +1,6 @@
 import numpy as np
 import google.protobuf as pb
+from google.protobuf import text_format
 from argparse import ArgumentParser
 import caffe
 
@@ -7,8 +8,8 @@ def process_prototxt(proto_old, proto_new):
     #load model and weights
     with open(proto_old) as f:
         model = caffe.proto.caffe_pb2.NetParameter()
-        pb.text_format.Parse(f.read(), model)
-    
+        text_format.Parse(f.read(), model)
+
     # Get the BN layers to be absorbed
     to_be_absorbed = []
     for i, layer in enumerate(model.layer):
@@ -48,9 +49,9 @@ def process_prototxt(proto_old, proto_new):
     del(output_model.layer[:])
     output_model.layer.extend(output_model_layers)
     with open(proto_new, 'w') as f:
-        f.write(pb.text_format.MessageToString(output_model))
-    return model, to_be_absorbed    
-    
+        f.write(text_format.MessageToString(output_model))
+    return model, to_be_absorbed
+
 def process_weights(weights_old, weights_new, to_be_absorbed, proto_old,proto_new, model):
     # Absorb the BN parameters
     weights = caffe.Net(proto_old, weights_old , caffe.TEST)
@@ -58,7 +59,7 @@ def process_weights(weights_old, weights_new, to_be_absorbed, proto_old,proto_ne
     output_weights = caffe.Net(proto_new, caffe.TEST)
     bias_dict = dict();
     for i, layer in enumerate(model.layer):
-        if layer.type!='BatchNorm' or layer.name not in to_be_absorbed: 
+        if layer.type!='BatchNorm' or layer.name not in to_be_absorbed:
             continue
         mean, var, aggcnt = [p.data.ravel()  for p in weights.params[layer.name]]
         scale_factor = 1.0/aggcnt[0] if aggcnt[0]>0 else 0;
