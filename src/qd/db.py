@@ -32,6 +32,7 @@ class BoundingBoxVerificationDB(object):
     status_submitted = 'submitted'
     status_completed = 'completed'
     status_merged = 'merged'
+    urgent_priority_tier = -10000
     def __init__(self, db_name='qd', collection_name='uhrs_bounding_box_verification'):
         self.client = None
         self.db_name = db_name
@@ -58,18 +59,20 @@ class BoundingBoxVerificationDB(object):
             b['bb_task_id'] = get_bb_task_id(b)
         self.collection.insert_many(all_box_task)
 
-    def retrieve(self, max_box):
+    def retrieve(self, max_box, urgent_task=False):
         assert max_box > 0
         sort_config = OrderedDict()
         sort_config['priority_tier'] = pymongo.ASCENDING
         sort_config['priority'] = pymongo.ASCENDING
+        match_criteria = {'status': self.status_requested}
+        if urgent_task:
+            match_criteria['priority_tier'] = self.urgent_priority_tier
         pipeline = [
-                {'$match': {'status': self.status_requested}},
+                {'$match': match_criteria},
                 {'$sort': sort_config},
                 {'$limit': max_box},
                 ]
         result = self.query_by_pipeline(pipeline)
-        result = list(result)
         # we need to update the status to status_retrieved to avoid duplicate
         # retrieve && submit
         self.update_status([r['_id'] for r in result],
