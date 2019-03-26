@@ -14,16 +14,16 @@ import time
 
 import _init_paths
 from evaluation import eval_utils
-from scripts import qd_common, tsv_io
+from qd import qd_common, tsv_io
 
-def call_api(gt_config_file):
+def call_api(gt_config_file, det_type):
     """
     Gets Object Detection results from competitor's cloud vision service
     """
     gt_cfg = eval_utils.GroundTruthConfig(gt_config_file)
     rootpath = os.path.split(gt_config_file)[0]
     def get_det_path(dataset_name, api_name):
-        return os.path.join(rootpath, "{}.{}.det{}.tsv"
+        return os.path.join(rootpath, "{}.{}.{}.tsv"
                 .format(dataset_name, api_name, datetime.datetime.today().strftime('%Y-%m-%d')))
 
     for dataset_name in gt_cfg.datasets():
@@ -38,12 +38,12 @@ def call_api(gt_config_file):
             if api == "aws":
                 response_file = det_file.rsplit('.', 1)[0] + ".response.tsv"
                 tag_file = det_file.rsplit('.', 1)[0] + ".tag.tsv"
-                call_aws(imgfile, det_file, response_file, tag_file)
+                call_aws(imgfile, response_file, det_file, tag_file)
             elif api == "gcloud":
-                call_gcloud(imgfile, det_file)
+                call_gcloud(imgfile, det_file, detection=det_type)
 
 
-def call_aws(imgfile, det_file, response_file, tag_file, key_col=0, img_col=2):
+def call_aws(imgfile, response_file, det_file, tag_file, key_col=0, img_col=2):
     """
     Calls AWS Rekognition API to get object detection and tagging results
     https://docs.aws.amazon.com/rekognition/latest/dg/labels-detect-labels-image.html
@@ -52,6 +52,9 @@ def call_aws(imgfile, det_file, response_file, tag_file, key_col=0, img_col=2):
     response_file: tsv file of imgkey, original response from aws
     post_process_file: tsv file of imgkey, list of bboxes
     """
+    if not qd_common.worth_create(imgfile, response_file):
+        return
+
     import boto3
     client=boto3.client('rekognition')
     all_det = []
@@ -116,8 +119,12 @@ def call_gcloud(imgfile, det_file, key_col=0, img_col=2, detection="object"):
     Calls Google Could to get object detection results.
     https://cloud.google.com/vision/docs/detecting-objects
 
-    Remember to: set GOOGLE_APPLICATION_CREDENTIALS=[PATH to auth file]
+    Remember to: export GOOGLE_APPLICATION_CREDENTIALS=[PATH to auth file],
+    or on Windows, set GOOGLE_APPLICATION_CREDENTIALS=[PATH to auth file]
     """
+    if not qd_common.worth_create(imgfile, det_file):
+        return
+
     client = vision.ImageAnnotatorClient()
     all_det = []
     time_elapsed = 0
@@ -136,6 +143,9 @@ def call_gcloud(imgfile, det_file, key_col=0, img_col=2, detection="object"):
             elif detection == "logo":
                 resp = client.logo_detection(image=img).logo_annotations
                 res = post_process_gcloud_logo(resp)
+            elif detection == "tag":
+                resp = client.label_detection(image=img).label_annotations
+                res = post_process_gcloud_tag(resp)
             else:
                 raise ValueError("Invalid detection type: {}".format(detection))
             time_elapsed += time.time() - tic
@@ -178,4 +188,11 @@ def post_process_gcloud_logo(response, prefix="logo of "):
             c = prefix + c
         all_res.append({"class": c, "conf": obj.score,
                         "rect": [left, top, right, bot]})
+    return all_res
+
+
+def post_process_gcloud_tag(response):
+    all_res = []
+    for obj in response:
+        all_res.append({"mid": obj.mid, "class": obj.description, "score": obj.score})
     return all_res

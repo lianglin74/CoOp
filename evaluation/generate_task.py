@@ -2,11 +2,13 @@ import base64
 import collections
 import copy
 import cv2
+from deprecated import deprecated
 import json
 import logging
 import math
 import numpy as np
 import os
+from tqdm import tqdm
 import uuid
 
 import evaluation.utils
@@ -147,6 +149,7 @@ def generate_task_files(task_type, label_file, hp_file, outbase,
                                 num_hp_per_hit=num_hp_per_hit, hp_neg_prob=0.5,
                                 box_per_img=box_per_img, num_hits_per_file=num_hits_per_file)
 
+@deprecated(reason="no longer generate honey pot on the fly to avoid class collision, e.g., cat vs animal")
 def generate_box_honeypot(dataset_name, imgfiles, labelfiles, outfile=None, easy_area_thres=0.2):
     """ Load ground truth data from specified dataset, split, version.
         The bbox is considered easy for human to verify if:
@@ -193,8 +196,8 @@ def generate_box_honeypot(dataset_name, imgfiles, labelfiles, outfile=None, easy
                 fout.write('\n')
     return hp_data
 
-def generate_verify_box_hp_wrong_loc(gt_dataset_name, split, version,
-        outfile=None, neg_iou_thres=0.1, replace_label=None):
+def generate_verify_box_hp(gt_dataset_name, split, version, outfile=None,
+        min_bbox_area_thres=0.08, neg_iou_thres=0.2, replace_label=None):
     all_hp_data = []
     process_tsv.populate_dataset_details(gt_dataset_name, check_image_details=True)
     dataset = TSVDataset(gt_dataset_name)
@@ -209,24 +212,23 @@ def generate_verify_box_hp_wrong_loc(gt_dataset_name, split, version,
         h, w = parts[1].split(' ')
         return int(h), int(w)
 
-    for key, coded_rects in dataset.iter_data(split, 'label', version=version):
+    all_labels = [l[0] for l in dataset.iter_data(split, 'labelmap', version=version)]
+
+    for key, coded_rects in tqdm(dataset.iter_data(split, 'label', version=version)):
         gt_rects = json.loads(coded_rects)
-        all_labels = [b["class"] for b in gt_rects]
+        if len(gt_rects) == 0:
+            continue
+        cur_all_labels = [b["class"] for b in gt_rects]
         im_h, im_w = get_hw(key)
         url = get_url(key)
         num_correct = len(gt_rects)
-        num_wrong = int(np.random.uniform(0.2, 5) * num_correct) + 1
+        num_wrong_loc = int(np.random.uniform(0.2, 2) * num_correct) + 1
+        num_wrong_label = int(np.random.uniform(0.5, 5) * num_correct) + 1
         neg_rects = []
-        while len(neg_rects) < num_wrong:
-            cur_box = gen_random_box(im_h, im_w)
-            is_overlap_gt = False
-            for gt_box in gt_rects:
-                if deteval.IoU(gt_box["rect"], cur_box) > neg_iou_thres:
-                    is_overlap_gt = True
-                    break
-            if not is_overlap_gt:
-                neg_rects.append({"class": np.random.choice(all_labels),
-                                  "rect": cur_box, "from": "hp_loc_gen"})
+        neg_rects.extend(gen_bbox_wrong_label(num_wrong_label, gt_rects, all_labels))
+        neg_rects.extend(gen_bbox_wrong_loc(num_wrong_loc, gt_rects, im_h, im_w,
+                    neg_iou_thres=neg_iou_thres, min_bbox_area_thres=min_bbox_area_thres,
+                    all_labels=cur_all_labels))
 
         cur_hp_list = [bbox_to_hp(b, url, info=gt_dataset_name,
                         is_neg=False, display_name=replace_label)
@@ -241,6 +243,35 @@ def generate_verify_box_hp_wrong_loc(gt_dataset_name, split, version,
         tsv_writer([[json.dumps(d)] for d in all_hp_data], outfile)
     return all_hp_data
 
+def gen_bbox_wrong_label(num_target, gt_rects, all_labels):
+    all_res = []
+    num_gt = len(gt_rects)
+    for i in range(num_target):
+        cur_bbox = copy.deepcopy(gt_rects[i % num_gt])
+        true_class = cur_bbox["class"]
+        false_class = true_class
+        while evaluation.utils.is_same_class(false_class, true_class):
+            false_class = np.random.choice(all_labels, size=1)[0]
+        cur_bbox["class"] = false_class
+        cur_bbox["from"] = "hp_wrong_label"
+        all_res.append(cur_bbox)
+    return all_res
+
+def gen_bbox_wrong_loc(num_target, gt_rects, im_h, im_w,
+        neg_iou_thres, min_bbox_area_thres, all_labels):
+    all_res = []
+    all_labels_set = set(all_labels)
+    while len(all_res) < num_target:
+        cur_box = gen_random_box(im_h, im_w, area_thres=min_bbox_area_thres)
+        overlap_labels = set()
+        for gt_box in gt_rects:
+            if deteval.IoU(gt_box["rect"], cur_box) > neg_iou_thres:
+                overlap_labels.add(gt_box["class"])
+        non_overlap_labels = list(all_labels_set - overlap_labels)
+        if len(non_overlap_labels) > 0:
+            all_res.append({"class": np.random.choice(non_overlap_labels),
+                    "rect": cur_box, "from": "hp_wrong_loc"})
+    return all_res
 
 def gen_random_box(im_h, im_w, area_thres=0.08, min_pixel=5):
     if im_h <= min_pixel or im_w <= min_pixel or im_h*im_w*area_thres <= min_pixel*min_pixel:
