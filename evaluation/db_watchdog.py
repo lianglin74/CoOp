@@ -11,28 +11,46 @@ import _init_paths
 from evaluation import generate_task, analyze_task
 from evaluation.uhrs import UhrsTaskManager
 
+# db constants
+db_uhrs_submitted_task_key = 'uhrs_submitted_result'
+db_uhrs_completed_task_key = "uhrs_completed_result"
+db_bbox_id_key = "_id"
+db_url_key = "url"
+db_rects_key = "rect"
+
+# configs
 class VerificationConfig():
+    db_name='qd'
+    collection_name='uhrs_bounding_box_verification'
     task_type = "VerifyBox"
     uhrs_type = "crowdsource_verify_box"
-    honeypot = "//vigdgx02/raid_data/uhrs/eval/honeypot/voc20_easy_gt.txt"
+    honeypot = "//vigdgx02/raid_data/uhrs/eval/honeypot/coco2017_test_loc_label_hp.txt"
+    hp_type = "hp"
     num_tasks_per_hit = 10
     num_hp_per_hit = 2
     max_hits_per_file = 2000
     num_judgment = 4
     max_tasks_running = 5
 
-def get_working_dir():
-    dirpath = op.join(tempfile.gettempdir(), "uhrs")
+class LogoVerificationConfig():
+    collection_name = "uhrs_logo_verification"
+    honeypot = "//vigdgx02/raid_data/uhrs/eval_logo/honeypot/logo40_test_logo_loc_hp.txt"
+    hp_type = "hp"
+    db_name='qd'
+    task_type = "VerifyBox"
+    uhrs_type = "crowdsource_verify_box"
+    num_tasks_per_hit = 10
+    num_hp_per_hit = 2
+    max_hits_per_file = 2000
+    num_judgment = 4
+    max_tasks_running = 5
+
+def get_working_dir(db_name, collection_name):
+    dirpath = op.join(tempfile.gettempdir(), "{}_{}".format(db_name, collection_name))
     qd_common.ensure_directory(dirpath)
     return dirpath
 
 def verify_bbox_db(cur_db, args):
-    db_uhrs_submitted_task_key = 'uhrs_submitted_result'
-    db_uhrs_completed_task_key = "uhrs_completed_result"
-    db_bbox_id_key = "_id"
-    db_url_key = "url"
-    db_rects_key = "rect"
-
     # scan existing tasks
     submitted_tasks = list(cur_db.query_submitted())
     all_task_ids = set()
@@ -47,7 +65,7 @@ def verify_bbox_db(cur_db, args):
     for ids in all_task_ids:
         task_group_id, task_id = ids[0], ids[1]
         if UhrsTaskManager.is_task_completed(task_group_id, task_id):
-            res_file = op.join(get_working_dir(), "uhrs_results.tsv")
+            res_file = op.join(get_working_dir(args.db_name, args.collection_name), "uhrs_results.tsv")
             UhrsTaskManager.download_task(task_group_id, task_id, res_file)
             id2ans = analyze_completed_task(res_file)
             completed_tasks = []
@@ -75,38 +93,45 @@ def verify_bbox_db(cur_db, args):
             logging.info("completed {} bboxes".format(len(completed_tasks)))
 
     # retrieve tasks to submit
-    if num_running_tasks < args.max_tasks_running:
-        bb_tasks = cur_db.retrieve(args.num_tasks_per_hit * args.max_hits_per_file)
-        bb_tasks = list(bb_tasks)
-        print len(bb_tasks)
-        if len(bb_tasks) > 0:
-            def gen_labels():
-                for bb_task in bb_tasks:
-                    bbox = bb_task[db_rects_key]
-                    assert all([k in bbox for k in ["class", "rect"]])
-                    yield bb_task[db_bbox_id_key], json.dumps([bbox]), bb_task[db_url_key]
-            task_group_id, task_id = create_new_task(gen_labels(), args)
+    for urgent_level in [True, False]:
+        while True:
+            if not urgent_level and num_running_tasks >= args.max_tasks_running:
+                break
+            bb_tasks = cur_db.retrieve(args.num_tasks_per_hit * args.max_hits_per_file, urgent_task=urgent_level)
+            bb_tasks = list(bb_tasks)
+            if len(bb_tasks) == 0:
+                break
+            task_group_id, task_id = create_new_task(_gen_labels_for_bb_tasks(bb_tasks), urgent_level, args)
 
             for t in bb_tasks:
                 t[db_uhrs_submitted_task_key] = [task_group_id, task_id]
             cur_db.submitted(bb_tasks)
+            num_running_tasks += 1
             logging.info("submitted {} bboxes".format(len(bb_tasks)))
 
-def create_new_task(label_enumerator, args):
+def _gen_labels_for_bb_tasks(bb_tasks):
+    for bb_task in bb_tasks:
+        bbox = bb_task[db_rects_key]
+        assert all([k in bbox for k in ["class", "rect"]])
+        yield bb_task[db_bbox_id_key], json.dumps([bbox]), bb_task[db_url_key]
+
+def create_new_task(label_enumerator, urgent_level, args):
     # write task files
-    outdir = get_working_dir()
+    outdir = get_working_dir(args.db_name, args.collection_name)
     label_file = op.join(outdir, "label.tsv")
     tsv_io.tsv_writer(label_enumerator, label_file)
     task_files = generate_task.generate_task_files(
                         args.task_type, label_file, args.honeypot, op.join(outdir, "uhrs_task"),
                         num_tasks_per_hit=args.num_tasks_per_hit, num_hits_per_file=args.max_hits_per_file,
-                        num_hp_per_hit=args.num_hp_per_hit)
+                        num_hp_per_hit=args.num_hp_per_hit, hp_type=args.hp_type)
     assert len(task_files) == 1
     task_file = task_files[0]
 
     # submit task to uhrs
     task_group_id = UhrsTaskManager._get_task_group_id(args.uhrs_type)
-    task_id = UhrsTaskManager.upload_task(task_group_id, task_file, args.num_judgment)
+    # In UHRS definition, the larger the number is, the higher priority the task has
+    uhrs_priority = 2000 if urgent_level else 1000
+    task_id = UhrsTaskManager.upload_task(task_group_id, task_file, args.num_judgment, priority=uhrs_priority)
     return task_group_id, task_id
 
 def analyze_completed_task(res_file):
@@ -123,6 +148,8 @@ def main():
     qd_common.init_logging()
     args = VerificationConfig()
     cur_db = db.create_bbverification_db()
+    # args = LogoVerificationConfig()
+    # cur_db = db.BoundingBoxVerificationDB(db_name=args.db_name, collection_name=args.collection_name)
 
     while True:
         verify_bbox_db(cur_db, args)

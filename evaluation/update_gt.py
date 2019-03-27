@@ -88,7 +88,7 @@ def update_gt(args):
                 continue
             ensure_dir_empty(task_upload_dir)
             generate_task_files(task_type, label_file, hp_file,
-                                os.path.join(task_upload_dir, source))
+                                os.path.join(task_upload_dir, source), "hp")
             uhrs_client.upload_tasks_from_folder(task_group, task_upload_dir,
                                                 prefix=source, num_judges=args.num_judges, priority=args.priority)
             ensure_dir_empty(task_download_dir)

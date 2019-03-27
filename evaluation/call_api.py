@@ -194,5 +194,5 @@ def post_process_gcloud_logo(response, prefix="logo of "):
 def post_process_gcloud_tag(response):
     all_res = []
     for obj in response:
-        all_res.append({"mid": obj.mid, "class": obj.description, "score": obj.score})
+        all_res.append({"mid": obj.mid, "class": obj.description, "conf": obj.score})
     return all_res

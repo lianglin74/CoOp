@@ -128,18 +128,15 @@ def write_task_file(data, filepath):
 
 
 def generate_task_files(task_type, label_file, hp_file, outbase,
-                        num_tasks_per_hit=10, num_hp_per_hit=2, num_hits_per_file=2000):
+                        hp_type, num_tasks_per_hit=10, num_hp_per_hit=2,
+                        num_hits_per_file=2000):
     if task_type == "VerifyImage":
-        hp_type = "hp"
         box_per_img="one"
     elif task_type == "VerifyBox":
-        hp_type = "gt"
         box_per_img="one"
     elif task_type == "VerifyCover":
-        hp_type = "hp"
         box_per_img="class"
     elif task_type == "DrawBox":
-        hp_type = "hp"
         box_per_img="class"
     else:
         raise Exception("invalid task type: {}".format(task_type))
