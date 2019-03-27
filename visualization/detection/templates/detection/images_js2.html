@@ -264,13 +264,6 @@
                     j = 1;
                 }
             }
-
-            for (i = 0; i < all_url.length; i++) {
-                let id = 'Canvas' + i.toString();
-                let canvas = document.getElementById(id);
-                let img_src = all_url[i];
-                make_canvas_element(canvas, img_src, []);
-            }
         }
 
         function update_label_list(type_to_rects, unchecked_labels, unchecked_type) {
@@ -410,7 +403,7 @@
             draw_images_div(all_url, all_key, all_type_to_rects);
             add_label_points(label_list);
             add_type_points(type_list);
-            window.setTimeout(onClick_abstraction, 2000)
+            onClick_abstraction()
         };
 
         function onClick_abstraction() {
@@ -441,13 +434,13 @@
         </table>
         <table id="label_table">
         </table>
-        <!-- Header -->
-        <!-- <div class="header" id="myHeader">
+        {% comment %} <!-- Header -->
+        <div class="header" id="myHeader">
             <p>Click on the buttons to change the grid view.</p>
             <button class="btn" onclick="one()">1</button>
             <button class="btn" onclick="two()">2</button>
             <button class="btn active" onclick="four()">4</button>
-        </div> -->
+        </div> {% endcomment %}
     </div>
 
     <div class="row" id="row1">
@@ -493,7 +486,7 @@
         }
     </script>
 
-    <!-- <script>
+    <script>
         // Add active class to the current button (highlight it)
         var header = document.getElementById("myHeader");
         var btns = header.getElementsByClassName("btn");
@@ -538,6 +531,6 @@
             }
         }
 
-    </script> -->
+    </script>
 </body>
 </html>

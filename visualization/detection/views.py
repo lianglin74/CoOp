@@ -802,13 +802,16 @@ def view_image_js3(request, data, split, version, label, start_id):
     return render(request, 'detection/images_js3.html', context)
 
 
-def view_image_js2(request, data, split, version, label, start_id):
+def view_image_js2(request, data, split, version, label, start_id, imKey=None):
     '''
     use js to render the box in the client side
     '''
     curr_dir = os.curdir
     os.chdir(get_qd_root())
     start_id = int(float(start_id))
+    if imKey is not None:
+        start_id = 0
+
     images = visualize_box_no_draw(data, split, version, label, start_id)
 
     blkLstFilename = "../data/{}/blacklist.txt".format(data)
@@ -822,19 +825,38 @@ def view_image_js2(request, data, split, version, label, start_id):
     all_url = []
     max_image_shown = 50
     all_key = []
-    for i, (fname, origin, gt) in enumerate(images):
-        if i >= max_image_shown:
-            break
-        
-        filename, file_extension = os.path.splitext(fname)
-        
-        from qd_common import hash_sha1
-        origin_html_path = save_image_in_static(origin, '{}/{}/{}/origin_{}.jpg'.format(data, split,
-                                                                                        version,
-                                                                                        hash_sha1(fname)))
-        all_key.append(fname)
-        all_url.append('/static/' + origin_html_path)
-        all_type_to_rects.append({'gt': gt})
+
+    if imKey is None:
+        for i, (fname, origin, gt) in enumerate(images):
+            
+            if i >= max_image_shown:
+                break
+            
+            filename, file_extension = os.path.splitext(fname)
+            
+            from qd_common import hash_sha1
+            origin_html_path = save_image_in_static(origin, '{}/{}/{}/origin_{}.jpg'.format(data, split,
+                                                                                            version,
+                                                                                            hash_sha1(fname)))
+            all_key.append(fname)
+            all_url.append('/static/' + origin_html_path)
+            all_type_to_rects.append({'gt': gt})
+    else:
+        for i, (fname, origin, gt) in enumerate(images):
+            # print "imKey", imKey, fname
+            if imKey in fname:
+                
+                filename, file_extension = os.path.splitext(fname)
+                
+                from qd_common import hash_sha1
+                origin_html_path = save_image_in_static(origin, '{}/{}/{}/origin_{}.jpg'.format(data, split,
+                                                                                                version,
+                                                                                                hash_sha1(fname)))
+                all_key.append(fname)
+                all_url.append('/static/' + origin_html_path)
+                all_type_to_rects.append({'gt': gt})
+
+    
     os.chdir(curr_dir)
 
     kwargs = copy.deepcopy(request.GET)
@@ -1156,6 +1178,7 @@ def view_compare(request):
         leftFile = op.join(predictConfigPath, leftFile)
         rightFile = op.join(predictConfigPath, rightFile)
 
+
         imageFile = "./data/" + data_source_name +  "/" + split + ".tsv"
 
         print leftFile
@@ -1382,13 +1405,22 @@ def view_image2(request):
     elif request.GET.get('split', '') == '' and request.GET.get('label', '') == '':
         curr_dir = os.curdir
         os.chdir(get_qd_root())
-        name_splits_labels = get_all_data_info2(request.GET['data'])
+
+        data = request.GET.get('data')
+        name_splits_labels = get_all_data_info2(data)
         os.chdir(curr_dir)
+
+        populate_dataset_details(data)
         context = {'name_splits_label_counts': name_splits_labels}
         return render(request, 'detection/image_overview.html', context)
     else:
         data = request.GET.get('data')
         split = request.GET.get('split')
+        key = None
+        key = request.GET.get('key')
+
+        populate_dataset_details(data)
+
         if split == 'None':
             split = None
         version = request.GET.get('version')
@@ -1396,10 +1428,13 @@ def view_image2(request):
             version = None
         version = int(version) if type(version) is str or \
             type(version) is unicode else version
+        
+        
         label = request.GET.get('label')
         start_id = request.GET.get('start_id')
         # result = view_image_js(request, data, split, version, label, start_id)
-        result = view_image_js2(request, data, split, version, label, start_id)
+        
+        result = view_image_js2(request, data, split, version, label, start_id, key)
         # result = view_image_js3(request, data, split, version, label, start_id)
         return result
 
