@@ -20,7 +20,6 @@ from process_tsv import TSVDatasetSource
 from yolotrain import yolotrain_main
 from process_tsv import convert_pred_to_dataset_label
 from qd_common import print_as_html
-from qd_common import yolo_new_to_old
 from tsv_io import tsv_reader, tsv_writer
 from qd_common import img_from_base64
 import simplejson as json
@@ -245,14 +244,18 @@ def calculate_correlation_between_terms_by_files(file_name1, file_name2,
 
 def convert_full_gpu_yolo_to_non_full_gpu_yolo(full_expid):
     c = CaffeWrapper(full_expid=full_expid, load_parameter=True)
+    out_full_expid = full_expid + '_old'
     best_model = c.best_model()
     best_model_iter = best_model.model_iter
     new_proto = op.join('output', full_expid, 'train.prototxt')
     new_weight = op.join('output', full_expid, 'snapshot',
             'model_iter_{}.caffemodel'.format(best_model_iter))
-    old_weight = op.join('output', full_expid, 'snapshot',
-            'model_iter_{}_old.caffemodel'.format(best_model_iter))
+    old_weight = op.join('output', out_full_expid, 'snapshot',
+            'model_iter_{}.caffemodel'.format(best_model_iter))
+    old_proto = op.join('output', out_full_expid, 'train.prototxt')
+    from qd.qd_caffe import yolo_new_to_old, yolo_new_to_old_proto
     yolo_new_to_old(new_proto, new_weight, old_weight)
+    yolo_new_to_old_proto(new_proto, old_proto)
 
 def extract_full_taxonomy_to_vso_format(full_taxonomy_yaml, hier_tax_yaml,
         property_yaml):

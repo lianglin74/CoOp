@@ -5,6 +5,9 @@ import numpy as np
 import multiprocessing as mp
 from multiprocessing import Process
 from google.protobuf import text_format
+import os.path as op
+from .qd_common import ensure_directory
+from .qd_common import write_to_file
 
 
 def load_net(file_name):
@@ -342,7 +345,7 @@ def calculate_macc(prototxt):
     net_proto = load_net(prototxt)
     macc = []
     ignore_layers = ['BatchNorm', 'Scale', 'ReLU', 'Softmax',
-            'Pooling', 'Eltwise', 'Shift', 'Concat']
+            'Pooling', 'Eltwise', 'Shift', 'Concat', 'RegionOutput']
     for layer in net_proto.layer:
         if layer.type == 'Convolution':
             assert len(layer.bottom) == 1
@@ -384,6 +387,21 @@ def calculate_macc(prototxt):
 
     return macc
 
+def yolo_new_to_old_proto(new_proto, old_proto):
+    proto = load_net(new_proto)
+    found = -1
+    for i, l in enumerate(proto.layer):
+        if l.name == 'last_conv' and \
+                l.type == 'Convolution' and \
+                len(l.top) == 1 and \
+                l.top[0] == 'last_conv':
+            assert found == -1
+            found = i
+    assert found != -1
+    to_remove = proto.layer[found + 1:]
+    for t in to_remove:
+        proto.layer.remove(t)
+    write_to_file(str(proto), old_proto)
 
 def yolo_new_to_old(new_proto, new_model, old_model):
     assert op.isfile(new_proto)
