@@ -2,3 +2,6 @@
 	path = src/CCSCaffe
 	url = https://github.com/msrccs/caffe
 	branch = WinCaffe
+[submodule "objectdetection"]
+	path = objectdetection
+	url = git@github.com:amsword/objectdetection.git
