@@ -31,3 +31,6 @@ PY_FASTER_RCNN_ROOT="${QUICKDETECTION_ROOT}/src/py-faster-rcnn"
 cd "${PY_FASTER_RCNN_ROOT}/lib"
 make
 
+# setup qd
+cd "${QUICKDETECTION_ROOT}/src"
+python setup.py build develop --user
