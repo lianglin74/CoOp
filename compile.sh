@@ -34,3 +34,7 @@ make
 # setup qd
 cd "${QUICKDETECTION_ROOT}/src"
 python setup.py build develop --user
+
+cd "${QUICKDETECTION_ROOT}/src/objectdetection"
+#python setup.py clean --all
+python setup.py build develop --user
