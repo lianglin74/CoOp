@@ -1,4 +1,6 @@
 #!python3
+import warnings
+warnings.warn('deprecated. please use import qd.deteeval')
 import os
 import sys
 import json

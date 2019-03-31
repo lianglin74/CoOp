@@ -1,3 +1,5 @@
+import warnings
+warnings.warn('deprecated. please use import qd.qd_common')
 import _init_paths
 import ruamel.yaml as yaml
 from collections import OrderedDict
