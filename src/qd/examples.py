@@ -12,6 +12,12 @@ def create_pipeline(kwargs):
     return YoloV2PtPipeline(**kwargs)
 
 def test_model_pipeline(**kwargs):
+    '''
+    run the script by
+
+    mpirun -npernode 4 \
+            python script_with_this_function_called.py
+    '''
     init_logging()
     kwargs.update(create_parameters(**kwargs))
     pip = create_pipeline(kwargs)
