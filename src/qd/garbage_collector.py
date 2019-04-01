@@ -31,7 +31,7 @@ def old_enough(fname):
         return False
     d = time.time() - os.stat(fname).st_atime
     days = d / 3600. / 24.
-    return days < 30
+    return days > 30
 
 def iter_to_be_deleted(folder):
     iter_extract_pattern = '.*model_iter_([0-9]*)e?\..*'
