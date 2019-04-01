@@ -156,10 +156,8 @@ def convert_pred_to_dataset_label(full_expid, predict_file,
 
     populate_dataset_details(data)
 
-
 def ensure_inject_expid(full_expid):
-    from .qd_common import get_all_predict_files
-    from .qd_common import load_solver
+    from .qd_caffe import load_solver
     solver_prototxt = op.join('output', full_expid,
         'solver.prototxt')
     if not op.isfile(solver_prototxt):
@@ -261,8 +259,7 @@ def upload_image_to_blob(data, split):
         logging.info('{} - {} does not exist'.format(data, split))
         return
     logging.info('{} - {}'.format(data, split))
-    if not op.isfile(dataset.get_data(split)) and \
-            op.isfile(dataset.get_data(split + 'X')):
+    if op.isfile(dataset.get_data(split + 'X')):
         ensure_composite_key_url(data, split)
         logging.info('ignore to upload images for composite dataset')
         return
@@ -2048,7 +2045,7 @@ def visualize_predict_no_draw(full_expid, predict_file, label, start_id,
             rects_pred = json.loads(row_in_pred[1])
             rects_gt = [r for r in rects_gt if r['class'] == label]
             rects_pred = [r for r in rects_pred if r['class'] == label]
-            ap = calculate_image_ap([r['rect'] for r in rects_gt],
+            ap = calculate_image_ap([r['rect'] for r in rects_gt if 'rect' in r],
                     [r['rect'] for r in rects_pred])
             target_aps.append(ap)
         key_idxGT_idxPred_aps = zip(target_keys, target_idx_in_gt,

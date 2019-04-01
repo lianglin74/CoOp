@@ -216,6 +216,7 @@ class TSVDataset(object):
         return result
 
     def load_keys(self, split):
+        assert self.has(split, 'label')
         result = []
         for row in tqdm(self.iter_data(split, 'label')):
             result.append(row[0])
@@ -660,13 +661,14 @@ def create_inverted_list2(rows, th=None):
     return inverted, keys
 
 def is_verified_rect(rect):
-    allowed_keys = set(['class', 'rect', 'uhrs_confirm', 'uhrs_uncertain',
-            'conf', 'merge_from', 'class_from', 'change_from', 'from', 'diff',
-            'IsInside', 'IsGroupOf', 'IsDepiction', 'IsOccluded',
-            'IsTruncated', 'workerId', 'class_propagate_from', 'obj', 'uhrs'])
-    unknown_keys = [k for k in rect if k not in allowed_keys]
-    if len(unknown_keys) > 0:
-        logging.info('unknown keys = {}\n'.format(pformat(unknown_keys)))
+    #allowed_keys = set(['class', 'rect', 'uhrs_confirm', 'uhrs_uncertain',
+            #'conf', 'merge_from', 'class_from', 'change_from', 'from', 'diff',
+            #'IsInside', 'IsGroupOf', 'IsDepiction', 'IsOccluded',
+            #'IsTruncated', 'workerId', 'class_propagate_from', 'obj', 'uhrs'])
+    #unknown_keys = [k for k in rect if k not in allowed_keys]
+    #if len(unknown_keys) > 0:
+        #logging.info('unknown keys = {}\n'.format(pformat(unknown_keys)))
+        #pass
 
     if 'uhrs' in rect:
         judge_result = rect['uhrs']

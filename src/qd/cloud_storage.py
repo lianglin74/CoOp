@@ -113,15 +113,17 @@ class CloudStorage(object):
         cmd = []
         cmd.append(op.expanduser('~/code/azcopy/azcopy'))
         cmd.append('cp')
-        cmd.append(src_dir)
+        cmd.append(op.realpath(src_dir))
         url = 'https://{}.blob.core.windows.net'.format(self.account_name)
         url = op.join(url, self.container_name, dest_dir)
         assert self.sas_token.startswith('?')
+        data_url = url
         url = url + self.sas_token
         cmd.append(url)
         if op.isdir(src_dir):
             cmd.append('--recursive')
         cmd_run(cmd)
+        return data_url, url
 
     def download_to_path(self, blob_name, local_path):
         self.block_blob_service.get_blob_to_path(self.container_name,

@@ -505,7 +505,7 @@ def get_all_tree_data():
 
 def parse_test_data(predict_file):
     # e.g. 'model_iter_368408.caffemodel.Tax1300V14.1_OpenImageV4_448Test_with_bb.train.maintainRatio.OutTreePath.TreeThreshold0.1.ClsIndependentNMS.predict'
-    pattern = 'model(?:_iter)?_[0-9]*[e]?\.(?:caffemodel|pth\.tar|pth)\.(.*)\.(train|trainval|test).*\.predict'
+    pattern = 'model(?:_iter)?_[0-9]*[e]?\.(?:caffemodel|pth\.tar|pth)\.(.*)\.(train|trainval|test)\..*\.predict'
     match_result = re.match(pattern, predict_file)
     if match_result and len(match_result.groups()) == 2:
         return match_result.groups()

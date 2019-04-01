@@ -42,13 +42,51 @@ def show_net_input(data, label, max_image_to_show=None):
         draw_bb(all_image[i], rects, txts)
         show_image(all_image[i])
 
+def drawline(img,pt1,pt2,color,thickness=1,style='dotted',gap=10):
+    dist =((pt1[0]-pt2[0])**2+(pt1[1]-pt2[1])**2)**.5
+    pts= []
+    for i in  np.arange(0,dist,gap):
+        r=i/dist
+        x=int((pt1[0]*(1-r)+pt2[0]*r)+.5)
+        y=int((pt1[1]*(1-r)+pt2[1]*r)+.5)
+        p = (x,y)
+        pts.append(p)
+
+    if style=='dotted':
+        for p in pts:
+            cv2.circle(img,p,thickness,color,-1)
+    else:
+        s=pts[0]
+        e=pts[0]
+        i=0
+        for p in pts:
+            s=e
+            e=p
+            if i%2==1:
+                cv2.line(img,s,e,color,thickness)
+            i+=1
+
+def drawpoly(img,pts,color,thickness=1,style='dotted',):
+    s=pts[0]
+    e=pts[0]
+    pts.append(pts.pop(0))
+    for p in pts:
+        s=e
+        e=p
+        drawline(img,s,e,color,thickness,style)
+
+def draw_dotted_rect(img,pt1,pt2,color,thickness=1):
+    pts = [pt1,(pt2[0],pt1[1]),pt2,(pt1[0],pt2[1])]
+    drawpoly(img,pts,color,thickness,style='dotted')
+
 def draw_bb(im, all_rect, all_label,
         probs=None,
         color=None,
         font_scale=None,
         font_thickness=None,
         #rect_thickness=2,
-        draw_label=True):
+        draw_label=True,
+        style=None):
     '''
     all_rect: x0, y0, x1, y1
     '''
@@ -57,7 +95,7 @@ def draw_bb(im, all_rect, all_label,
     if font_scale is None:
         font_scale = ref / 500.
     if font_thickness is None:
-        font_thickness = max(ref // 250, 1)
+        font_thickness = max(ref // 300, 1)
     rect_thickness = max(ref // 250, 1)
     # in python3, it is float, and we need to convert it to integer
     font_thickness = int(font_thickness)
@@ -92,9 +130,16 @@ def draw_bb(im, all_rect, all_label,
     for i in range(len(all_label)):
         rect = all_rect[i]
         label = all_label[i]
-        cv2.rectangle(im, (int(rect[0]), int(rect[1])),
-                (int(rect[2]), int(rect[3])), color[label],
-                thickness=rect_thickness)
+        if style == 'dotted':
+            draw_dotted_rect(im, (int(rect[0]), int(rect[1])),
+                    (int(rect[2]), int(rect[3])),
+                    color[label],
+                    thickness=rect_thickness)
+            pass
+        else:
+            cv2.rectangle(im, (int(rect[0]), int(rect[1])),
+                    (int(rect[2]), int(rect[3])), color[label],
+                    thickness=rect_thickness)
         if probs is not None:
             if draw_label:
                 label_in_image = '{}-{:.2f}'.format(label, probs[i])
