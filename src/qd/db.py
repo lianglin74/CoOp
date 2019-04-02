@@ -5,14 +5,17 @@ import copy
 from bson import ObjectId
 from datetime import datetime
 from collections import OrderedDict
+from collections import defaultdict
+import logging
+from tqdm import tqdm
 
 def create_mongodb_client():
     config = load_from_yaml_file('./aux_data/configs/mongodb_credential.yaml')
     host = config['host']
     return MongoClient(host)
 
-def create_bbverification_db():
-    return BoundingBoxVerificationDB()
+def create_bbverification_db(db_name='qd', collection_name='uhrs_bounding_box_verification'):
+    return BoundingBoxVerificationDB(db_name, collection_name)
 
 def objectid_to_str(result):
     # convert the type of ObjectId() to string
@@ -133,6 +136,35 @@ class BoundingBoxVerificationDB(object):
                 'uhrs_completed_result',
                 self.status_completed,
                 allowed_original_statuses=[self.status_submitted])
+
+    def set_status_as_merged(self, all_id):
+        self.update_status(all_id, self.status_merged,
+                allowed_original_statuses=[self.status_completed])
+
+    def get_completed_uhrs_result(self):
+        pipeline = [
+                {'$match': {'status': self.status_completed}},
+                #{'$group': {'_id': {'data': '$data',
+                                    #'split': '$split',
+                                    #'key': '$key',
+                                    #'bb_task_id': '$bb_task_id'},
+                            #'rects': {'$first': '$rects'},
+                            #'uhrs': {'$push': '$uhrs_completed_result'},
+                            #'related_ids': {'$push': '$_id'},
+                            #}}
+                ]
+        data_split_to_key_rects = defaultdict(list)
+        all_id = []
+        logging.info('querying the completed tasks')
+        for rect_info in tqdm(self.query_by_pipeline(pipeline)):
+            data = rect_info['data']
+            split = rect_info['split']
+            rect = rect_info['rect']
+            all_id.append(rect_info['_id'])
+            rect['uhrs'] = rect_info['uhrs_completed_result']
+            key = rect_info['key']
+            data_split_to_key_rects[(data, split)].append((key, rect))
+        return data_split_to_key_rects, all_id
 
     @property
     def collection(self):
