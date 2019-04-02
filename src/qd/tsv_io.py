@@ -272,12 +272,18 @@ class TSVDataset(object):
         v = 0
         if t is None:
             pattern = op.join(self._data_root, '{}.v*.tsv'.format(split))
+            re_pattern = '{}\.v([0-9]*)\.tsv'.format(split)
         else:
             pattern = op.join(self._data_root, '{}.{}.v*.tsv'.format(
                 split, t))
+            re_pattern = '{}\.{}\.v([0-9]*)\.tsv'.format(split, t)
         all_file = glob.glob(pattern)
-        if len(all_file):
-            v = max(int(op.basename(f).split('.')[-2][1:]) for f in all_file)
+        import re
+        re_results = [re.match(re_pattern, op.basename(f)) for f in all_file]
+        candidates = ([int(re_result.groups()[0]) for re_result, f in
+            zip(re_results, all_file) if re_result])
+        if len(candidates) > 0:
+            v = max(candidates)
         assert v >= 0
         return v
 

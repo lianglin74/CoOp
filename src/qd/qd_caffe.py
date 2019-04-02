@@ -10,6 +10,44 @@ from .qd_common import ensure_directory
 from .qd_common import write_to_file
 
 
+def construct_model(solver, test_proto_file, is_last=True, iteration=None):
+    solver_param = load_solver(solver)
+    train_net_param = load_net(solver_param.train_net)
+    # if we don't convert it to list, the type is repeated field, which is not
+    # pickable, and thus cannot be paralled by mp.Pool()
+    mean_value = list(train_net_param.layer[0].transform_param.mean_value)
+    scale = train_net_param.layer[0].transform_param.scale
+    from qd.qd_common import Model
+
+    if is_last:
+        last_model = '{0}_iter_{1}.caffemodel'.format(
+                solver_param.snapshot_prefix, solver_param.max_iter)
+        return Model(test_proto_file, solver_param.train_net,
+                last_model, mean_value, scale,
+                solver_param.max_iter)
+    elif iteration:
+        last_model = '{0}_iter_{1}.caffemodel'.format(
+                solver_param.snapshot_prefix, iteration)
+        return Model(test_proto_file, solver_param.train_net,
+                last_model, mean_value, scale,
+                solver_param.max_iter)
+    else:
+        total = (solver_param.max_iter + solver_param.snapshot - 1) / solver_param.snapshot
+        all_model = []
+        for i in range(total + 1, 0, -1):
+            if i == 0:
+                continue
+            j = i * solver_param.snapshot
+            j = min(solver_param.max_iter, j)
+            if j == solver_param.max_iter:
+                continue
+            last_model = '{0}_iter_{1}.caffemodel'.format(
+                    solver_param.snapshot_prefix, j)
+            all_model.append(Model(test_proto_file, solver_param.train_net,
+                last_model, mean_value,
+                scale, j))
+        return all_model
+
 def load_net(file_name):
     with open(file_name, 'r') as fp:
         all_line = fp.read()
