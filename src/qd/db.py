@@ -9,6 +9,16 @@ from collections import defaultdict
 import logging
 from tqdm import tqdm
 
+def is_positive_uhrs_verified(r):
+    uhrs = r['uhrs']
+    y, n = uhrs.get('1', 0), uhrs.get('2', 0)
+    return y > n
+
+def is_negative_uhrs_verified(r):
+    uhrs = r['uhrs']
+    y, n = uhrs.get('1', 0), uhrs.get('2', 0)
+    return n > y
+
 def create_mongodb_client():
     config = load_from_yaml_file('./aux_data/configs/mongodb_credential.yaml')
     host = config['host']
