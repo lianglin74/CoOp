@@ -1,5 +1,5 @@
 #!python2
-from process_image import draw_bb, show_image
+from qd.process_image import draw_bb, show_image
 try:
     import cPickle as pkl
 except:
@@ -15,17 +15,17 @@ import os, sys, cv2
 import argparse
 import numpy as np
 import base64
-import progressbar 
+import progressbar
 import json
 import matplotlib.pyplot as plt
 import fast_rcnn
 from fast_rcnn.nms_wrapper import nms
 
-from qd_common import img_from_base64, FileProgressingbar
+from qd.qd_common import img_from_base64, FileProgressingbar
 import multiprocessing as mp
 from fast_rcnn.nms_wrapper import nms
 
-from tsv_io import tsv_writer
+from qd.tsv_io import tsv_writer
 
 def parse_args(arg_list):
     """Parse input arguments."""
@@ -64,7 +64,7 @@ def vis_detections(im, prob, bboxes, labelmap, thresh=0.3, save_filename=None):
             score = prob[i, j]
             cls = j
             x,y,w,h = box
-        
+
             im_h, im_w = im.shape[0:2]
             left  = (x-w/2.)
             right = (x+w/2.)
@@ -128,7 +128,7 @@ def xywh_to_xyxy(bbox):
 def im_classify(caffe_net, im, pixel_mean, **kwarg):
     im_orig = im.astype(np.float32, copy=True)
     im_orig -= pixel_mean
-    
+
     scale = kwarg.get('scale', 1)
     if scale != 1:
         blob *= scale
@@ -157,9 +157,9 @@ def im_classify(caffe_net, im, pixel_mean, **kwarg):
 
     return prob
 
-def correct_labels_to_blob(labels, 
-        orig_shape, 
-        network_input_size, 
+def correct_labels_to_blob(labels,
+        orig_shape,
+        network_input_size,
         label_map, max_truth):
     orig_min = min(orig_shape)
     orig_max = max(orig_shape)
@@ -191,7 +191,7 @@ def prepare_net_input(im, pixel_mean, network_input_size, **kwargs):
     im_orig = im.astype(np.float32, copy=True)
     if pixel_mean and pixel_mean[0] != 0:
         im_orig -= pixel_mean
-    
+
     im_resized = im_rescale(im_orig, network_input_size)
     new_h, new_w = im_resized.shape[0:2]
     left = (network_input_size - new_w) // 2
@@ -199,7 +199,7 @@ def prepare_net_input(im, pixel_mean, network_input_size, **kwargs):
     top = (network_input_size - new_h) // 2
     bottom = network_input_size - new_h - top
 
-    im_squared  = cv2.copyMakeBorder(im_resized, top=top, bottom=bottom, left=left, right=right, borderType= cv2.BORDER_CONSTANT, 
+    im_squared  = cv2.copyMakeBorder(im_resized, top=top, bottom=bottom, left=left, right=right, borderType= cv2.BORDER_CONSTANT,
             value=[0, 0, 0])
 
     # change blob dim order from h.w.c to c.h.w
@@ -217,7 +217,7 @@ def prepare_net_input(im, pixel_mean, network_input_size, **kwargs):
 
     if 'gt_labels' in kwargs:
         labels = kwargs['gt_labels']
-        blob_label = correct_labels_to_blob(labels, im_orig.shape[:2], 
+        blob_label = correct_labels_to_blob(labels, im_orig.shape[:2],
                 network_input_size, kwargs['label_map'], kwargs['yolo_max_truth'])
         #net.blobs['label'].data[...] = blob_label
 
@@ -251,7 +251,7 @@ def im_multi_scale_detect(caffe_net, im, pixel_mean, gpu,
         removed[keep] = False
         prob[removed, :] = 0
     return prob, bbox
-        
+
 def im_detect(caffe_net, im, pixel_mean, network_input_size=416, stat=None, **kwargs):
     if stat != None:
         time_start = time.time()
@@ -266,7 +266,7 @@ def im_detect(caffe_net, im, pixel_mean, network_input_size=416, stat=None, **kw
         time_curr = time.time()
         stat['minum_mean'] = time_curr - time_start
         time_start = time_curr
-   
+
     if kwargs.get('yolo_test_maintain_ratio'):
         h, w = im_orig.shape[0:2]
         alpha = network_input_size / np.sqrt(h * w)
@@ -280,7 +280,7 @@ def im_detect(caffe_net, im, pixel_mean, network_input_size=416, stat=None, **kw
             network_input_width = (width2 + 31) // 32 * 32
             network_input_height = ((network_input_width * h + w - 1) // w +
                     31) // 32 * 32
-        network_input_size = max(network_input_width, 
+        network_input_size = max(network_input_width,
                 network_input_height)
     else:
         network_input_width = network_input_size
@@ -321,7 +321,7 @@ def im_detect(caffe_net, im, pixel_mean, network_input_size=416, stat=None, **kw
     if 'label'  in caffe_net.blobs:
         labels = kwargs['gt_labels']
         assert network_input_width == network_input_height
-        blob_label = correct_labels_to_blob(labels, im_orig.shape[:2], 
+        blob_label = correct_labels_to_blob(labels, im_orig.shape[:2],
                 network_input_size, kwargs['label_map'], kwargs['yolo_max_truth'])
         caffe_net.blobs['label'].data[...] = blob_label
     if stat != None:
@@ -376,7 +376,7 @@ def postfilter(im, scores, boxes, class_map, max_per_image=1000, thresh=0.005):
         crect = dict();
 
         x,y,w,h = box
-        
+
         im_h, im_w = im.shape[0:2]
         left  = (x-w/2.);
         right = (x+w/2.);
@@ -393,7 +393,7 @@ def postfilter(im, scores, boxes, class_map, max_per_image=1000, thresh=0.005):
         crect['class'] = class_map[cls]
         crect['conf'] = float(scores[i, -1])
         det_results += [crect]
-    
+
     return json.dumps(det_results)
 
 def detect_image(caffe_net, im, pixel_mean, all_names, stat=None, thresh=0,
@@ -432,7 +432,7 @@ def detect_image(caffe_net, im, pixel_mean, all_names, stat=None, thresh=0,
 
 def result2bblist3(im, probs, boxes, class_map, thresh=0, yolo_tree=False):
     '''
-    assume each box have more than one chance to be selected. 
+    assume each box have more than one chance to be selected.
     result2bblist2 is not good for tree-based taxonomy, but this is
     '''
     class_num = probs.shape[1] - 1;        #the last one is obj_score * max_prob
@@ -516,13 +516,13 @@ def result2bblist(im, probs, boxes, class_map, thresh=None, obj_thresh=None, cla
                 continue
 
             x, y, w, h = box
-        
+
             im_h, im_w = im.shape[0:2]
             left = (x - w / 2.)
             right = (x + w / 2.)
             top = (y - h / 2.)
             bot = (y + h / 2.)
-            
+
             left = max(left, 0)
             left = min(left, im_w - 1)
             right = max(right, 0)
@@ -541,11 +541,9 @@ def result2bblist(im, probs, boxes, class_map, thresh=None, obj_thresh=None, cla
 
     return det_results
 
-
 def result2json(im, probs, boxes, class_map, thresh=0):
     det_results = result2bblist(im, probs, boxes, class_map, thresh)
     return json.dumps(det_results, separators=(',', ':'))
-
 
 def pick_blob_result(caffe_net, suffix):
     prob = caffe_net.blobs['prob{}'.format(suffix)].data[0]
@@ -566,7 +564,7 @@ def detprocess(caffenet, caffemodel, pixel_mean, scale, cmap, gpu, key_idx, img_
     else:
         caffe.set_mode_cpu()
     caffe_net = caffe.Net(str(caffenet), str(caffemodel), caffe.TEST)
-    
+
     last_print_time = 0
     count = 0
     while True:
@@ -637,7 +635,7 @@ def tsvdet_iter(caffenet, caffemodel, in_rows, key_idx,img_idx, pixel_mean,
     cmap = [load_labelmap_list(c) for c in cmapfile]
     count = 0
     debug = kwargs.get('debug_detect', False)
-    
+
     from qd_common import gen_uuid
     import tempfile
     # save the key, used for re-ranking to keep the order
@@ -682,12 +680,12 @@ def tsvdet_iter(caffenet, caffemodel, in_rows, key_idx,img_idx, pixel_mean,
     worker_pool = [];
     if debug:
         detprocess(caffenet, caffemodel,
-            pixel_mean, scale, cmap, gpus[0], key_idx, 
+            pixel_mean, scale, cmap, gpus[0], key_idx,
             img_idx, in_queue, out_queue, **kwargs)
     else:
         for gpu in gpus:
             worker = mp.Process(target=detprocess, args=(caffenet, caffemodel,
-                pixel_mean, scale, cmap, gpu, key_idx, 
+                pixel_mean, scale, cmap, gpu, key_idx,
                 img_idx, in_queue, out_queue), kwargs=kwargs);
             worker.daemon = True
             worker_pool.append(worker)
@@ -721,7 +719,7 @@ def tsvdet_iter(caffenet, caffemodel, in_rows, key_idx,img_idx, pixel_mean,
         outtsv_file))
     writer.daemon = True
     writer.start()
-    
+
     reader.join()
     if reader.exitcode != 0:
         logging.info('reader failed')
@@ -758,8 +756,8 @@ if __name__ =="__main__":
     outtsv_file = args.outtsv if args.outtsv!="" else os.path.splitext(args.intsv)[0]+".eval"
 
     pixel_mean = [float(x) for x in args.mean.split(',')]
-    
+
     scale = 1
     tsvdet(args.net, args.model, args.intsv, args.colkey, args.colimg,
             pixel_mean, scale, outtsv_file, gpus=args.gpus)
-    
+

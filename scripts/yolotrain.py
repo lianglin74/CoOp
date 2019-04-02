@@ -156,7 +156,6 @@ def create_shuffle_for_init(data):
     label_num = sorted(label_num, key=lambda x: x[1])
     logging.info(pformat(label_num))
 
-
 def data_dependent_init_tree(pre_trained_full_expid,
         target_full_expid, t='ncc2'):
     target_exp = CaffeWrapper(full_expid=target_full_expid,
@@ -318,6 +317,9 @@ class ProtoGenerator(object):
         if not deploy and self._kwargs.get('num_bn_fix', 0) > 0:
             from qd_common import fix_net_bn_layers
             fix_net_bn_layers(net, self._kwargs['num_bn_fix'])
+        if not deploy and self._kwargs.get('drop_second_batch_in_bn'):
+            from qd_common import drop_second_batch_in_bn
+            drop_second_batch_in_bn(net)
 
         proto_str = str(net)
 
@@ -482,18 +484,18 @@ def predict_one_yolo_view(im, full_expid, predict_file):
     logging.info('using {}'.format(th_file))
     if op.exists(th_file):
         per_cat_th = {l: float(th) for l, th, _ in tsv_reader(th_file)}
-        result_bb, result_label, result_conf = [], [], []
-        for b, l, c in izip(*result):
-            if c > per_cat_th.get(l, 0.01):
-                result_bb.append(b)
-                result_label.append(l)
-                result_conf.append(c)
-            else:
-                logging.info('ignore {}-{}'.format(l, c))
-        return result_bb, result_label, result_conf
     else:
-        logging.info('no per-cat threshold')
-        return result
+        per_cat_th = {}
+
+    result_bb, result_label, result_conf = [], [], []
+    for b, l, c in zip(*result):
+        if c > per_cat_th.get(l, thresh):
+            result_bb.append(b)
+            result_label.append(l)
+            result_conf.append(c)
+        else:
+            logging.info('ignore {}-{}'.format(l, c))
+    return result_bb, result_label, result_conf
 
 class CaffeWrapper(object):
     def __init__(self, load_parameter=False, **kwargs):
@@ -510,7 +512,7 @@ class CaffeWrapper(object):
                     t = datetime.strptime(m.group(1), '%Y_%m_%d_%H_%M_%S')
                     return t
                 times = [parse_time(f) for f in yaml_files]
-                fts = [(f, t) for f, t in izip(yaml_files, times)]
+                fts = [(f, t) for f, t in zip(yaml_files, times)]
                 fts.sort(key=lambda x: x[1], reverse=True)
                 yaml_file = fts[0][0]
             else:
@@ -624,11 +626,11 @@ class CaffeWrapper(object):
         while True:
             logging.info('monitoring')
             finished_time = False
+            is_unfinished = self.tracking()
             if self._is_train_finished():
                 self.cpu_test_time()
                 self.gpu_test_time()
                 finished_time = True
-            is_unfinished = self.tracking()
             self.plot_loss()
             self.param_distribution()
             s = self.get_iter_acc()
@@ -741,8 +743,13 @@ class CaffeWrapper(object):
         # save teh following two fields for saving only
         self._kwargs['data']  = data
         self._kwargs['net'] = net
+        time_str = datetime.now().strftime('%Y_%m_%d_%H_%M_%S')
+
         write_to_yaml_file(self._kwargs, op.join(path_env['output'],
-            'parameters_{}.yaml'.format(datetime.now().strftime('%Y_%m_%d_%H_%M_%S'))))
+            'parameters_{}.yaml'.format(time_str)))
+        # save the env parameters
+        write_to_yaml_file(os.environ, op.join(path_env['output'],
+            'env_{}.yaml'.format(time_str)))
 
         if not kwargs.get('skip_genprototxt', False):
             source_dataset = TSVDataset(self._data)
@@ -790,8 +797,7 @@ class CaffeWrapper(object):
 
         model = construct_model(path_env['solver'], path_env['test_proto_file'])
         if not kwargs.get('skip_train', False) and (not self._is_train_finished() or kwargs.get('force_train', False)):
-            with open(path_env['log'], 'w') as fp:
-                self._train()
+            self._train()
 
         return model
 
@@ -893,6 +899,8 @@ class CaffeWrapper(object):
         surgery = surgery or len(blame) != 0 or extract_target or fix_xy or fix_wh \
                 or 'conf_debug' in extract_features or need_label
 
+        assert 'nms_type' not in self._kwargs
+
         #nms_type = self._kwargs.get('nms_type',
                 #caffe.proto.caffe_pb2.RegionPredictionParameter.Standard)
         if 'class_specific_nms' in self._kwargs and not yolo_tree:
@@ -904,6 +912,8 @@ class CaffeWrapper(object):
         if 'o_obj_loss' in extract_features:
             surgery = True
             need_label = True
+        if 'yolo_nms' in self._kwargs:
+            surgery = True
 
         #surgery = surgery or nms_type != caffe.proto.caffe_pb2.RegionPredictionParameter.Standard
 
@@ -920,8 +930,15 @@ class CaffeWrapper(object):
                         #self._kwargs['gaussian_nms_sigma']
                     #out_file = '{}.gnms{}'.format(out_file,
                             #self._kwargs['gaussian_nms_sigma'])
-            if 'class_specific_nms' in self._kwargs and not yolo_tree:
+            if 'yolo_nms' in self._kwargs:
+                assert l.type == 'RegionPrediction'
+                l.region_prediction_param.nms = self._kwargs['yolo_nms']
+            if 'class_specific_nms' in self._kwargs and \
+                    not yolo_tree and \
+                    self._kwargs.get('detmodel', 'yolo') == 'yolo':
                 l.region_output_param.class_specific_nms = self._kwargs['class_specific_nms']
+                l.region_prediction_param.class_specific_nms = self._kwargs['class_specific_nms']
+                assert l.type in ['RegionOutput', 'RegionPrediction']
                 out_file = '{}_clasSpecificNMS{}'.format(out_file,
                         self._kwargs['class_specific_nms'])
             if 'yolo_test_thresh' in self._kwargs:
@@ -1301,6 +1318,8 @@ class CaffeWrapper(object):
         write_to_file(pformat(feat_sum), out_file)
 
     def evaluate(self, model, predict_result):
+        if self._kwargs.get('skip_evaluate'):
+            return
         if 'target_prediction' in self._kwargs.get('extract_features', ''):
             self._evaluate_yolo_target_prediction(model, predict_result)
             return
@@ -1483,7 +1502,7 @@ class CaffeWrapper(object):
 
     def _perf_file(self, model):
         if self._detmodel != 'classification':
-            report_file = op.splitext(self._predict_file(model))[0] + '.report'
+            report_file = op.splitext(self._predict_file(model))[0]
             if self._kwargs.get('eval_label_to_keys_iter'):
                 report_file = report_file + '.eval_label_to_keys'
             if self._test_version != 0 and self._test_version != None:
@@ -1491,7 +1510,7 @@ class CaffeWrapper(object):
                     self._test_version = self._test_dataset.get_latest_version(self._test_split,
                             'label')
                 report_file = report_file + '.v{}'.format(self._test_version)
-            return report_file
+            return report_file + '.report'
         else:
             return self._predict_file(model) + '.report'
 
@@ -1788,7 +1807,7 @@ def setup_paths(basenet, dataset, expid):
     basemodel_file = op.join(model_path ,basenet+'.caffemodel');
     output_path = op.join(proj_root,"output", "_".join([dataset,basenet,expid]));
     solver_file = op.join(output_path,"solver.prototxt");
-    snapshot_path = op.join([output_path,"snapshot"]);
+    snapshot_path = op.join(output_path, "snapshot");
     DATE = datetime.now().strftime('%Y%m%d_%H%M%S')
     log_file = op.join(output_path, '%s_%s.log' %(basenet, DATE));
     caffe_log_file = op.join(output_path, '%s_caffe_'%(basenet));
