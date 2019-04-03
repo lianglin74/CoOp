@@ -1,9 +1,8 @@
 import random
 import re
 from tsv_io import TSVDataset, tsv_reader, tsv_writer
-#from qd_common import write_to_file, basename_no_ext
-#from qd_common import load_list_file
-#from taxonomy import synset_to_noffset, SynsetTree, LabelToSynset
+from qd_common import write_to_file
+from taxonomy import synset_to_noffset, LabelToSynset
 import json
 import os
 import os.path as op
@@ -42,7 +41,7 @@ def ensure_dataset_sample(source_dataset, sample_label, sample_image, out_data):
     sampled_labels = [labels[i] for i in sampled_labels_idx]
     write_to_file('\n'.join(sampled_labels), op.join(out_data, 'labelmap.txt'))
 
-def dynamic_process_tsv(source_dataset, output_data_path, 
+def dynamic_process_tsv(source_dataset, output_data_path,
         **kwargs):
     if 'dataset_ops' not in kwargs:
         kwargs['dataset_ops'] = []
@@ -86,8 +85,17 @@ def process_dataset(source_dataset, output_root_data_path, dataset_ops):
     if len(train_label_files) != 0 and all(op.isfile(f) for f in train_label_files):
         source_labels.append(train_label_files)
     shuffle_file = source_dataset.get_train_shuffle_file()
-    if op.isfile(shuffle_file):
-        source_shuffles.append(shuffle_file)
+    def append_shuffle_file_if_valid(shuffle_file, source):
+        if op.isfile(shuffle_file):
+            if len(source) == 1:
+                # we need to check if the shuffle file is the multi-version
+                is_invalid = any(len(x) == 2 and int(x[0]) != 0 for x in
+                        tsv_reader(shuffle_file))
+                if not is_invalid:
+                    source_shuffles.append(shuffle_file)
+            else:
+                source_shuffles.append(shuffle_file)
+    append_shuffle_file_if_valid(shuffle_file, source)
 
     for i, operator in enumerate(dataset_ops):
         if operator['op'] == 'remove':
@@ -123,8 +131,9 @@ def process_dataset(source_dataset, output_root_data_path, dataset_ops):
             else:
                 assert False
             #curr_labelmap = extra_dataset.load_labelmap()
-            if op.isfile(extra_dataset.get_train_shuffle_file()):
-                source_shuffles.append(extra_dataset.get_train_shuffle_file())
+            shuffle_file = extra_dataset.get_train_shuffle_file()
+            source = curr_source
+            append_shuffle_file_if_valid(shuffle_file, source)
             sources.append(curr_source)
             labelmaps.append(extra_dataset.get_labelmap_file())
             if len(curr_labels) == len(curr_source):
@@ -170,7 +179,7 @@ def process_dataset(source_dataset, output_root_data_path, dataset_ops):
                 num_label = len(old_labels)
                 old_new = create_mask_label_map(operator['old_label_idx'],
                         new_label_idx, num_label)
-                mask_background(source_dataset.get_train_tsv(), 
+                mask_background(source_dataset.get_train_tsv(),
                         op.join(target_folder, 'train.tsv'),
                         old_new)
                 mask_background(source_dataset.get_test_tsv_file(),
@@ -187,10 +196,10 @@ def process_dataset(source_dataset, output_root_data_path, dataset_ops):
             sources.append(op.join(target_folder, 'train.tsv'))
         else:
             assert False
-    return {'sources': sources, 
-            'source_labels': source_labels, 
-            'source_shuffles': source_shuffles, 
-            'data_batch_weights': data_batch_weights, 
+    return {'sources': sources,
+            'source_labels': source_labels,
+            'source_shuffles': source_shuffles,
+            'data_batch_weights': data_batch_weights,
             'labelmaps': labelmaps,
             'tree_files': tree_files}
 
@@ -229,7 +238,7 @@ def is_noffset_list(labels):
         else:
             return True
 
-def map_label(source, labels, synset_tree, source_label): 
+def map_label(source, labels, synset_tree, source_label):
     assert synset_tree
     all_idx = []
 
@@ -247,7 +256,7 @@ def map_label(source, labels, synset_tree, source_label):
         is_cls_set = False
         for i, row in enumerate(rows):
             if row[1].isdigit():
-                infos = [{'class': label_noffset[labels[int(row[1])]], 
+                infos = [{'class': label_noffset[labels[int(row[1])]],
                     'rect': [0,0,0,0]}]
                 is_cls_set = True
             else:
