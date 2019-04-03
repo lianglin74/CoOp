@@ -18,6 +18,16 @@ except ImportError:
 import progressbar
 from tqdm import tqdm
 
+def rm_tsv(tsv_file):
+    if op.isfile(tsv_file):
+        os.remove(tsv_file)
+        line_idx = op.splitext(tsv_file)[0] + '.lineidx'
+        if op.isfile(line_idx):
+            os.remove(line_idx)
+
+def tsv_rm(tsv_file):
+    rm_tsv(tsv_file)
+
 def tsv_copy(src_tsv, dst_tsv):
     copy_file(src_tsv, dst_tsv)
     src_idx = op.splitext(src_tsv)[0] + '.lineidx'

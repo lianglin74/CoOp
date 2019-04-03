@@ -24,51 +24,79 @@ import sys
 import time
 import unicodedata
 import yaml
+from collections import defaultdict
 from deprecated import deprecated
 
 from datetime import datetime
 from pprint import pformat
 from pymongo import MongoClient
 from StringIO import StringIO
-from .cloud_storage import CloudStorage
-from .process_image import draw_bb, show_image, save_image
-from .process_image import show_images
-from .qd_common import calculate_image_ap
-from .qd_common import calculate_iou
-from .qd_common import dict_to_list
-from .qd_common import ensure_directory
-from .qd_common import generate_lineidx
-from .qd_common import hash_sha1
-from .qd_common import img_from_base64
-from .qd_common import init_logging
-from .qd_common import json_dump
-from .qd_common import list_to_dict, list_to_dict_unique
-from .qd_common import parse_test_data
-from .qd_common import read_to_buffer, load_list_file
-from .qd_common import worth_create
-from .qd_common import write_to_file
-from .qd_common import write_to_yaml_file, load_from_yaml_file
-from .taxonomy import child_parent_print_tree2
-from .taxonomy import create_markdown_url
-from .taxonomy import disambibuity_noffsets
-from .taxonomy import gen_noffset
-from .taxonomy import gen_term_list
-from .taxonomy import get_nick_name
-from .taxonomy import is_noffset
-from .taxonomy import LabelToSynset, synset_to_noffset
-from .taxonomy import load_all_tax, merge_all_tax
-from .taxonomy import noffset_to_synset
-from .taxonomy import populate_cum_images
-from .taxonomy import populate_url_for_offset
-from .taxonomy import Taxonomy
-from .tsv_io import create_inverted_list
-from .tsv_io import create_inverted_list2
-from .tsv_io import extract_label
-from .tsv_io import get_meta_file
-from .tsv_io import load_labels
-from .tsv_io import TSVDataset, TSVFile
-from .tsv_io import tsv_reader, tsv_writer
+from qd.cloud_storage import CloudStorage
+from qd.process_image import draw_bb, show_image, save_image
+from qd.process_image import show_images
+from qd.qd_common import calculate_image_ap
+from qd.qd_common import calculate_iou
+from qd.qd_common import dict_to_list
+from qd.qd_common import ensure_directory
+from qd.qd_common import generate_lineidx
+from qd.qd_common import hash_sha1
+from qd.qd_common import img_from_base64
+from qd.qd_common import init_logging
+from qd.qd_common import json_dump
+from qd.qd_common import list_to_dict, list_to_dict_unique
+from qd.qd_common import parse_test_data
+from qd.qd_common import read_to_buffer, load_list_file
+from qd.qd_common import worth_create
+from qd.qd_common import write_to_file
+from qd.qd_common import write_to_yaml_file, load_from_yaml_file
+from qd.taxonomy import child_parent_print_tree2
+from qd.taxonomy import create_markdown_url
+from qd.taxonomy import disambibuity_noffsets
+from qd.taxonomy import gen_noffset
+from qd.taxonomy import gen_term_list
+from qd.taxonomy import get_nick_name
+from qd.taxonomy import is_noffset
+from qd.taxonomy import LabelToSynset, synset_to_noffset
+from qd.taxonomy import load_all_tax, merge_all_tax
+from qd.taxonomy import noffset_to_synset
+from qd.taxonomy import populate_cum_images
+from qd.taxonomy import populate_url_for_offset
+from qd.taxonomy import Taxonomy
+from qd.tsv_io import create_inverted_list
+from qd.tsv_io import create_inverted_list2
+from qd.tsv_io import extract_label
+from qd.tsv_io import get_meta_file
+from qd.tsv_io import load_labels
+from qd.tsv_io import TSVDataset, TSVFile
+from qd.tsv_io import tsv_reader, tsv_writer
 
+
+def create_new_image_tsv_if_exif_rotated(data, split):
+    dataset = TSVDataset(data)
+    info = {'changed': 0, 'total': 0}
+    def gen_rows():
+        for key, str_rects, str_im in tqdm(dataset.iter_data(split)):
+            info['total'] = info['total'] + 1
+            im = img_from_base64(str_im)
+            from qd.qd_common import img_from_base64_ignore_rotation
+            im2 = img_from_base64_ignore_rotation(str_im)
+            if im.shape[0] != im2.shape[0] or im.shape[1] != im2.shape[1]:
+                assert im.shape[0] == im2.shape[1]
+                assert im.shape[1] == im2.shape[0]
+                info['changed'] = info['changed'] + 1
+                from qd.qd_common import encoded_from_img
+                yield key, str_rects, encoded_from_img(im)
+            else:
+                yield key, str_rects, str_im
+    tmp_tsv = dataset.get_data(split, 'tmp')
+    tsv_writer(gen_rows(), tmp_tsv)
+    logging.info(pformat(info))
+    if info['changed'] != 0:
+        from qd.tsv_io import tsv_mv
+        tsv_mv(tmp_tsv, dataset.get_data(split))
+    else:
+        from qd.tsv_io import tsv_rm
+        tsv_rm(tmp_tsv)
 
 def get_data_distribution(data, split, version):
     # return a dictionary to represent the distribution of the data

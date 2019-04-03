@@ -1339,6 +1339,12 @@ def img_from_base64(imagestring):
     except:
         return None;
 
+def img_from_base64_ignore_rotation(str_im):
+    jpgbytestring = base64.b64decode(str_im)
+    nparr = np.frombuffer(jpgbytestring, np.uint8)
+    im = cv2.imdecode(nparr, cv2.IMREAD_IGNORE_ORIENTATION);
+    return im
+
 if __name__ == '__main__':
     init_logging()
     kwargs = parse_general_args()
