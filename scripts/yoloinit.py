@@ -4,13 +4,16 @@ import glob
 import numpy as np
 import argparse
 import _init_paths
-import caffe
 from shutil import copyfile
 from google.protobuf import text_format
 from numpy import linalg as LA
 import logging
 from tqdm import tqdm
-from itertools import izip
+try:
+    from itertools import izip as zip
+except:
+    # python3
+    pass
 from pathos.multiprocessing import ProcessingPool as Pool
 import pathos.multiprocessing as mp
 
@@ -23,13 +26,14 @@ def data_dependent_init_ncc1(pretrained_weights_filename,
     ncc version 1
     '''
 
+    import caffe
     caffe.set_device(0)
     caffe.set_mode_gpu()
 
-    net = data_dependent_init_tree_ncc(pretrained_weights_filename, 
-            pretrained_prototxt_filename, 
+    net = data_dependent_init_tree_ncc(pretrained_weights_filename,
+            pretrained_prototxt_filename,
             new_prototxt_filename,
-            tr_cnt=tr_cnt, 
+            tr_cnt=tr_cnt,
             max_iters=max_iters)
 
     net.save(new_weight)
@@ -38,18 +42,19 @@ def data_dependent_init_ncc2(pretrained_weights_filename,
         pretrained_prototxt_filename, new_prototxt_filename, new_weight,
         tr_cnt=100, max_iters=1000):
 
+    import caffe
     caffe.set_device(0)
     caffe.set_mode_gpu()
 
-    net = data_dependent_init_tree_online(pretrained_weights_filename, 
-            pretrained_prototxt_filename, 
+    net = data_dependent_init_tree_online(pretrained_weights_filename,
+            pretrained_prototxt_filename,
             new_prototxt_filename,
-            tr_cnt=tr_cnt, 
+            tr_cnt=tr_cnt,
             max_iters=max_iters)
 
     net.save(new_weight)
 
-def extract_training_data_mean(new_net,anchor_num, lname, 
+def extract_training_data_mean(new_net,anchor_num, lname,
         cid_groups, group_offsets, parents, group_sizes,
         tr_cnt, max_iter):
     feature_blob_name = new_net.bottom_names[lname][0]
@@ -65,8 +70,8 @@ def extract_training_data_mean(new_net,anchor_num, lname,
         # the second one is for sum x_i for each category
         # the third one is the count for each category on each group
         # the last one is the number of images within that group
-        sum_count_n.append([np.zeros((group_sizes[g], feature_dim)), 
-            np.zeros((group_sizes[g], 1)), 
+        sum_count_n.append([np.zeros((group_sizes[g], feature_dim)),
+            np.zeros((group_sizes[g], 1)),
             np.zeros(1)])
     for _ in range(max_iter):
         if (_ % 100) == 0:
@@ -109,7 +114,7 @@ def extract_training_data_mean(new_net,anchor_num, lname,
         means.append((mean_x_each, n))
     return means
 
-def extract_training_data_convmean(new_net,anchor_num, lname, 
+def extract_training_data_convmean(new_net,anchor_num, lname,
         cid_groups, group_offsets, parents, group_sizes,
         tr_cnt, max_iter):
     feature_blob_name = new_net.bottom_names[lname][0]
@@ -130,9 +135,9 @@ def extract_training_data_convmean(new_net,anchor_num, lname,
         # the second one is for sum x_i for each category
         # the third one is the count for each category on each group
         # the last one is the number of images within that group
-        conv_sum_count_n.append([np.zeros((feature_dim, feature_dim)), 
-            np.zeros((group_sizes[g], feature_dim)), 
-            np.zeros((group_sizes[g], 1)), 
+        conv_sum_count_n.append([np.zeros((feature_dim, feature_dim)),
+            np.zeros((group_sizes[g], feature_dim)),
+            np.zeros((group_sizes[g], 1)),
             np.zeros(1)])
     for _ in range(max_iter):
         if (_ % 100) == 0:
@@ -190,7 +195,7 @@ def extract_training_data_convmean(new_net,anchor_num, lname,
         for i in range(len(count_each)):
             count_each[i] = 1 if count_each[i] == 0 else count_each[i]
         mean_x_each = sum_x_each / count_each
-        for mean_x, c in izip(mean_x_each, count_each):
+        for mean_x, c in zip(mean_x_each, count_each):
             mean_x = mean_x.reshape((-1, 1))
             nmeanmeant += c * np.dot(mean_x, mean_x.T)
         if n > 1:
@@ -269,7 +274,7 @@ def number_of_anchor_boxex2(model):
     for l in model.layer:
         if l.type == 'RegionTarget':
             assert num_anchor is None
-            num_anchor = len(l.region_target_param.biases) / 2 
+            num_anchor = len(l.region_target_param.biases) / 2
         elif l.type == 'RegionLoss':
             assert num_anchor is None
             num_anchor = len(l.region_loss_param.biases) / 2
@@ -284,7 +289,7 @@ def ncc2_train_with_mean(means, nsample, avgnorm2):
     w = means
     b = np.zeros(means.shape[0])
     return weight_normalize(w, b, avgnorm2)
-    
+
 def ncc2_train_with_covariance_and_mean(cov, means, nsample, avgnorm2):
     if nsample <= 1:
         return
@@ -298,6 +303,7 @@ def ncc2_train_with_covariance_and_mean(cov, means, nsample, avgnorm2):
 def data_dependent_init_tree_ncc(pretrained_weights_filename,
         pretrained_prototxt_filename, new_prototxt_filename, tr_cnt=20,
         max_iters=1000):
+    import caffe
     caffe.set_device(0)
     caffe.set_mode_gpu()
     pretrained_net = caffe.Net(pretrained_prototxt_filename, pretrained_weights_filename, caffe.TEST)
@@ -316,25 +322,25 @@ def data_dependent_init_tree_ncc(pretrained_weights_filename,
     print("# of anchors: %s" % anchor_num)
     #model surgery 1, copy bbox regression
     conv_w, conv_b = [p.data for p in pretrained_net.params[pretrain_last_layer_name]]
-    featuredim = conv_w.shape[1]    
+    featuredim = conv_w.shape[1]
     assert conv_w.shape[2] == 1 and conv_w.shape[3] == 1
     conv_w = conv_w.reshape(-1, anchor_num, featuredim)
     conv_b = conv_b.reshape(-1, anchor_num)
 
-    new_w, new_b = [p.data for p in new_net.params[new_last_layer_name]];    
+    new_w, new_b = [p.data for p in new_net.params[new_last_layer_name]];
     assert new_w.shape[2] == 1 and new_w.shape[3] == 1
-    
+
     # save the param for the bounding box regression and objectiveness
     new_w = new_w.reshape(-1, anchor_num, featuredim)
     new_b = new_b.reshape(-1, anchor_num)
     new_w[:5, :, :] = conv_w[:5, :, :]
     new_b[:5, :] = conv_b[:5, :]
-    
+
     tree_file = get_softmax_tree_path(model_from_new_proto)
     group_offsets, group_sizes, cid_groups, parents = read_softmax_tree(tree_file)
     assert len(cid_groups) == len(parents)
     start_time = time.time()
-    means = extract_training_data_mean(new_net, anchor_num, new_last_layer_name, 
+    means = extract_training_data_mean(new_net, anchor_num, new_last_layer_name,
             cid_groups, group_offsets, parents, group_sizes,
             tr_cnt=tr_cnt, max_iter=max_iters)
     logging.info('time cost to extract the training data: {}s'.format(
@@ -344,8 +350,8 @@ def data_dependent_init_tree_ncc(pretrained_weights_filename,
 
     #calculate the empirical norm of the yolo classification weights
     base_cw= conv_w[5:, :, :]
-    base_avgnorm2 = np.average(np.add.reduce(base_cw*base_cw,axis=1))    
-    
+    base_avgnorm2 = np.average(np.add.reduce(base_cw*base_cw,axis=1))
+
     logging.info('begin sequential')
     for i, (mean_x_each, c) in enumerate(means):
         if c <= 1:
@@ -364,7 +370,7 @@ def data_dependent_init_tree_ncc(pretrained_weights_filename,
             new_w[5 + offset:5 + offset + size, a] = W
             new_b[5 + offset:5 + offset + size, a] = B
     logging.info('end sequential')
-    
+
     new_net.params[new_last_layer_name][0].data[...] = new_w.reshape(-1, featuredim, 1, 1)
     new_net.params[new_last_layer_name][1].data[...] = new_b.reshape(-1)
     logging.info('time cost to learn the parameter: {}s'.format(time.time() -
@@ -393,33 +399,33 @@ def data_dependent_init_tree_online(pretrained_weights_filename,
     print("# of anchors: %s" % anchor_num)
     #model surgery 1, copy bbox regression
     conv_w, conv_b = [p.data for p in pretrained_net.params[pretrain_last_layer_name]]
-    featuredim = conv_w.shape[1]    
+    featuredim = conv_w.shape[1]
     assert conv_w.shape[2] == 1 and conv_w.shape[3] == 1
     conv_w = conv_w.reshape(-1, anchor_num, featuredim)
     conv_b = conv_b.reshape(-1, anchor_num)
 
-    new_w, new_b = [p.data for p in new_net.params[new_last_layer_name]];    
+    new_w, new_b = [p.data for p in new_net.params[new_last_layer_name]];
     assert new_w.shape[2] == 1 and new_w.shape[3] == 1
-    
+
     # save the param for the bounding box regression and objectiveness
     new_w = new_w.reshape(-1, anchor_num, featuredim)
     new_b = new_b.reshape(-1, anchor_num)
     new_w[:5, :, :] = conv_w[:5, :, :]
     new_b[:5, :] = conv_b[:5, :]
-    
+
     tree_file = get_softmax_tree_path(model_from_new_proto)
     group_offsets, group_sizes, cid_groups, parents = read_softmax_tree(tree_file)
     assert len(cid_groups) == len(parents)
     start_time = time.time()
-    conv_means = extract_training_data_convmean(new_net, anchor_num, new_last_layer_name, 
+    conv_means = extract_training_data_convmean(new_net, anchor_num, new_last_layer_name,
             cid_groups, group_offsets, parents, group_sizes,
             tr_cnt=tr_cnt, max_iter=max_iters)
     logging.info('time to extract data: {}s'.format(time.time() - start_time))
     start_time = time.time()
     #calculate the empirical norm of the yolo classification weights
     base_cw= conv_w[5:, :, :]
-    base_avgnorm2 = np.average(np.add.reduce(base_cw*base_cw,axis=1))    
-    
+    base_avgnorm2 = np.average(np.add.reduce(base_cw*base_cw,axis=1))
+
     for i, (conv_x, mean_x_each, c) in enumerate(conv_means):
         if c <= 1:
             # single data have no conv
@@ -437,13 +443,14 @@ def data_dependent_init_tree_online(pretrained_weights_filename,
             new_w[5 + offset:5 + offset + size, a] = W
             new_b[5 + offset:5 + offset + size, a] = B
     logging.info('time for ncc2: {}s'.format(time.time() - start_time))
-    
+
     new_net.params[new_last_layer_name][0].data[...] = new_w.reshape(-1, featuredim, 1, 1)
     new_net.params[new_last_layer_name][1].data[...] = new_b.reshape(-1)
 
     return new_net
 
 def read_model_proto(proto_file_path):
+    import caffe
     with open(proto_file_path) as f:
         model = caffe.proto.caffe_pb2.NetParameter()
         text_format.Parse(f.read(), model)
@@ -475,7 +482,7 @@ def weight_normalize(W,B,avgnorm2):
     W_normavg = np.average(np.add.reduce(W*W, axis=1)) + EPS
     alpha = np.sqrt(avgnorm2/W_normavg)
     return alpha*W, alpha*B
-    
+
 def calc_epsilon(dnratio):
     if dnratio>10: return 0.1
     elif dnratio<2:  return 10
@@ -530,7 +537,7 @@ def extract_training_data( new_net,anchor_num, lname, tr_cnt=200):
     while True:
         new_net.forward(end=lname)
         feature_map = new_net.blobs[feature_blob_name].data.copy()
-        fh = feature_map.shape[2]-1    
+        fh = feature_map.shape[2]-1
         fw = feature_map.shape[3]-1
         labels = new_net.blobs['label'].data;
         batch_size = labels.shape[0];
@@ -548,8 +555,9 @@ def extract_training_data( new_net,anchor_num, lname, tr_cnt=200):
         if  np.min(wcnt) > tr_cnt:    break;
     return np.vstack(xlist).astype(float), np.array(ylist).astype(int);
 
-    
+
 def data_dependent_init(pretrained_weights_filename, pretrained_prototxt_filename, new_prototxt_filename):
+    import caffe
     pretrained_net = caffe.Net(pretrained_prototxt_filename, pretrained_weights_filename, caffe.TEST)
     new_net = caffe.Net(new_prototxt_filename, caffe.TRAIN)
     new_net.copy_from(pretrained_weights_filename, ignore_shape_mismatch=True)
@@ -566,31 +574,31 @@ def data_dependent_init(pretrained_weights_filename, pretrained_prototxt_filenam
     print("# of anchors: %s" % anchor_num)
     #model surgery 1, copy bbox regression
     conv_w, conv_b = [p.data for p in pretrained_net.params[pretrain_last_layer_name]]
-    featuredim = conv_w.shape[1]    
+    featuredim = conv_w.shape[1]
     conv_w = conv_w.reshape(anchor_num,-1,featuredim)
     conv_b = conv_b.reshape(anchor_num,-1)
 
-    new_w, new_b = [p.data for p in new_net.params[new_last_layer_name]];    
+    new_w, new_b = [p.data for p in new_net.params[new_last_layer_name]];
 
     new_w = new_w.reshape(anchor_num,-1,featuredim)
     new_b = new_b.reshape(anchor_num,-1)
     new_w[:,:5,:] = conv_w[:,:5,:]
     new_b[:,:5] = conv_b[:,:5]
 
-    #data dependent model init   
+    #data dependent model init
     class_to_ind = load_labelmap(parse_labelfile_path(model_from_new_proto))
-    
+
     X,Y = extract_training_data(new_net,anchor_num, new_last_layer_name, tr_cnt=60  )
     #calculate the empirical norm of the yolo classification weights
     base_cw= conv_w[:,5:,:].reshape(-1,featuredim)
-    base_avgnorm2 = np.average(np.add.reduce(base_cw*base_cw,axis=1))    
-    
-    W,B = ncc2_train(X,Y,base_avgnorm2)    
-    
+    base_avgnorm2 = np.average(np.add.reduce(base_cw*base_cw,axis=1))
+
+    W,B = ncc2_train(X,Y,base_avgnorm2)
+
     for i in range(anchor_num):
         new_w[i,5:] = W
         new_b[i,5:] = B
-        
+
     new_net.params[new_last_layer_name][0].data[...] = new_w.reshape(-1, featuredim, 1,1)
     new_net.params[new_last_layer_name][1].data[...] = new_b.reshape(-1)
 
@@ -607,6 +615,7 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
 
+    import caffe
     caffe.set_device(args.gpuid)
     caffe.set_mode_gpu()
 
