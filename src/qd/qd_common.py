@@ -38,6 +38,12 @@ except ImportError:
     from urllib2 import urlopen
     from urllib2 import HTTPError
 
+
+def ensure_copy_folder(src_folder, dst_folder):
+    if op.isdir(dst_folder):
+        return
+    shutil.copytree(src_folder, dst_folder)
+
 def get_current_time_as_str():
     return datetime.now().strftime('%Y_%m_%d_%H_%M_%S')
 

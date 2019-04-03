@@ -3390,6 +3390,96 @@ def attach_properties(src_nodes, dst_tree):
                 dst_node.add_feature(f, src_node.__getattribute__(f))
     assert len(confusings) == 0, pformat(confusings)
 
+def update_taxonomy_by_latest(ref_data, target_data):
+    lift_train = True
+    from qd.qd_common import ensure_copy_folder
+    # copy everything from ref_data to target_data and _no_bb
+    ensure_copy_folder(op.join('data', ref_data),
+            op.join('data', target_data))
+    ensure_copy_folder(op.join('data', ref_data + '_no_bb'),
+            op.join('data', target_data + '_no_bb'))
+
+    # _with_bb
+    ref_data = ref_data + '_with_bb'
+    target_data = target_data + '_with_bb'
+
+    ref_dataset = TSVDataset(ref_data)
+    out_dataset = TSVDataset(target_data)
+
+    split = 'train'
+    splitX = '{}X'.format(split)
+    all_idxsource_idxrow = [(int(s_idx_source), int(s_idx_row)) for s_idx_source, s_idx_row in
+            tsv_reader(ref_dataset.get_shuffle_file(split))]
+    pattern = 'data/(.*)/(train|trainval|test).label.v.*.tsv'
+    source_data_splits = [re.match(pattern, source_origin_label).groups()
+            for source_origin_label, in ref_dataset.iter_data(splitX, 'origin.label')]
+    tax = Taxonomy(load_from_yaml_file(op.join(ref_dataset._data_root, 'root.yaml')))
+    sources_label = []
+    sources_origin_label = []
+    for idxsource, (source_data, source_split) in enumerate(source_data_splits):
+        idx = [idx_r for idx_s, idx_r in all_idxsource_idxrow if idxsource == idx_s]
+        from qd.process_tsv import TSVDatasetSource
+        for n in tax.root.iter_search_nodes():
+            if source_data in n.features:
+                n.add_feature(source_data,
+                        n.__getattribute__(source_data) + ',{}'.format(n.name))
+        source_dataset = TSVDatasetSource(source_data, root=tax.root,
+                split_infos=[{'split': split, 'version': -1}])
+        source_dataset._ensure_initialized()
+        source_origin_label = source_dataset.get_data(source_split, 'label', -1)
+        sources_origin_label.append(source_origin_label)
+        from qd.process_tsv import convert_label
+        converted_label = convert_label(source_origin_label,
+                idx, source_dataset._sourcelabel_to_targetlabels,
+                with_bb=True)
+        for i in tqdm(idx):
+            l = converted_label[i]
+            if lift_train:
+                from qd.process_tsv import lift_one_image
+                l[1] = json.dumps(lift_one_image(l[1], tax))
+            else:
+                from qd.process_tsv import delift_one_image
+                l[1] = json.dumps(delift_one_image(l[1], tax))
+            l[0] = '{}_{}_{}'.format(source_dataset.name, split, l[0])
+        out_split = '{}{}'.format(split, idxsource)
+        label_file = out_dataset.get_data(out_split, 'label')
+        tsv_writer(converted_label, label_file)
+        sources_label.append(label_file)
+    write_to_file('\n'.join(sources_label),
+            out_dataset.get_data(splitX, 'label'))
+    write_to_file('\n'.join(sources_origin_label),
+            out_dataset.get_data(splitX, 'origin.label'))
+    from qd.qd_common import ensure_copy_file
+    # copy the image source file
+    ensure_copy_file(ref_dataset.get_data(splitX),
+            out_dataset.get_data(splitX))
+    # copy the labelmap
+    ensure_copy_file(ref_dataset.get_labelmap_file(),
+            out_dataset.get_labelmap_file())
+
+    # copy the shuffle file
+    ensure_copy_file(ref_dataset.get_shuffle_file(split),
+            out_dataset.get_shuffle_file(split))
+
+def test():
+    data = 'LogosInTheWild-v2Clean'
+    idx = 1237
+    dataset = TSVDataset(data)
+    tsv = TSVFile(dataset.get_data('train', 'label', 3))
+    key, str_rects = tsv.seek(idx)
+    key, _, str_im = dataset.seek_by_key(key, 'train')
+
+    #im = img_from_base64(str_im)
+    jpgbytestring = base64.b64decode(str_im)
+    nparr = np.frombuffer(jpgbytestring, np.uint8)
+    im = cv2.imdecode(nparr, cv2.IMREAD_IGNORE_ORIENTATION);
+
+    rects = json.loads(str_rects)
+    draw_rects(im, rects)
+    save_image(im, '/mnt/jianfw_desk/a.png')
+    import ipdb;ipdb.set_trace(context=15)
+
+
 def build_taxonomy_impl(taxonomy_folder, **kwargs):
     random.seed(777)
     dataset_name = kwargs.get('data',
