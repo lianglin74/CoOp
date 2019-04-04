@@ -14,9 +14,9 @@ def get_arg_parser(model_names):
     parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
                         help='number of data loading workers (default: 4)')
 
-    # custom hyper parameter config
-    parser.add_argument('--hyper-param-config', default='', type=str, metavar='PATH',
-                        help='path to yaml config of hyper parameters')
+    # DEBUG
+    parser.add_argument('--debug', dest='debug', action='store_true',
+                        help='DEBUG mode')
 
     # has default hyper parameter for ResNet
     parser.add_argument('--epochs', default=90, type=int, metavar='N',
@@ -78,4 +78,12 @@ def get_arg_parser(model_names):
     parser.add_argument('--finetune', dest='finetune', action='store_true',
                         help='finetune last layer by using 0.1x lr for previous layers')
 
+    parser.add_argument('--fixfeature', dest='fixfeature', action='store_true',
+                        help='fix features, only optimize the fc layer')
+
+    parser.add_argument('--fixpartialfeature', dest='fixpartialfeature', action='store_true',
+                        help='only optimize the last feature block and fc layer')
+
+    parser.add_argument('--BatchNormEvalMode', dest='BatchNormEvalMode', action='store_true',
+                        help='Use eval mode for batch normalization layer. Corresponding to Caffe use global statistics')
     return parser

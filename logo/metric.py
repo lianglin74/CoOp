@@ -15,7 +15,7 @@ from logo.classifier import CropTaggingWrapper
 from scripts.qd_common import init_logging, worth_create, read_to_buffer
 from scripts.tsv_io import tsv_reader, tsv_writer, TSVDataset
 from scripts import deteval, qd_common
-from scripts.yolotrain import yolo_predict
+# from scripts.yolotrain import yolo_predict
 from scripts.pytablemd import write_tablemd
 
 trained_dataset = "brand1048"
@@ -29,21 +29,21 @@ new_gt = "/raid/data/logo40/test.label.tsv"
 rootpath = "/raid/data/brand_output/"
 iou_thres = [0.5]
 
+det1_expid = "brand1048_darknet19_448_B_noreorg_rotate10_Init.best_model8022_extraConvKernel.1.3.1_TsvBoxSamples50ExtraConvGroups1_4_1EffectBatchSize128"
+det2_expid = "TaxLogoV1_1_darknet19_448_C_Init.best_model9748_maxIter.50eEffectBatchSize128_bb_only"
+det3_expid = "TaxLogoV1_7_darknet19_448_C_Init.best_model9748_maxIter.75eEffectBatchSize128_bb_only"
+det4_expid = "brand1048Clean_net_RongFasterRCNN"
+
+tag1_expid = "gt_only"
+tag2_expid = "pretrained_0.1"
+tag3_expid = "ccs_code_fix"
+tag4_expid = "ccs_old"
+tag5_expid = "pretrained_0.1_old"
+tag6_expid = "logo40can2"
 
 def main():
     records = []
     headings = ["Methods"] + ["mAP@{}".format(iou) for iou in iou_thres] * 4
-
-    det1_expid = "brand1048_darknet19_448_B_noreorg_rotate10_Init.best_model8022_extraConvKernel.1.3.1_TsvBoxSamples50ExtraConvGroups1_4_1EffectBatchSize128"
-    det2_expid = "TaxLogoV1_1_darknet19_448_C_Init.best_model9748_maxIter.50eEffectBatchSize128_bb_only"
-    det3_expid = "TaxLogoV1_7_darknet19_448_C_Init.best_model9748_maxIter.75eEffectBatchSize128_bb_only"
-    det4_expid = "brand1048Clean_net_RongFasterRCNN"
-
-    tag1_expid = "gt_only"
-    tag2_expid = "pretrained_0.1"
-    tag3_expid = "ccs_code_fix"
-    tag4_expid = "ccs_old"
-    tag5_expid = "pretrained_0.1_old"
 
     records.append(["1k logo detector"] + evaluate_detector(det1_expid))
     records.append(["logo/non-logo detector"] + evaluate_detector(det3_expid))

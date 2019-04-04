@@ -4,6 +4,7 @@ import progressbar
 import json
 import sys
 import os
+import math
 import multiprocessing as mp
 from multiprocessing import Process
 from multiprocessing import Event
@@ -120,7 +121,7 @@ def cmd_run(list_cmd, return_output=False, env=None,
         shell=False):
     logging.info('start to cmd run: {}'.format(' '.join(map(str, list_cmd))))
     # if we dont' set stdin as sp.PIPE, it will complain the stdin is not a tty
-    # device. Maybe, the reson is it is inside another process. 
+    # device. Maybe, the reson is it is inside another process.
     # if stdout=sp.PIPE, it will not print the result in the screen
     e = os.environ.copy()
     if 'SSH_AUTH_SOCK' in e:
@@ -135,15 +136,15 @@ def cmd_run(list_cmd, return_output=False, env=None,
             #p = sp.Popen(list_cmd, stdin=sp.PIPE, cwd=working_dir)
         #else:
         if shell:
-            p = sp.Popen(' '.join(list_cmd), 
-                    stdin=stdin, 
-                    env=e, 
+            p = sp.Popen(' '.join(list_cmd),
+                    stdin=stdin,
+                    env=e,
                     cwd=working_dir,
                     shell=True)
         else:
-            p = sp.Popen(list_cmd, 
-                    stdin=sp.PIPE, 
-                    env=e, 
+            p = sp.Popen(list_cmd,
+                    stdin=sp.PIPE,
+                    env=e,
                     cwd=working_dir)
         message = p.communicate()
         if p.returncode != 0:
@@ -293,7 +294,7 @@ def print_as_html(table, html_output):
     j2_env = Environment(loader=FileSystemLoader('./'), trim_blocks=True)
     # find the cols with longest length. If it does not include all cols, then
     # append those not included
-    _, cols = max([(len(table[row]), table[row]) for row in table], 
+    _, cols = max([(len(table[row]), table[row]) for row in table],
             key=lambda x: x[0])
     cols = list(cols)
     for row in table:
@@ -403,7 +404,7 @@ def calculate_ap_by_true_list_count_num(corrects, total):
     precision = (1. * np.cumsum(corrects)) / np.arange(1, 1 + len(corrects))
     if np.sum(corrects) == 0:
         return 0
-    return np.sum(precision) / len(precision) * np.sum(corrects) / total 
+    return np.sum(precision) / len(precision) * np.sum(corrects) / total
 
 def calculate_weighted_ap_by_true_list(corrects, weights, total):
     precision = np.cumsum(corrects * weights) / (np.cumsum(weights) + 0.0001)
@@ -565,7 +566,7 @@ def parse_snapshot_rank(predict_file):
 
 def get_all_predict_files(full_expid):
     model_folder = op.join('output', full_expid, 'snapshot')
-    
+
     predict_files = []
     found = glob.glob(op.join(model_folder, '*.report'))
     predict_files.extend([op.basename(f) for f in found])
@@ -674,7 +675,7 @@ def drop_second_batch_in_bn(net):
         l.top.remove(l.top[0])
         l.top.append(l.name + '/slice0')
         all_layer.append(l)
-        
+
         fix_bn_layer = net.layer.add()
         fix_bn_layer.name = l.name + '/bn1'
         fix_bn_layer.bottom.append(l.name + '/slice1')
@@ -1350,6 +1351,28 @@ def img_from_base64_ignore_rotation(str_im):
     nparr = np.frombuffer(jpgbytestring, np.uint8)
     im = cv2.imdecode(nparr, cv2.IMREAD_IGNORE_ORIENTATION);
     return im
+
+def int_rect(rect, enlarge_factor=1.0, im_h=None, im_w=None):
+    assert(len(rect) == 4)
+    left, top, right, bot = rect
+    rw = right - left
+    rh = bot - top
+
+    new_x = int(left + (1.0 - enlarge_factor) * rw / 2.0)
+    new_y = int(top + (1.0 - enlarge_factor) * rh / 2.0)
+    new_w = int(math.ceil(enlarge_factor * rw))
+    new_h = int(math.ceil(enlarge_factor * rh))
+    if im_h and im_w:
+        new_x = np.clip(new_x, 0, im_w)
+        new_y = np.clip(new_y, 0, im_h)
+        new_w = np.clip(new_w, 0, im_w - new_x)
+        new_h = np.clip(new_h, 0, im_h - new_y)
+
+    return [new_x, new_y, new_x + new_w, new_y + new_h]
+
+def is_valid_rect(rect):
+    return len(rect) == 4 and rect[0] < rect[2] and rect[1] < rect[3]
+
 
 if __name__ == '__main__':
     init_logging()

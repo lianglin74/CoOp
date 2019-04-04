@@ -76,6 +76,26 @@ def get_optimizer(model, args):
                                 momentum=args.momentum,
                                 weight_decay=args.weight_decay)
 
+    if args.fixpartialfeature:
+        group_decay = []
+        group_no_decay = []
+        for name, param in model.named_parameters():
+            if 'layer4' in name or 'fc' in name:
+                if 'bn' in name or 'bias' in name:
+                    group_no_decay.append(param)
+                else:
+                    group_decay.append(param)
+            else:
+                param.requires_grad = False
+
+        groups = [{'params': group_decay, 'lr': args.lr, 'weight_decay': args.weight_decay},
+                  {'params': group_no_decay, 'lr': args.lr, 'weight_decay': 0}]
+
+        optimizer = torch.optim.SGD(groups, args.lr,
+                                    momentum=args.momentum,
+                                    weight_decay=args.weight_decay)
+        return optimizer
+
     if args.finetune:
         group_pretrained = []
         group_new = []
@@ -90,8 +110,9 @@ def get_optimizer(model, args):
         optimizer = torch.optim.SGD(groups, args.lr,
                                     momentum=args.momentum,
                                     weight_decay=args.weight_decay)
-    return optimizer
+        return optimizer
 
+    return optimizer
 
 def get_scheduler(optimizer, args):
     if args.lr_policy.lower() == 'step':
@@ -114,6 +135,10 @@ def get_scheduler(optimizer, args):
 
     return scheduler
 
+def set_bn_eval(m):
+    classname = m.__class__.__name__
+    if classname.find('BatchNorm') != -1:
+        m.eval()
 
 def train(args, train_loader, model, criterion, optimizer, epoch, logger, accuracy):
     batch_time = AverageMeter()
@@ -128,6 +153,16 @@ def train(args, train_loader, model, criterion, optimizer, epoch, logger, accura
 
     # switch to train mode
     model.train()
+
+    if args.BatchNormEvalMode:
+        for module in model.module.children():
+            module.apply(set_bn_eval)
+    elif args.fixpartialfeature:
+        # set the fixed feature layers bn to evaluation mode
+        for module_name, module in model.module.named_children():
+            if 'layer4' in module_name or 'fc' in module_name:
+                continue
+            module.apply(set_bn_eval)
 
     end = time.time()
     tic = time.time()

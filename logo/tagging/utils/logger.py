@@ -8,6 +8,8 @@ class Logger(object):
         # set up logger
         if not os.path.exists(root_output_path):
             os.makedirs(root_output_path)
+        for handler in logging.root.handlers:
+            logging.root.removeHandler(handler)
 
         log_file = '{}_{}.log'.format(logger_name, time.strftime('%Y-%m-%d-%H-%M'))
         head = '%(asctime)-15s %(message)s'

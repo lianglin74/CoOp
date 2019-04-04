@@ -8,43 +8,60 @@ import torch.utils.data
 import torch.utils.data.distributed
 from torch.utils.data.dataloader import default_collate
 
-from ..lib.dataset import TSVDataset, TSVDatasetPlusYaml, TSVDatasetWithoutLabel, CropClassTSVDataset, CropClassTSVDatasetYaml
+from ..lib.dataset import TSVDataset, TSVDatasetPlusYaml, TSVDatasetWithoutLabel, CropClassTSVDataset, CropClassTSVDatasetYaml, CropClassTSVDatasetYamlList
 
-def get_data_loader(args, logger):
-    if not args.data.lower().endswith('.yaml'):
-        raise NotImplementedError()
-    else:
+def get_data_loader(args, logger=None):
+    if args.data.endswith('.yaml'):
         train_dataset = CropClassTSVDatasetYaml(args.data, session_name='train', transform=get_pt_transform("train"))
+    elif args.data.endswith('.yamllst'):
+        train_dataset = CropClassTSVDatasetYamlList(args.data, session_name='train', transform=get_pt_transform("train"))
+    else:
+        raise NotImplementedError()
 
     if args.distributed:
         train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
     else:
         train_sampler = None
 
+    shuffle = (not args.debug)
     train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
+        train_dataset, batch_size=args.batch_size, shuffle=shuffle,
         num_workers=args.workers, pin_memory=True, sampler=train_sampler)
 
-    if not args.data.lower().endswith('.yaml'):
-        raise NotImplementedError()
-    else:
+    if args.data.endswith('.yaml'):
         val_dataset = CropClassTSVDatasetYaml(args.data, session_name='val', transform=get_pt_transform("test"))
+    elif args.data.endswith('.yamllst'):
+        val_dataset = CropClassTSVDatasetYamlList(args.data, session_name='val', transform=get_pt_transform("test"))
+    else:
+        raise NotImplementedError()
 
     val_loader = torch.utils.data.DataLoader(
         val_dataset, batch_size=args.batch_size, shuffle=False,
         num_workers=args.workers, pin_memory=True)
 
-    # TODO: move to unit test or debug mode
-    if False:
+    if args.debug:
         imgdir = os.path.join(args.output_dir, "imgs")
         if not os.path.exists(imgdir):
             os.mkdir(imgdir)
-        for idx in range(100):
+        target_labels = {0:0, 1:0, 2:0, 3:0}
+        for idx in range(len(train_dataset)):
             img, label = train_dataset[idx]
-            save_image(img, os.path.join(imgdir, "train_{}_{}.jpg".format(label.item(), idx)))
-            img, label = val_dataset[idx]
-            save_image(img, os.path.join(imgdir, "val_{}_{}.jpg".format(label.item(), idx)))
 
+            if label.item() in target_labels and target_labels[label.item()]<10:
+                save_image(img, os.path.join(imgdir, "train_{}_{}.jpg".format(label.item(), idx)))
+                target_labels[label.item()] += 1
+
+        target_labels = {0:0, 1:0, 2:0, 3:0}
+        for idx in range(len(val_dataset)):
+            img, label = val_dataset[idx]
+            if label.item() in target_labels and target_labels[label.item()]<10:
+                save_image(img, os.path.join(imgdir, "val_{}_{}.jpg".format(label.item(), idx)))
+                target_labels[label.item()] += 1
+
+        for i, (input, target, info) in enumerate(train_loader):
+            if i%100==0:
+                print(i)
+        import ipdb; ipdb.set_trace()
     return train_loader, val_loader, train_sampler, train_dataset
 
 def my_collate(batch):
@@ -82,13 +99,13 @@ def get_pt_transform(phase):
     train_transform = transforms.Compose([
             transforms.ToPILImage(),
             transforms.RandomResizedCrop(224, scale=(0.2,1)),
-            transforms.RandomAffine(degrees=180),
+            # transforms.RandomAffine(degrees=180),
             transforms.ColorJitter(brightness=0.5,contrast=0.5,saturation=0.5, hue=0.2),
-            # transforms.RandomHorizontalFlip(),
+            transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
             bgr_normalize,
         ])
-    if phase.lwoer() == "test":
+    if phase.lower() == "test":
         return test_transform
     elif phase.lower() == "train":
         return train_transform

@@ -146,8 +146,8 @@ def truncate_rect(rect, im_h, im_w):
 
 
 def is_same_class(c1, c2):
-        def clean(s):
-            return re.sub('[^0-9a-z]+', '', s.lower())
-        c1 = clean(c1)
-        c2 = clean(c2)
-        return c1==c2 or c1 in c2 or c2 in c1
+    def clean(s):
+        return re.sub('[^0-9a-z]+', '', s.lower())
+    c1 = clean(c1)
+    c2 = clean(c2)
+    return c1==c2 or c1 in c2 or c2 in c1

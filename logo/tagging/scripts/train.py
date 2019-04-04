@@ -120,7 +120,8 @@ def main(args):
         if args.distributed:
             train_sampler.set_epoch(epoch)
 
-        scheduler.step()
+        if scheduler != None:
+            scheduler.step()
 
         # train for one epoch
         train(args, train_loader, model, criterion, optimizer, epoch, logger, accuracy)

@@ -2,10 +2,8 @@ import os
 import torch
 from torch.utils.data import Dataset
 
-# TODO: the importing behavior here depends on sys.path, which must include QD_ROOT(/quickdetection/)
-from scripts.tsv_io import TSVFile, tsv_reader
-from scripts.qd_common import img_from_base64, generate_lineidx, load_from_yaml_file
-from scripts.qd_common import FileProgressingbar
+from qd.tsv_io import TSVFile, tsv_reader, tsv_writer
+from qd.qd_common import img_from_base64, generate_lineidx, load_from_yaml_file, FileProgressingbar, int_rect, hash_sha1
 
 import base64
 from collections import OrderedDict, defaultdict
@@ -218,7 +216,7 @@ class TSVDatasetWithoutLabel(TSVDatasetPlus):
 class CropClassTSVDataset(Dataset):
     def __init__(self, tsvfile, labelmap, labelfile=None, label_filter_fn=None,
                  transform=None, logger=None, for_test=False, reorder_label=False,
-                 overwrite_cache=False, enlarge_bbox=2.5):
+                 overwrite_cache=False, enlarge_bbox=1.0):
         """ TSV dataset with cropped images from bboxes labels
         Params:
             tsvfile: image tsv file, columns are key, bboxes, b64_image_string
@@ -226,6 +224,7 @@ class CropClassTSVDataset(Dataset):
             labelfile: label tsv file, columns are key, bboxes
             label_filter_fn: callable, filter the bbox list
         """
+        self.min_pixels = 3
         self.tsv = TSVFile(tsvfile)
         self.tsvfile = tsvfile
         self.labelfile = labelfile
@@ -234,6 +233,7 @@ class CropClassTSVDataset(Dataset):
         with open(labelmap, 'r') as fp:
             for i, line in enumerate(fp):
                 l = line.rstrip('\n')
+                assert(l not in self.label_to_idx)
                 self.label_to_idx[l] = i
         self.label_filter_fn = label_filter_fn
         self.img_col = 2
@@ -246,12 +246,14 @@ class CropClassTSVDataset(Dataset):
         self._enlarge_bbox = enlarge_bbox
 
         _cache_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "cache")
-        self._cache = os.path.join(_cache_dir, "{}.tsv".format(hash(';'.join([tsvfile, labelfile if labelfile else "", str(for_test)]))))
+        self._bbox_idx_file = os.path.join(_cache_dir, "{}.tsv".format(hash_sha1((tsvfile, labelfile if labelfile else "", str(for_test)))))
         try:
-            self._class_instance_idx = self._generate_class_instance_index_parallel()
+            _class_instance_idx = self._generate_class_instance_index_parallel()
+            tsv_writer(_class_instance_idx, self._bbox_idx_file)
+            self._bbox_idx_tsv = TSVFile(self._bbox_idx_file)
         except Exception as e:
-            if os.path.isfile(self._cache):
-                os.remove(self._cache)
+            if os.path.isfile(self._bbox_idx_file):
+                os.remove(self._bbox_idx_file)
             raise e
 
     def label_dim(self):
@@ -329,16 +331,19 @@ class CropClassTSVDataset(Dataset):
             rect: left, top, right, bot
         """
         return gen_index(self.tsvfile, self.labelfile, self.label_to_idx, self._for_test,
-                self._enlarge_bbox, self.key_col, self.label_col, self.img_col, self.logger)
+                self._enlarge_bbox, self.key_col, self.label_col, self.img_col, self.logger,
+                self.min_pixels)
 
     def __getitem__(self, index):
-        info = self._class_instance_idx[index]
+        # info = self._class_instance_idx[index]
+        info = self._bbox_idx_tsv.seek(index)
         img_idx, left, top, right, bot = (int(info[i]) for i in range(5))
         row = self.tsv.seek(img_idx)
         img = img_from_base64(row[self.img_col])
         cropped_img = img[top:bot, left:right]
         if self.transform is not None:
             cropped_img = self.transform(cropped_img)
+
         if self._for_test:
             return cropped_img, (row[self.key_col], info[5])
         else:
@@ -348,13 +353,13 @@ class CropClassTSVDataset(Dataset):
             return cropped_img, label
 
     def __len__(self):
-        return len(self._class_instance_idx)
+        return self._bbox_idx_tsv.num_rows()
 
 
 class CropClassTSVDatasetYaml(CropClassTSVDataset):
     """ CropClassTSVDataset taking a Yaml file for easy function call
     """
-    def __init__(self, yaml_file, session_name='', transform=None):
+    def __init__(self, yaml_file, session_name='', transform=None, logger=None):
         cfg = load_from_yaml_file(yaml_file)
 
         if session_name:
@@ -370,11 +375,60 @@ class CropClassTSVDatasetYaml(CropClassTSVDataset):
 
         super(CropClassTSVDatasetYaml, self).__init__(
             tsv_file, labelmap, label_file,
-            for_test=for_test, reorder_label=False, transform=transform)
+            for_test=for_test, reorder_label=False, transform=transform, logger=logger)
+
+class CropClassTSVDatasetYamlList():
+    def __init__(self, yaml_lst_file, session_name='', transform=None, logger=None):
+        self.yaml_files = self.load_yaml_list(yaml_lst_file)
+        self.datasets = [CropClassTSVDatasetYaml(yaml_file, session_name=session_name,
+                transform=transform, logger=logger) for yaml_file in self.yaml_files]
+        self.dataset_lengths = [len(d) for d in self.datasets]
+        self.length = sum(self.dataset_lengths)
+
+        # check if labelmap match
+        self.label_to_idx = self.datasets[0].label_to_idx
+        for i in range(1, len(self.datasets)):
+            tmp = self.datasets[i].label_to_idx
+            assert(len(tmp) == len(self.label_to_idx))
+            for k in self.label_to_idx:
+                assert(self.label_to_idx[k] == tmp[k])
+
+    def __len__(self):
+        return self.length
+
+    def __getitem__(self, index):
+        cum_length = 0
+        dataset_idx = 0
+        for _, length in enumerate(self.dataset_lengths):
+            if cum_length + length > index:
+                break
+            cum_length += length
+            dataset_idx += 1
+        assert(dataset_idx < len(self.datasets))
+        return self.datasets[dataset_idx][index - cum_length]
+
+    def label_dim(self):
+        return len(self.label_to_idx)
+
+    def is_multi_label(self):
+        return False
+
+    def get_labelmap(self):
+        return self.label_to_idx.keys()
+
+    def load_yaml_list(self, yaml_lst_file):
+        yaml_list = []
+        for parts in tsv_reader(yaml_lst_file):
+            f = parts[0]
+            assert(os.path.isfile(f))
+            yaml_list.append(f)
+        return yaml_list
 
 
 def gen_index(imgfile, labelfile, label_to_idx, for_test,
-                enlarge_bbox, key_col, label_col, img_col, logger):
+                enlarge_bbox_for_test, key_col, label_col, img_col,
+                logger, min_pixels):
+    enlarge_bbox = enlarge_bbox_for_test if for_test else 1.0
     all_args = []
     num_worker = mp.cpu_count()
     num_tasks = num_worker * 3
@@ -411,17 +465,16 @@ def gen_index(imgfile, labelfile, label_to_idx, for_test,
             else:
                 bboxes = json.loads(img_row[label_col])
             img = img_from_base64(img_row[img_col])
-            height, width, _ = img.shape
+            height, width, channels = img.shape
+            assert(channels == 3)
             for bbox in bboxes:
-                left, top, right, bot = int_rect(bbox["rect"], enlarge_bbox)
-                left = np.clip(left, 0, width)
-                right = np.clip(right, 0, width)
-                top = np.clip(top, 0, height)
-                bot = np.clip(bot, 0, height)
+                new_rect = int_rect(bbox["rect"], enlarge_factor=enlarge_bbox,
+                            im_h=height, im_w=width)
+                left, top, right, bot = new_rect
                 # ignore invalid bbox
-                if bot <= top or right <= left:
+                if bot - top < min_pixels or right - left < min_pixels:
                     if logger:
-                        logger.info("skip invalid bbox in {}".format(img_row[0]))
+                        logger.info("skip invalid bbox in {}: {}".format(img_row[0], str(new_rect)))
                     continue
                 info = [idx, left, top, right, bot]
                 if for_test:
@@ -441,15 +494,3 @@ def gen_index(imgfile, labelfile, label_to_idx, for_test,
             raise Exception("fail to generate index")
         x.extend(r)
     return x
-
-def int_rect(rect, enlarge_factor=1.0):
-    left, top, right, bot = rect
-    rw = right - left
-    rh = bot - top
-
-    new_x = int(left + (1.0-enlarge_factor) * rw / 2.0)
-    new_y = int(top + (1.0 - enlarge_factor) * rh / 2.0)
-    new_w = int(math.ceil(enlarge_factor * rw))
-    new_h = int(math.ceil(enlarge_factor * rh))
-
-    return new_x, new_y, new_x + new_w, new_y + new_h

@@ -1,8 +1,10 @@
 import base64
 import collections
+import copy
 import datetime
 import json
 import logging
+import math
 import numpy as np
 import os
 import torch
@@ -16,20 +18,20 @@ import matplotlib.pyplot as plt
 import _init_paths
 from tagging.scripts import extract, pred
 from tagging.utils import accuracy
-from scripts.qd_common import calculate_iou, write_to_yaml_file, load_from_yaml_file, init_logging, worth_create, ensure_directory
+from qd.qd_common import calculate_iou, write_to_yaml_file, load_from_yaml_file, init_logging, worth_create, ensure_directory, int_rect, is_valid_rect
 from evaluation.eval_utils import DetectionFile
 from evaluation import dataproc
 from logo import constants
-from scripts.tsv_io import TSVDataset, TSVFile, tsv_reader, tsv_writer
-from scripts import tsv_io
+from qd.tsv_io import TSVDataset, TSVFile, tsv_reader, tsv_writer
+from qd import tsv_io
 from scripts.yolotrain import yolo_predict
 
 
 class CropTaggingWrapper(object):
     def __init__(self, det_expid, tag_expid):
         self.det_expid = det_expid
-        self._data_folder = "/raid/data/brand_output/"
-        self._rootpath = "/raid/data/brand_output/{}/classifier/{}".format(det_expid, tag_expid)
+        self._data_folder = "data/brand_output/"
+        self._rootpath = "data/brand_output/{}/classifier/{}".format(det_expid, tag_expid)
         self.labelmap = os.path.join(self._rootpath, "labelmap.txt")
         self.tag_model_path = os.path.join(self._rootpath, "snapshot/model_best.pth.tar")
         self.log_file = os.path.join(self._rootpath, "eval/prediction_log.txt")
@@ -536,73 +538,94 @@ def nms(dets, thresh):
     return keep
 
 
-def prepare_training_data(det_expid, gt_dataset_name, outdir, gt_split="train"):
-    # generate region proposal
-    detpred_file, _ = yolo_predict(full_expid=det_expid, test_data=gt_dataset_name, test_split=gt_split)
-
-    # merge region proposal and ground truth
-    pos_iou = 0.5
-    neg_iou = 0.05
-    outfile = os.path.join(outdir, "region_proposal/{}.{}.gt_rp.{}_{}.tsv".format(gt_dataset_name, gt_split, pos_iou, neg_iou))
-    dataset = TSVDataset(gt_dataset_name)
-    merge_gt_rp(dataset.get_data(gt_split, t='label'), detpred_file, outfile, pos_iou, neg_iou)
-
-
-def merge_gt_rp(gt_file, rp_file, outfile, pos_iou=0.5, neg_iou=0.05):
+def prepare_training_data(det_expid, gt_dataset_name, outdir, gt_split="train",
+            version=0, pos_iou=0.5, neg_iou=(0.1, 0.3), enlarge_bbox=2.5):
     """
     Merge ground truth bbox with region proposal bbox
     region proposal is annotated with the corresponding class if IoU>pos_iou,
     annotated as __background if max(IoU)<neg_iou
     """
-    gt = DetectionFile(gt_file)
-    rp = DetectionFile(rp_file)
+    # generate region proposal
+    detpred_file, _ = yolo_predict(full_expid=det_expid, test_data=gt_dataset_name, test_split=gt_split)
 
+    # merge region proposal and ground truth
+    outfile = os.path.join(outdir, "region_proposal/{}.{}.gt_rp.{}_{}_{}.tsv".format(
+            gt_dataset_name, gt_split, pos_iou, neg_iou[0], neg_iou[1]))
+    gt_dataset = TSVDataset(gt_dataset_name)
+
+    def get_hw(key):
+        parts = gt_dataset.seek_by_key(key, gt_split, t="hw")
+        assert(len(parts) == 2)
+        assert(parts[0] == key)
+        nums = parts[1].split(' ')
+        assert(len(nums) == 2)
+        return int(nums[0]), int(nums[1])
+
+    rp = DetectionFile(detpred_file)
     rp_candidates = collections.defaultdict(list)  # imgkey: list of bboxes
-
-    count_class = collections.defaultdict(int)  # class: count
+    class2count = collections.defaultdict(int)  # class: count
     bg_cands = []  # tuple of imgkey, bbox
-    for imgkey in gt:
-        gt_bboxes = gt[imgkey]
+    num_gt = 0
+    num_total_regions = 0
+
+    for imgkey, coded_rects in gt_dataset.iter_data(gt_split, t='label', version=version):
+        # HACK
+        if imgkey == "http://www.mimifroufrou.com/scentedsalamander/images/Le-Male-2009-Billboard-B.jpg":
+            continue
+
+        im_h, im_w = get_hw(imgkey)
+        gt_bboxes = json.loads(coded_rects)
+        num_gt += len(gt_bboxes)
+        for idx in range(len(gt_bboxes)):
+            cur_bbox = copy.deepcopy(gt_bboxes[idx])
+            cur_bbox["rect"] = int_rect(cur_bbox["rect"], enlarge_factor=1.0, im_h=im_h, im_w=im_w)
+            enlarged_rect = int_rect(cur_bbox["rect"], enlarge_factor=enlarge_bbox, im_h=im_h, im_w=im_w)
+            overlaps = [calculate_iou(enlarged_rect, gtbox["rect"]) for i, gtbox in enumerate(gt_bboxes) if i!=idx]
+            # enlarge bbox only if it does not overlap other boxes
+            if len(overlaps) > 0 and max(overlaps) < neg_iou[0]:
+                cur_bbox["rect"] = enlarged_rect
+            if not is_valid_rect(cur_bbox["rect"]):
+                print("invalid rect")
+                continue
+            rp_candidates[imgkey].append(cur_bbox)
+            num_total_regions += 1
+
         rp_bboxes = rp[imgkey]
         for b in rp_bboxes:
-            overlaps = np.array([calculate_iou(b["rect"], gtbox["rect"]) for gtbox in gt_bboxes])
-            bbox_idx_max = np.argmax(overlaps)
-            if overlaps[bbox_idx_max] > pos_iou:
-                b["class"] = gt_bboxes[bbox_idx_max]["class"]
-                rp_candidates[imgkey].append(b)
-                count_class[b["class"]] += 1
-            elif overlaps[bbox_idx_max] < neg_iou:
+            new_rect = int_rect(b["rect"], enlarge_factor=enlarge_bbox, im_h=im_h, im_w=im_w)
+            b["rect"] = new_rect
+            if not is_valid_rect(b["rect"]):
+                continue
+            overlaps = [calculate_iou(new_rect, gtbox["rect"]) for gtbox in gt_bboxes]
+            sorted_overlaps = sorted([(i, v) for i, v in enumerate(overlaps)], key=lambda t: t[1], reverse=True)
+            if len(overlaps) == 0:
+                continue
+            max_iou_idx, max_iou = sorted_overlaps[0]
+
+            if max_iou >= neg_iou[0] and max_iou <= neg_iou[1]:
                 # background candidate
                 b["class"] = constants.BACKGROUND_LABEL
                 bg_cands.append((imgkey, b))
+            elif max_iou > pos_iou:
+                if len(sorted_overlaps)>1 and sorted_overlaps[1][1]>pos_iou:
+                    # skip if the region covers >1 instances
+                    continue
+                b["class"] = gt_bboxes[sorted_overlaps[0][0]]["class"]
+                rp_candidates[imgkey].append(b)
+                num_total_regions += 1
 
-        for b in gt_bboxes:
-            count_class[b["class"]] += 1
-
-    max_count = max([count_class[c] for c in count_class])
     bg_cands = sorted(bg_cands, key=lambda t: t[1]["obj"], reverse=True)
     # skip top 1% to avoid false negative
     bg_lidx = int(0.01 * len(bg_cands))
-    bg_ridx = min(len(bg_cands), int(bg_lidx+max_count*1.5))
+    bg_ridx = min(len(bg_cands), int(bg_lidx+num_total_regions*2))
     for i in range(bg_lidx, bg_ridx):
         k, b = bg_cands[i]
         rp_candidates[k].append(b)
-    print("added #background: {}".format(bg_ridx-bg_lidx))
+    print("added #background: {}, #gt: {}, #proposal: {}".format(bg_ridx-bg_lidx, num_gt, num_total_regions-num_gt))
 
-    num_gt = 0
-    num_rp = 0
-    num_img = 0
-    with open(outfile, 'w') as fout:
-        for imgkey in gt:
-            num_img += 1
-            gt_bboxes = gt[imgkey]
+    def gen_labels():
+        for imgkey, coded_rects in gt_dataset.iter_data(gt_split, t='label', version=version):
+            yield imgkey, json.dumps(rp_candidates[imgkey], separators=(',', ':'))
 
-            num_rp += len(rp_candidates[imgkey])
-            num_gt += len(gt_bboxes)
-
-            fout.write('\t'.join([imgkey, json.dumps(gt_bboxes + rp_candidates[imgkey])]))
-            fout.write('\n')
-    print("load #img: {}, #gt: {}, #proposal: {}".format(num_img, num_gt, num_rp))
-    outlineidx = outfile.rsplit('.', 1)[0] + ".lineidx"
-    if os.path.isfile(outlineidx):
-        os.remove(outlineidx)
+    tsv_writer(gen_labels(), outfile)
+    return outfile
