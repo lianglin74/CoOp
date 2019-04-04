@@ -3391,7 +3391,7 @@ def attach_properties(src_nodes, dst_tree):
     assert len(confusings) == 0, pformat(confusings)
 
 def update_taxonomy_by_latest(ref_data, target_data):
-    lift_train = True
+    lift_train = False
     from qd.qd_common import ensure_copy_folder
     # copy everything from ref_data to target_data and _no_bb
     ensure_copy_folder(op.join('data', ref_data),
