@@ -96,7 +96,7 @@ def view_tree(request):
         return render(request, 'detection/view_list_has_tree.html', context)
 
 
-def view_tree2(request):
+def view_tree_test(request):
     if 'data' in request.GET:
         data = request.GET.get('data')
         # provide the accuracy for each category
@@ -510,7 +510,7 @@ def isfloat(value):
         return False
 
 
-def view_image_compare2(request, data, split, version, label, start_id, min_conf=None):
+def view_image_compare_test(request, data, split, version, label, start_id, min_conf=None):
     '''
     use js to render the box in the client side
     '''
@@ -537,12 +537,12 @@ def view_image_compare2(request, data, split, version, label, start_id, min_conf
 
     kwargs = copy.deepcopy(request.GET)
     kwargs['start_id'] = str(max(0, start_id - max_image_shown))
-    previous_link = reverse('detection:view_compare2')
+    previous_link = reverse('detection:view_compare_test')
     previous_link = previous_link + '?' + \
         '&'.join(['{}={}'.format(k, kwargs[k]) for k in kwargs])
     kwargs = copy.deepcopy(request.GET)
     kwargs['start_id'] = str(start_id + len(all_type_to_rects))
-    next_link = reverse('detection:view_compare2')
+    next_link = reverse('detection:view_compare_test')
     next_link = next_link + '?' + \
         '&'.join(['{}={}'.format(k, kwargs[k]) for k in kwargs])
 
@@ -758,7 +758,7 @@ def view_image_compare(request, data, split, version, label, start_id, min_conf_
     return render(request, 'detection/images_compare.html', context)
 
 
-def view_image_js3(request, data, split, version, label, start_id):
+def view_image_result(request, data, split, version, label, start_id):
     '''
     use js to render the box in the client side
     '''
@@ -802,7 +802,8 @@ def view_image_js3(request, data, split, version, label, start_id):
     return render(request, 'detection/images_js3.html', context)
 
 
-def view_image_js2(request, data, split, version, label, start_id, imKey=None):
+def view_image_js(request, data, split, version, label, start_id, imKey=None):
+
     '''
     use js to render the box in the client side
     '''
@@ -880,45 +881,7 @@ def view_image_js2(request, data, split, version, label, start_id, imKey=None):
 
     return render(request, 'detection/images_js2.html', context)
 
-# def view_image_js(request, data, split, version, label, start_id):
-    # '''
-    # use js to render the box in the client side
-    # '''
-    # curr_dir = os.curdir
-    # os.chdir(get_qd_root())
-    # start_id = int(float(start_id))
-    # images = visualize_box_no_draw(data, split, version, label, start_id)
-    # html_image_paths = []
-    # max_image_shown = 50
-    # label_list = set()
-    # for i, (fname, origin, all_info, label_info) in enumerate(images):
-      # if i >= max_image_shown:
-          # break
-      # origin_html_path = save_image_in_static(origin, '{}/{}/{}/origin_{}.jpg'.format(data, split,
-          # version,
-          # fname))
-      # html_image_paths.append({"path": origin_html_path,
-                         # "all_info": all_info,
-                         # "label_info": label_info})
-      # label_list.update(all_info['class'])
-    # os.chdir(curr_dir)
-    # label_list = list(label_list)
-    # if label is not None:
-      # label_list.remove(label)
-      # label_list.insert(0, label)
-
-    # context = {'images': json.dumps(html_image_paths),
-          # 'label_list': json.dumps(list(label_list)),
-          # 'data': data,
-          # 'split': split,
-          # 'version': version,
-          # 'label': label,
-          # 'next_id': str(start_id + len(html_image_paths)),
-          # 'previous_id': str(max(0, start_id - max_image_shown))}
-    # return render(request, 'detection/images_js.html', context)
-
-
-def view_compare2(request):
+def view_compare_test(request):
     if request.GET.get('data', '') == '':
         curr_dir = os.curdir
         os.chdir(get_qd_root())
@@ -951,7 +914,7 @@ def view_compare2(request):
         if min_conf == 'None':
             min_conf = None
 
-        result = view_image_compare2(
+        result = view_image_compare_test(
             request, data, split, version, label, start_id)
         return result
 
@@ -1231,7 +1194,7 @@ def view_compare(request):
         return result
 
 
-def view_image3(request):
+def view_result(request):
     if request.GET.get('data', '') == '':
         curr_dir = os.curdir
         os.chdir(get_qd_root())
@@ -1393,7 +1356,7 @@ def verify_data(request):
 
     return view_verify_data(request, data, split, version, label, start_id)
 
-def view_image2(request):
+def view_image(request):
     if request.GET.get('data', '') == '':
         curr_dir = os.curdir
         os.chdir(get_qd_root())
@@ -1429,13 +1392,10 @@ def view_image2(request):
         version = int(version) if type(version) is str or \
             type(version) is unicode else version
         
-        
         label = request.GET.get('label')
         start_id = request.GET.get('start_id')
-        # result = view_image_js(request, data, split, version, label, start_id)
         
-        result = view_image_js2(request, data, split, version, label, start_id, key)
-        # result = view_image_js3(request, data, split, version, label, start_id)
+        result = view_image_js(request, data, split, version, label, start_id, key)
         return result
 
 
