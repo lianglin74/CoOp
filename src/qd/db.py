@@ -64,6 +64,8 @@ class BoundingBoxVerificationDB(object):
         for b in all_box_task:
             assert 'status' not in b
             assert 'priority_tier' in b, 'priority' in b
+            assert 'url' in b
+            assert 'rect' in b
             b['status'] = self.status_requested
             b['last_update_time'] = {'last_{}'.format(self.status_requested):
                     datetime.now()}
