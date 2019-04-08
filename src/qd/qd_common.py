@@ -40,6 +40,18 @@ except ImportError:
     from urllib2 import HTTPError
 
 
+def retry_agent(func, *args, **kwargs):
+    i = 0
+    while True:
+        try:
+            return func(*args, **kwargs)
+            break
+        except Exception as e:
+            logging.info('fails: try {}-th time'.format(i))
+            i = i + 1
+            import time
+            time.sleep(5)
+
 def ensure_copy_folder(src_folder, dst_folder):
     if op.isdir(dst_folder):
         return
