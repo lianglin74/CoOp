@@ -1,5 +1,6 @@
 import os.path as op
 from qd.qd_common import retry_agent, cmd_run
+from qd.qd_common import ensure_directory
 from qd.cloud_storage import create_cloud_storage
 import logging
 
@@ -109,7 +110,6 @@ def upload_through_blob(src_dir, dest_dir, vc, cluster):
     sub_cmd = ['-cp', '-r', dest_url, op.join(dest_dir, op.basename(src_dir)), 3]
     philly_run(sub_cmd, vc, cluster, extra_env=env)
 
-
 def philly_upload_dir(src_dir, dest_dir, vc='input', cluster='philly-prod-cy4',
         blob=True):
     philly_mkdir(dest_dir, vc, cluster)
@@ -140,4 +140,10 @@ def philly_upload_dir(src_dir, dest_dir, vc='input', cluster='philly-prod-cy4',
         cmd.append(src_dir)
         cmd.append('{}{}'.format(folder_prefix, dest_dir))
         philly_input_run(cmd)
+
+def philly_download(src, dest, vc, cluster):
+    dest = op.realpath(dest)
+    ensure_directory(dest)
+    sub_cmd = ['-cp', '-r', src, dest, 2]
+    philly_run(sub_cmd, vc, cluster)
 
