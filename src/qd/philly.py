@@ -107,7 +107,7 @@ def upload_through_blob(src_dir, dest_dir, vc, cluster):
 
     env = {'AZURE_STORAGE_ACCESS_KEY': c.account_key}
 
-    sub_cmd = ['-cp', '-r', dest_url, op.join(dest_dir, op.basename(src_dir)), 3]
+    sub_cmd = ['-cp', '-r', dest_url, dest_dir, 3]
     philly_run(sub_cmd, vc, cluster, extra_env=env)
 
 def philly_upload_dir(src_dir, dest_dir, vc='input', cluster='philly-prod-cy4',
