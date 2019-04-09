@@ -242,6 +242,7 @@ class CropClassTSVDataset(Dataset):
         self.logger = logger
         self._for_test = for_test
         self._enlarge_bbox_for_testing = enlarge_bbox_for_testing
+        self._label_counts = None
 
         _cache_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "cache")
         self._bbox_idx_file = os.path.join(_cache_dir, "{}.tsv".format(hash_sha1((tsvfile, labelfile if labelfile else "", str(for_test)))))
@@ -303,6 +304,15 @@ class CropClassTSVDataset(Dataset):
     def __len__(self):
         return self._bbox_idx_tsv.num_rows()
 
+    @property
+    def label_counts(self):
+        assert not self._for_test
+        if self._label_counts is None:
+            self._label_counts = np.zeros(len(self.label_to_idx))
+            for parts in tsv_reader(self._bbox_idx_file):
+                self._label_counts[int(parts[5])] += 1
+        return self._label_counts
+
 
 class CropClassTSVDatasetYaml(CropClassTSVDataset):
     """ CropClassTSVDataset taking a Yaml file for easy function call
@@ -333,6 +343,7 @@ class CropClassTSVDatasetYamlList():
                 for yaml_file in self.yaml_files]
         self.dataset_lengths = [len(d) for d in self.datasets]
         self.length = sum(self.dataset_lengths)
+        self._label_counts = None
 
         # check if labelmap match
         self.label_to_idx = self.datasets[0].label_to_idx
@@ -372,6 +383,16 @@ class CropClassTSVDatasetYamlList():
             assert(os.path.isfile(f))
             yaml_list.append(f)
         return yaml_list
+
+    @property
+    def label_counts(self):
+        if self._label_counts is None:
+            self._label_counts = np.zeros(self.label_to_idx)
+            for d in self.datasets:
+                tmp = d.label_counts
+                assert len(tmp) == len(self._label_counts)
+                self._label_counts += tmp
+        return self._label_counts
 
 
 def gen_index(imgfile, labelfile, label_to_idx, for_test,

@@ -17,6 +17,8 @@ import torchvision.datasets as datasets
 import torchvision.models as models
 from torchvision.models.resnet import model_urls
 
+import numpy as np
+
 from ..lib import layers
 from ..lib.dataset import TSVDataset, TSVDatasetPlusYaml
 from ..utils.parser import get_arg_parser
@@ -88,7 +90,19 @@ def main(args):
         model = torch.nn.parallel.DistributedDataParallel(model)
 
     # get loss function (criterion), optimizer, and scheduler (for learning rate)
-    criterion = get_criterion(train_dataset.is_multi_label(), args.neg_weight_file)
+    class_weights = None
+    if args.balance_class:
+        class_counts = train_dataset.label_counts
+        num_pos_classes = np.count_nonzero(class_counts)
+        assert num_pos_classes > 0
+        class_weights = np.zeros(train_dataset.label_dim())
+        for idx, c in enumerate(class_counts):
+            if c > 0:
+                class_weights[idx] = float(len(train_dataset)) / (num_pos_classes * c)
+        logger.info("use balanced class weights")
+        class_weights = torch.from_numpy(class_weights).float().cuda()
+
+    criterion = get_criterion(train_dataset.is_multi_label(), args.neg_weight_file, class_weights=class_weights)
     optimizer = get_optimizer(model, args)
     scheduler = get_scheduler(optimizer, args)
     accuracy = get_accuracy_calculator(multi_label=train_dataset.is_multi_label())

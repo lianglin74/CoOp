@@ -9,6 +9,7 @@ from qd import tsv_io, qd_common
 
 torch.manual_seed(2018)
 
+
 def main():
     config_root = "data/brand_output/configs/"
 

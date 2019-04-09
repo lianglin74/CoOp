@@ -77,23 +77,24 @@ def get_arg_parser(model_names):
 
     parser.add_argument('--bn_no_weight_decay', dest='bn_no_weight_decay', action='store_true',
                         help='No weight decay for bn and bias during taining')
-
-    parser.add_argument('--finetune', dest='finetune', action='store_true',
-                        help='finetune last layer by using 0.1x lr for previous layers')
-
-    parser.add_argument('--fixfeature', dest='fixfeature', action='store_true',
-                        help='fix features, only optimize the fc layer')
-
-    parser.add_argument('--fixpartialfeature', dest='fixpartialfeature', action='store_true',
-                        help='only optimize the last feature block and fc layer')
-
     parser.add_argument('--BatchNormEvalMode', dest='BatchNormEvalMode', action='store_true',
                         help='Use eval mode for batch normalization layer. Corresponding to Caffe use global statistics')
 
+    parser.add_argument('--finetune', dest='finetune', action='store_true',
+                        help='finetune last layer by using 0.1x lr for previous layers')
+    parser.add_argument('--fixfeature', dest='fixfeature', action='store_true',
+                        help='fix features, only optimize the fc layer')
+    parser.add_argument('--fixpartialfeature', dest='fixpartialfeature', action='store_true',
+                        help='only optimize the last feature block and fc layer')
+
+    parser.add_argument('--ccs_loss_param', default=0.0, type=float,
+                        help='ccl_loss_param * ccs_loss + classification loss')
+
+    parser.add_argument('--balance_class', dest='balance_class', action='store_true',
+                        help='use weighted CrossEntropyLoss, where weights[c] is n_samples / (n_classes * label_counts[c])')
     parser.add_argument('--data_aug', dest='data_aug', action='store_true',
                         help='data augmentation')
     parser.add_argument('--enlarge_bbox_for_test', default=1.0, type=float,
                         help='make bbox larger (factor*width, factor*height) when testing')
-    parser.add_argument('--ccs_loss_param', default=0.0, type=float,
-                        help='ccl_loss_param * ccs_loss + classification loss')
+
     return parser

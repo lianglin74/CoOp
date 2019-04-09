@@ -12,7 +12,7 @@ from ..utils.averagemeter import AverageMeter
 from ..lib import layers
 
 
-def get_criterion(multi_label=False, multi_label_negative_sample_weights_file = None):
+def get_criterion(multi_label=False, multi_label_negative_sample_weights_file=None, class_weights=None):
     if multi_label:
         if multi_label_negative_sample_weights_file == None:
             print("Use BCEWithLogitsLoss")
@@ -23,9 +23,12 @@ def get_criterion(multi_label=False, multi_label_negative_sample_weights_file = 
                 weights = [float(line) for line in f]
                 criterion = layers.SigmoidCrossEntropyLossWithBalancing(np.array(weights)).cuda()
     else:
-        print("Use CrossEntropyLoss")
-        criterion = nn.CrossEntropyLoss().cuda()
-
+        if class_weights is None:
+            print("Use CrossEntropyLoss")
+            criterion = nn.CrossEntropyLoss().cuda()
+        else:
+            print("Use Weighted CrossEntropyLoss")
+            criterion = nn.CrossEntropyLoss(weight=class_weights).cuda()
     return criterion
 
 
