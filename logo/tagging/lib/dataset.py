@@ -3,7 +3,7 @@ import torch
 from torch.utils.data import Dataset
 
 from qd.tsv_io import TSVFile, tsv_reader, tsv_writer
-from qd.qd_common import img_from_base64, generate_lineidx, load_from_yaml_file, FileProgressingbar, int_rect, hash_sha1
+from qd.qd_common import img_from_base64, generate_lineidx, load_from_yaml_file, FileProgressingbar, int_rect, hash_sha1, worth_create
 
 import base64
 from collections import OrderedDict, defaultdict
@@ -215,8 +215,8 @@ class TSVDatasetWithoutLabel(TSVDatasetPlus):
 
 class CropClassTSVDataset(Dataset):
     def __init__(self, tsvfile, labelmap, labelfile=None, label_filter_fn=None,
-                 transform=None, logger=None, for_test=False, reorder_label=False,
-                 overwrite_cache=False, enlarge_bbox=1.0):
+                 transform=None, logger=None, for_test=False, enlarge_bbox_for_testing=1.0,
+                 use_cache=True):
         """ TSV dataset with cropped images from bboxes labels
         Params:
             tsvfile: image tsv file, columns are key, bboxes, b64_image_string
@@ -241,15 +241,15 @@ class CropClassTSVDataset(Dataset):
         self.key_col = 0
         self.logger = logger
         self._for_test = for_test
-        self._reorder_label = reorder_label
-        self._overwrite_cache = overwrite_cache
-        self._enlarge_bbox = enlarge_bbox
+        self._enlarge_bbox_for_testing = enlarge_bbox_for_testing
 
         _cache_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "cache")
         self._bbox_idx_file = os.path.join(_cache_dir, "{}.tsv".format(hash_sha1((tsvfile, labelfile if labelfile else "", str(for_test)))))
         try:
-            _class_instance_idx = self._generate_class_instance_index_parallel()
-            tsv_writer(_class_instance_idx, self._bbox_idx_file)
+            if not use_cache or not os.path.isfile(self._bbox_idx_file) or worth_create(tsvfile, self._bbox_idx_file) \
+                    or (labelfile and worth_create(labelfile, self._bbox_idx_file)):
+                _class_instance_idx = self._generate_class_instance_index_parallel()
+                tsv_writer(_class_instance_idx, self._bbox_idx_file)
             self._bbox_idx_tsv = TSVFile(self._bbox_idx_file)
         except Exception as e:
             if os.path.isfile(self._bbox_idx_file):
@@ -272,58 +272,6 @@ class CropClassTSVDataset(Dataset):
                 ret.append(line.strip().split(sep))
         return ret
 
-    def _generate_class_instance_index_old(self):
-        """ DEPRECATED: use _generate_class_instance_index_parallel
-        """
-        if os.path.isfile(self._cache) and not self._overwrite_cache:
-            return self._read_into_buffer(self._cache)
-
-        label_dict = None
-        if self.labelfile:
-            if self._reorder_label:
-                label_dict = {}
-                for row in tsv_reader(self.labelfile):
-                    label_dict[row[self.key_col]] = json.loads(row[self.label_col])
-            else:
-                label_tsv = TSVFile(self.labelfile)
-
-        # rewrite cache index
-        with open(self._cache, 'w') as fp:
-            for img_idx in range(self.tsv.num_rows()):
-                row = self.tsv.seek(img_idx)
-                if self.labelfile:
-                    if label_dict:
-                        bboxes = label_dict[row[self.key_col]]
-                    else:
-                        label_row = label_tsv.seek(img_idx)
-                        assert(row[self.key_col] == label_row[self.key_col])
-                        bboxes = json.loads(label_row[self.label_col])
-                else:
-                    bboxes = json.loads(row[self.label_col])
-                img = img_from_base64(row[self.img_col])
-                height, width, _ = img.shape
-                for bbox in bboxes:
-                    left, top, right, bot = self._int_rect(bbox["rect"], self._enlarge_bbox)
-                    left = np.clip(left, 0, width)
-                    right = np.clip(right, 0, width)
-                    top = np.clip(top, 0, height)
-                    bot = np.clip(bot, 0, height)
-                    # ignore invalid bbox
-                    if bot <= top or right <= left:
-                        if self.logger:
-                            self.logger.info("skip invalid bbox in {}".format(row[0]))
-                        continue
-                    info = [img_idx, left, top, right, bot]
-                    if self._for_test:
-                        info.append(json.dumps(bbox))
-                    else:
-                        # label only exists in training data
-                        info.append(self.label_to_idx[bbox["class"]])
-                    fp.write('\t'.join([str(c) for c in info]))
-                    fp.write('\n')
-
-        return self._read_into_buffer(self._cache)
-
     def _generate_class_instance_index_parallel(self):
         """ For training: (img_idx, rect, label_idx)
             For testing: (img_idx, rect, original_bbox)
@@ -331,7 +279,7 @@ class CropClassTSVDataset(Dataset):
             rect: left, top, right, bot
         """
         return gen_index(self.tsvfile, self.labelfile, self.label_to_idx, self._for_test,
-                self._enlarge_bbox, self.key_col, self.label_col, self.img_col, self.logger,
+                self._enlarge_bbox_for_testing, self.key_col, self.label_col, self.img_col, self.logger,
                 self.min_pixels)
 
     def __getitem__(self, index):
@@ -359,7 +307,7 @@ class CropClassTSVDataset(Dataset):
 class CropClassTSVDatasetYaml(CropClassTSVDataset):
     """ CropClassTSVDataset taking a Yaml file for easy function call
     """
-    def __init__(self, yaml_file, session_name='', transform=None, logger=None):
+    def __init__(self, yaml_file, session_name='', transform=None, logger=None, enlarge_bbox_for_testing=1.0):
         cfg = load_from_yaml_file(yaml_file)
 
         if session_name:
@@ -375,13 +323,14 @@ class CropClassTSVDatasetYaml(CropClassTSVDataset):
 
         super(CropClassTSVDatasetYaml, self).__init__(
             tsv_file, labelmap, label_file,
-            for_test=for_test, reorder_label=False, transform=transform, logger=logger)
+            for_test=for_test, transform=transform, logger=logger, enlarge_bbox_for_testing=enlarge_bbox_for_testing)
 
 class CropClassTSVDatasetYamlList():
-    def __init__(self, yaml_lst_file, session_name='', transform=None, logger=None):
+    def __init__(self, yaml_lst_file, session_name='', transform=None, logger=None, enlarge_bbox_for_testing=1.0):
         self.yaml_files = self.load_yaml_list(yaml_lst_file)
         self.datasets = [CropClassTSVDatasetYaml(yaml_file, session_name=session_name,
-                transform=transform, logger=logger) for yaml_file in self.yaml_files]
+                transform=transform, logger=logger, enlarge_bbox_for_testing=enlarge_bbox_for_testing)
+                for yaml_file in self.yaml_files]
         self.dataset_lengths = [len(d) for d in self.datasets]
         self.length = sum(self.dataset_lengths)
 

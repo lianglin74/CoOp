@@ -12,10 +12,10 @@ import matplotlib.pyplot as plt
 
 import _init_paths
 from logo.classifier import CropTaggingWrapper
-from scripts.qd_common import init_logging, worth_create, read_to_buffer
-from scripts.tsv_io import tsv_reader, tsv_writer, TSVDataset
-from scripts import deteval, qd_common
-# from scripts.yolotrain import yolo_predict
+from qd.qd_common import init_logging, worth_create, read_to_buffer
+from qd.tsv_io import tsv_reader, tsv_writer, TSVDataset
+from qd import deteval, qd_common
+from scripts.yolotrain import yolo_predict
 from scripts.pytablemd import write_tablemd
 
 trained_dataset = "brand1048"

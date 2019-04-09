@@ -20,20 +20,22 @@ from tagging.scripts import extract, pred
 from tagging.utils import accuracy
 from qd.qd_common import calculate_iou, write_to_yaml_file, load_from_yaml_file, init_logging, worth_create, ensure_directory, int_rect, is_valid_rect
 from evaluation.eval_utils import DetectionFile
-from evaluation import dataproc
 from logo import constants
 from qd.tsv_io import TSVDataset, TSVFile, tsv_reader, tsv_writer
 from qd import tsv_io
-from scripts.yolotrain import yolo_predict
-
+try:
+    from scripts.yolotrain import yolo_predict
+    from evaluation import dataproc
+except ImportError:
+    pass
 
 class CropTaggingWrapper(object):
-    def __init__(self, det_expid, tag_expid):
+    def __init__(self, det_expid, tag_expid, tag_snap_id="snapshot"):
         self.det_expid = det_expid
         self._data_folder = "data/brand_output/"
         self._rootpath = "data/brand_output/{}/classifier/{}".format(det_expid, tag_expid)
         self.labelmap = os.path.join(self._rootpath, "labelmap.txt")
-        self.tag_model_path = os.path.join(self._rootpath, "snapshot/model_best.pth.tar")
+        self.tag_model_path = os.path.join(self._rootpath, "{}/model_best.pth.tar".format(tag_snap_id))
         self.log_file = os.path.join(self._rootpath, "eval/prediction_log.txt")
         ensure_directory(self._rootpath)
         ensure_directory(os.path.dirname(self.tag_model_path))
@@ -83,7 +85,7 @@ class CropTaggingWrapper(object):
 
         # TODO: configure reference database
         # get feature for gt/canonical
-        prototype_dataset = "logo40"
+        prototype_dataset = "logo40can2"
         prototype_split = "train"
         proto_tsv = TSVDataset(prototype_dataset)
         data_yaml = self._write_data_yaml(prototype_dataset, prototype_split, "test",

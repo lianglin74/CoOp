@@ -67,21 +67,25 @@ def get_optimizer(model, args):
     init_lr = get_init_lr(args)
     print('initial learning rate: %f' % init_lr)
 
-    if args.start_epoch > 0:
-        groups = [dict(params=list(model.parameters()), initial_lr=init_lr)]
-    else:
-        groups = model.parameters()
+    if args.bn_no_weight_decay:
+        group_decay = []
+        group_no_decay = []
+        for name, param in model.named_parameters():
+            if 'bn' in name or 'downsample.1.' in name:
+                assert name.endswith("weight") or name.endswith("bias")
+                group_no_decay.append(param)
+            else:
+                group_decay.append(param)
 
-    optimizer = torch.optim.SGD(groups, args.lr,
-                                momentum=args.momentum,
-                                weight_decay=args.weight_decay)
+        groups = [{'params': group_decay, 'lr': args.lr, 'weight_decay': args.weight_decay},
+                  {'params': group_no_decay, 'lr': args.lr, 'weight_decay': 0}]
 
-    if args.fixpartialfeature:
+    elif args.fixpartialfeature:
         group_decay = []
         group_no_decay = []
         for name, param in model.named_parameters():
             if 'layer4' in name or 'fc' in name:
-                if 'bn' in name or 'bias' in name:
+                if 'bn' in name or 'downsample.1.' in name:
                     group_no_decay.append(param)
                 else:
                     group_decay.append(param)
@@ -91,12 +95,7 @@ def get_optimizer(model, args):
         groups = [{'params': group_decay, 'lr': args.lr, 'weight_decay': args.weight_decay},
                   {'params': group_no_decay, 'lr': args.lr, 'weight_decay': 0}]
 
-        optimizer = torch.optim.SGD(groups, args.lr,
-                                    momentum=args.momentum,
-                                    weight_decay=args.weight_decay)
-        return optimizer
-
-    if args.finetune:
+    elif args.finetune:
         group_pretrained = []
         group_new = []
         for name, param in model.named_parameters():
@@ -107,11 +106,16 @@ def get_optimizer(model, args):
         assert len(list(model.parameters())) == len(group_pretrained) + len(group_new)
         groups = [dict(params=group_pretrained, lr=args.lr*0.01, initial_lr=init_lr*0.01),
                     dict(params=group_new,  lr=args.lr, initial_lr=init_lr)]
-        optimizer = torch.optim.SGD(groups, args.lr,
-                                    momentum=args.momentum,
-                                    weight_decay=args.weight_decay)
-        return optimizer
 
+    else:
+        if args.start_epoch > 0:
+            groups = [dict(params=list(model.parameters()), initial_lr=init_lr)]
+        else:
+            groups = model.parameters()
+
+    optimizer = torch.optim.SGD(groups, args.lr,
+                                momentum=args.momentum,
+                                weight_decay=args.weight_decay)
     return optimizer
 
 def get_scheduler(optimizer, args):
@@ -149,20 +153,21 @@ def train(args, train_loader, model, criterion, optimizer, epoch, logger, accura
     ccs_losses = AverageMeter()
 
     ccs_loss_layer = layers.CCSLoss()
-    ccs_loss_param = 1.0
+    ccs_loss_param = args.ccs_loss_param
 
     # switch to train mode
     model.train()
 
     if args.BatchNormEvalMode:
-        for module in model.module.children():
+        for module in model.module.modules():
             module.apply(set_bn_eval)
-    elif args.fixpartialfeature:
+    if args.fixpartialfeature:
         # set the fixed feature layers bn to evaluation mode
         for module_name, module in model.module.named_children():
             if 'layer4' in module_name or 'fc' in module_name:
                 continue
-            module.apply(set_bn_eval)
+            for m in module.modules():
+                m.apply(set_bn_eval)
 
     end = time.time()
     tic = time.time()

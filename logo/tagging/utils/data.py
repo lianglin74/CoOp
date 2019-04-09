@@ -11,10 +11,13 @@ from torch.utils.data.dataloader import default_collate
 from ..lib.dataset import TSVDataset, TSVDatasetPlusYaml, TSVDatasetWithoutLabel, CropClassTSVDataset, CropClassTSVDatasetYaml, CropClassTSVDatasetYamlList
 
 def get_data_loader(args, logger=None):
+    train_transform = get_pt_transform("train", args)
+    test_transform = get_pt_transform("test", args)
+
     if args.data.endswith('.yaml'):
-        train_dataset = CropClassTSVDatasetYaml(args.data, session_name='train', transform=get_pt_transform("train"))
+        train_dataset = CropClassTSVDatasetYaml(args.data, session_name='train', transform=train_transform)
     elif args.data.endswith('.yamllst'):
-        train_dataset = CropClassTSVDatasetYamlList(args.data, session_name='train', transform=get_pt_transform("train"))
+        train_dataset = CropClassTSVDatasetYamlList(args.data, session_name='train', transform=train_transform)
     else:
         raise NotImplementedError()
 
@@ -23,15 +26,15 @@ def get_data_loader(args, logger=None):
     else:
         train_sampler = None
 
-    shuffle = (not args.debug)
+    shuffle = (train_sampler is None)
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=shuffle,
         num_workers=args.workers, pin_memory=True, sampler=train_sampler)
 
     if args.data.endswith('.yaml'):
-        val_dataset = CropClassTSVDatasetYaml(args.data, session_name='val', transform=get_pt_transform("test"))
+        val_dataset = CropClassTSVDatasetYaml(args.data, session_name='val', transform=test_transform, enlarge_bbox_for_testing=args.enlarge_bbox_for_test)
     elif args.data.endswith('.yamllst'):
-        val_dataset = CropClassTSVDatasetYamlList(args.data, session_name='val', transform=get_pt_transform("test"))
+        val_dataset = CropClassTSVDatasetYamlList(args.data, session_name='val', transform=test_transform, enlarge_bbox_for_testing=args.enlarge_bbox_for_test)
     else:
         raise NotImplementedError()
 
@@ -84,7 +87,7 @@ def get_testdata_loader(args):
     return val_loader
 
 
-def get_pt_transform(phase):
+def get_pt_transform(phase, args):
     # NOTE: OpenCV loads image in BGR
     bgr_normalize = transforms.Normalize(mean=[0.406, 0.456, 0.485],
                                      std=[0.225, 0.224, 0.229])
@@ -96,15 +99,26 @@ def get_pt_transform(phase):
             transforms.ToTensor(),
             bgr_normalize,
         ])
-    train_transform = transforms.Compose([
+    if args.data_aug:
+        train_transform = transforms.Compose([
             transforms.ToPILImage(),
             transforms.RandomResizedCrop(224, scale=(0.2,1)),
-            # transforms.RandomAffine(degrees=180),
+            transforms.RandomAffine(degrees=180),
             transforms.ColorJitter(brightness=0.5,contrast=0.5,saturation=0.5, hue=0.2),
-            transforms.RandomHorizontalFlip(),
+            # transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
             bgr_normalize,
         ])
+    else:
+        train_transform = transforms.Compose([
+                transforms.ToPILImage(),
+                transforms.RandomResizedCrop(224, scale=(0.2,1)),
+                # transforms.RandomAffine(degrees=180),
+                transforms.ColorJitter(brightness=0.5,contrast=0.5,saturation=0.5, hue=0.2),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                bgr_normalize,
+            ])
     if phase.lower() == "test":
         return test_transform
     elif phase.lower() == "train":
