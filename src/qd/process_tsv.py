@@ -2674,7 +2674,7 @@ class TSVDatasetSource(TSVDataset):
                     datasetlabel_to_split_idx}
             self._type_to_datasetlabel_to_count[t] = datasetlabel_to_count
 
-        self._split_to_num_image = {split: self.num_rows(split_info['split']) for split_info in
+        self._split_to_num_image = {split_info['split']: self.num_rows(split_info['split']) for split_info in
                 self._split_infos if self.has(split_info['split'])}
 
     def update_label_mapper(self):
