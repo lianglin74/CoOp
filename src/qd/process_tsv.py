@@ -73,8 +73,12 @@ from qd.tsv_io import tsv_reader, tsv_writer
 
 def create_new_image_tsv_if_exif_rotated(data, split):
     dataset = TSVDataset(data)
+    key_no_rotate_in_image = 'no_rotate_in_image'
+    if dataset.has(split, key_no_rotate_in_image):
+        return
     info = {'changed': 0, 'total': 0}
     def gen_rows():
+        logging.info('{}-{}'.format(data, split))
         for key, str_rects, str_im in tqdm(dataset.iter_data(split)):
             info['total'] = info['total'] + 1
             im = img_from_base64(str_im)
@@ -97,6 +101,7 @@ def create_new_image_tsv_if_exif_rotated(data, split):
     else:
         from qd.tsv_io import tsv_rm
         tsv_rm(tmp_tsv)
+    dataset.write_data([], split, key_no_rotate_in_image)
 
 def get_data_distribution(data, split, version):
     # return a dictionary to represent the distribution of the data
@@ -1534,7 +1539,8 @@ def ensure_create_inverted_tsv_for_each(args):
             dataset.write_data(gen_inverted_rows(inverted_result[k]),
                     split, k, v)
 
-def populate_dataset_details(data, check_image_details=False, splits=None):
+def populate_dataset_details(data, check_image_details=False,
+        splits=None, check_box=False):
     logging.info(data)
     dataset = TSVDataset(data)
 
@@ -1745,7 +1751,8 @@ def populate_dataset_details(data, check_image_details=False, splits=None):
 
     populate_all_label_counts(dataset)
 
-    populate_bbcount(dataset)
+    if check_box:
+        populate_bbcount(dataset)
 
 def populate_bbcount(dataset):
     for split in ['train', 'trainval', 'test']:
@@ -3410,7 +3417,8 @@ def update_taxonomy_by_latest(ref_data, target_data):
     splitX = '{}X'.format(split)
     all_idxsource_idxrow = [(int(s_idx_source), int(s_idx_row)) for s_idx_source, s_idx_row in
             tsv_reader(ref_dataset.get_shuffle_file(split))]
-    pattern = 'data/(.*)/(train|trainval|test).label.v.*.tsv'
+    pattern = 'data/(.*)/(train|trainval|test)\.label.*\.tsv'
+    # e.g. source_origin_label = 'data/SeeingAISplit/train.label.tsv'
     source_data_splits = [re.match(pattern, source_origin_label).groups()
             for source_origin_label, in ref_dataset.iter_data(splitX, 'origin.label')]
     tax = Taxonomy(load_from_yaml_file(op.join(ref_dataset._data_root, 'root.yaml')))
@@ -3424,7 +3432,7 @@ def update_taxonomy_by_latest(ref_data, target_data):
                 n.add_feature(source_data,
                         n.__getattribute__(source_data) + ',{}'.format(n.name))
         source_dataset = TSVDatasetSource(source_data, root=tax.root,
-                split_infos=[{'split': split, 'version': -1}])
+                split_infos=[{'split': source_split, 'version': -1}])
         source_dataset._ensure_initialized()
         source_origin_label = source_dataset.get_data(source_split, 'label', -1)
         sources_origin_label.append(source_origin_label)

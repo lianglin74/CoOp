@@ -10,6 +10,7 @@ from .qd_common import copy_file
 import six
 import os
 import os.path as op
+import shutil
 try:
     from itertools import izip as zip
 except ImportError:
@@ -36,11 +37,11 @@ def tsv_copy(src_tsv, dst_tsv):
         copy_file(src_idx, dst_idx)
 
 def tsv_mv(src_file, dst_file):
-    os.rename(src_file, dst_file)
+    shutil.move(src_file, dst_file)
     src_idx = op.splitext(src_file)[0] + '.lineidx'
     if op.isfile(src_idx):
         dst_idx = op.splitext(dst_file)[0] + '.lineidx'
-        os.rename(src_idx, dst_idx)
+        shutil.move(src_idx, dst_idx)
 
 def reorder_tsv_keys(in_tsv_file, ordered_keys, out_tsv_file):
     tsv = TSVFile(in_tsv_file)

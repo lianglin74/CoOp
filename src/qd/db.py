@@ -154,17 +154,22 @@ class BoundingBoxVerificationDB(object):
                 allowed_original_statuses=[self.status_completed])
 
     def get_completed_uhrs_result(self):
+        merge_multiple_verification = False # True if we submit one rect multiple times, not tested
         pipeline = [
                 {'$match': {'status': self.status_completed}},
-                #{'$group': {'_id': {'data': '$data',
-                                    #'split': '$split',
-                                    #'key': '$key',
-                                    #'bb_task_id': '$bb_task_id'},
-                            #'rects': {'$first': '$rects'},
-                            #'uhrs': {'$push': '$uhrs_completed_result'},
-                            #'related_ids': {'$push': '$_id'},
-                            #}}
                 ]
+
+        if merge_multiple_verification:
+            pipeline.append(
+                {'$group': {'_id': {'data': '$data',
+                                    'split': '$split',
+                                    'key': '$key',
+                                    'bb_task_id': '$bb_task_id'},
+                            'rects': {'$first': '$rects'},
+                            'uhrs': {'$push': '$uhrs_completed_result'},
+                            'related_ids': {'$push': '$_id'},
+                            }}
+                    )
         data_split_to_key_rects = defaultdict(list)
         all_id = []
         logging.info('querying the completed tasks')
