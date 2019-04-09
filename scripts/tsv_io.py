@@ -686,7 +686,16 @@ def get_all_data_info2(name=None):
         labels = dataset.load_labelmap()
         valid_split_versions = []
         splits = ['train', 'trainval', 'test']
+
         for split in splits:
+            aliasDict = {}
+            afilename = "data/{}/{}.alias.tsv".format(name, split)
+            if op.isfile(afilename):
+                with open(afilename, 'r') as fp:
+                    for i, line in enumerate(fp):
+                        items = line.split('\t')
+                        if len(items) == 2:
+                            aliasDict[int(items[0])] = items[1]
             v = 0
             while True:
                 if not dataset.has(split, 'label', v):
@@ -695,8 +704,12 @@ def get_all_data_info2(name=None):
                 label_count_rows = dataset.iter_data(split, 'inverted.label.count', v)
                 label_count = [(r[0], int(r[1])) for r in label_count_rows]
                 label_count = sorted(label_count, key=lambda x: x[1])
-                valid_split_versions.append((split, v, [(i, l, c) for i, (l, c) in
-                    enumerate(label_count)]))
+                if v in aliasDict:
+                    valid_split_versions.append((split, v, aliasDict[v],  [(i, l, c) for i, (l, c) in
+                        enumerate(label_count)]))
+                else:
+                    valid_split_versions.append((split, v, "",  [(i, l, c) for i, (l, c) in
+                        enumerate(label_count)]))
                 v = v + 1
         name_splits_labels = [(name, valid_split_versions)]
         return name_splits_labels

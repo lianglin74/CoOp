@@ -555,6 +555,7 @@ def view_image_compare_test(request, data, split, version, label, start_id, min_
 
     return render(request, 'detection/images_compare.html', context)
 
+
 def view_image_compare_test(request, data, split, version, label, start_id, min_conf=None):
     '''
     use js to render the box in the client side
@@ -802,8 +803,7 @@ def view_image_result(request, data, split, version, label, start_id):
     return render(request, 'detection/images_js3.html', context)
 
 
-def view_image_js(request, data, split, version, label, start_id, imKey=None):
-
+def view_image_js(request, data, split, version, label, start_id, imKey=None, min_conf=None):
     '''
     use js to render the box in the client side
     '''
@@ -841,7 +841,15 @@ def view_image_js(request, data, split, version, label, start_id, imKey=None):
                                                                                             hash_sha1(fname)))
             all_key.append(fname)
             all_url.append('/static/' + origin_html_path)
-            all_type_to_rects.append({'gt': gt})
+            gt1 = []
+            for item in gt:
+                if not min_conf == None:
+                    if 'conf' in item:
+                        if item['conf'] >= min_conf:
+                            gt1.append(item)
+                else:
+                    gt1.append(item)
+            all_type_to_rects.append({'gt': gt1})
     else:
         for i, (fname, origin, gt) in enumerate(images):
             # print "imKey", imKey, fname
@@ -857,17 +865,16 @@ def view_image_js(request, data, split, version, label, start_id, imKey=None):
                 all_url.append('/static/' + origin_html_path)
                 all_type_to_rects.append({'gt': gt})
 
-    
     os.chdir(curr_dir)
 
     kwargs = copy.deepcopy(request.GET)
     kwargs['start_id'] = str(max(0, start_id - max_image_shown))
-    previous_link = reverse('detection:view_image2')
+    previous_link = reverse('detection:view_image')
     previous_link = previous_link + '?' + \
         '&'.join(['{}={}'.format(k, kwargs[k]) for k in kwargs])
     kwargs = copy.deepcopy(request.GET)
     kwargs['start_id'] = str(start_id + len(all_type_to_rects))
-    next_link = reverse('detection:view_image2')
+    next_link = reverse('detection:view_image')
     next_link = next_link + '?' + \
         '&'.join(['{}={}'.format(k, kwargs[k]) for k in kwargs])
 
@@ -1363,8 +1370,10 @@ def view_image(request):
         # name_splits_labels = get_all_data_info()
         names = get_all_data_info2()
         os.chdir(curr_dir)
+
         context = {'names': names}
         return render(request, 'detection/data_list.html', context)
+
     elif request.GET.get('split', '') == '' and request.GET.get('label', '') == '':
         curr_dir = os.curdir
         os.chdir(get_qd_root())
@@ -1374,6 +1383,7 @@ def view_image(request):
         os.chdir(curr_dir)
 
         populate_dataset_details(data)
+
         context = {'name_splits_label_counts': name_splits_labels}
         return render(request, 'detection/image_overview.html', context)
     else:
@@ -1382,6 +1392,10 @@ def view_image(request):
         key = None
         key = request.GET.get('key')
 
+        min_conf = None
+        min_conf = request.GET.get('min_conf')
+        if min_conf != None:
+            min_conf = float(min_conf)
         populate_dataset_details(data)
 
         if split == 'None':
@@ -1395,8 +1409,7 @@ def view_image(request):
         label = request.GET.get('label')
         start_id = request.GET.get('start_id')
         
-        result = view_image_js(request, data, split, version, label, start_id, key)
-        return result
+        result = view_image_js(request, data, split, version, label, start_id, key, min_conf)
 
 
 def get_data_sources_for_composite():
