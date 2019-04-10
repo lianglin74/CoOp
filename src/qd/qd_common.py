@@ -40,6 +40,14 @@ except ImportError:
     from urllib2 import HTTPError
 
 
+def case_incensitive_overlap(all_terms):
+    all_lower_to_term = [{t.lower(): t for t in terms} for terms in all_terms]
+    all_lowers = [set(l.keys()) for l in all_lower_to_term]
+    anchor = all_lowers[0].intersection(*all_lowers[1:])
+
+    return [[lower_to_term[l] for l in anchor]
+        for lower_to_term in all_lower_to_term]
+
 def retry_agent(func, *args, **kwargs):
     i = 0
     while True:
