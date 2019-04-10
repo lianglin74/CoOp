@@ -4,6 +4,7 @@ from azure.storage.common.storageclient import logger
 from .qd_common import load_from_yaml_file
 from .qd_common import cmd_run
 import logging
+from tqdm import tqdm
 logger.propagate = False
 
 def create_cloud_storage(x):
@@ -29,6 +30,51 @@ def azcopy_upload(src, dest_url, dest_key):
         cmd.append('--recursive')
     cmd_run(cmd, shell=True)
 
+def blob_download_all_qdoutput(prefix):
+    c = create_cloud_storage('vig')
+    all_blob_name = list(c.list_blob_names(prefix))
+    def parse_blob_root_folder(b):
+        b = b.replace(prefix, '')
+        if b.startswith('/'):
+            b = b[1:]
+        while '/' in b:
+            b = op.dirname(b)
+        return b
+    all_full_expid = set([parse_blob_root_folder(b) for b in all_blob_name])
+    for full_expid in all_full_expid:
+        logging.info(full_expid)
+        src_path = op.join(prefix, full_expid)
+        target_folder = op.join('output', full_expid)
+        blob_download_qdoutput(src_path, target_folder)
+
+def blob_download_qdoutput(src_path, target_folder):
+    c = create_cloud_storage('vig')
+    def is_in_snapshot(b):
+        return op.basename(op.dirname(b)) == 'snapshot'
+    all_blob_name = list(c.list_blob_names(src_path))
+    in_snapshot_blobs = [b for b in all_blob_name if is_in_snapshot(b)]
+    not_in_snapshot_blobs = [b for b in all_blob_name if not is_in_snapshot(b)]
+    try:
+        not_in_snapshot_blobs.remove(src_path)
+    except:
+        pass
+    try:
+        not_in_snapshot_blobs.remove(src_path + '/snapshot')
+    except:
+        pass
+    need_download_blobs = []
+    need_download_blobs.extend(not_in_snapshot_blobs)
+    from qd.qd_common import parse_iteration
+    iters = [parse_iteration(f) for f in in_snapshot_blobs]
+    if len(iters) > 0:
+        max_iters = max(iters)
+        need_download_blobs.extend([f for f, i in zip(in_snapshot_blobs, iters) if i ==
+                max_iters])
+    for f in tqdm(need_download_blobs):
+        target_f = f.replace(src_path, target_folder)
+        if not op.isfile(target_f):
+            c.download_to_path(f, target_f)
+
 class CloudStorage(object):
     def __init__(self, config=None):
         if config is None:
@@ -44,6 +90,10 @@ class CloudStorage(object):
 
         self.account_name = account_name
         self.account_key = account_key
+
+    def list_blob_names(self, prefix):
+        return self.block_blob_service.list_blob_names(self.container_name,
+                prefix=prefix)
 
     def upload_stream(self, s, name, force=False):
         if not force and self.block_blob_service.exists(self.container_name,
@@ -87,9 +137,8 @@ class CloudStorage(object):
         def upload_callback(curr, total):
             if total < 1024 ** 3:
                 return
-            import tqdm
             if bar[0] is None:
-                bar[0] = tqdm.tqdm(total=total, unit_scale=True)
+                bar[0] = tqdm(total=total, unit_scale=True)
             bar[0].update(curr - last[0])
             last[0] = curr
 
@@ -126,6 +175,8 @@ class CloudStorage(object):
         return data_url, url
 
     def download_to_path(self, blob_name, local_path):
+        from qd.qd_common import ensure_directory
+        ensure_directory(op.dirname(local_path))
         self.block_blob_service.get_blob_to_path(self.container_name,
                 blob_name, local_path)
 

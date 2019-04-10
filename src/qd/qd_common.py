@@ -558,17 +558,13 @@ def parse_data(full_expid):
     max_length = max([len(c) for c in candidates])
     return [c for c in candidates if len(c) == max_length][0]
 
-def parse_iteration(predict_file):
-    begin_key = 'model_iter_'
-    end_key = '.caffemodel'
-    begin_idx = predict_file.find(begin_key)
-    end_idx = predict_file.find(end_key)
-    num_str = predict_file[begin_idx + len(begin_key) : end_idx]
-    try:
-        return float(num_str)
-    except:
-        logging.info('interpreting {} as -1'.format(num_str))
-        return -1
+def parse_iteration(file_name):
+    r = re.match('.*model_iter_([0-9]*)\..*', file_name)
+    if r is None:
+        r = re.match('.*model_iter_([0-9]*)e\..*', file_name)
+        if r is None:
+            return -1
+    return int(float(r.groups()[0]))
 
 def parse_snapshot_rank(predict_file):
     '''
@@ -638,7 +634,6 @@ def list_to_dict(l, idx, keep_one=False):
     return result
 
 def generate_lineidx(filein, idxout):
-    assert not os.path.isfile(idxout)
     with open(filein,'r') as tsvin, open(idxout,'w') as tsvout:
         fsize = os.fstat(tsvin.fileno()).st_size
         fpos = 0;
