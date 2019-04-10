@@ -12,6 +12,7 @@ import logging
 import numpy as np
 import logging
 import glob
+import re
 try:
     from itertools import izip as zip
 except ImportError:
@@ -47,6 +48,57 @@ def case_incensitive_overlap(all_terms):
 
     return [[lower_to_term[l] for l in anchor]
         for lower_to_term in all_lower_to_term]
+
+def zip_qd(out_zip):
+    cmd = ['zip',
+            '-yrv',
+            out_zip,
+            '*',
+            '-x',
+            '\*src/build/lib.linux-x86_64-2.7/\*',
+            '-x',
+            '\*build/lib.linux-x86_64-2.7/\*',
+            '-x',
+            '\*build/temp.linux-x86_64-2.7/\*',
+            '-x',
+            '\*build/lib.linux-x86_64-3.5/\*',
+            '-x',
+            '\*build/temp.linux-x86_64-3.5/\*',
+            '-x',
+            '\*build/lib.linux-x86_64-3.6/\*',
+            '-x',
+            '\*build/temp.linux-x86_64-3.6/\*',
+            '-x',
+            '\*src/CCSCaffe/models/\*',
+            '-x',
+            '\*src/CCSCaffe/data/\*',
+            '-x',
+            '\*src/CCSCaffe/examples/\*',
+            '-x',
+            '\*aux_data/yolo9k/\*',
+            '-x',
+            '\*visualization\*',
+            '-x',
+            '\*.build_release\*',
+            '-x',
+            '\*.build_debug\*',
+            '-x',
+            '\*.build\*',
+            '-x',
+            '\*tmp_run\*',
+            '-x',
+            '\*src/CCSCaffe/MSVC/\*',
+            '-x',
+            '\*.pyc',
+            '-x',
+            '\*.so',
+            '-x',
+            '\*src/CCSCaffe/docs/tutorial/\*',
+            '-x',
+            '\*src/CCSCaffe/matlab/\*',
+            '-x',
+            '\*.git\*']
+    cmd_run(cmd, working_dir=os.getcwd(), shell=True)
 
 def retry_agent(func, *args, **kwargs):
     i = 0

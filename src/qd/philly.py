@@ -108,7 +108,7 @@ def philly_mkdir(dest_dir, vc, cluster):
     sub_cmd = ['-mkdir', dest_dir]
     philly_run(sub_cmd, vc, cluster)
 
-def upload_through_blob(src_dir, dest_dir, vc, cluster):
+def upload_through_blob(src_dir, dest_dir, vc, cluster, **kwargs):
     assert len(dest_dir) > 0 and dest_dir[0] != '/' and dest_dir[0] != '\\'
     account = 'vig'
     dest_url = op.join('https://{}.blob.core.windows.net/data',
@@ -118,14 +118,14 @@ def upload_through_blob(src_dir, dest_dir, vc, cluster):
 
     c = create_cloud_storage(account)
     dest_url, _ = c.az_upload2(src_dir, op.join(dest_dir, op.basename(src_dir)))
+    if kwargs.get('copy_to_hdfs', True):
+        env = {'AZURE_STORAGE_ACCESS_KEY': c.account_key}
 
-    env = {'AZURE_STORAGE_ACCESS_KEY': c.account_key}
-
-    sub_cmd = ['-cp', '-r', dest_url, dest_dir, 3]
-    philly_run(sub_cmd, vc, cluster, extra_env=env)
+        sub_cmd = ['-cp', '-r', dest_url, dest_dir, 3]
+        philly_run(sub_cmd, vc, cluster, extra_env=env)
 
 def philly_upload_dir(src_dir, dest_dir, vc='input', cluster='philly-prod-cy4',
-        blob=True):
+        blob=True, **kwargs):
     philly_mkdir(dest_dir, vc, cluster)
     t = infer_type(vc, cluster)
     if t == 'prem' or t == 'ap':
@@ -145,7 +145,7 @@ def philly_upload_dir(src_dir, dest_dir, vc='input', cluster='philly-prod-cy4',
             cmd.append('{}{}'.format(folder_prefix, dest_dir))
             retry_agent(cmd_run, cmd, env={'PHILLY_VC': vc})
         else:
-            upload_through_blob(src_dir, dest_dir, vc, cluster)
+            upload_through_blob(src_dir, dest_dir, vc, cluster, **kwargs)
     elif t == 'ap':
         cmd = []
         cmd.append('./philly-fs')
@@ -304,43 +304,13 @@ class PhillyVC(object):
         cmd = ['cp', './scripts/run.py', './tmp_run/{}'.format(random_run)]
         code_qd = os.getcwd()
         cmd_run(cmd, working_dir=code_qd)
-        cmd = ['zip',
-                '-yrv',
-                random_abs_qd,
-                '*',
-                '-x',
-                '\*src/CCSCaffe/models/\*',
-                '-x',
-                '\*src/CCSCaffe/data/\*',
-                '-x',
-                '\*src/CCSCaffe/examples/\*',
-                '-x',
-                '\*aux_data/yolo9k/\*',
-                '-x',
-                '\*visualization\*',
-                '-x',
-                '\*.build_release\*',
-                '-x',
-                '\*.build_debug\*',
-                '-x',
-                '\*.build\*',
-                '-x',
-                '\*tmp_run\*',
-                '-x',
-                '\*src/CCSCaffe/MSVC/\*',
-                '-x',
-                '\*.pyc',
-                '-x',
-                '\*src/CCSCaffe/docs/tutorial/\*',
-                '-x',
-                '\*src/CCSCaffe/matlab/\*',
-                '-x',
-                '\*.git\*']
-        cmd_run(cmd, working_dir=code_qd, shell=True)
+        from qd.qd_common import zip_qd
+        zip_qd(random_abs_qd)
+        copy_to_hdfs = not self.use_blob_as_input
         if infer_type(self.vc, self.cluster) == 'azure':
             philly_upload_dir(random_abs_qd, '{}/code'.format(self.user_name),
                     vc=self.vc,
-                    cluster=self.cluster, blob=True)
+                    cluster=self.cluster, blob=True, copy_to_hdfs=copy_to_hdfs)
         else:
             philly_upload(random_abs_qd, '{}/code'.format(self.user_name), vc=self.vc,
                     cluster=self.cluster)
