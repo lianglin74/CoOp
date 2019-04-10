@@ -334,7 +334,6 @@ def parse_general_args():
         configs = load_from_yaml_file(args.config_file)
         for k in configs:
             kwargs[k] = configs[k]
-    from qd_common import  load_from_yaml_str
     if args.base64_param:
         configs = load_from_yaml_str(base64.b64decode(args.base64_param))
         for k in configs:
@@ -1301,11 +1300,11 @@ def parse_basemodel_with_depth(net):
         i = net.index('_')
         return net[: i]
 
-def worth_create(base_file_name, derived_file_name):
+def worth_create(base_file_name, derived_file_name, buf_second=0):
     if not op.isfile(base_file_name):
         return False
     if os.path.isfile(derived_file_name) and \
-            os.path.getmtime(derived_file_name) > os.path.getmtime(base_file_name):
+            os.path.getmtime(derived_file_name) > os.path.getmtime(base_file_name) - buf_second:
         return False
     else:
         return True

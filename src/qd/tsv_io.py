@@ -3,10 +3,11 @@ from pprint import pformat
 import glob
 import json
 import random
-from .qd_common import ensure_directory
-from .qd_common import load_list_file
-from .qd_common import generate_lineidx
-from .qd_common import copy_file
+from qd.qd_common import ensure_directory
+from qd.qd_common import load_list_file
+from qd.qd_common import generate_lineidx
+from qd.qd_common import copy_file
+from qd.qd_common import worth_create
 import six
 import os
 import os.path as op
@@ -18,6 +19,7 @@ except ImportError:
     pass
 import progressbar
 from tqdm import tqdm
+
 
 def rm_tsv(tsv_file):
     if op.isfile(tsv_file):
@@ -105,7 +107,8 @@ class TSVFile(object):
 
     def _ensure_lineidx_loaded(self):
         if self._lineidx is None:
-            if not op.isfile(self.lineidx) and not op.islink(self.lineidx):
+            if not op.isfile(self.lineidx) and not op.islink(self.lineidx) \
+                    or worth_create(self.tsv_file, self.lineidx, buf_second=60):
                 generate_lineidx(self.tsv_file, self.lineidx)
             with open(self.lineidx, 'r') as fp:
                 self._lineidx = [int(i.strip()) for i in fp.readlines()]
