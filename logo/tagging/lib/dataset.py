@@ -215,8 +215,8 @@ class TSVDatasetWithoutLabel(TSVDatasetPlus):
 
 class CropClassTSVDataset(Dataset):
     def __init__(self, tsvfile, labelmap, labelfile=None, label_filter_fn=None,
-                 transform=None, logger=None, for_test=False, enlarge_bbox_for_testing=1.0,
-                 use_cache=True):
+                 transform=None, logger=None, for_test=False, enlarge_bbox=1.0,
+                 use_cache=False):
         """ TSV dataset with cropped images from bboxes labels
         Params:
             tsvfile: image tsv file, columns are key, bboxes, b64_image_string
@@ -230,10 +230,12 @@ class CropClassTSVDataset(Dataset):
         self.labelfile = labelfile
         self.transform = transform
         self.label_to_idx = {}
+        self.labels = []
         with open(labelmap, 'r') as fp:
             for i, line in enumerate(fp):
                 l = line.rstrip('\n')
                 assert(l not in self.label_to_idx)
+                self.labels.append(l)
                 self.label_to_idx[l] = i
         self.label_filter_fn = label_filter_fn
         self.img_col = 2
@@ -241,7 +243,7 @@ class CropClassTSVDataset(Dataset):
         self.key_col = 0
         self.logger = logger
         self._for_test = for_test
-        self._enlarge_bbox_for_testing = enlarge_bbox_for_testing
+        self._enlarge_bbox = enlarge_bbox
         self._label_counts = None
 
         _cache_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "cache")
@@ -264,7 +266,7 @@ class CropClassTSVDataset(Dataset):
         return False
 
     def get_labelmap(self):
-        return self.label_to_idx.keys()
+        return self.labels
 
     def _read_into_buffer(self, fpath, sep='\t'):
         ret = []
@@ -280,7 +282,7 @@ class CropClassTSVDataset(Dataset):
             rect: left, top, right, bot
         """
         return gen_index(self.tsvfile, self.labelfile, self.label_to_idx, self._for_test,
-                self._enlarge_bbox_for_testing, self.key_col, self.label_col, self.img_col, self.logger,
+                self._enlarge_bbox, self.key_col, self.label_col, self.img_col, self.logger,
                 self.min_pixels)
 
     def __getitem__(self, index):
@@ -317,7 +319,7 @@ class CropClassTSVDataset(Dataset):
 class CropClassTSVDatasetYaml(CropClassTSVDataset):
     """ CropClassTSVDataset taking a Yaml file for easy function call
     """
-    def __init__(self, yaml_file, session_name='', transform=None, logger=None, enlarge_bbox_for_testing=1.0):
+    def __init__(self, yaml_file, session_name='', transform=None, logger=None, enlarge_bbox=1.0):
         cfg = load_from_yaml_file(yaml_file)
 
         if session_name:
@@ -333,25 +335,29 @@ class CropClassTSVDatasetYaml(CropClassTSVDataset):
 
         super(CropClassTSVDatasetYaml, self).__init__(
             tsv_file, labelmap, label_file,
-            for_test=for_test, transform=transform, logger=logger, enlarge_bbox_for_testing=enlarge_bbox_for_testing)
+            for_test=for_test, transform=transform, logger=logger, enlarge_bbox=enlarge_bbox)
 
 class CropClassTSVDatasetYamlList():
-    def __init__(self, yaml_lst_file, session_name='', transform=None, logger=None, enlarge_bbox_for_testing=1.0):
+    def __init__(self, yaml_lst_file, session_name='', transform=None, logger=None, enlarge_bbox=1.0):
         self.yaml_files = self.load_yaml_list(yaml_lst_file)
         self.datasets = [CropClassTSVDatasetYaml(yaml_file, session_name=session_name,
-                transform=transform, logger=logger, enlarge_bbox_for_testing=enlarge_bbox_for_testing)
+                transform=transform, logger=logger, enlarge_bbox=enlarge_bbox)
                 for yaml_file in self.yaml_files]
         self.dataset_lengths = [len(d) for d in self.datasets]
         self.length = sum(self.dataset_lengths)
         self._label_counts = None
 
-        # check if labelmap match
+        # combine labelmap from multiple datasets
+        self.labels = self.datasets[0].get_labelmap
         self.label_to_idx = self.datasets[0].label_to_idx
+        cur_l_idx = len(self.label_to_idx)
         for i in range(1, len(self.datasets)):
-            tmp = self.datasets[i].label_to_idx
-            assert(len(tmp) == len(self.label_to_idx))
-            for k in self.label_to_idx:
-                assert(self.label_to_idx[k] == tmp[k])
+            for l in self.datasets[i].get_labelmap():
+                if l not in self.label_to_idx:
+                    self.labels.append(l)
+                    self.label_to_idx[l] = cur_l_idx
+                    cur_l_idx += 1
+        assert cur_l_idx == len(self.label_to_idx)
 
     def __len__(self):
         return self.length
@@ -374,7 +380,7 @@ class CropClassTSVDatasetYamlList():
         return False
 
     def get_labelmap(self):
-        return self.label_to_idx.keys()
+        return self.labels
 
     def load_yaml_list(self, yaml_lst_file):
         yaml_list = []
@@ -389,16 +395,17 @@ class CropClassTSVDatasetYamlList():
         if self._label_counts is None:
             self._label_counts = np.zeros(self.label_to_idx)
             for d in self.datasets:
-                tmp = d.label_counts
-                assert len(tmp) == len(self._label_counts)
-                self._label_counts += tmp
+                cur_counts = d.label_counts
+                cur_labels = d.get_labelmap()
+                assert len(cur_counts) == len(cur_labels)
+                for l, count in zip(cur_labels, cur_counts):
+                    self._label_counts[self.label_to_idx[l]] += count
         return self._label_counts
 
 
 def gen_index(imgfile, labelfile, label_to_idx, for_test,
-                enlarge_bbox_for_test, key_col, label_col, img_col,
+                enlarge_bbox, key_col, label_col, img_col,
                 logger, min_pixels):
-    enlarge_bbox = enlarge_bbox_for_test if for_test else 1.0
     all_args = []
     num_worker = mp.cpu_count()
     num_tasks = num_worker * 3

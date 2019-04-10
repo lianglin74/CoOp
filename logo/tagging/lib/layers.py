@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torchvision.models as models
 import numpy as np
 
 class ResNetFeatureExtract(nn.Module):
@@ -28,6 +29,29 @@ class ResNetFeatureExtract(nn.Module):
         x = self.fc(x)
 
         return x, fea
+
+class ResNetInput112(nn.Module):
+    def __init__(self, arch, num_classes):
+        super(ResNetInput112, self).__init__()
+        orig_model = models.__dict__[arch](num_classes=num_classes)
+        self.layer_names = ["conv1", "bn1", "relu", "layer1", "layer2", "layer3",
+                  "layer4", "avgpool", "fc"]   # remove maxpool
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=(5, 5), stride=(2, 2), padding=(2, 2), bias=False)
+        for l_name in self.layer_names[1:]:
+            setattr(self, l_name, getattr(orig_model, l_name))
+
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, 0, 0.01)
+                nn.init.constant_(m.bias, 0)
+        torch.nn.init.xavier_uniform_(self.fc.weight)
+
+    def forward(self, x):
+        for l_name in self.layer_names:
+            x = getattr(self, l_name)(x)
+            if l_name == "avgpool":
+                x = x.view(x.size(0), -1)
+        return x
 
 
 class SigmoidCrossEntropyLossWithBalancing(nn.Module):

@@ -15,9 +15,9 @@ def get_data_loader(args, logger=None):
     test_transform = get_pt_transform("test", args)
 
     if args.data.endswith('.yaml'):
-        train_dataset = CropClassTSVDatasetYaml(args.data, session_name='train', transform=train_transform)
+        train_dataset = CropClassTSVDatasetYaml(args.data, session_name='train', transform=train_transform, enlarge_bbox=args.enlarge_bbox)
     elif args.data.endswith('.yamllst'):
-        train_dataset = CropClassTSVDatasetYamlList(args.data, session_name='train', transform=train_transform)
+        train_dataset = CropClassTSVDatasetYamlList(args.data, session_name='train', transform=train_transform, enlarge_bbox=args.enlarge_bbox)
     else:
         raise NotImplementedError()
 
@@ -32,9 +32,9 @@ def get_data_loader(args, logger=None):
         num_workers=args.workers, pin_memory=True, sampler=train_sampler)
 
     if args.data.endswith('.yaml'):
-        val_dataset = CropClassTSVDatasetYaml(args.data, session_name='val', transform=test_transform, enlarge_bbox_for_testing=args.enlarge_bbox_for_test)
+        val_dataset = CropClassTSVDatasetYaml(args.data, session_name='val', transform=test_transform, enlarge_bbox=args.enlarge_bbox)
     elif args.data.endswith('.yamllst'):
-        val_dataset = CropClassTSVDatasetYamlList(args.data, session_name='val', transform=test_transform, enlarge_bbox_for_testing=args.enlarge_bbox_for_test)
+        val_dataset = CropClassTSVDatasetYamlList(args.data, session_name='val', transform=test_transform, enlarge_bbox=args.enlarge_bbox)
     else:
         raise NotImplementedError()
 
@@ -91,34 +91,83 @@ def get_pt_transform(phase, args):
     # NOTE: OpenCV loads image in BGR
     bgr_normalize = transforms.Normalize(mean=[0.406, 0.456, 0.485],
                                      std=[0.225, 0.224, 0.229])
-    test_transform = transforms.Compose([
-            transforms.ToPILImage(),
-            transforms.Resize(256),
-            transforms.CenterCrop(224),
-            # transforms.Resize([224, 224]),
-            transforms.ToTensor(),
-            bgr_normalize,
-        ])
-    if args.data_aug:
-        train_transform = transforms.Compose([
-            transforms.ToPILImage(),
-            transforms.RandomResizedCrop(224, scale=(0.2,1)),
-            transforms.RandomAffine(degrees=180),
-            transforms.ColorJitter(brightness=0.5,contrast=0.5,saturation=0.5, hue=0.2),
-            # transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            bgr_normalize,
-        ])
+    if args.input_size == 224:
+        target_size = 256
+        crop_size = 224
+    elif args.input_size == 112:
+        target_size = 128
+        crop_size = 112
     else:
-        train_transform = transforms.Compose([
+        raise ValueError("input size {} not supported".format(args.input_size))
+
+    if args.data_aug == 1:
+        test_transform = transforms.Compose([
                 transforms.ToPILImage(),
-                transforms.RandomResizedCrop(224, scale=(0.2,1)),
-                # transforms.RandomAffine(degrees=180),
-                transforms.ColorJitter(brightness=0.5,contrast=0.5,saturation=0.5, hue=0.2),
-                transforms.RandomHorizontalFlip(),
+                transforms.Resize(target_size),
+                transforms.CenterCrop(crop_size),
+                transforms.ToTensor(),
+                # bgr_normalize,
+            ])
+    else:
+        test_transform = transforms.Compose([
+                transforms.ToPILImage(),
+                transforms.Resize(target_size),
+                transforms.CenterCrop(crop_size),
                 transforms.ToTensor(),
                 bgr_normalize,
             ])
+
+    if args.data_aug == 0:
+        train_transform = transforms.Compose([
+                transforms.ToPILImage(),
+                transforms.RandomResizedCrop(crop_size, scale=(0.25,1), ratio=(2./3., 3./2.)),
+                # transforms.ColorJitter(brightness=(0.66667, 1.5), contrast=0, saturation=(0.66667, 1.5), hue=(-0.1, 0.1)),
+                transforms.ColorJitter(brightness=0.5, contrast=0, saturation=0.5, hue=0.1),
+                # transforms.RandomHorizontalFlip(0.5),
+                transforms.ToTensor(),
+                bgr_normalize,
+            ])
+    elif args.data_aug == 1:
+        train_transform = transforms.Compose([
+                transforms.ToPILImage(),
+                transforms.RandomResizedCrop(crop_size, scale=(0.25,1)),
+                # transforms.ColorJitter(brightness=(0.66667, 1.5), contrast=0, saturation=(0.66667, 1.5), hue=(-0.1, 0.1)),
+                # transforms.RandomHorizontalFlip(0.5),
+                transforms.ToTensor(),
+                # bgr_normalize,
+            ])
+    elif args.data_aug == 2:
+        train_transform = transforms.Compose([
+                transforms.ToPILImage(),
+                transforms.RandomAffine(0, shear=15),
+                transforms.RandomAffine(degrees=10),
+                transforms.RandomAffine(0, shear=15),
+                transforms.RandomResizedCrop(crop_size, scale=(0.25,1), ratio=(2./3., 3./2.)),
+                transforms.ColorJitter(brightness=0.5, contrast=0, saturation=0.5, hue=0.1),
+                transforms.ToTensor(),
+                bgr_normalize,
+            ])
+    elif args.data_aug == 3:
+        train_transform = transforms.Compose([
+                transforms.ToPILImage(),
+                transforms.RandomAffine(0, shear=15),
+                transforms.RandomAffine(degrees=10),
+                transforms.RandomAffine(0, shear=15),
+                transforms.RandomResizedCrop(crop_size, scale=(0.25,1), ratio=(2./3., 3./2.)),
+                # transforms.ColorJitter(brightness=(0.66667, 1.5), contrast=0, saturation=(0.66667, 1.5), hue=(-0.1, 0.1)),
+                transforms.ToTensor(),
+                bgr_normalize,
+            ])
+    elif args.data_aug == 4:
+        train_transform = transforms.Compose([
+                transforms.ToPILImage(),
+                transforms.RandomResizedCrop(crop_size, scale=(0.25,1), ratio=(2./3., 3./2.)),
+                transforms.RandomHorizontalFlip(0.5),
+                transforms.ToTensor(),
+                bgr_normalize,
+            ])
+    else:
+        raise ValueError()
     if phase.lower() == "test":
         return test_transform
     elif phase.lower() == "train":

@@ -92,9 +92,11 @@ def get_arg_parser(model_names):
 
     parser.add_argument('--balance_class', dest='balance_class', action='store_true',
                         help='use weighted CrossEntropyLoss, where weights[c] is n_samples / (n_classes * label_counts[c])')
-    parser.add_argument('--data_aug', dest='data_aug', action='store_true',
-                        help='data augmentation')
-    parser.add_argument('--enlarge_bbox_for_test', default=1.0, type=float,
-                        help='make bbox larger (factor*width, factor*height) when testing')
+    parser.add_argument('--data_aug', default=0, type=int,
+                        help='data augmentation type')
+    parser.add_argument('--enlarge_bbox', default=1.0, type=float,
+                        help='make bbox larger (factor*width, factor*height)')
+    parser.add_argument('--input_size', default=224, type=int,
+                        help='input image size')
 
     return parser

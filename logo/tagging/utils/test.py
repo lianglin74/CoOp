@@ -20,7 +20,10 @@ def validate(val_loader, model, criterion, logger):
 
             # compute output
             all_outputs = model(input)
-            output, feature = all_outputs[0], all_outputs[1]
+            if isinstance(all_outputs, tuple):
+                output, feature = all_outputs[0], all_outputs[1]
+            else:
+                output = all_outputs
 
             # measure accuracy and record loss
             accuracy.calc(output, target)

@@ -74,7 +74,8 @@ def get_optimizer(model, args):
         group_decay = []
         group_no_decay = []
         for name, param in model.named_parameters():
-            if 'bn' in name or 'downsample.1.' in name:
+            # if 'bn' in name or 'downsample.1.' in name:
+            if len(param.shape) == 1 or name.endswith(".bias"):
                 assert name.endswith("weight") or name.endswith("bias")
                 group_no_decay.append(param)
             else:
@@ -146,6 +147,7 @@ def set_bn_eval(m):
     classname = m.__class__.__name__
     if classname.find('BatchNorm') != -1:
         m.eval()
+        m.track_running_status = False
 
 def train(args, train_loader, model, criterion, optimizer, epoch, logger, accuracy):
     batch_time = AverageMeter()
@@ -162,15 +164,14 @@ def train(args, train_loader, model, criterion, optimizer, epoch, logger, accura
     model.train()
 
     if args.BatchNormEvalMode:
-        for module in model.module.modules():
+        for module in model.module.children():
             module.apply(set_bn_eval)
     if args.fixpartialfeature:
         # set the fixed feature layers bn to evaluation mode
         for module_name, module in model.module.named_children():
             if 'layer4' in module_name or 'fc' in module_name:
                 continue
-            for m in module.modules():
-                m.apply(set_bn_eval)
+            module.apply(set_bn_eval)
 
     end = time.time()
     tic = time.time()
@@ -181,9 +182,10 @@ def train(args, train_loader, model, criterion, optimizer, epoch, logger, accura
 
         # compute output
         all_outputs = model(input)
-        output, feature = all_outputs[0], all_outputs[1]
-        orig_loss = criterion(output, target)
+
         if ccs_loss_param > 0:
+            output, feature = all_outputs[0], all_outputs[1]
+            orig_loss = criterion(output, target)
             # NOTE: use detach() to not calculate grad w.r.t. weight in ccs_loss
             weight = model.module.fc.weight
             ccs_loss = ccs_loss_layer(feature, weight, target)
@@ -192,6 +194,8 @@ def train(args, train_loader, model, criterion, optimizer, epoch, logger, accura
 
             loss = orig_loss + ccs_loss_param*ccs_loss
         else:
+            output = all_outputs
+            orig_loss = criterion(output, target)
             loss = orig_loss
 
         # measure accuracy and record loss
@@ -207,7 +211,7 @@ def train(args, train_loader, model, criterion, optimizer, epoch, logger, accura
         batch_time.update(time.time() - end)
         end = time.time()
 
-        if i % args.print_freq == 0:
+        if i == len(train_loader)-1 or i % args.print_freq == 0:
             speed = args.print_freq * args.batch_size / float(args.world_size) / (time.time() - tic)
             info_str = 'Epoch: [{0}][{1}/{2}]\t' \
                         'Speed: {speed:.2f} samples/sec\t' \

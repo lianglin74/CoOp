@@ -74,10 +74,14 @@ def main(args):
                 nn.init.constant_(m.bias, 0)
         torch.nn.init.xavier_uniform_(model.fc.weight)
     else:
-        logger.info("=> creating model '{}'".format(args.arch))
-        model = models.__dict__[args.arch](num_classes=train_dataset.label_dim())
+        if args.input_size == 112:
+            model = layers.ResNetInput112(args.arch, train_dataset.label_dim())
+        else:
+            logger.info("=> creating model '{}'".format(args.arch))
+            model = models.__dict__[args.arch](num_classes=train_dataset.label_dim())
 
-    model = layers.ResNetFeatureExtract(model)
+    if args.ccs_loss_param > 0:
+        model = layers.ResNetFeatureExtract(model)
 
     if not args.distributed:
         if args.arch.startswith('alexnet') or args.arch.startswith('vgg'):
