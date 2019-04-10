@@ -1,8 +1,10 @@
 import os.path as op
 from azure.storage.blob import BlockBlobService
 from azure.storage.common.storageclient import logger
-from .qd_common import load_from_yaml_file
-from .qd_common import cmd_run
+import glob
+from qd.qd_common import load_from_yaml_file
+from qd.qd_common import cmd_run
+from qd.qd_common import parse_iteration
 import logging
 from tqdm import tqdm
 logger.propagate = False
@@ -29,6 +31,32 @@ def azcopy_upload(src, dest_url, dest_key):
     if op.isdir(src):
         cmd.append('--recursive')
     cmd_run(cmd, shell=True)
+
+def blob_upload_qdoutput(src_path, dest_path, client):
+    to_copy = get_to_copy_file_for_qdoutput(src_path, dest_path)
+    for f, d in to_copy:
+        client.az_upload2(f, d)
+
+def get_to_copy_file_for_qdoutput(src_path, dest_path):
+    # upload all the files under src_path
+    to_copy = []
+    all_src_file = glob.glob(op.join(src_path, '*'))
+    for f in all_src_file:
+        if op.isfile(f):
+            to_copy.append((f, op.join(dest_path, op.basename(f))))
+
+    # for the model and the tested files, only upload the best
+    all_src_file = glob.glob(op.join(src_path, 'snapshot',
+        'model_iter_*.caffemodel'))
+    all_iter = [parse_iteration(f) for f in all_src_file]
+    max_iters = max(all_iter)
+    need_copy_files = [f for f, i in zip(all_src_file, all_iter) if i == max_iters]
+    dest_snapshot = op.join(dest_path, 'snapshot')
+    for f in need_copy_files:
+        to_copy.append((f, op.join(dest_snapshot, op.basename(f))))
+        f = f.replace('.caffemodel', '.solverstate')
+        to_copy.append((f, op.join(dest_snapshot, op.basename(f))))
+    return to_copy
 
 def blob_download_all_qdoutput(prefix):
     c = create_cloud_storage('vig')
@@ -64,7 +92,6 @@ def blob_download_qdoutput(src_path, target_folder):
         pass
     need_download_blobs = []
     need_download_blobs.extend(not_in_snapshot_blobs)
-    from qd.qd_common import parse_iteration
     iters = [parse_iteration(f) for f in in_snapshot_blobs]
     if len(iters) > 0:
         max_iters = max(iters)
