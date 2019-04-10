@@ -4027,6 +4027,43 @@ def convert_uhrs_result_back_to_sources(in_tsv, debug=True, tree_file=None):
                 logging.info('equal - {} - {}'.format(data, split))
         populate_dataset_details(data)
 
+def merge_by_key(tsv_file1, tsv_file2, out_tsv,
+        from_flag1='', from_flag2=''):
+    files = [tsv_file1, tsv_file2]
+    all_key_rects = [load_key_rects(tsv_reader(f)) for f in files]
+    all_key_to_rects = [{key: rects for key, rects in key_rects}
+        for key_rects in all_key_rects]
+    keys = [key for key, _ in all_key_rects[0]]
+    flags = [from_flag1, from_flag2]
+    def gen_rows():
+        for key in keys:
+            all_rects = [key_to_rects[key] for key_to_rects in all_key_to_rects]
+            for rects, f in zip(all_rects, flags):
+                for r in rects:
+                    r['from'] = f
+            rects = all_rects[0]
+            for r in all_rects[1:]:
+                rects.extend(r)
+            yield key, json_dump(rects)
+    tsv_writer(gen_rows(), out_tsv)
+
+def threshold_merged_prediction(pred_tsv_file, from_to_class_to_threshold,
+        output_file):
+    def gen_rows():
+        for key, str_rects in tsv_reader(pred_tsv_file):
+            rects = json.loads(str_rects)
+            all_rect = []
+            for r in rects:
+                if type(from_to_class_to_threshold[r['from']]) is dict:
+                    th = from_to_class_to_threshold[r['from']][r['class']]
+                else:
+                    th = from_to_class_to_threshold[r['from']]
+                assert type(th) is float or type(th) is int
+                if r['conf'] > th:
+                    all_rect.append(r)
+            yield key, json_dump(all_rect)
+    tsv_writer(gen_rows(), output_file)
+
 def remove_has_confirmed_colocation_labels(all_data, iou_threshold=0.75):
     all_split = ['train', 'trainval', 'test']
     debug = False
