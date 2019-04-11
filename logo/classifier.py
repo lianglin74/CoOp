@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 import _init_paths
 from tagging.scripts import extract, pred
 from tagging.utils import accuracy
-from qd.qd_common import calculate_iou, write_to_yaml_file, load_from_yaml_file, init_logging, worth_create, ensure_directory, int_rect, is_valid_rect
+from qd.qd_common import calculate_iou, write_to_yaml_file, load_from_yaml_file, init_logging, ensure_directory, int_rect, is_valid_rect, worth_create
 from evaluation.eval_utils import DetectionFile
 from logo import constants
 from qd.tsv_io import TSVDataset, TSVFile, tsv_reader, tsv_writer
@@ -29,55 +29,57 @@ try:
 except ImportError:
     pass
 
+
 class CropTaggingWrapper(object):
-    def __init__(self, det_expid, tag_expid, tag_snap_id="snapshot"):
+    def __init__(self, det_expid, tag_expid, tag_snap_id="snapshot", labelmap=None):
         self.det_expid = det_expid
-        self._data_folder = "data/brand_output/"
-        self._rootpath = "data/brand_output/{}/classifier/{}".format(det_expid, tag_expid)
-        self.labelmap = os.path.join(self._rootpath, "labelmap.txt")
-        self.tag_model_path = os.path.join(self._rootpath, "{}/model_best.pth.tar".format(tag_snap_id))
-        self.log_file = os.path.join(self._rootpath, "eval/prediction_log.txt")
-        ensure_directory(self._rootpath)
+        self._data_folder = "data/brand_output/tmp"
+        self.eval_dir = "data/brand_output/{}/{}/eval".format(tag_expid, tag_snap_id)
+        self.labelmap = labelmap
+        self.tag_model_path = os.path.join(os.path.dirname(self.eval_dir), "model_best.pth.tar")
+        self.log_file = os.path.join(self.eval_dir, "prediction_log.txt")
+        ensure_directory(self.eval_dir)
         ensure_directory(os.path.dirname(self.tag_model_path))
-        ensure_directory(os.path.dirname(self.log_file))
 
         self.num_workers = 24
 
-    def predict_on_known_class(self, dataset_name, split):
+    def predict_on_known_class(self, dataset_name, split, version=-1,
+                region_source=constants.PRED_REGION, conf_from=constants.CONF_OBJ_TAG,
+                enlarge_bbox=1.0, eval_topk_acc=None):
         """
         Two stage methods by combining detector with classifier
         Returns file of imgkey, list of bboxes
         """
         # get region proposal
-        rp_file = self.det_predict(dataset_name, split)
+        rp_file = self.get_region_proposal(dataset_name, split,
+                region_source=region_source, version=version)
 
         # get tagging results
-        data_yaml = self._write_data_yaml(dataset_name, split, "test", rp_file)
-        tag_file = self.tag_predict(data_yaml)
+        data_yaml = self._write_data_yaml(dataset_name, split, "test", rp_file, enlarge_bbox=enlarge_bbox)
+        max_k = eval_topk_acc if eval_topk_acc else 1
+        tag_file = self.tag_predict(data_yaml, max_k=max_k, enlarge_bbox=enlarge_bbox)
 
         # combine
-        outfile = os.path.join(self._rootpath, "{}.{}.tag.predict.tsv".format(dataset_name, split))
-        if worth_create(tag_file, outfile):
-            parse_tagging_predict(tag_file, outfile)
+        outfile = os.path.join(self.eval_dir, "{}.{}.tag.predict.tsv".format(dataset_name, split))
+        topk_acc = parse_tagging_predict(tag_file, outfile, conf_from=conf_from,
+                eval_accuracy=(eval_topk_acc is not None))
         # align the order of imgkeys
         dataproc.align_detection(dataset_name, split, outfile)
-        return outfile
+        return outfile, topk_acc
 
-    def predict_on_unknown_class(self, dataset_name, split, region_source="predict"):
+    def predict_on_unknown_class(self, dataset_name, split,
+                region_source=constants.PRED_REGION, version=-1):
         """
         Predicts on unknown classes by comparing similarity with reference database
         Returns file of imgkey, list of bboxes
         """
         # get region proposal
-        if region_source == "predict":
-            rp_file = self.det_predict(dataset_name, split)
+        rp_file = self.get_region_proposal(dataset_name, split,
+                region_source=region_source, version=version)
+        if region_source == constants.PRED_REGION:
             top_k_acc = None
-        elif region_source == "gt":
-            d = TSVDataset(dataset_name)
-            rp_file = d.get_data(split, t='label', version=-1)
+        elif region_source == constants.GT_REGION:
             top_k_acc = (1,5)
-        else:
-            raise ValueError("Invalid region source: {}".format(region_source))
 
         # get feature for prediction
         data_yaml = self._write_data_yaml(dataset_name, split, "test", rp_file)
@@ -93,7 +95,7 @@ class CropTaggingWrapper(object):
         gt_fea_file = self.extract_feature(data_yaml)
 
         # compare similarity
-        outfile = os.path.join(self._rootpath,
+        outfile = os.path.join(self.eval_dir,
                 "{}.{}.fea.predict.region.{}.tsv".format(dataset_name, split, region_source))
         if worth_create(fea_file, outfile) or worth_create(gt_fea_file, outfile):
             acc_str = compare_similarity(gt_fea_file, fea_file, outfile, top_k_acc=top_k_acc)
@@ -195,7 +197,7 @@ class CropTaggingWrapper(object):
             fp.write('\n')
 
 
-    def tag_predict(self, datayaml, force_rewrite=False, max_k=1):
+    def tag_predict(self, datayaml, force_rewrite=False, max_k=1, enlarge_bbox=1.0):
         """ Tagging on given images and regions
         output: TSV file of image_key, json bbox(rect, obj), tag:conf list separated by ;
         """
@@ -203,14 +205,17 @@ class CropTaggingWrapper(object):
         if not force_rewrite and not worth_create(datayaml, outpath):
             logging.info("skip tagging, already exists: {}".format(outpath))
             return outpath
-        pred.main([
+        args = [
             datayaml,
             "--model", self.tag_model_path,
             "--output", outpath,
-            "--labelmap", self.labelmap,
             "--topk", str(max_k),
-            "--workers", str(self.num_workers)
-        ])
+            "--workers", str(self.num_workers),
+            '--enlarge_bbox', str(enlarge_bbox)
+        ]
+        if self.labelmap:
+            args.extend(["--labelmap", self.labelmap,])
+        pred.main(args)
         return outpath
 
     def extract_feature(self, datayaml, force_rewrite=False):
@@ -254,9 +259,20 @@ class CropTaggingWrapper(object):
             tsv_writer(gen_labels(), rp_file)
         return os.path.realpath(rp_file)
 
-    def _write_data_yaml(self, dataset_name, split, session, labelfile=None):
+    def get_region_proposal(self, dataset_name, split, region_source=constants.PRED_REGION, version=-1):
+        if region_source == constants.PRED_REGION:
+            rp_file = self.det_predict(dataset_name, split)
+        elif region_source == constants.GT_REGION:
+            d = TSVDataset(dataset_name)
+            rp_file = d.get_data(split, t='label', version=version)
+        else:
+            raise ValueError("Invalid region source: {}".format(region_source))
+        return rp_file
+
+    def _write_data_yaml(self, dataset_name, split, session,
+            labelfile=None, enlarge_bbox=1.0):
         dataset = TSVDataset(dataset_name)
-        data_yaml_info = [dataset_name, split]
+        data_yaml_info = [dataset_name, split, str(enlarge_bbox)]
         if labelfile:
             # check key orders, the image key must match in image file and label file
             ordered_keys = []
@@ -279,7 +295,7 @@ class CropTaggingWrapper(object):
 
             data_yaml_info.append("label"+str(hash(labelfile)))
         data_yaml_info.append("dataset.yaml")
-        data_yaml = os.path.join(self._rootpath, ".".join(data_yaml_info))
+        data_yaml = os.path.join(self.eval_dir, ".".join(data_yaml_info))
         if os.path.isfile(data_yaml):
             data_config = load_from_yaml_file(data_yaml)
         else:
@@ -369,42 +385,72 @@ def compare_similarity(gt_fea_file, pred_fea_file, outfile, nms_type="cls_dep", 
         return ""
 
 
-def parse_tagging_predict(infile, outfile, nms_type="cls_dep", bg_skip=1):
+def parse_tagging_predict(infile, outfile, nms_type=None, bg_skip=1,
+            conf_from=constants.CONF_OBJ_TAG, eval_accuracy=False):
     """ Convert two-stage prediction result to regular format
     Args:
         infile: imgkey, bbox, classification results (term:conf;)
         outfile: imgkey, bbox list
         nms_type: None (no nms), cls_dep, cls_indep
         bg_skip: int, if background is in the first [n] prediction, it is treated as bg
+        eval_accuracy: calculate top k accuracy basing on bbox from infile,
+                where k is the number of tags provided. Default is no evaluation.
     """
     pred_dict = collections.defaultdict(list) # key: a list of bbox
+    correct_counts = None
+    num_samples = 0
     for cols in tsv_reader(infile):
         assert(len(cols) == 3)
+        num_samples += 1
         key = cols[0]
         bbox = json.loads(cols[1])
-        # choose the first label
-        label_conf_pair = [p.rsplit(':', 1) for p in cols[2].split(';')]
+        label_conf_pairs = [p.rsplit(':', 1) for p in cols[2].split(';')]
 
+        # decide if the prediction is background
         is_bg = False
-        for i, (label, conf) in enumerate(label_conf_pair):
+        for i, (label, conf) in enumerate(label_conf_pairs):
             if i >= bg_skip:
                 break
             if label == constants.BACKGROUND_LABEL:
                 is_bg = True
                 break
-        if is_bg:
-            continue
 
-        # use classification label as label, classification score * obj as conf score
-        bbox["class"] = label_conf_pair[0][0]
-        bbox["conf"] = float(label_conf_pair[0][1]) * bbox["obj"]
+        if eval_accuracy:
+            if correct_counts is None:
+                correct_counts = [0] * len(label_conf_pairs)
+            gt_label = bbox["class"]
+            for i, pair in enumerate(label_conf_pairs):
+                if pair[0] == gt_label:
+                    correct_counts[i] += 1
+                    break
 
-        pred_dict[key].append(bbox)
+        # use top1 classification prediction as label
+        bbox["class"] = label_conf_pairs[0][0]
+        # use classification score * obj as conf score
+        if conf_from == constants.CONF_OBJ_TAG:
+            bbox["conf"] = float(label_conf_pairs[0][1]) * bbox["obj"]
+        elif conf_from == constants.CONF_TAG:
+            bbox["conf"] = float(label_conf_pairs[0][1])
+        elif conf_from == constants.CONF_OBJ:
+            bbox["conf"] = bbox["obj"]
+        else:
+            raise ValueError("invalid confidence type: {}".format(conf_from))
+
+        if not is_bg:
+            pred_dict[key].append(bbox)
     if nms_type:
         for key in pred_dict:
             pred_dict[key] = nms_wrapper(pred_dict[key], nms_type=nms_type)
 
     tsv_writer([[k, json.dumps(pred_dict[k])] for k in pred_dict], outfile)
+
+    if eval_accuracy:
+        if len(correct_counts) > 1:
+            for i in range(1, len(correct_counts)):
+                correct_counts[i] += correct_counts[i-1]
+        return [float(num_correct)/num_samples for num_correct in correct_counts]
+    else:
+        return None
 
 
 def compare_pair_features(fea_file, outfile):

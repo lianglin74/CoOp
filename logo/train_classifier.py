@@ -35,18 +35,39 @@ def test():
 def main():
     config_root = "data/brand_output/configs/"
 
-    config_file = os.path.join(config_root, "train_brand1048.yaml")
-    outdir = "data/brand_output/brand1048_resnet18_clsbalance/snapshot_wd_enlarge_aug/"
+    # config_file = os.path.join(config_root, "train_brand1048_nobg.yaml")
+    # outdir = "data/brand_output/brand1048_resnet18_nobg_aug/snapshot4/"
+    # train.main(
+    #     [config_file,
+    #     # "--debug",
+    #     "--arch", "resnet18",
+    #     '--data_aug', '4',
+    #     '--enlarge_bbox', '2',
+    #     "--bn_no_weight_decay",
+    #     '--weight-decay', '1e-3',
+    #     "--pretrained",
+    #     # '--balance_class',
+    #     "-f",
+    #     "--workers", str(64),
+    #     "-b", str(256),
+    #     # "--resume", os.path.join(config_root, "snapshot1/None-0400.pth.tar"),
+    #     '--print-freq', str(100),
+    #     '--epochs', "120",
+    #     "--output-dir", outdir])
+
+    config_file = os.path.join(config_root, "train_brand1048_nobg.yaml")
+    outdir = "data/brand_output/brand1048_resnet18_nobg_fixpartial/snapshot/"
     train.main(
         [config_file,
         # "--debug",
         "--arch", "resnet18",
+        '--fixpartialfeature',
         '--data_aug', '0',
         '--enlarge_bbox', '2',
         "--bn_no_weight_decay",
         '--weight-decay', '1e-3',
         "--pretrained",
-        '--balance_class',
+        # '--balance_class',
         "-f",
         "--workers", str(64),
         "-b", str(256),
@@ -56,11 +77,12 @@ def main():
         "--output-dir", outdir])
 
     config_file = os.path.join(config_root, "train_brand1048_nobg.yaml")
-    outdir = "data/brand_output/brand1048_resnet18_nobg_aug/snapshot0/"
+    outdir = "data/brand_output/brand1048_resnet18_nobg_ccs/snapshot_0.5/"
     train.main(
         [config_file,
         # "--debug",
         "--arch", "resnet18",
+        '--ccs_loss_param', '0.5',
         '--data_aug', '0',
         '--enlarge_bbox', '2',
         "--bn_no_weight_decay",
@@ -76,12 +98,13 @@ def main():
         "--output-dir", outdir])
 
     config_file = os.path.join(config_root, "train_brand1048_nobg.yaml")
-    outdir = "data/brand_output/brand1048_resnet18_nobg_aug/snapshot1/"
+    outdir = "data/brand_output/brand1048_resnet18_nobg_ccs/snapshot_1.0/"
     train.main(
         [config_file,
         # "--debug",
         "--arch", "resnet18",
-        '--data_aug', '1',
+        '--ccs_loss_param', '1.0',
+        '--data_aug', '0',
         '--enlarge_bbox', '2',
         "--bn_no_weight_decay",
         '--weight-decay', '1e-3',
@@ -96,52 +119,13 @@ def main():
         "--output-dir", outdir])
 
     config_file = os.path.join(config_root, "train_brand1048_nobg.yaml")
-    outdir = "data/brand_output/brand1048_resnet18_nobg_aug/snapshot2/"
+    outdir = "data/brand_output/brand1048_resnet18_nobg_ccs/snapshot_2.0/"
     train.main(
         [config_file,
         # "--debug",
         "--arch", "resnet18",
-        '--data_aug', '2',
-        '--enlarge_bbox', '2',
-        "--bn_no_weight_decay",
-        '--weight-decay', '1e-3',
-        "--pretrained",
-        # '--balance_class',
-        "-f",
-        "--workers", str(64),
-        "-b", str(256),
-        # "--resume", os.path.join(config_root, "snapshot1/None-0400.pth.tar"),
-        '--print-freq', str(100),
-        '--epochs', "120",
-        "--output-dir", outdir])
-
-    config_file = os.path.join(config_root, "train_brand1048_nobg.yaml")
-    outdir = "data/brand_output/brand1048_resnet18_nobg_aug/snapshot3/"
-    train.main(
-        [config_file,
-        # "--debug",
-        "--arch", "resnet18",
-        '--data_aug', '3',
-        '--enlarge_bbox', '2',
-        "--bn_no_weight_decay",
-        '--weight-decay', '1e-3',
-        "--pretrained",
-        # '--balance_class',
-        "-f",
-        "--workers", str(64),
-        "-b", str(256),
-        # "--resume", os.path.join(config_root, "snapshot1/None-0400.pth.tar"),
-        '--print-freq', str(100),
-        '--epochs', "120",
-        "--output-dir", outdir])
-
-    config_file = os.path.join(config_root, "train_brand1048_nobg.yaml")
-    outdir = "data/brand_output/brand1048_resnet18_nobg_aug/snapshot4/"
-    train.main(
-        [config_file,
-        # "--debug",
-        "--arch", "resnet18",
-        '--data_aug', '4',
+        '--ccs_loss_param', '2.0',
+        '--data_aug', '0',
         '--enlarge_bbox', '2',
         "--bn_no_weight_decay",
         '--weight-decay', '1e-3',
@@ -172,6 +156,6 @@ def philly_main():
 
 if __name__ == "__main__":
     qd_common.init_logging()
-    test()
-    # main()
+    # test()
+    main()
     # philly_main()

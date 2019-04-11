@@ -75,9 +75,14 @@ def my_collate(batch):
 def get_testdata_loader(args):
     if not args.data.lower().endswith('.yaml'):
         raise NotImplementedError()
+    if args.opencv:
+        test_transform = cv_transform
     else:
-        # NOTE: OpenCV transform is used in testing
-        val_dataset = CropClassTSVDatasetYaml(args.data, session_name='test', transform=cv_transform)
+        test_transform = get_pt_transform("test", args)
+
+    # NOTE: OpenCV transform is used in testing
+    val_dataset = CropClassTSVDatasetYaml(args.data, session_name='test',
+            transform=cv_transform, enlarge_bbox=args.enlarge_bbox)
 
     val_loader = torch.utils.data.DataLoader(
         val_dataset, batch_size=args.batch_size, shuffle=False,
@@ -100,80 +105,80 @@ def get_pt_transform(phase, args):
     else:
         raise ValueError("input size {} not supported".format(args.input_size))
 
-    if args.data_aug == 1:
-        test_transform = transforms.Compose([
-                transforms.ToPILImage(),
-                transforms.Resize(target_size),
-                transforms.CenterCrop(crop_size),
-                transforms.ToTensor(),
-                # bgr_normalize,
-            ])
-    else:
-        test_transform = transforms.Compose([
-                transforms.ToPILImage(),
-                transforms.Resize(target_size),
-                transforms.CenterCrop(crop_size),
-                transforms.ToTensor(),
-                bgr_normalize,
-            ])
-
-    if args.data_aug == 0:
-        train_transform = transforms.Compose([
-                transforms.ToPILImage(),
-                transforms.RandomResizedCrop(crop_size, scale=(0.25,1), ratio=(2./3., 3./2.)),
-                # transforms.ColorJitter(brightness=(0.66667, 1.5), contrast=0, saturation=(0.66667, 1.5), hue=(-0.1, 0.1)),
-                transforms.ColorJitter(brightness=0.5, contrast=0, saturation=0.5, hue=0.1),
-                # transforms.RandomHorizontalFlip(0.5),
-                transforms.ToTensor(),
-                bgr_normalize,
-            ])
-    elif args.data_aug == 1:
-        train_transform = transforms.Compose([
-                transforms.ToPILImage(),
-                transforms.RandomResizedCrop(crop_size, scale=(0.25,1)),
-                # transforms.ColorJitter(brightness=(0.66667, 1.5), contrast=0, saturation=(0.66667, 1.5), hue=(-0.1, 0.1)),
-                # transforms.RandomHorizontalFlip(0.5),
-                transforms.ToTensor(),
-                # bgr_normalize,
-            ])
-    elif args.data_aug == 2:
-        train_transform = transforms.Compose([
-                transforms.ToPILImage(),
-                transforms.RandomAffine(0, shear=15),
-                transforms.RandomAffine(degrees=10),
-                transforms.RandomAffine(0, shear=15),
-                transforms.RandomResizedCrop(crop_size, scale=(0.25,1), ratio=(2./3., 3./2.)),
-                transforms.ColorJitter(brightness=0.5, contrast=0, saturation=0.5, hue=0.1),
-                transforms.ToTensor(),
-                bgr_normalize,
-            ])
-    elif args.data_aug == 3:
-        train_transform = transforms.Compose([
-                transforms.ToPILImage(),
-                transforms.RandomAffine(0, shear=15),
-                transforms.RandomAffine(degrees=10),
-                transforms.RandomAffine(0, shear=15),
-                transforms.RandomResizedCrop(crop_size, scale=(0.25,1), ratio=(2./3., 3./2.)),
-                # transforms.ColorJitter(brightness=(0.66667, 1.5), contrast=0, saturation=(0.66667, 1.5), hue=(-0.1, 0.1)),
-                transforms.ToTensor(),
-                bgr_normalize,
-            ])
-    elif args.data_aug == 4:
-        train_transform = transforms.Compose([
-                transforms.ToPILImage(),
-                transforms.RandomResizedCrop(crop_size, scale=(0.25,1), ratio=(2./3., 3./2.)),
-                transforms.RandomHorizontalFlip(0.5),
-                transforms.ToTensor(),
-                bgr_normalize,
-            ])
-    else:
-        raise ValueError()
     if phase.lower() == "test":
+        if hasattr(args, "data_aug") and args.data_aug == 1:
+            test_transform = transforms.Compose([
+                    transforms.ToPILImage(),
+                    transforms.Resize(target_size),
+                    transforms.CenterCrop(crop_size),
+                    transforms.ToTensor(),
+                    # bgr_normalize,
+                ])
+        else:
+            test_transform = transforms.Compose([
+                    transforms.ToPILImage(),
+                    transforms.Resize(target_size),
+                    transforms.CenterCrop(crop_size),
+                    transforms.ToTensor(),
+                    bgr_normalize,
+                ])
         return test_transform
-    elif phase.lower() == "train":
+
+    if phase.lower() == "train":
+        if args.data_aug == 0:
+            train_transform = transforms.Compose([
+                    transforms.ToPILImage(),
+                    transforms.RandomResizedCrop(crop_size, scale=(0.25,1), ratio=(2./3., 3./2.)),
+                    # transforms.ColorJitter(brightness=(0.66667, 1.5), contrast=0, saturation=(0.66667, 1.5), hue=(-0.1, 0.1)),
+                    transforms.ColorJitter(brightness=0.5, contrast=0, saturation=0.5, hue=0.1),
+                    # transforms.RandomHorizontalFlip(0.5),
+                    transforms.ToTensor(),
+                    bgr_normalize,
+                ])
+        elif args.data_aug == 1:
+            train_transform = transforms.Compose([
+                    transforms.ToPILImage(),
+                    transforms.RandomResizedCrop(crop_size, scale=(0.25,1)),
+                    # transforms.ColorJitter(brightness=(0.66667, 1.5), contrast=0, saturation=(0.66667, 1.5), hue=(-0.1, 0.1)),
+                    # transforms.RandomHorizontalFlip(0.5),
+                    transforms.ToTensor(),
+                    # bgr_normalize,
+                ])
+        elif args.data_aug == 2:
+            train_transform = transforms.Compose([
+                    transforms.ToPILImage(),
+                    transforms.RandomAffine(0, shear=15),
+                    transforms.RandomAffine(degrees=10),
+                    transforms.RandomAffine(0, shear=15),
+                    transforms.RandomResizedCrop(crop_size, scale=(0.25,1), ratio=(2./3., 3./2.)),
+                    transforms.ColorJitter(brightness=0.5, contrast=0, saturation=0.5, hue=0.1),
+                    transforms.ToTensor(),
+                    bgr_normalize,
+                ])
+        elif args.data_aug == 3:
+            train_transform = transforms.Compose([
+                    transforms.ToPILImage(),
+                    transforms.RandomAffine(0, shear=15),
+                    transforms.RandomAffine(degrees=10),
+                    transforms.RandomAffine(0, shear=15),
+                    transforms.RandomResizedCrop(crop_size, scale=(0.25,1), ratio=(2./3., 3./2.)),
+                    # transforms.ColorJitter(brightness=(0.66667, 1.5), contrast=0, saturation=(0.66667, 1.5), hue=(-0.1, 0.1)),
+                    transforms.ToTensor(),
+                    bgr_normalize,
+                ])
+        elif args.data_aug == 4:
+            train_transform = transforms.Compose([
+                    transforms.ToPILImage(),
+                    transforms.RandomResizedCrop(crop_size, scale=(0.25,1), ratio=(2./3., 3./2.)),
+                    transforms.RandomHorizontalFlip(0.5),
+                    transforms.ToTensor(),
+                    bgr_normalize,
+                ])
+        else:
+            raise ValueError()
         return train_transform
-    else:
-        raise ValueError("unknow phase: {}".format(phase))
+
+    raise ValueError("unknow phase: {}".format(phase))
 
 def cv_transform(imageMat):
     # TODO: put constant in one place

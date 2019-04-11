@@ -247,7 +247,8 @@ class CropClassTSVDataset(Dataset):
         self._label_counts = None
 
         _cache_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "cache")
-        self._bbox_idx_file = os.path.join(_cache_dir, "{}.tsv".format(hash_sha1((tsvfile, labelfile if labelfile else "", str(for_test)))))
+        self._bbox_idx_file = os.path.join(_cache_dir, "{}.tsv".format(
+                hash_sha1((tsvfile, labelfile if labelfile else "", str(for_test), str(enlarge_bbox)))))
         try:
             if not use_cache or not os.path.isfile(self._bbox_idx_file) or worth_create(tsvfile, self._bbox_idx_file) \
                     or (labelfile and worth_create(labelfile, self._bbox_idx_file)):

@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 
 import _init_paths
 from logo.classifier import CropTaggingWrapper
+from logo import constants
 from qd.qd_common import init_logging, worth_create, read_to_buffer
 from qd.tsv_io import tsv_reader, tsv_writer, TSVDataset
 from qd import deteval, qd_common
@@ -286,6 +287,62 @@ def tune_threshold(eval_file, iou, target="recall", target_num=0.75):
     print(all_recalls[target_idx], all_precisions[target_idx], all_thresholds[target_idx])
 
 
+def eval_classifier(gt_dataset_name, split, version, det_expid, tag_expid,
+            tag_snap_id, labelmap=None, iou_thres=0.5, enlarge_bbox=1.0):
+    """ Calculates:
+    top1/5 acc on gt region, mAP with gt region (conf from tag),
+    mAP with logo/non-logo region (conf from tag, conf from tag*obj, conf from obj)
+    """
+    croptagger = CropTaggingWrapper(det_expid, tag_expid,
+            tag_snap_id=tag_snap_id, labelmap=labelmap)
+    stats = []
+
+    def cal_map(pred_file):
+        eval_file = pred_file.rsplit('.', 1)[0] + "eval"
+        evaluate_detection(gt_dataset_name, split, pred_file, eval_file,
+                region_only=False, version=version)
+        eval_res= json.loads(read_to_buffer(eval_file))
+        return eval_res["overall"][str(iou_thres)]["map"]
+
+    # top1/5 acc on gt region
+    topk = (1, 5)
+    pred_file, topk_acc = croptagger.predict_on_known_class(gt_dataset_name, split,
+                version=version, region_source=constants.GT_REGION, enlarge_bbox=enlarge_bbox,
+                conf_from=constants.CONF_TAG, eval_topk_acc=max(topk))
+    for k in topk:
+        stats.append(topk_acc[k-1])
+    # mAP with gt region (conf from tag)
+    stats.append(cal_map(pred_file))
+
+    for conf_from in [constants.CONF_TAG, constants.CONF_OBJ_TAG, constants.CONF_OBJ]:
+        pred_file, _ = croptagger.predict_on_known_class(gt_dataset_name, split,
+                    version=version, region_source=constants.PRED_REGION, enlarge_bbox=enlarge_bbox,
+                    conf_from=conf_from, eval_topk_acc=None)
+        stats.append(cal_map(pred_file))
+    return stats
+
+def test_eval_classifier():
+    gt_dataset_name = "brand1048"
+    split = "test"
+    version = 4
+    det_expid = det3_expid
+
+    output_root = 'data/brand_output/'
+    labelmap = "data/brand_output/TaxLogoV1_7_darknet19_448_C_Init.best_model9748_maxIter.75eEffectBatchSize128_bb_only/classifier/add_sports/labelmap.txt"
+    all_tag_expid = [d for d in os.listdir(output_root) if d.startswith("brand1048_resnet18")]
+    def gen_rows():
+        for tag_expid in all_tag_expid:
+            for tag_snap_id in os.listdir(os.path.join(output_root, tag_expid)):
+                for enlarge_bbox in [1.0, 1.5, 2.0, 2.5]:
+                    res = [enlarge_bbox, tag_expid, tag_snap_id]
+                    res.extend(eval_classifier(gt_dataset_name, split, version, det_expid, tag_expid,
+                            tag_snap_id, labelmap=labelmap, iou_thres=0.5, enlarge_bbox=enlarge_bbox))
+                    print(res)
+                    yield res
+    tsv_writer(gen_rows(), os.path.join(output_root, 'all_eval.tsv'))
+
+
 if __name__ == "__main__":
     init_logging()
-    main()
+    # main()
+    test_eval_classifier()

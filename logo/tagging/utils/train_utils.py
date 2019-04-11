@@ -211,7 +211,7 @@ def train(args, train_loader, model, criterion, optimizer, epoch, logger, accura
         batch_time.update(time.time() - end)
         end = time.time()
 
-        if i == len(train_loader)-1 or i % args.print_freq == 0:
+        if i % args.print_freq == 0:
             speed = args.print_freq * args.batch_size / float(args.world_size) / (time.time() - tic)
             info_str = 'Epoch: [{0}][{1}/{2}]\t' \
                         'Speed: {speed:.2f} samples/sec\t' \
