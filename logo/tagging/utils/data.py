@@ -21,10 +21,14 @@ def get_data_loader(args, logger=None):
     else:
         raise NotImplementedError()
 
-    if args.distributed:
-        train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
+    if args.balance_sampler:
+        assert not args.balance_class
+        train_sampler = make_class_balanced_sampler(train_dataset)
     else:
-        train_sampler = None
+        if args.distributed:
+            train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
+        else:
+            train_sampler = None
 
     shuffle = (train_sampler is None)
     train_loader = torch.utils.data.DataLoader(
@@ -206,3 +210,11 @@ def cv_transform(imageMat):
     imageMat3 = imageMat3 - meanValue
     imageMat4 = torch.from_numpy(np.transpose(imageMat3, [2,0,1])).type(torch.FloatTensor)
     return imageMat4
+
+def make_class_balanced_sampler(train_dataset):
+    weight_per_class = [max(len(train_dataset)/float(count), 9e-4) for count in train_dataset.label_counts]
+    assert len(weight_per_class) == train_dataset.label_dim()
+    weights = torch.tensor([0.] * len(train_dataset))
+    for i in range(len(train_dataset)):
+        weights[i] = weight_per_class[train_dataset.get_target(i)]
+    return torch.utils.data.WeightedRandomSampler(weights, len(train_dataset))

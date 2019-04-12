@@ -329,15 +329,18 @@ def test_eval_classifier():
 
     output_root = 'data/brand_output/'
     labelmap = "data/brand_output/TaxLogoV1_7_darknet19_448_C_Init.best_model9748_maxIter.75eEffectBatchSize128_bb_only/classifier/add_sports/labelmap.txt"
-    all_tag_expid = [d for d in os.listdir(output_root) if d.startswith("brand1048_resnet18")]
+    all_tag_expid = []
+    for d in os.listdir(output_root):
+        if os.path.isdir(os.path.join(output_root, d)) and d.startswith("brand1048_resnet18") and d!="brand1048_resnet18_nobg_input112":
+            all_tag_expid.append(d)
+
     def gen_rows():
         for tag_expid in all_tag_expid:
             for tag_snap_id in os.listdir(os.path.join(output_root, tag_expid)):
-                for enlarge_bbox in [1.0, 1.5, 2.0, 2.5]:
+                for enlarge_bbox in [1.5, 2.0, 2.5]:
                     res = [enlarge_bbox, tag_expid, tag_snap_id]
                     res.extend(eval_classifier(gt_dataset_name, split, version, det_expid, tag_expid,
                             tag_snap_id, labelmap=labelmap, iou_thres=0.5, enlarge_bbox=enlarge_bbox))
-                    print(res)
                     yield res
     tsv_writer(gen_rows(), os.path.join(output_root, 'all_eval.tsv'))
 

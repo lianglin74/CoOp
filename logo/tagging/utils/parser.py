@@ -92,6 +92,8 @@ def get_arg_parser(model_names):
 
     parser.add_argument('--balance_class', dest='balance_class', action='store_true',
                         help='use weighted CrossEntropyLoss, where weights[c] is n_samples / (n_classes * label_counts[c])')
+    parser.add_argument('--balance_sampler', action='store_true',
+                        help='class aware sampling for imbalanced dataset')
     parser.add_argument('--data_aug', default=0, type=int,
                         help='data augmentation type')
     parser.add_argument('--enlarge_bbox', default=1.0, type=float,

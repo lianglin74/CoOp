@@ -96,6 +96,7 @@ def main(args):
     # get loss function (criterion), optimizer, and scheduler (for learning rate)
     class_weights = None
     if args.balance_class:
+        assert not args.balance_sampler
         class_counts = train_dataset.label_counts
         num_pos_classes = np.count_nonzero(class_counts)
         assert num_pos_classes > 0

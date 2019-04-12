@@ -307,6 +307,10 @@ class CropClassTSVDataset(Dataset):
     def __len__(self):
         return self._bbox_idx_tsv.num_rows()
 
+    def get_target(self, index):
+        info = self._bbox_idx_tsv.seek(index)
+        return int(info[5])
+
     @property
     def label_counts(self):
         assert not self._for_test
@@ -349,7 +353,7 @@ class CropClassTSVDatasetYamlList():
         self._label_counts = None
 
         # combine labelmap from multiple datasets
-        self.labels = self.datasets[0].get_labelmap
+        self.labels = self.datasets[0].get_labelmap()
         self.label_to_idx = self.datasets[0].label_to_idx
         cur_l_idx = len(self.label_to_idx)
         for i in range(1, len(self.datasets)):
@@ -364,15 +368,12 @@ class CropClassTSVDatasetYamlList():
         return self.length
 
     def __getitem__(self, index):
-        cum_length = 0
-        dataset_idx = 0
-        for _, length in enumerate(self.dataset_lengths):
-            if cum_length + length > index:
-                break
-            cum_length += length
-            dataset_idx += 1
-        assert(dataset_idx < len(self.datasets))
-        return self.datasets[dataset_idx][index - cum_length]
+        dataset_idx, sample_idx = self.__get_internal_index(index)
+        return self.datasets[dataset_idx][sample_idx]
+
+    def get_target(self, index):
+        dataset_idx, sample_idx = self.__get_internal_index(index)
+        return self.datasets[dataset_idx].get_target(sample_idx)
 
     def label_dim(self):
         return len(self.label_to_idx)
@@ -394,7 +395,7 @@ class CropClassTSVDatasetYamlList():
     @property
     def label_counts(self):
         if self._label_counts is None:
-            self._label_counts = np.zeros(self.label_to_idx)
+            self._label_counts = np.zeros(len(self.label_to_idx))
             for d in self.datasets:
                 cur_counts = d.label_counts
                 cur_labels = d.get_labelmap()
@@ -402,6 +403,18 @@ class CropClassTSVDatasetYamlList():
                 for l, count in zip(cur_labels, cur_counts):
                     self._label_counts[self.label_to_idx[l]] += count
         return self._label_counts
+
+    def __get_internal_index(self, index):
+        cum_length = 0
+        dataset_idx = 0
+        for _, length in enumerate(self.dataset_lengths):
+            if cum_length + length > index:
+                break
+            cum_length += length
+            dataset_idx += 1
+        assert(dataset_idx < len(self.datasets))
+        sample_idx = index - cum_length
+        return dataset_idx, sample_idx
 
 
 def gen_index(imgfile, labelfile, label_to_idx, for_test,
