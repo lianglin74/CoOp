@@ -63,89 +63,80 @@ def gen_background_labels(det_file, gt_dataset_name, split, version,
         key2labels[imgkey].append(b)
     return key2labels
 
-def prepare_training_data(det_expid, gt_dataset_name, outdir, gt_split="train",
-            version=0, pos_iou=0.5, neg_iou=(0.1, 0.3), enlarge_bbox=2.5):
+def gen_proposed_labels(det_file, gt_dataset_name, split, version,
+            iou_range=(0.5, 1.0), conf_range=(0.0, 1.0), enlarge_bbox=1.0):
+    rp = DetectionFile(det_file)
+    gt_dataset = TSVDataset(gt_dataset_name)
+
+    key2labels = collections.defaultdict(list)
+    num_total_regions = 0
+    for imgkey, coded_rects in gt_dataset.iter_data(split, t='label', version=version):
+        gt_bboxes = json.loads(coded_rects)
+        rp_bboxes = rp[imgkey]
+        for b in rp_bboxes:
+            rect = b["rect"]
+            if not is_valid_rect(rect):
+                continue
+            if b["conf"] < conf_range[0] or b["conf"] > conf_range[1]:
+                continue
+            overlaps = [calculate_iou(rect, gtbox["rect"]) for gtbox in gt_bboxes]
+            sorted_overlaps = sorted([(i, v) for i, v in enumerate(overlaps)], key=lambda t: t[1], reverse=True)
+            if len(overlaps) == 0:
+                continue
+            max_iou_idx, max_iou = sorted_overlaps[0]
+            if max_iou >= iou_range[0] and max_iou <= iou_range[1]:
+                if len(sorted_overlaps)>1 and sorted_overlaps[1][1]>=iou_range[0]:
+                    # skip if the region covers >1 instances
+                    continue
+                b["class"] = gt_bboxes[max_iou_idx]["class"]
+                key2labels[imgkey].append(b)
+                num_total_regions += 1
+    print("get {} positive samples".format(num_total_regions))
+    return key2labels
+
+
+def prepare_training_data(det_expid, gt_dataset_name, split, version, outdataset_name,
+            pos_iou_range=(0.5, 1.0), pos_conf_range=(0.0, 1.0),
+            neg_iou_range=(0.0, 0.1), neg_conf_range=(0.0, 0.3),
+            add_gt=True):
     """
     Merge ground truth bbox with region proposal bbox
     region proposal is annotated with the corresponding class if IoU>pos_iou,
     annotated as __background if max(IoU)<neg_iou
     """
     # generate region proposal
-    detpred_file, _ = yolo_predict(full_expid=det_expid, test_data=gt_dataset_name, test_split=gt_split)
+    det_file, _ = yolo_predict(full_expid=det_expid, test_data=gt_dataset_name, test_split=split)
 
-    # merge region proposal and ground truth
-    outfile = os.path.join(outdir, "region_proposal/{}.{}.gt_rp.{}_{}_{}.tsv".format(
-            gt_dataset_name, gt_split, pos_iou, neg_iou[0], neg_iou[1]))
+    label_dicts = []
+    generate_info = []
+    if neg_iou_range and neg_iou_range[0] < neg_iou_range[1]:
+        kwargs = {"det_file": det_file, "gt_dataset_name": gt_dataset_name, "split": split,
+                "version": version, "iou_range": neg_iou_range, "conf_range": neg_conf_range,
+                "enlarge_bbox": 1.0}
+        key2labels = gen_background_labels(**kwargs)
+        label_dicts.append(key2labels)
+        generate_info.append(["gen_background_labels", json.dumps(kwargs)])
+    if pos_iou_range and pos_iou_range[0] < pos_iou_range[1]:
+        kwargs = {"det_file": det_file, "gt_dataset_name": gt_dataset_name, "split": split,
+                "version": version, "iou_range": pos_iou_range, "conf_range": pos_conf_range,
+                "enlarge_bbox": 1.0}
+        key2labels = gen_proposed_labels(**kwargs)
+        label_dicts.append(key2labels)
+        generate_info.append(["gen_proposed_labels", json.dumps(kwargs)])
+
     gt_dataset = TSVDataset(gt_dataset_name)
-
-    rp = DetectionFile(detpred_file)
-    rp_candidates = collections.defaultdict(list)  # imgkey: list of bboxes
-    class2count = collections.defaultdict(int)  # class: count
-    bg_cands = []  # tuple of imgkey, bbox
-    num_gt = 0
-    num_total_regions = 0
-
-    for imgkey, coded_rects in gt_dataset.iter_data(gt_split, t='label', version=version):
-        # HACK
-        if imgkey == "http://www.mimifroufrou.com/scentedsalamander/images/Le-Male-2009-Billboard-B.jpg":
-            continue
-
-        im_h, im_w = get_hw(imgkey)
-        gt_bboxes = json.loads(coded_rects)
-        num_gt += len(gt_bboxes)
-        for idx in range(len(gt_bboxes)):
-            cur_bbox = copy.deepcopy(gt_bboxes[idx])
-            cur_bbox["rect"] = int_rect(cur_bbox["rect"], enlarge_factor=1.0, im_h=im_h, im_w=im_w)
-            enlarged_rect = int_rect(cur_bbox["rect"], enlarge_factor=enlarge_bbox, im_h=im_h, im_w=im_w)
-            overlaps = [calculate_iou(enlarged_rect, gtbox["rect"]) for i, gtbox in enumerate(gt_bboxes) if i!=idx]
-            # enlarge bbox only if it does not overlap other boxes
-            if len(overlaps) > 0 and max(overlaps) < neg_iou[0]:
-                cur_bbox["rect"] = enlarged_rect
-            if not is_valid_rect(cur_bbox["rect"]):
-                print("invalid rect")
-                continue
-            rp_candidates[imgkey].append(cur_bbox)
-            num_total_regions += 1
-
-        rp_bboxes = rp[imgkey]
-        for b in rp_bboxes:
-            new_rect = int_rect(b["rect"], enlarge_factor=enlarge_bbox, im_h=im_h, im_w=im_w)
-            b["rect"] = new_rect
-            if not is_valid_rect(b["rect"]):
-                continue
-            overlaps = [calculate_iou(new_rect, gtbox["rect"]) for gtbox in gt_bboxes]
-            sorted_overlaps = sorted([(i, v) for i, v in enumerate(overlaps)], key=lambda t: t[1], reverse=True)
-            if len(overlaps) == 0:
-                continue
-            max_iou_idx, max_iou = sorted_overlaps[0]
-
-            if max_iou >= neg_iou[0] and max_iou <= neg_iou[1]:
-                # background candidate
-                b["class"] = constants.BACKGROUND_LABEL
-                bg_cands.append((imgkey, b))
-            elif max_iou > pos_iou:
-                if len(sorted_overlaps)>1 and sorted_overlaps[1][1]>pos_iou:
-                    # skip if the region covers >1 instances
-                    continue
-                b["class"] = gt_bboxes[sorted_overlaps[0][0]]["class"]
-                rp_candidates[imgkey].append(b)
-                num_total_regions += 1
-
-    bg_cands = sorted(bg_cands, key=lambda t: t[1]["obj"], reverse=True)
-    # skip top 1% to avoid false negative
-    bg_lidx = int(0.01 * len(bg_cands))
-    bg_ridx = min(len(bg_cands), int(bg_lidx+num_total_regions*2))
-    for i in range(bg_lidx, bg_ridx):
-        k, b = bg_cands[i]
-        rp_candidates[k].append(b)
-    print("added #background: {}, #gt: {}, #proposal: {}".format(bg_ridx-bg_lidx, num_gt, num_total_regions-num_gt))
-
+    dataset = TSVDataset(outdataset_name)
     def gen_labels():
-        for imgkey, coded_rects in gt_dataset.iter_data(gt_split, t='label', version=version):
-            yield imgkey, json.dumps(rp_candidates[imgkey], separators=(',', ':'))
-
-    tsv_writer(gen_labels(), outfile)
-    return outfile
+        for key, coded_rects in gt_dataset.iter_data(split, 'label', version=version):
+            if add_gt:
+                labels = json.loads(coded_rects)
+            else:
+                labels = []
+            for key2labels in label_dicts:
+                labels.extend(key2labels[key])
+            yield key, json.dumps(labels, separators=(',', ':'))
+    dataset.update_data(gen_labels(), split, 'label', generate_info=generate_info)
+    print("generate new label file: {}".format(dataset.get_data(split, 'label', version=-1)))
 
 
 def get_train_config(outdir, dataset_name, version, labelmap,
@@ -179,22 +170,12 @@ def test():
     gt_dataset = TSVDataset(gt_dataset_name)
     split = "train"
     version = 4
+    outdataset_name = "brand1048_add_bg"
 
-    det_file, _ = yolo_predict(full_expid=det_expid, test_data=gt_dataset_name, test_split=split)
-    kwargs = {"det_file": det_file, "gt_dataset_name": gt_dataset_name, "split": split,
-            "version": version, "iou_range": (0.0, 0.1), "conf_range": (0.0, 1.0),
-            "enlarge_bbox": 1.0}
-    # key2labels = gen_background_labels(det_file, gt_dataset_name, split, version,
-    #         iou_range=(0.0, 0.3), conf_range=(0.0, 1.0), enlarge_bbox=2.0)
-    key2labels = gen_background_labels(**kwargs)
-
-    dataset = TSVDataset("brand1048_add_bg")
-    def gen_labels():
-        for key, _, _ in gt_dataset.iter_data(split):
-            labels = key2labels[key] if key in key2labels else []
-            yield key, json.dumps(labels, separators=(',', ':'))
-    dataset.update_data(gen_labels(), split, 'label',
-            generate_info=[["gen_background_labels"], [json.dumps(kwargs)]])
+    prepare_training_data(det_expid, gt_dataset_name, split, version, outdataset_name,
+            pos_iou_range=None, pos_conf_range=(0.0, 1.0),
+            neg_iou_range=(0.0, 0.1), neg_conf_range=(0.2, 0.3),
+            add_gt=True)
 
 if __name__ == "__main__":
     # outdir = "data/brand_output/configs/"

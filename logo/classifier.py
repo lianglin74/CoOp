@@ -303,8 +303,9 @@ class CropTaggingWrapper(object):
 
         new_cfg = {
             "tsv": os.path.realpath(dataset.get_data(split)),
-            "labelmap": self.labelmap
         }
+        if self.labelmap:
+            new_cfg["labelmap"] = self.labelmap
         if labelfile:
             new_cfg["label"] = os.path.realpath(labelfile)
 

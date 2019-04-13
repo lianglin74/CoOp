@@ -214,7 +214,7 @@ class TSVDatasetWithoutLabel(TSVDatasetPlus):
 
 
 class CropClassTSVDataset(Dataset):
-    def __init__(self, tsvfile, labelmap, labelfile=None, label_filter_fn=None,
+    def __init__(self, tsvfile, labelmap, labelfile=None,
                  transform=None, logger=None, for_test=False, enlarge_bbox=1.0,
                  use_cache=False):
         """ TSV dataset with cropped images from bboxes labels
@@ -222,7 +222,6 @@ class CropClassTSVDataset(Dataset):
             tsvfile: image tsv file, columns are key, bboxes, b64_image_string
             labelmap: file of all categories
             labelfile: label tsv file, columns are key, bboxes
-            label_filter_fn: callable, filter the bbox list
         """
         self.min_pixels = 3
         self.tsv = TSVFile(tsvfile)
@@ -231,13 +230,13 @@ class CropClassTSVDataset(Dataset):
         self.transform = transform
         self.label_to_idx = {}
         self.labels = []
-        with open(labelmap, 'r') as fp:
-            for i, line in enumerate(fp):
-                l = line.rstrip('\n')
-                assert(l not in self.label_to_idx)
-                self.labels.append(l)
-                self.label_to_idx[l] = i
-        self.label_filter_fn = label_filter_fn
+        if labelmap:
+            with open(labelmap, 'r') as fp:
+                for i, line in enumerate(fp):
+                    l = line.rstrip('\n')
+                    assert(l not in self.label_to_idx)
+                    self.labels.append(l)
+                    self.label_to_idx[l] = i
         self.img_col = 2
         self.label_col = 1
         self.key_col = 0

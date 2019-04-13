@@ -77,7 +77,7 @@ def load_model(args):
     if args.labelmap:
         labelmap = load_labelmap(args.labelmap)
     elif 'labelmap' in checkpoint:
-        labelmap = model['labelmap']
+        labelmap = checkpoint['labelmap']
     else:
         labelmap = [str(i) for i in range(checkpoint['num_classes'])]
 

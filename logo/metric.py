@@ -286,6 +286,19 @@ def tune_threshold(eval_file, iou, target="recall", target_num=0.75):
     print(target_idx)
     print(all_recalls[target_idx], all_precisions[target_idx], all_thresholds[target_idx])
 
+def filter_topN_pred(pred_file, topN, obj_thres=None):
+    def gen_rows():
+        for key, coded_rects in tsv_reader(pred_file):
+            bboxes = json.loads(coded_rects)
+            sorted_bboxes = sorted(bboxes, key=lambda b: b["obj"], reverse=True)
+            # choose bbox with topN highest obj score or >obj_thres
+            end_idx = topN
+            if obj_thres and len(sorted_bboxes) > topN:
+                while end_idx < len(sorted_bboxes) and sorted_bboxes[end_idx]["obj"] >= obj_thres:
+                    end_idx += 1
+            end_idx = min(end_idx, len(sorted_bboxes))
+            yield key, json.dumps(sorted_bboxes[0: end_idx], separators=(',', ':'))
+    tsv_writer(gen_rows(), pred_file+'.top{}'.format(topN))
 
 def eval_classifier(gt_dataset_name, split, version, det_expid, tag_expid,
             tag_snap_id, labelmap=None, iou_thres=0.5, enlarge_bbox=1.0):
@@ -328,21 +341,29 @@ def test_eval_classifier():
     det_expid = det3_expid
 
     output_root = 'data/brand_output/'
-    labelmap = "data/brand_output/TaxLogoV1_7_darknet19_448_C_Init.best_model9748_maxIter.75eEffectBatchSize128_bb_only/classifier/add_sports/labelmap.txt"
+    # labelmap = "data/brand_output/TaxLogoV1_7_darknet19_448_C_Init.best_model9748_maxIter.75eEffectBatchSize128_bb_only/classifier/add_sports/labelmap.txt"
+    labelmap = None
     all_tag_expid = []
-    for d in os.listdir(output_root):
-        if os.path.isdir(os.path.join(output_root, d)) and d.startswith("brand1048_resnet18") and d!="brand1048_resnet18_nobg_input112":
-            all_tag_expid.append(d)
+    # for d in os.listdir(output_root):
+    #     if os.path.isdir(os.path.join(output_root, d)) and d.startswith("brand1048_resnet18") and d!="brand1048_resnet18_nobg_input112":
+    #         all_tag_expid.append(d)
+    # all_tag_expid.append("brandsports_resnet18_nobg")
+    # tag_snap_pairs = []
+    # for tag_expid in all_tag_expid:
+    #     for tag_snap_id in os.listdir(os.path.join(output_root, tag_expid)):
+    #         tag_snap_pairs.append((tag_expid, tag_snap_id))
+
+    tag_snap_pairs = [("brand1048_resnet18_nobg_ccs", "snapshot_2.0"), ("brand1048_resnet18", "snapshot_addrp")]
 
     def gen_rows():
-        for tag_expid in all_tag_expid:
-            for tag_snap_id in os.listdir(os.path.join(output_root, tag_expid)):
-                for enlarge_bbox in [1.5, 2.0, 2.5]:
-                    res = [enlarge_bbox, tag_expid, tag_snap_id]
-                    res.extend(eval_classifier(gt_dataset_name, split, version, det_expid, tag_expid,
-                            tag_snap_id, labelmap=labelmap, iou_thres=0.5, enlarge_bbox=enlarge_bbox))
-                    yield res
-    tsv_writer(gen_rows(), os.path.join(output_root, 'all_eval.tsv'))
+        for tag_expid, tag_snap_id in tag_snap_pairs:
+            for enlarge_bbox in [2.0]:
+                res = [enlarge_bbox, tag_expid, tag_snap_id]
+                res.extend(eval_classifier(gt_dataset_name, split, version, det_expid, tag_expid,
+                        tag_snap_id, labelmap=labelmap, iou_thres=0.5, enlarge_bbox=enlarge_bbox))
+                # print(res)
+                yield res
+    tsv_writer(gen_rows(), os.path.join(output_root, 'tmp.tsv'))
 
 
 if __name__ == "__main__":
