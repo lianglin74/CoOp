@@ -6,6 +6,8 @@ import zipfile
 import subprocess as sp
 import os.path as op
 import torch.distributed as dist
+import time
+import torch
 
 def load_list_file(fname):
     with open(fname, 'r') as fp:
@@ -75,12 +77,39 @@ def get_mpi_size():
 def get_philly_mpi_hosts():
     return load_list_file(op.expanduser('~/mpi-hosts'))
 
+def synchronize():
+    """
+    from mask rcnn
+    Helper function to synchronize between multiple processes when
+    using distributed training
+    """
+    if not torch.distributed.is_initialized():
+        return
+    world_size = torch.distributed.get_world_size()
+    rank = torch.distributed.get_rank()
+    if world_size == 1:
+        return
+
+    def _send_and_wait(r):
+        if rank == r:
+            tensor = torch.tensor(0, device="cuda")
+        else:
+            tensor = torch.tensor(1, device="cuda")
+        torch.distributed.broadcast(tensor, r)
+        while tensor.item() == 1:
+            time.sleep(1)
+
+    _send_and_wait(0)
+    _send_and_wait(1)
+
 class Sync(object):
     def __init__(self):
         self.mpi_size = get_mpi_size()
         self.mpi_rank = get_mpi_rank()
         self.mpi_local_rank = get_mpi_local_rank()
         self.mpi_local_size = get_mpi_local_size()
+        logging.info('{} -> {} -> {} -> {}'.format(self.mpi_size,
+            self.mpi_rank, self.mpi_local_size, self.mpi_local_rank))
         self.dist_url = 'tcp://{}:23456'.format(get_philly_mpi_hosts()[0])
         self.init()
 
@@ -99,6 +128,12 @@ class Sync(object):
 
     def is_local_master(self):
         return self.mpi_local_rank == 0
+
+    def sync(self):
+        logging.info('syncing {}'.format(self.mpi_rank))
+        synchronize()
+        if self.mpi_size > 1:
+            dist.destroy_process_group()
 
     def barrier(self):
         if self.mpi_size > 1:
@@ -152,8 +187,10 @@ def wrap_all(code_zip,
 
         # compile the source code
         compile_qd(code_root)
-    sync.barrier()
-    sync.close()
+    else:
+        logging.info('waiting {}'.format(sync.mpi_local_rank))
+
+    sync.sync()
 
     if len(command) > 0:
         cmd_run(command, working_directory=code_root)
@@ -226,7 +263,14 @@ def run_in_local():
             ['ls'],
             output_folder)
 
+def test_sync():
+    s = Sync()
+    s.sync()
+
 if __name__ == '__main__':
     init_logging()
+
+    #test_sync()
     run_in_philly()
     #run_in_local()
+
