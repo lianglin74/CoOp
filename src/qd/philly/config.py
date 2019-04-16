@@ -18,9 +18,11 @@ def load_list_file(fname):
     return result
 
 def init_logging():
+    import socket
     logging.basicConfig(level=logging.INFO,
-    format='%(asctime)s.%(msecs)03d %(process)d %(filename)s:%(lineno)s %(funcName)10s(): %(message)s',
-    datefmt='%m-%d %H:%M:%S',
+        format='%(asctime)s.%(msecs)03d {} %(process)d %(filename)s:%(lineno)s %(funcName)10s(): %(message)s'.format(
+            socket.gethostname()),
+        datefmt='%m-%d %H:%M:%S',
     )
 
 def unzip(zip_file, target_folder):
@@ -71,77 +73,17 @@ def update_ssh():
 def get_mpi_rank():
     return int(os.environ.get('OMPI_COMM_WORLD_RANK', '0'))
 
-def get_mpi_size():
-    return int(os.environ.get('OMPI_COMM_WORLD_SIZE', '1'))
+import fcntl
 
-def get_philly_mpi_hosts():
-    return load_list_file(op.expanduser('~/mpi-hosts'))
+def acquireLock():
+    ''' acquire exclusive lock file access '''
+    locked_file_descriptor = open('/tmp/lockfile.LOCK', 'w+')
+    fcntl.lockf(locked_file_descriptor, fcntl.LOCK_EX)
+    return locked_file_descriptor
 
-def synchronize():
-    """
-    from mask rcnn
-    Helper function to synchronize between multiple processes when
-    using distributed training
-    """
-    if not torch.distributed.is_initialized():
-        return
-    world_size = torch.distributed.get_world_size()
-    rank = torch.distributed.get_rank()
-    if world_size == 1:
-        return
-
-    def _send_and_wait(r):
-        if rank == r:
-            tensor = torch.tensor(0, device="cuda")
-        else:
-            tensor = torch.tensor(1, device="cuda")
-        torch.distributed.broadcast(tensor, r)
-        while tensor.item() == 1:
-            time.sleep(1)
-
-    _send_and_wait(0)
-    _send_and_wait(1)
-
-class Sync(object):
-    def __init__(self):
-        self.mpi_size = get_mpi_size()
-        self.mpi_rank = get_mpi_rank()
-        self.mpi_local_rank = get_mpi_local_rank()
-        self.mpi_local_size = get_mpi_local_size()
-        logging.info('{} -> {} -> {} -> {}'.format(self.mpi_size,
-            self.mpi_rank, self.mpi_local_size, self.mpi_local_rank))
-        self.dist_url = 'tcp://{}:23456'.format(get_philly_mpi_hosts()[0])
-        self.init()
-
-    def init(self):
-        if self.mpi_size > 1:
-            logging.info('run init process group')
-            dist.init_process_group(
-                init_method=self.dist_url,
-                world_size=self.mpi_size,
-                rank=self.mpi_rank,
-                group_name='sync',
-                backend='nccl')
-
-    def is_master(self):
-        return self.mpi_rank == 0
-
-    def is_local_master(self):
-        return self.mpi_local_rank == 0
-
-    def sync(self):
-        logging.info('syncing {}'.format(self.mpi_rank))
-        synchronize()
-        if self.mpi_size > 1:
-            dist.destroy_process_group()
-
-    def barrier(self):
-        if self.mpi_size > 1:
-            dist.barrier()
-
-    def close(self):
-        if self.mpi_size > 1:
-            dist.destroy_process_group()
+def releaseLock(locked_file_descriptor):
+    ''' release exclusive lock file access '''
+    locked_file_descriptor.close()
 
 def wrap_all(code_zip,
         code_root,
@@ -149,12 +91,8 @@ def wrap_all(code_zip,
         command,
         output_folder):
 
-    sync = Sync()
-
-    if sync.is_local_master():
-        if op.isdir(code_root):
-            import shutil
-            shutil.rmtree(code_root)
+    lock_fd = acquireLock()
+    if not op.isdir(code_root):
         cmd_run(['grep', 'Port', '/etc/ssh/sshd_config'])
         cmd_run(['ifconfig'])
         cmd_run(['df', '-h'])
@@ -187,10 +125,7 @@ def wrap_all(code_zip,
 
         # compile the source code
         compile_qd(code_root)
-    else:
-        logging.info('waiting {}'.format(sync.mpi_local_rank))
-
-    sync.sync()
+    releaseLock(lock_fd)
 
     if len(command) > 0:
         cmd_run(command, working_directory=code_root)
@@ -247,9 +182,10 @@ def run_in_philly():
     # the permission should be changed because the output is there, but the
     # permission is for the docker job only and teh philly-fs cannot delete or
     # change it
-    cmd_run(['sudo', 'chmod', '777',
-        op.join(input_folder, 'work', 'qd_output'),
-        '-R'], succeed=False)
+    if get_mpi_rank():
+        cmd_run(['sudo', 'chmod', '777',
+            op.join(input_folder, 'work', 'qd_output'),
+            '-R'], succeed=False)
 
 def run_in_local():
     qd_zip = 'quickdetection.zip'
@@ -263,14 +199,9 @@ def run_in_local():
             ['ls'],
             output_folder)
 
-def test_sync():
-    s = Sync()
-    s.sync()
-
 if __name__ == '__main__':
     init_logging()
 
-    #test_sync()
     run_in_philly()
     #run_in_local()
 
