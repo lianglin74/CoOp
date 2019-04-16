@@ -294,6 +294,9 @@ class PhillyVC(object):
         self.use_blob_as_input = kwargs.get('use_blob_as_input', False)
         self.user_name = user_name
 
+        self.src_config_path = 'src/qd/philly/config.py'
+        self.dest_config_folder = '{}/code'.format(self.user_name)
+
     def sync_code(self, random_id):
         random_run = 'run{}.py'.format(random_id)
         self.random_id = random_id
@@ -356,6 +359,9 @@ class PhillyVC(object):
                 all_job_info.append(job_info)
 
         return all_job_info
+
+    def update_config(self):
+        self.upload_file(self.src_config_path, self.dest_config_folder)
 
     def query(self, **kwargs):
         all_job_info = self.query_all_job()
@@ -445,8 +451,8 @@ class PhillyVC(object):
             "UserName": self.user_name,
             "BuildId": 0,
             "ToolType": None,
-            "ConfigFile": "/hdfs/{}/{}/code/run.py".format(self.vc,
-                self.user_name),
+            "ConfigFile": "/hdfs/{}/{}/{}".format(self.vc,
+                self.dest_config_folder, op.basename(self.src_config_path)),
             "Inputs": [{
                 "Name": "dataDir",
                 "Path": "/hdfs/{}/{}".format(self.vc, self.user_name)
@@ -669,8 +675,9 @@ class PhillyVC(object):
 
     def upload_file(self, file_from, file_target):
         if self.cluster in ['sc2', 'wu1']:
+            blob = False
             philly_upload_dir(file_from, file_target, self.vc,
-                    self.cluster, blob=True)
+                    self.cluster, blob=blob)
         else:
             philly_upload(file_from, file_target, self.vc, self.cluster)
 
