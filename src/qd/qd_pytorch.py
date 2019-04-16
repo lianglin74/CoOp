@@ -123,7 +123,6 @@ class CompositeTSVFile():
 class TSVSplit(Dataset):
     def __init__(self, data, split, version=0, cache_policy=None):
         dataset = TSVDataset(data)
-        self.is_composite = False
         if op.isfile(dataset.get_data(split)):
             self.tsv = TSVFile(dataset.get_data(split),
                     cache_policy)
@@ -564,7 +563,8 @@ class TorchTrain(object):
             # always set the device at the very beginning
             torch.cuda.set_device(self.mpi_local_rank)
             logging.info('init param: \n{}'.format(pformat(init_param)))
-            dist.init_process_group(**init_param)
+            if not dist.is_initialized():
+                dist.init_process_group(**init_param)
             # we need to synchronise before exit here so that all workers can
             # finish init_process_group(). If not, worker A might exit the
             # whole program first, but worker B still needs to talk with A. In
@@ -1038,22 +1038,24 @@ class YoloV2PtPipeline(ModelPipeline):
             'display': 100,
             'lr_policy': 'multifixed',
             'workers': 4})
+        self.num_train_images = None
 
     def _get_checkpoint_file(self, epoch=None, iteration=None):
-        assert epoch is None
-        if iteration is None:
-            iteration = self.max_iter
-
+        assert epoch is None, 'not supported'
+        iteration = self.parse_iter(iteration)
         return op.join(self.output_folder, 'snapshot',
                 "model_{:07d}.pth".format(iteration))
 
-    def is_tree_taxonomy(self):
-        dataset = TSVDataset(self.data)
-        train_split = 'train'
-        if dataset.has(train_split):
-            return False
-        else:
-            return True
+    def parse_iter(self, i):
+        if self.num_train_images is None:
+            self.num_train_images = TSVDataset(self.data).num_rows('train')
+        def to_iter(e):
+            if type(e) is str and e.endswith('e'):
+                iter_each_epoch = 1. * self.num_train_images / self.effective_batch_size
+                return int(float(e[:-1]) * iter_each_epoch)
+            else:
+                return int(e)
+        return to_iter(i)
 
     def train(self):
         dataset = TSVDataset(self.data)
@@ -1062,34 +1064,16 @@ class YoloV2PtPipeline(ModelPipeline):
                 'logdir': self.output_folder,
                 'labelmap': dataset.get_labelmap_file(),
                 }
-        train_split = 'train'
-        if not self.is_tree_taxonomy():
-            train_data_path = dataset.get_data(train_split)
+        if not self.use_treestructure:
             param.update({'use_treestructure': False})
         else:
-            train_split_x = train_split + 'X'
-            assert dataset.has(train_split_x)
-            train_data_path = dataset.get_data(train_split_x)
             param.update({'use_treestructure': True,
                           'tree': dataset.get_tree_file()})
-
-        kwargs = self.kwargs
-        max_iter = self.max_iter
-        effective_batch_size = self.effective_batch_size
-
-        def to_iter(e):
-            num_train_images = kwargs.get('num_train_images', 5011)
-            if type(e) is str and e.endswith('e'):
-                iter_each_epoch = 1. * num_train_images / effective_batch_size
-                return int(float(e[:-1]) * iter_each_epoch)
-            else:
-                return int(e)
-
-        if type(max_iter) is str:
-            max_iter = to_iter(max_iter)
+        train_data_path = '$'.join([self.data, 'train'])
 
         lr_policy = self.lr_policy
         snapshot_prefix = os.path.join(self.output_folder, 'snapshot', 'model')
+        max_iter = self.parse_iter(self.max_iter)
 
         stageiter = list(map(lambda x:int(x*max_iter/7000),
             [100,5000,6000,7000]))
@@ -1111,7 +1095,7 @@ class YoloV2PtPipeline(ModelPipeline):
 
         write_to_yaml_file(solver_param, solver_yaml)
 
-        init_model = './models/pytorch/darknet_3extraconv.pt'
+        base_model = self.base_model
         assert self.effective_batch_size % self.mpi_size == 0
         if 'WORLD_SIZE' in os.environ:
             assert int(os.environ['WORLD_SIZE']) == self.mpi_size
@@ -1126,7 +1110,7 @@ class YoloV2PtPipeline(ModelPipeline):
                       'only_backbone': False,
                       'batch_size': self.effective_batch_size // self.mpi_size,
                       'workers': self.workers,
-                      'model': init_model,
+                      'model': base_model,
                       'restore': False,
                       'latest_snapshot': None,
                       'display': self.display,
@@ -1156,18 +1140,16 @@ class YoloV2PtPipeline(ModelPipeline):
 
     def predict(self, model_file, predict_result_file):
         if self.mpi_rank != 0:
-            synchronize()
+            logging.info('ignore to predict for non-master process')
             return
         from mmod.file_logger import FileLogger
         from mmod import yolo_predict_session
 
         dataset = TSVDataset(self.data)
-        test_dataset = TSVDataset(self.test_data)
-        test_tsv = test_dataset.get_data(self.test_split)
         param = {
                 'model': model_file,
                 'labelmap': dataset.get_labelmap_file(),
-                'test': test_tsv,
+                'test': '$'.join([self.test_data, self.test_split]),
                 'output': predict_result_file,
                 'logdir': self.output_folder,
                 'batch_size': 64,
@@ -1178,7 +1160,7 @@ class YoloV2PtPipeline(ModelPipeline):
                 'thresh': 0.01,
                 'log_interval': 100,
                 }
-        is_tree = self.is_tree_taxonomy()
+        is_tree = self.use_treestructure
         param['use_treestructure'] = is_tree
         if is_tree:
             param['tree'] = dataset.get_tree_file()
@@ -1187,7 +1169,6 @@ class YoloV2PtPipeline(ModelPipeline):
         log = FileLogger(self.output_folder, is_master=self.is_master,
                 is_rank0=is_local_rank0)
         yolo_predict_session.main(param, log)
-        synchronize()
 
 def evaluate_topk(predict_file, label_tsv_file):
     predicts = load_key_rects(tsv_reader(predict_file))

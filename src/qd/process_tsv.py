@@ -40,6 +40,7 @@ from qd.qd_common import dict_to_list
 from qd.qd_common import ensure_directory
 from qd.qd_common import generate_lineidx
 from qd.qd_common import hash_sha1
+from qd.qd_common import ensure_copy_file
 from qd.qd_common import img_from_base64
 from qd.qd_common import init_logging
 from qd.qd_common import json_dump
@@ -3421,12 +3422,19 @@ def update_taxonomy_by_latest(ref_data, target_data):
     # e.g. source_origin_label = 'data/SeeingAISplit/train.label.tsv'
     source_data_splits = [re.match(pattern, source_origin_label).groups()
             for source_origin_label, in ref_dataset.iter_data(splitX, 'origin.label')]
+    source_data_split_versions = [(d, s, -1) for d, s in source_data_splits]
+
+    dump_to_taxonomy_dataset(ref_dataset, all_idxsource_idxrow,
+            source_data_split_versions, lift_train, split, out_dataset)
+
+def dump_to_taxonomy_dataset(ref_dataset, all_idxsource_idxrow,
+        source_data_split_versions, lift_train, split, out_dataset):
+    splitX = split + 'X'
     tax = Taxonomy(load_from_yaml_file(op.join(ref_dataset._data_root, 'root.yaml')))
     sources_label = []
     sources_origin_label = []
-    for idxsource, (source_data, source_split) in enumerate(source_data_splits):
+    for idxsource, (source_data, source_split, source_version) in enumerate(source_data_split_versions):
         idx = [idx_r for idx_s, idx_r in all_idxsource_idxrow if idxsource == idx_s]
-        from qd.process_tsv import TSVDatasetSource
         for n in tax.root.iter_search_nodes():
             if source_data in n.features:
                 n.add_feature(source_data,
@@ -3434,39 +3442,43 @@ def update_taxonomy_by_latest(ref_data, target_data):
         source_dataset = TSVDatasetSource(source_data, root=tax.root,
                 split_infos=[{'split': source_split, 'version': -1}])
         source_dataset._ensure_initialized()
-        source_origin_label = source_dataset.get_data(source_split, 'label', -1)
+        source_origin_label = source_dataset.get_data(source_split, 'label',
+                source_version)
         sources_origin_label.append(source_origin_label)
-        from qd.process_tsv import convert_label
         converted_label = convert_label(source_origin_label,
                 idx, source_dataset._sourcelabel_to_targetlabels,
                 with_bb=True)
         for i in tqdm(idx):
             l = converted_label[i]
             if lift_train:
-                from qd.process_tsv import lift_one_image
                 l[1] = json.dumps(lift_one_image(l[1], tax))
             else:
-                from qd.process_tsv import delift_one_image
                 l[1] = json.dumps(delift_one_image(l[1], tax))
-            l[0] = '{}_{}_{}'.format(source_dataset.name, split, l[0])
+            l[0] = '{}_{}_{}'.format(source_dataset.name, source_split, l[0])
         out_split = '{}{}'.format(split, idxsource)
         label_file = out_dataset.get_data(out_split, 'label')
         tsv_writer(converted_label, label_file)
         sources_label.append(label_file)
+
+    # the label version might be updated. Thus, the sources_label could be
+    # different from the reference dataset
     write_to_file('\n'.join(sources_label),
             out_dataset.get_data(splitX, 'label'))
+
     write_to_file('\n'.join(sources_origin_label),
             out_dataset.get_data(splitX, 'origin.label'))
-    from qd.qd_common import ensure_copy_file
+
     # copy the image source file
     ensure_copy_file(ref_dataset.get_data(splitX),
             out_dataset.get_data(splitX))
+
     # copy the labelmap
     ensure_copy_file(ref_dataset.get_labelmap_file(),
             out_dataset.get_labelmap_file())
 
     # copy the shuffle file
-    ensure_copy_file(ref_dataset.get_shuffle_file(split),
+    # the idx could be different since we might add more images here
+    tsv_writer(all_idxsource_idxrow,
             out_dataset.get_shuffle_file(split))
 
 def test():

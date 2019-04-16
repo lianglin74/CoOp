@@ -97,6 +97,14 @@ def blob_download_qdoutput(src_path, target_folder):
         max_iters = max(iters)
         need_download_blobs.extend([f for f, i in zip(in_snapshot_blobs, iters) if i ==
                 max_iters])
+    to_remove = []
+    for i, b1 in enumerate(need_download_blobs):
+        for b2 in need_download_blobs:
+            if b1 != b2 and b2.startswith(b1) and b2.startswith(b1 + '/'):
+                to_remove.append(b1)
+                break
+    for t in to_remove:
+        need_download_blobs.remove(t)
     for f in tqdm(need_download_blobs):
         target_f = f.replace(src_path, target_folder)
         if not op.isfile(target_f):

@@ -8,14 +8,60 @@ from qd.qd_common import json_dump
 from qd.db import is_positive_uhrs_verified, is_negative_uhrs_verified
 from qd.tsv_io import is_verified_rect
 from qd.qd_common import calculate_iou
+from qd.qd_common import hash_sha1
+import copy
+
 
 # you can all all the functions prefixed with test_ without any input
 # parameter
-def create_parameters(**kwargs):
-    kwargs.update({'data': 'voc20',
-                   'max_iter': 10000,
-                   'effective_batch_size': 64})
-    return kwargs
+def update_parameters(param):
+    default_param = {'data': 'voc20',
+            'max_iter': 10000,
+            'effective_batch_size': 64}
+
+    for k, v in viewitems(default_param):
+        if k not in param:
+            param[k] = v
+
+    if 'expid' in param:
+        return
+    # we need to update expid so that the model folder contains the critical
+    # param information
+    infos = []
+    need_hash_sha_params = ['basemodel']
+    for k in need_hash_sha_params:
+        if k in param:
+            infos.append('{}{}'.format(k, hash_sha1(param[k])[:5]))
+
+    direct_add_value_keys = {'effective_batch_size': 'BS',
+            'max_iter': 'MaxIter',
+            'max_epoch': 'MaxEpoch',
+            'num_extra_convs': 'ExtraConv'}
+    for k, v in viewitems(direct_add_value_keys):
+        if k in param:
+            infos.append('{}{}'.format(v, param[k]))
+
+    true_false_keys = {'use_treestructure': ('Tree', None)}
+    for k in true_false_keys:
+        if k in param:
+            if param[k] and true_false_keys[k][0]:
+                infos.append(true_false_keys[k][0])
+            elif not param[k] and true_false_keys[k][1]:
+                infos.append(true_false_keys[k][1])
+
+    non_expid_impact_keys = ['data', 'net', 'expid_prefix',
+            'test_data', 'test_split', 'test_version',
+            'dist_url_tcp_port', 'workers']
+
+    for k in param:
+        assert k in need_hash_sha_params or \
+                k in non_expid_impact_keys or \
+                k in direct_add_value_keys or \
+                k in true_false_keys, k
+
+    if 'expid_prefix' in param:
+        infos.insert(0, param['expid_prefix'])
+    param['expid'] = '_'.join(infos)
 
 def create_pipeline(kwargs):
     from qd.qd_pytorch import YoloV2PtPipeline
@@ -103,8 +149,7 @@ def merge_uhrs_result_to_dataset(data_split_to_key_rects):
         dataset.update_data(gen_rows(), split, 'label',
                 generate_info=generate_info())
 
-
-def test_model_pipeline(**kwargs):
+def test_model_pipeline(param):
     '''
     run the script by
 
@@ -112,13 +157,30 @@ def test_model_pipeline(**kwargs):
             python script_with_this_function_called.py
     '''
     init_logging()
-    kwargs.update(create_parameters(**kwargs))
-    pip = create_pipeline(kwargs)
+    update_parameters(param)
+    pip = create_pipeline(param)
 
-    if kwargs.get('monitor_train_only'):
+    if param.get('monitor_train_only'):
         pip.monitor_train()
     else:
         pip.ensure_train()
+        pip.ensure_predict()
+        pip.ensure_evaluate()
+
+def load_pipeline(curr_param):
+    from qd.qd_pytorch import YoloV2PtPipeline
+    return YoloV2PtPipeline(load_parameter=True, **curr_param)
+
+def test_model_pipeline_eval_multi(all_test_data, param):
+    init_logging()
+    update_parameters(param)
+    pip = create_pipeline(param)
+    pip.ensure_train()
+    param['full_expid'] = pip.full_expid
+    for test_data_info in all_test_data:
+        curr_param = copy.deepcopy(param)
+        curr_param.update(test_data_info)
+        pip = load_pipeline(curr_param)
         pip.ensure_predict()
         pip.ensure_evaluate()
 

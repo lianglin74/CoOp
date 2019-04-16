@@ -12,6 +12,7 @@ import six
 import os
 import os.path as op
 import shutil
+import re
 try:
     from itertools import izip as zip
 except ImportError:
@@ -569,6 +570,16 @@ class TSVDataset(object):
                 self.write_data(generate_info, split, '{}.generate.info'.format(t), v + 1)
             self.write_data(rows, split, t, version=v + 1)
             return v + 1
+
+    def load_composite_source_data_split_versions(self, split):
+        splitX = split + 'X'
+        pattern = 'data/(.*)/(train|trainval|test)\.label\.v(.*)\.tsv'
+        tsv_sources = [l for l, in tsv_reader(self.get_data(splitX,
+            'origin.label'))]
+        matched_result = [re.match(pattern, l).groups()
+                for l in tsv_sources]
+
+        return [(d, s, int(v)) for d, s, v in matched_result]
 
 def tsv_writer(values, tsv_file_name, sep='\t'):
     ensure_directory(os.path.dirname(tsv_file_name))

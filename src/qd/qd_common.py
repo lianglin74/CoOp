@@ -457,7 +457,7 @@ def get_mpi_local_size():
     return int(os.environ.get('OMPI_COMM_WORLD_LOCAL_SIZE', '1'))
 
 def load_class_ap(full_expid, predict_file):
-    report_file = predict_file
+    report_file = op.splitext(predict_file)[0] + '.report'
     fname = op.join('output', full_expid, 'snapshot', report_file +
             '.class_ap.json')
     if op.isfile(fname):
@@ -635,10 +635,8 @@ def get_all_predict_files(full_expid):
     model_folder = op.join('output', full_expid, 'snapshot')
 
     predict_files = []
-    found = glob.glob(op.join(model_folder, '*.report'))
-    predict_files.extend([op.basename(f) for f in found])
 
-    found = glob.glob(op.join(model_folder, '*.report.v[0-9]'))
+    found = glob.glob(op.join(model_folder, '*.predict'))
     predict_files.extend([op.basename(f) for f in found])
 
     iterations = [(parse_snapshot_rank(p), p) for p in predict_files]
@@ -913,6 +911,7 @@ def ensure_directory(path):
     if path == '' or path == '.':
         return
     if path != None and len(path) > 0:
+        assert not op.isfile(path), '{} is a file'.format(path)
         if not os.path.exists(path) and not op.islink(path):
             try:
                 os.makedirs(path)
@@ -922,6 +921,8 @@ def ensure_directory(path):
                     pass
                 else:
                     raise
+        # we should always check if it succeeds.
+        assert op.isdir(path), 'failed'
 
 def parse_pattern(pattern, s):
     result = re.search(pattern, s)
