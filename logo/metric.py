@@ -298,10 +298,13 @@ def filter_topN_pred(pred_file, topN, obj_thres=None):
                     end_idx += 1
             end_idx = min(end_idx, len(sorted_bboxes))
             yield key, json.dumps(sorted_bboxes[0: end_idx], separators=(',', ':'))
-    tsv_writer(gen_rows(), pred_file+'.top{}'.format(topN))
+    new_pred_file = pred_file+'.top{}'.format(topN)
+    tsv_writer(gen_rows(), new_pred_file)
+    return new_pred_file
 
 def eval_classifier(gt_dataset_name, split, version, det_expid, tag_expid,
-            tag_snap_id, labelmap=None, iou_thres=0.5, enlarge_bbox=1.0):
+            tag_snap_id, labelmap=None, iou_thres=0.5, enlarge_bbox=1.0,
+            topN_rp=None, obj_thres=0):
     """ Calculates:
     top1/5 acc on gt region, mAP with gt region (conf from tag),
     mAP with logo/non-logo region (conf from tag, conf from tag*obj, conf from obj)
@@ -331,42 +334,41 @@ def eval_classifier(gt_dataset_name, split, version, det_expid, tag_expid,
         pred_file, _ = croptagger.predict_on_known_class(gt_dataset_name, split,
                     version=version, region_source=constants.PRED_REGION, enlarge_bbox=enlarge_bbox,
                     conf_from=conf_from, eval_topk_acc=None)
+        if conf_from == constants.CONF_TAG and topN_rp:
+            pred_file = filter_topN_pred(pred_file, topN_rp, obj_thres=obj_thres)
+
         stats.append(cal_map(pred_file))
     return stats
 
-def test_eval_classifier():
+def run_all_eval_classifier():
     gt_dataset_name = "brand1048"
     split = "test"
     version = 4
     det_expid = det3_expid
 
     output_root = 'data/brand_output/'
-    # labelmap = "data/brand_output/TaxLogoV1_7_darknet19_448_C_Init.best_model9748_maxIter.75eEffectBatchSize128_bb_only/classifier/add_sports/labelmap.txt"
     labelmap = None
     all_tag_expid = []
-    # for d in os.listdir(output_root):
-    #     if os.path.isdir(os.path.join(output_root, d)) and d.startswith("brand1048_resnet18") and d!="brand1048_resnet18_nobg_input112":
-    #         all_tag_expid.append(d)
-    # all_tag_expid.append("brandsports_resnet18_nobg")
-    # tag_snap_pairs = []
-    # for tag_expid in all_tag_expid:
-    #     for tag_snap_id in os.listdir(os.path.join(output_root, tag_expid)):
-    #         tag_snap_pairs.append((tag_expid, tag_snap_id))
-
-    tag_snap_pairs = [("brand1048_resnet18_nobg_ccs", "snapshot_2.0"), ("brand1048_resnet18", "snapshot_addrp")]
+    for d in os.listdir(output_root):
+        if os.path.isdir(os.path.join(output_root, d)) and d.startswith("brand1048_resnet18") and d!="brand1048_resnet18_nobg_input112":
+            all_tag_expid.append(d)
+    tag_snap_pairs = []
+    for tag_expid in all_tag_expid:
+        for tag_snap_id in os.listdir(os.path.join(output_root, tag_expid)):
+            tag_snap_pairs.append((tag_expid, tag_snap_id))
 
     def gen_rows():
         for tag_expid, tag_snap_id in tag_snap_pairs:
-            for enlarge_bbox in [2.0]:
-                res = [enlarge_bbox, tag_expid, tag_snap_id]
-                res.extend(eval_classifier(gt_dataset_name, split, version, det_expid, tag_expid,
-                        tag_snap_id, labelmap=labelmap, iou_thres=0.5, enlarge_bbox=enlarge_bbox))
-                # print(res)
-                yield res
+            for obj_thres in [0.1, 0.3, 0.5, 0.6]:
+                for topN in [1, 3, 5, 10]:
+                    res = [obj_thres, topN, tag_expid, tag_snap_id]
+                    res.extend(eval_classifier(gt_dataset_name, split, version, det_expid, tag_expid,
+                            tag_snap_id, labelmap=labelmap, iou_thres=0.5, enlarge_bbox=2.0, topN_rp=topN, obj_thres=obj_thres))
+                    # print(res)
+                    yield res
     tsv_writer(gen_rows(), os.path.join(output_root, 'tmp.tsv'))
 
 
 if __name__ == "__main__":
     init_logging()
-    # main()
-    test_eval_classifier()
+    main()

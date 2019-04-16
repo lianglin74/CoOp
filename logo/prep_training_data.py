@@ -136,8 +136,9 @@ def prepare_training_data(det_expid, gt_dataset_name, split, version, outdataset
                 labels.extend(key2labels[key])
             yield key, json.dumps(labels, separators=(',', ':'))
     dataset.update_data(gen_labels(), split, 'label', generate_info=generate_info)
-    print("generate new label file: {}".format(dataset.get_data(split, 'label', version=-1)))
-
+    new_label_file = dataset.get_data(split, 'label', version=-1)
+    print("generate new label file: {}".format(new_label_file))
+    return new_label_file
 
 def get_train_config(outdir, dataset_name, version, labelmap,
             det_expid=None, use_region_proposal=True):
@@ -146,8 +147,12 @@ def get_train_config(outdir, dataset_name, version, labelmap,
     dataset = TSVDataset(dataset_name)
 
     if use_region_proposal:
-        label_file = prepare_training_data(det_expid, dataset_name, outdir, gt_split="train",
-                version=version, enlarge_bbox=1.5)
+        outdataset_name = dataset_name + "_add_bg"
+        split = "train"
+        label_file = prepare_training_data(det_expid, dataset_name, split, version, outdataset_name,
+            pos_iou_range=(0.5, 1.0), pos_conf_range=(0.0, 1.0),
+            neg_iou_range=(0.0, 0.1), neg_conf_range=(0.2, 0.3),
+            add_gt=True)
     else:
         label_file = dataset.get_data("train", t="label", version=version)
 
@@ -163,26 +168,3 @@ def get_train_config(outdir, dataset_name, version, labelmap,
     }}
     qd_common.write_to_yaml_file(config, config_file)
     return config_file
-
-def test():
-    det_expid = "TaxLogoV1_7_darknet19_448_C_Init.best_model9748_maxIter.75eEffectBatchSize128_bb_only"
-    gt_dataset_name = "brand1048"
-    gt_dataset = TSVDataset(gt_dataset_name)
-    split = "train"
-    version = 4
-    outdataset_name = "brand1048_add_bg"
-
-    prepare_training_data(det_expid, gt_dataset_name, split, version, outdataset_name,
-            pos_iou_range=None, pos_conf_range=(0.0, 1.0),
-            neg_iou_range=(0.0, 0.1), neg_conf_range=(0.2, 0.3),
-            add_gt=True)
-
-if __name__ == "__main__":
-    # outdir = "data/brand_output/configs/"
-    # labelmap = "data/brand_output/TaxLogoV1_7_darknet19_448_C_Init.best_model9748_maxIter.75eEffectBatchSize128_bb_only/classifier/add_sports/labelmap.txt"
-
-    # tsv_io.tsv_writer([[get_train_config(outdir, "brand1048", 4, labelmap)],
-    #         [get_train_config(outdir, "sports_missingSplit", -1, labelmap, use_region_proposal=False)]],
-    #         os.path.join(outdir, "train.yamllst"))
-
-    test()
