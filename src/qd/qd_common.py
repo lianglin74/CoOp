@@ -41,6 +41,34 @@ except ImportError:
     from urllib2 import HTTPError
 
 
+def float_tolorance_equal(d1, d2):
+    from past.builtins import basestring
+    if isinstance(d1, basestring) and isinstance(d2, basestring):
+        return d1 == d2
+    if type(d1) in [int, float] and type(d2) in [int, float]:
+        return abs(d1 - d2) <= 0.00001 * abs(d1)
+    if type(d1) != type(d2):
+        return False
+    if type(d1) is dict:
+        if len(d1) != len(d2):
+            return False
+        for k in d1:
+            if k not in d2:
+                return False
+            v1, v2 = d1[k], d2[k]
+            if not float_tolorance_equal(v1, v2):
+                return False
+        return True
+    elif type(d1) in [tuple, list]:
+        if len(d1) != len(d2):
+            return False
+        for x1, x2 in zip(d1, d2):
+            if not float_tolorance_equal(x1, x2):
+                return False
+        return True
+    else:
+        raise Exception('unknown type')
+
 def case_incensitive_overlap(all_terms):
     all_lower_to_term = [{t.lower(): t for t in terms} for terms in all_terms]
     all_lowers = [set(l.keys()) for l in all_lower_to_term]

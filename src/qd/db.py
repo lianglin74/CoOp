@@ -1,4 +1,5 @@
-from .qd_common import load_from_yaml_file
+from qd.qd_common import load_from_yaml_file
+from qd.qd_common import gen_uuid
 from pymongo import MongoClient
 import pymongo
 import copy
@@ -38,6 +39,59 @@ def ensure_objectid(result):
     for r in result:
         if type(r['_id']) is str:
             r['_id'] = ObjectId(r['_id'])
+
+class AnnotationDB(object):
+    '''
+    gradually move all the Annotation db related function call to this wrapper.
+    The related table incldues: image, ground_truth, label, prediction_result
+    '''
+    def __init__(self):
+        self._qd = create_mongodb_client()
+        self._gt = self._qd['qd']['ground_truth']
+        self._label = self._qd['qd']['label']
+
+    def update_label(self, query, update):
+        self._label.update_one(query, update)
+
+    def iter_label(self):
+        return self._label.find()
+
+    def insert_label(self, **kwargs):
+        if 'uuid' not in kwargs:
+            kwargs['uuid'] = gen_uuid()
+        if 'create_time' not in kwargs:
+            kwargs['create_time'] = datetime.now()
+
+        self._label.insert_one(kwargs)
+
+    def iter_query_label(self, query):
+        return self._label.find(query)
+
+    def build_label_index(self):
+        self._label.create_index([('uuid', 1)], unique=True)
+        self._label.create_index([('unique_name', 1)], unique=True,
+                collation={'locale': 'en', 'strength':2})
+
+    def drop_ground_truth_index(self):
+        self._gt.drop_indexes()
+
+    def build_ground_truth_index(self):
+        self._gt.create_index([('data', 1),
+            ('split', 1),
+            ('key', 1),
+            ('class', 1)])
+        self._gt.create_indexes
+        self._gt.create_index([('data', 1),
+            ('split', 1),
+            ('class', 1)])
+        self._gt.create_index([('data', 1),
+            ('split', 1),
+            ('class', 1),
+            ('version', 1)])
+        # used for deleting all before inserting
+        self._gt.create_index([('data', 1),
+            ('split', 1),
+            ('version', 1)])
 
 class BoundingBoxVerificationDB(object):
     status_requested = 'requested'
