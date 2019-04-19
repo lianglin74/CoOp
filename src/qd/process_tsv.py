@@ -20,6 +20,7 @@ import pymongo
 import random
 import re
 import shutil
+from collections import OrderedDict
 import sys
 import time
 import unicodedata
@@ -29,7 +30,6 @@ from deprecated import deprecated
 
 from datetime import datetime
 from pprint import pformat
-from pymongo import MongoClient
 from StringIO import StringIO
 from qd.cloud_storage import CloudStorage
 from qd.process_image import draw_bb, show_image, save_image
@@ -70,6 +70,7 @@ from qd.tsv_io import get_meta_file
 from qd.tsv_io import load_labels
 from qd.tsv_io import TSVDataset, TSVFile
 from qd.tsv_io import tsv_reader, tsv_writer
+from qd.db import create_mongodb_client
 
 
 def create_new_image_tsv_if_exif_rotated(data, split):
@@ -204,15 +205,14 @@ def ensure_inject_expid(full_expid):
     for p in all_predict:
         ensure_inject_expid_pred(full_expid, op.basename(p))
 
-def ensure_inject_dataset(data):
+def ensure_inject_dataset(data, **kwargs):
     for split in ['train', 'trainval', 'test']:
         ensure_upload_image_to_blob(data, split)
         ensure_inject_image(data, split)
-        ensure_inject_gt(data, split)
+        ensure_inject_gt(data, split, **kwargs)
 
 def ensure_inject_decorate(func):
     def func_wrapper(*args, **kwargs):
-        from .db import create_mongodb_client
         client = create_mongodb_client()
         db = client['qd']
         task = db['task']
@@ -352,7 +352,7 @@ def ensure_inject_image(data, split):
     if not dataset.has(split):
         return
 
-    client = MongoClient()
+    client = create_mongodb_client()
     db = client['qd']
     images = db['image']
     images.delete_many(filter={'data': data, 'split': split})
@@ -414,7 +414,7 @@ def ensure_update_pred_with_correctness(data, split,
 def update_pred_with_correctness(test_data, test_split,
         full_expid,
         predict_file):
-    client = MongoClient()
+    client = create_mongodb_client()
     db = client['qd']
     pred_collection = db['predict_result']
     _gt = db['ground_truth']
@@ -522,7 +522,7 @@ def ensure_inject_expid_pred(full_expid, predict_file):
 
 @ensure_inject_decorate
 def ensure_inject_pred(full_expid, pred_file, test_data, test_split):
-    client = MongoClient()
+    client = create_mongodb_client()
     db = client['qd']
     pred_collection = db['predict_result']
     logging.info('cleaning {} - {}'.format(full_expid, pred_file))
@@ -545,95 +545,99 @@ def ensure_inject_pred(full_expid, pred_file, test_data, test_split):
     if len(all_rect) > 0:
         pred_collection.insert_many(all_rect)
 
-def ensure_inject_gt(data, split):
-    client = MongoClient()
+def ensure_inject_gt(data, split, **kwargs):
+    client = create_mongodb_client()
     db = client['qd']
     task = db['task']
-    if split is None:
-        for s in ['train', 'trainval', 'test']:
-            ensure_inject_gt(data, s)
-    else:
-        dataset = TSVDataset(data)
-        version = 0
-        set_previous_key_rects = False
-        while dataset.has(split, 'label', version=version):
-            query = {'task_type': 'inject_gt',
-                                    'data': data,
-                                    'split': split,
-                                    'version': version}
-            result = task.update_one(filter=query,
-                                    update={'$setOnInsert': query},
-                                    upsert=True)
-            if result.matched_count == 0:
-                logging.info('start to inserting {}-{}-{}'.format(data,
-                    split, version))
-                # no process is working on inserting current version
-                task.update_one(filter=query,
-                        update={'$set': {'status': 'started',
-                                         'create_time': datetime.now()}})
-                if not set_previous_key_rects:
-                    if version == 0:
-                        previous_key_to_rects = {}
-                    else:
-                        key_rects = load_key_rects(dataset.iter_data(split, 'label',
-                            version=version-1))
-                        previous_key_to_rects = {key: rects for key, rects in key_rects}
-                    set_previous_key_rects = True
-                inject_gt_version(data, split, version, previous_key_to_rects)
-                task.update_many(filter={'task_type': 'inject_gt',
-                    'data': data,
-                    'split': split,
-                    'version': version}, update={'$set': {'status': 'done'}})
-            else:
-                # it is done or it is started by anohter process. let's skip
-                # this version
-                assert result.matched_count == 1
-                while True:
-                    existing_entries = list(task.find(query))
-                    if any(e for e in existing_entries if e['status'] == 'done'):
-                        logging.info('ignore to inject since it is done: \n{}'.format(query))
-                        break
-                    elif len(existing_entries) == 0:
-                        logging.info('we will do it')
-                        version = version - 1
-                        break
-                    else:
-                        logging.info('waiting to finish \n{}'.format(
-                            pformat(existing_entries)))
-                        time.sleep(10)
-                set_previous_key_rects = False
-            version = version + 1
+    assert split is not None
+    dataset = TSVDataset(data)
+    version = 0
+    set_previous_key_rects = False
+    while dataset.has(split, 'label', version=version):
+        query = {'task_type': 'inject_gt',
+                                'data': data,
+                                'split': split,
+                                'version': version}
+        result = task.update_one(filter=query,
+                                update={'$setOnInsert': query},
+                                upsert=True)
+        if result.matched_count == 0:
+            logging.info('start to inserting {}-{}-{}'.format(data,
+                split, version))
+            # no process is working on inserting current version
+            task.update_one(filter=query,
+                    update={'$set': {'status': 'started',
+                                     'create_time': datetime.now()}})
+            if not set_previous_key_rects:
+                if version == 0:
+                    previous_key_to_rects = {}
+                else:
+                    key_rects = load_key_rects(dataset.iter_data(split, 'label',
+                        version=version-1))
+                    previous_key_to_rects = {key: rects for key, rects in key_rects}
+                set_previous_key_rects = True
+            inject_gt_version(data, split, version, previous_key_to_rects,
+                    **kwargs)
+            task.update_many(filter={'task_type': 'inject_gt',
+                'data': data,
+                'split': split,
+                'version': version}, update={'$set': {'status': 'done'}})
+        else:
+            # it is done or it is started by anohter process. let's skip
+            # this version
+            assert result.matched_count == 1
+            while True:
+                existing_entries = list(task.find(query))
+                if any(e for e in existing_entries if e['status'] == 'done'):
+                    logging.info('ignore to inject since it is done: \n{}'.format(query))
+                    break
+                elif len(existing_entries) == 0:
+                    logging.info('we will do it')
+                    version = version - 1
+                    break
+                else:
+                    logging.info('waiting to finish \n{}'.format(
+                        pformat(existing_entries)))
+                    time.sleep(10)
+            set_previous_key_rects = False
+        version = version + 1
 
-def inject_gt_version(data, split, version, previous_key_to_rects):
-    client = MongoClient()
+def inject_gt_version(data, split, version, previous_key_to_rects,
+        delete_existing=True):
+    client = create_mongodb_client()
     db = client['qd']
     gt = db['ground_truth']
     dataset = TSVDataset(data)
-    gt.delete_many({'data': data, 'split': split, 'version': version})
+    logging.info('deleting data={}, split={}, version={}'.format(
+        data, split, version))
+    if delete_existing:
+        gt.delete_many({'data': data, 'split': split, 'version': version})
     dataset = TSVDataset(data)
 
     if not dataset.has(split, 'label', version):
         return False
     all_rect = []
     logging.info('{}-{}-{}'.format(data, split, version))
-    for i, (key, label_str) in tqdm(enumerate(dataset.iter_data(
+    total_inserted = 0
+    for idx_in_split, (key, label_str) in tqdm(enumerate(dataset.iter_data(
         split, 'label', version=version))):
         rects = json.loads(label_str)
-        for j, r in enumerate(rects):
-            r['data'] = data
-            r['split'] = split
-            r['key'] = key
-            # for tagging dataset, tehre is no rect
-            r['action_target_id'] = hash_sha1([data, split, key, r['class'],
+        def add_to_all_rect(r, extra_info):
+            r2 = copy.deepcopy(r)
+            r2.update(extra_info)
+            r2['idx_in_split'] = idx_in_split
+            r2['data'] = data
+            r2['split'] = split
+            r2['key'] = key
+            r2['action_target_id'] = hash_sha1([data, split, key, r['class'],
                 r.get('rect', [])])
-            r['version'] = version
+            r2['version'] = version
+            r2['create_time'] = datetime.now()
+            all_rect.append(r2)
         if version == 0:
             assert key not in previous_key_to_rects
             for r in rects:
-                r['action_type'] = 'add'
-                r['contribution'] = 1
-                r['create_time'] = datetime.now()
-            all_rect.extend(rects)
+                add_to_all_rect(r, {'contribution': 1})
         else:
             previous_rects = previous_key_to_rects[key]
             # use strict_rect_in_rects rather than rect_in_rects: if the higher
@@ -644,36 +648,21 @@ def inject_gt_version(data, split, version, previous_key_to_rects):
             current_not_in_previous = copy.deepcopy([r for r in rects if
                     not strict_rect_in_rects(r, previous_rects)])
             for r in previous_not_in_current:
-                r['data'] = data
-                r['split'] = split
-                r['key'] = key
-                r['action_target_id'] = hash_sha1([data, split, key,
-                    r['class'], r.get('rect', [])])
-                r['version'] = version
-                r['action_type'] = 'remove'
-                r['contribution'] = -1
-                r['create_time'] = datetime.now()
-                r['version'] = version
-            all_rect.extend(previous_not_in_current)
+                add_to_all_rect(r, {'contribution': -1})
             for r in current_not_in_previous:
-                r['data'] = data
-                r['split'] = split
-                r['key'] = key
-                r['action_target_id'] = hash_sha1([data, split, key,
-                    r['class'], r.get('rect', [])])
-                r['version'] = version
-                r['action_type'] = 'add'
-                r['contribution'] = 1
-                r['create_time'] = datetime.now()
-                r['version'] = version
-            all_rect.extend(current_not_in_previous)
+                add_to_all_rect(r, {'contribution': 1})
         previous_key_to_rects[key] = rects
-        if len(all_rect) > 10000:
+        if len(all_rect) > 1000:
             db_insert_many(gt, all_rect)
+            total_inserted = total_inserted + len(all_rect)
+            logging.info('inserting data={}, split={}, version={}, curr_insert={}, total={}'.format(
+                data, split, version, len(all_rect), total_inserted))
             all_rect = []
 
     if len(all_rect) > 0:
-        logging.info('inserting {} - {} - {}'.format(data, split, version))
+        total_inserted = total_inserted + len(all_rect)
+        logging.info('inserting data={}, split={}, version={}, curr_insert={}, total={}'.format(
+            data, split, version, len(all_rect), total_inserted))
         db_insert_many(gt, all_rect)
         all_rect = []
     return True
@@ -686,7 +675,7 @@ def db_insert_many(collection, all_info):
 
 class VisualizationDatabaseByMongoDB():
     def __init__(self):
-        self._client = MongoClient()
+        self._client = create_mongodb_client()
         self._db = self._client['qd']
         self._pred = self._db['predict_result']
         self._gt = self._db['ground_truth']
@@ -3118,6 +3107,126 @@ def parallel_map_to_array(func, all_task, num_worker=128):
         result.extend(s)
     return result
 
+def convert_label_db(dataset, split, idx, with_bb):
+    result = None
+    label_mapper = dataset._sourcelabel_to_targetlabels
+    queried = []
+    for row_with_idx in tqdm(dataset.iter_gt_image(split, idx=idx)):
+        i = row_with_idx[0]
+        queried.append(i)
+        row = list(row_with_idx[1:])
+        rects = row[1]
+        def eval_with_bb(r):
+            if not r['class'].startswith('-'):
+                return 'rect' in r and any(x != 0 for x in r['rect'])
+            else:
+                return 'rect' not in r or all(x == 0 for x in r['rect'])
+        if with_bb:
+            # in the case with -, we will not add rect
+                                # with all zeros, thus, no need to check if it is all zeros
+                                # when it is negative samples
+            rects = [r for r in rects if eval_with_bb(r)]
+        # all annotations if eval_with_bb(r) is valid for no_bb. Thus, disable
+        # the following
+        #else:
+            #rects = [r for r in rects if not eval_with_bb(r)]
+        if result is None:
+            result = [None] * dataset.num_rows(split)
+            for _ in range(len(result)):
+                result[_] = ['d'] * len(row)
+        rects2 = []
+        # the following code should use convert_one_label
+        for rect in rects:
+            if rect['class'] in label_mapper:
+                for t in label_mapper[rect['class']]:
+                    r2 = copy.deepcopy(rect)
+                    r2['class'] = t
+                    if rect['class'] != t:
+                        # keep this for logging
+                        r2['class_from'] = rect['class']
+                    rects2.append(r2)
+        row[1] = rects2
+        result[i] = row
+    not_coverred = set(idx).difference(queried)
+    assert len(not_coverred) == 0
+    return result
+
+def create_trainX_db(train_ldtsi, extra_dtsi, tax, out_dataset,
+        lift_train=False):
+    t_to_ldsi = list_to_dict(train_ldtsi, 2)
+    extra_t_to_ldsi = list_to_dict(extra_dtsi, 1)
+    train_ldtsik = []
+    extra_dtsik = []
+    for label_type in t_to_ldsi:
+        ldsi = t_to_ldsi[label_type]
+        extra_ldsi = extra_t_to_ldsi.get(label_type, [])
+        d_to_lsi = list_to_dict(ldsi, 1)
+        extra_d_to_lsi = list_to_dict(extra_ldsi, 1)
+        k = 0
+        sources = []
+        sources_label = []
+        with_bb = label_type == 'with_bb'
+        for dataset in d_to_lsi:
+            lsi = d_to_lsi[dataset]
+            extra_lsi = extra_d_to_lsi.get(dataset, [])
+            s_li = list_to_dict(lsi, 1)
+            extra_s_li = list_to_dict(extra_lsi, 1)
+            for split in s_li:
+                li = s_li[split]
+                idx_to_l = list_to_dict(li, 1)
+                idx = idx_to_l.keys()
+                extra_li = extra_s_li.get(split, [])
+                # link the data tsv
+                source = dataset.get_data(split)
+                out_split = 'train{}'.format(k)
+                train_ldtsik.extend([(l, dataset, label_type, split, i,
+                    k) for l, i in li])
+                extra_dtsik.extend([(dataset, label_type, split, i, k)
+                    for l, i in extra_li])
+                k = k + 1
+                sources.append(source)
+                logging.info('converting labels: {}-{}'.format(
+                    dataset.name, split))
+
+                converted_label = convert_label_db(dataset,
+                        split, idx, with_bb=with_bb)
+                # convert the file name
+                logging.info('delifting the labels')
+                for i in tqdm(idx):
+                    l = converted_label[i]
+                    if lift_train:
+                        l[1] = json.dumps(lift_one_image(l[1], tax))
+                    else:
+                        l[1] = json.dumps(delift_one_image(l[1], tax))
+                    l[0] = '{}_{}_{}'.format(dataset.name, split, l[0])
+                label_file = out_dataset[label_type].get_data(out_split, 'label')
+                logging.info('writing the label file {}'.format(label_file))
+                tsv_writer(converted_label, label_file)
+                sources_label.append(label_file)
+        write_to_file('\n'.join(sources),
+                out_dataset[label_type].get_data('trainX'))
+        write_to_file('\n'.join(sources_label),
+                out_dataset[label_type].get_data('trainX', 'label'))
+
+    logging.info('saving the shuffle file')
+    type_to_ldsik = list_to_dict(train_ldtsik, 2)
+    extra_type_to_dsik = list_to_dict(extra_dtsik, 1)
+    for label_type in type_to_ldsik:
+        ldsik = type_to_ldsik[label_type]
+        shuffle_info = [(str(k), str(i)) for l, d, s, i, k in ldsik]
+        shuffle_info = list(set(shuffle_info))
+        if label_type in extra_type_to_dsik:
+            dsik = extra_type_to_dsik[label_type]
+            # we should not de-duplicate it because it comes from the duplicate
+            # policy
+            extra_shuffle_info = [(str(k), str(i) ) for d, s, i, k in dsik]
+            shuffle_info.extend(extra_shuffle_info)
+        random.shuffle(shuffle_info)
+        tsv_writer(shuffle_info,
+                out_dataset[label_type].get_shuffle_file('train'))
+
+    populate_output_num_images(train_ldtsik, 'toTrain', tax.root)
+
 def create_trainX(train_ldtsi, extra_dtsi, tax, out_dataset,
         lift_train=False):
     t_to_ldsi = list_to_dict(train_ldtsi, 2)
@@ -3498,6 +3607,497 @@ def test():
     draw_rects(im, rects)
     save_image(im, '/mnt/jianfw_desk/a.png')
     import ipdb;ipdb.set_trace(context=15)
+
+class TSVDatasetDB(object):
+    def __init__(self, name):
+        self.name = name
+        self._db = create_mongodb_client()
+        self._gt = self._db['qd']['ground_truth']
+        self._image = self._db['qd']['image']
+
+    def iter_gt_image(self, split, version=None, version_by_time=None,
+            idx=None, bb_type='with_bb'):
+        # if idx is not none, here we do not guarrentee the order is kept.
+        # Thus, we also return the index of the image
+        if idx:
+            extra_filter = {'idx_in_split': {'$in': idx}}
+        else:
+            extra_filter = None
+        pipeline = self._get_gt_rect_pipeline(split,
+                version, version_by_time, bb_type,
+                extra_filter)
+        pipeline.append({'$group': {'_id': '$idx_in_split',
+                                    'key': {'$first': '$key'},
+                                    'rects': {'$push': '$$ROOT'}}})
+        logging.info(pformat(pipeline))
+        for result in self._gt.aggregate(pipeline):
+            for rect in result['rects']:
+                if '_id' in rect:
+                    del rect['_id']
+                if 'create_time' in rect:
+                    del rect['create_time']
+            yield result['_id'], result['key'], result['rects']
+
+    def _get_gt_rect_pipeline(self, split, version, version_by_time,
+            bb_type, extra_filter):
+        match = {'data': self.name,
+                 'split': split}
+        if extra_filter:
+            match.update(extra_filter)
+        if version_by_time:
+            match['create_time'] = {'$lte': version_by_time}
+            sort_by = 'create_time'
+        else:
+            if version is None:
+                version = 0
+            if version != -1:
+                match['version'] = {'$lte': version}
+            sort_by = 'version'
+        sort_value = OrderedDict() # use ordered since dict is non-ordered
+        sort_value[sort_by] = -1
+        sort_value['contribution'] = -1
+        pipeline = [{'$match': match},
+                    # we may change some properties at the same version or
+                    # time. In this case, we prefer contribution=1
+                    {'$sort': sort_value},
+                    {'$group': {'_id':      '$action_target_id',
+                                'rect_info': {'$first': '$$ROOT'}}},
+                    {'$replaceRoot': {'newRoot': '$rect_info'}},
+                    {'$match': {'contribution': 1}},
+                    ]
+        if bb_type == 'with_bb':
+            cond1 = {'rect': {'$ne': None}}
+            cond2_or = []
+            for i in range(4):
+                cond2_or.append({'rect.{}'.format(i): {'$ne': 0}})
+            cond2 = {'$or': cond2_or}
+            match_with_bb = {'$and': [cond1, cond2]}
+            pipeline.append({'$match': match_with_bb})
+        else:
+            assert bb_type == 'no_bb'
+        return pipeline
+
+    def iter_gt_rect(self, split, version=None, version_by_time=None,
+            bb_type='with_bb',
+            extra_filter=None):
+            # we do not add any filter here. Thus it is no_bb + with_bb
+        pipeline = self._get_gt_rect_pipeline(split, version, version_by_time,
+                bb_type, extra_filter)
+        return self._gt.aggregate(pipeline)
+
+    def num_rows(self, split):
+        pipeline = [{'$match': {'data': self.name, 'split': split}},
+                {'$group': {'_id': 1, 'm': {'$max': '$idx_in_split'}}}]
+        result = next(self._image.aggregate(pipeline))
+        return result['m'] + 1
+
+    def get_data(self, split):
+        return op.join('data', self.name, '{}.tsv'.format(split))
+
+    def _get_unique_labels(self):
+        # we ignore the version to make it simplier. it should cover all labels
+        splits = [split_info['split'] for split_info in self._split_infos]
+        pipeline = [{'$match': {'data': self.name,
+                                'split': {'$in': splits}}},
+                    {'$group': {'_id': '$class'}}]
+        labelmap = sorted([r['_id'] for r in self._gt.aggregate(pipeline)])
+        return labelmap
+
+class TSVDatasetSourceDB(TSVDatasetDB):
+    def __init__(self, name, root=None,
+            split_infos=None,
+            cleaness=10,
+            use_all=False,
+            use_negative_label=False,
+            select_by_verified=False):
+        super(TSVDatasetSourceDB, self).__init__(name)
+        self._noffset_count = {}
+        self._type = None
+        self._root = root
+        # the list of <datasetlabel, rootlabel>
+        self._sourcelabel_to_targetlabels = None
+        self._targetlabel_to_sourcelabels = None
+        self._initialized = False
+        self._type_to_datasetlabel_to_split_idx = None
+        self._type_to_datasetlabel_to_count = None
+        self._type_to_split_label_idx = None
+        if split_infos is not None:
+            self._split_infos = split_infos
+        else:
+            self._split_infos = [{'split': s, 'version': -1}
+                    for s in ['train', 'trainval', 'test']]
+        self._split_to_info = {s['split']: s for s in self._split_infos}
+        assert len(set([split_info['split'] for split_info in
+            self._split_infos])) == len(self._split_infos)
+        self._use_all = use_all
+        self._select_by_verified = select_by_verified
+        self.cleaness = cleaness
+        self.use_negative_label = use_negative_label
+
+    def populate_info(self, root):
+        self._ensure_initialized()
+        for node in root.iter_search_nodes():
+            if root == node:
+                continue
+            if node.name in self._targetlabel_to_sourcelabels:
+                sourcelabels = self._targetlabel_to_sourcelabels[node.name]
+                node.add_feature(self.name, ','.join(sourcelabels))
+                if any(is_noffset(l) for l in sourcelabels):
+                    node.add_feature(self.name + '_readable',
+                            ','.join(get_nick_name(noffset_to_synset(l)) if
+                                is_noffset(l) else l for l in sourcelabels))
+                total = 0
+                for sourcelabel in sourcelabels:
+                    for t in self._type_to_datasetlabel_to_count:
+                        datasetlabel_to_count = self._type_to_datasetlabel_to_count[t]
+                        c = datasetlabel_to_count.get(sourcelabel, 0)
+                        total = total + c
+                        key = 'images_{}'.format(t)
+                        node.add_feature(key,
+                                node.__getattribute__(key) + c)
+                node.add_feature('{}_total'.format(self.name), total)
+
+    def _ensure_initialized(self):
+        if self._initialized:
+            return
+
+        self.update_label_mapper()
+
+        self._load_inverted()
+
+        self._initialized = True
+
+    def _load_inverted(self):
+        # make sure self.update_label_mapper() is called
+        types = ['with_bb', 'no_bb']
+        self._type_split_label_idx = []
+
+        usefull_dataset_labels = self._sourcelabel_to_targetlabels.keys()
+        usefull_dataset_labels = [l for l in usefull_dataset_labels if not l.startswith('-')]
+        for split_info in self._split_infos:
+            for bb_type in types:
+                iter_merged = self.iter_gt_rect(split=split_info['split'],
+                        version=split_info.get('version'),
+                        version_by_time=split_info.get('version_by_time'),
+                        bb_type=bb_type,
+                        extra_filter={'class': {'$in': usefull_dataset_labels}})
+                type_split_label_idx = ((bb_type, rect_info['split'],
+                    rect_info['class'], rect_info['idx_in_split'])
+                    for rect_info in iter_merged)
+                self._type_split_label_idx.extend(type_split_label_idx)
+
+        assert not self.use_negative_label, 'not supported'
+
+        self._type_split_label_idx = list(set(self._type_split_label_idx))
+        self._type_to_split_label_idx = list_to_dict(
+                self._type_split_label_idx, 0)
+        self._type_to_datasetlabel_to_split_idx = {}
+        for t in self._type_to_split_label_idx:
+            split_label_idx = self._type_to_split_label_idx[t]
+            label_to_split_idx = list_to_dict(split_label_idx, 1)
+            self._type_to_datasetlabel_to_split_idx[t] = label_to_split_idx
+        self._type_to_datasetlabel_to_count = {}
+        for t in self._type_to_datasetlabel_to_split_idx:
+            datasetlabel_to_split_idx = self._type_to_datasetlabel_to_split_idx[t]
+            datasetlabel_to_count = {l: len(datasetlabel_to_split_idx[l]) for l in
+                    datasetlabel_to_split_idx}
+            self._type_to_datasetlabel_to_count[t] = datasetlabel_to_count
+
+        self._split_to_num_image = {split_info['split']: self.num_rows(split_info['split']) for split_info in
+                self._split_infos}
+
+    def update_label_mapper(self):
+        root = self._root
+
+        labelmap = self._get_unique_labels()
+        hash_labelmap = set(labelmap)
+
+        tree_noffsets = {}
+        for node in root.iter_search_nodes():
+            if node == root or not node.noffset:
+                continue
+            for s in node.noffset.split(','):
+                tree_noffsets[s] = node.name
+        name_to_targetlabels = {}
+        targetlabel_has_whitelist = set()
+        invalid_list = []
+        any_source_key = 'label_names_in_all_dataset_source'
+        for node in root.iter_search_nodes():
+            if node == root:
+                continue
+            if hasattr(node, self.name) or hasattr(node, any_source_key):
+                if hasattr(node, self.name):
+                    # this is like a white-list
+                    values = node.__getattribute__(self.name)
+                else:
+                    values = node.__getattribute__(any_source_key)
+                if values is not None:
+                    source_terms = values.split(',')
+                    for t in source_terms:
+                        t = t.strip()
+                        if t not in name_to_targetlabels:
+                            name_to_targetlabels[t] = set()
+                        if t not in hash_labelmap:
+                            invalid_list.append((t, self.name, node.name))
+                            continue
+                        name_to_targetlabels[t].add(node.name)
+                # even if it is None, we will also add it to white-list so that
+                # we will not automatically match the term.
+                targetlabel_has_whitelist.add(node.name)
+            else:
+                # we will keep the lower case always for case-insensitive
+                # comparison
+                all_candidate_src_names = [node.name.lower()]
+                if hasattr(node, 'alias_names'):
+                    all_candidate_src_names.extend([s.strip() for s in
+                        node.alias_names.split(',')])
+                for t in set(all_candidate_src_names):
+                    if t not in name_to_targetlabels:
+                        name_to_targetlabels[t] = set()
+                    name_to_targetlabels[t].add(node.name)
+
+        sourcelabel_targetlabel = []
+        if len(invalid_list) != 0:
+            logging.warn('invalid white list information: {}'.format(pformat(invalid_list)))
+
+        #result = {}
+        label_to_synset = LabelToSynset()
+        for l in labelmap:
+            matched = False
+            if l.lower() in name_to_targetlabels:
+                matched = True
+                for t in name_to_targetlabels[l.lower()]:
+                    sourcelabel_targetlabel.append((l, t))
+            if l in name_to_targetlabels:
+                for t in name_to_targetlabels[l]:
+                    sourcelabel_targetlabel.append((l, t))
+                matched = True
+            if not matched:
+                succeed, ns = label_to_synset.convert(l)
+                if not succeed:
+                    continue
+                for n in ns:
+                    n = synset_to_noffset(n)
+                    if n in tree_noffsets:
+                        t = tree_noffsets[n]
+                        if t in targetlabel_has_whitelist:
+                            # if it has white list, we will not respect the
+                            # noffset to do the autmatic matching
+                            continue
+                        sourcelabel_targetlabel.append((l, t))
+                        #result[l] = t
+        if self.use_negative_label:
+            # we just add the mapping here. no need to check if -s is in the
+            # source label list
+            sourcelabel_targetlabel.extend([('-' + s, '-' + t) for s, t in
+                sourcelabel_targetlabel])
+
+        self._sourcelabel_to_targetlabels = list_to_dict_unique(sourcelabel_targetlabel,
+                0)
+        self._targetlabel_to_sourcelabels = list_to_dict_unique(sourcelabel_targetlabel,
+                1)
+
+        return self._sourcelabel_to_targetlabels
+
+    def iter_gt_image(self, split, idx=None, bb_type='with_bb'):
+        split_info = self._split_to_info[split]
+
+        return super(TSVDatasetSourceDB, self).iter_gt_image(split,
+                version=split_info.get('version'),
+                version_by_time=split_info.get('version_by_time'),
+                idx=idx, bb_type=bb_type)
+
+    def select_tsv_rows(self, label_type):
+        self._ensure_initialized()
+        result = []
+        if label_type in self._type_to_split_label_idx:
+            split_label_idx = self._type_to_split_label_idx[label_type]
+            datasetlabel_to_splitidx = list_to_dict(split_label_idx, 1)
+            for datasetlabel in datasetlabel_to_splitidx:
+                if datasetlabel in self._sourcelabel_to_targetlabels:
+                    split_idxes = datasetlabel_to_splitidx[datasetlabel]
+                    targetlabels = self._sourcelabel_to_targetlabels[datasetlabel]
+                    for targetlabel in targetlabels:
+                        result.extend([(targetlabel, split, idx) for split, idx in
+                            split_idxes])
+        # must_have_indices
+        for split_info in self._split_infos:
+            split = split_info['split']
+            must_have_indices = split_info.get('must_have_indices', [])
+            # we set the target label here as None so that the post-processing
+            # will not ignore it. The real labels will also be converted
+            # corrected since we do not depend on this target label only.
+            result.extend((None, split, i) for i in must_have_indices)
+        if self._use_all:
+            split_to_targetlabel_idx = list_to_dict(result, 1)
+            for s in split_to_targetlabel_idx:
+                rootlabel_idxes = split_to_targetlabel_idx[s]
+                idx_to_rootlabel = list_to_dict(rootlabel_idxes, 1)
+                num_image = self._split_to_num_image[s]
+                idxes = set(range(num_image)).difference(set(idx_to_rootlabel.keys()))
+                for i in idxes:
+                    # for these images, the root label is hard-coded as None
+                    result.append((None, s, i))
+            for split_info in self._split_infos:
+                s = split_info['split']
+                if s in split_to_targetlabel_idx:
+                    continue
+                if s not in self._split_to_num_image:
+                    continue
+                result.extend([(None, s, i) for i in
+                    range(self._split_to_num_image[s])])
+        return result
+
+def build_tax_dataset_from_db(taxonomy_folder, **kwargs):
+    random.seed(777)
+    dataset_name = kwargs.get('data',
+            op.basename(taxonomy_folder))
+    overall_dataset = TSVDataset(dataset_name)
+    if op.isfile(overall_dataset.get_labelmap_file()):
+        logging.info('ignore to build taxonomy since {} exists'.format(
+            overall_dataset.get_labelmap_file()))
+        return
+    init_logging()
+    logging.info('building {}'.format(dataset_name))
+    all_tax = load_all_tax(taxonomy_folder)
+    tax = merge_all_tax(all_tax)
+    tax.update()
+    initialize_images_count(tax.root)
+    mapper = LabelToSynset()
+    mapper.populate_noffset(tax.root)
+    imagenet22k = TSVDatasetSource('imagenet22k_448', tax.root)
+    if op.isfile(imagenet22k.get_labelmap_file()):
+        disambibuity_noffsets(tax.root, imagenet22k.load_noffsets())
+    else:
+        logging.info('there is no imagenet22k_448 dataset to help identify the noffset')
+    populate_url_for_offset(tax.root)
+
+    ambigous_noffset_file = op.join(overall_dataset._data_root,
+            'ambigous_noffsets.yaml')
+    output_ambigous_noffsets(tax.root, ambigous_noffset_file)
+
+    data_infos = regularize_data_sources(kwargs['datas'])
+
+    data_sources = [TSVDatasetSourceDB(root=tax.root, **d)
+            for d in data_infos]
+
+    for s in data_sources:
+        s.populate_info(tax.root)
+
+    populate_cum_images(tax.root)
+
+    labels, child_parent_sgs = child_parent_print_tree2(tax.root, 'name')
+
+    label_map_file = overall_dataset.get_labelmap_file()
+    write_to_file('\n'.join(labels), label_map_file)
+    # save the parameter
+    write_to_yaml_file((taxonomy_folder, kwargs), op.join(overall_dataset._data_root,
+            'generate_parameters.yaml'))
+    dest_taxonomy_folder = op.join(overall_dataset._data_root,
+            'taxonomy_folder')
+    if op.isdir(dest_taxonomy_folder):
+        shutil.rmtree(dest_taxonomy_folder)
+    shutil.copytree(taxonomy_folder, dest_taxonomy_folder)
+
+    out_dataset = {'with_bb': TSVDataset(dataset_name + '_with_bb'),
+            'no_bb': TSVDataset(dataset_name + '_no_bb')}
+
+    for label_type in out_dataset:
+        target_file = out_dataset[label_type].get_labelmap_file()
+        ensure_directory(op.dirname(target_file))
+        shutil.copy(label_map_file, target_file)
+
+    logging.info('cum_images_with_bb: {}'.format(tax.root.cum_images_with_bb))
+    logging.info('cum_images_no_bb: {}'.format(tax.root.cum_images_no_bb))
+
+    # write the simplified version of the tree
+    dest = op.join(overall_dataset._data_root, 'root.simple.yaml')
+    write_to_yaml_file(tax.dump(['images_with_bb']), dest)
+
+    tree_file = overall_dataset.get_tree_file()
+    write_to_file('\n'.join(['{} {}{}'.format(c, p, '' if sg < 0 else ' {}'.format(sg))
+                             for c, p, sg in child_parent_sgs]),
+            tree_file)
+    for label_type in out_dataset:
+        target_file = out_dataset[label_type].get_tree_file()
+        ensure_directory(op.dirname(target_file))
+        shutil.copy(tree_file, target_file)
+
+    node_should_have_images(tax.root, 200,
+            op.join(overall_dataset._data_root, 'labels_with_few_images.yaml'))
+
+    # get the information of all train val
+    ldtsi = []
+    logging.info('collecting all candidate images')
+    for label_type in out_dataset:
+        for dataset in data_sources:
+            targetlabel_split_idxes = dataset.select_tsv_rows(label_type)
+            for rootlabel, split, idx in targetlabel_split_idxes:
+                ldtsi.append((rootlabel, dataset, label_type, split, idx))
+    # we need to remove the duplicates. the duplicates could come from such
+    # cases: for example, we have Laptop and laptop in the image. Both of the
+    # labels are mapped to laptop, which is in the target domain. In this case,
+    # the image could be in the list twice
+    ldtsi = list(set(ldtsi))
+
+    num_test = kwargs.get('num_test', 50)
+
+    # for each label, let's duplicate the image or remove the image
+    default_max_image = kwargs.get('max_image_per_label', 1000)
+    label_to_max_image = {n.name: n.__getattribute__('max_image_extract_for_train')
+            if 'max_image_extract_for_train' in n.features and n.__getattribute__('max_image_extract_for_train') > default_max_image
+            else default_max_image for n in tax.root.iter_search_nodes() if n != tax.root}
+    label_to_max_image = {l: max(label_to_max_image[l], num_test) for l in label_to_max_image}
+    # negative images constraint
+    labels = list(label_to_max_image.keys())
+    for l in labels:
+        label_to_max_image['-' + l] = label_to_max_image[l]
+    label_to_max_image[None] = 10000000000
+    min_image = kwargs.get('min_image_per_label', 200)
+
+    logging.info('keep a small image pool to split')
+    label_to_max_augmented_images = {l: label_to_max_image[l] * 3 for l in label_to_max_image}
+    # reduce the computing cost
+    ldtsi, extra_dtsi = remove_or_duplicate(ldtsi, 0,
+            label_to_max_augmented_images)
+    assert len(extra_dtsi) == 0
+
+    logging.info('select the best test image')
+    if num_test == 0:
+        test_ldtsi = []
+    else:
+        # generate the test set from the best data source
+        label_to_max_images_for_test = {l: num_test for l in
+            label_to_max_image}
+        test_ldtsi, extra_dtsi = remove_or_duplicate(ldtsi, 0,
+                label_to_max_images_for_test)
+        assert len(extra_dtsi) == 0
+
+    logging.info('removing test images from image pool')
+    train_ldtsi = remove_test_in_train(ldtsi, test_ldtsi)
+
+    logging.info('select the final training images')
+    train_ldtsi, extra_dtsi = remove_or_duplicate(train_ldtsi, min_image,
+            label_to_max_image)
+
+    logging.info('creating the train data')
+    create_trainX_db(train_ldtsi, extra_dtsi, tax, out_dataset,
+            lift_train=kwargs.get('lift_train', False))
+
+    populate_output_num_images(test_ldtsi, 'toTest', tax.root)
+
+    # dump the tree to yaml format
+    dest = op.join(overall_dataset._data_root, 'root.yaml')
+    d = tax.dump()
+    write_to_yaml_file(d, dest)
+    for label_type in out_dataset:
+        target_file = op.join(out_dataset[label_type]._data_root, 'root.yaml')
+        ensure_directory(op.dirname(target_file))
+        shutil.copy(dest, target_file)
+
+    create_testX(test_ldtsi, tax, out_dataset)
+
+    logging.info('done')
 
 
 def build_taxonomy_impl(taxonomy_folder, **kwargs):
@@ -3893,8 +4493,36 @@ def rect_in_rects(target, rects, iou=0.95):
         return any(r for r in same_class_rects if 'rect' in r and
             calculate_iou(target['rect'], r['rect']) > iou)
 
+def float_tolorance_equal(d1, d2):
+    from past.builtins import basestring
+    if isinstance(d1, basestring) and isinstance(d2, basestring):
+        return d1 == d2
+    if type(d1) in [int, float] and type(d2) in [int, float]:
+        return abs(d1 - d2) <= 0.00001 * abs(d1)
+    if type(d1) != type(d2):
+        return False
+    if type(d1) is dict:
+        if len(d1) != len(d2):
+            return False
+        for k in d1:
+            if k not in d2:
+                return False
+            v1, v2 = d1[k], d2[k]
+            if not float_tolorance_equal(v1, v2):
+                return False
+        return True
+    elif type(d1) in [tuple, list]:
+        if len(d1) != len(d2):
+            return False
+        for x1, x2 in zip(d1, d2):
+            if not float_tolorance_equal(x1, x2):
+                return False
+        return True
+    else:
+        raise Exception('unknown type')
+
 def strict_rect_in_rects(target, rects):
-    return any(target == r for r in rects)
+    return any(float_tolorance_equal(target, r) for r in rects)
 
 def load_key_rects(iter_data):
     result = []
