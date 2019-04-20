@@ -483,11 +483,9 @@ class PhillyVC(object):
             data["NumOfContainers"] = "1"
 
         blob_account  = 'vig'
-        blob_container = 'data'
-        if blob_account == 'vig':
-            blob_key = 'H+fK4IQDUSlUJzOs5GvLiE0U958m4NkvKZpwuxZLcwux86aTrKWDuJ3unhY1wBgiOHBxA1eirp2wbJLydbo22A=='
-        else:
-            raise Exception()
+        cloud_blob = create_cloud_storage(blob_account)
+        blob_container = cloud_blob.container_name
+        blob_key = cloud_blob.account_key
 
         data['volumes'] = {'blob': {'type': 'blobfuseVolume',
             'storageAccount': blob_account,
