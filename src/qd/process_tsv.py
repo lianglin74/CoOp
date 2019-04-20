@@ -74,6 +74,22 @@ from qd.tsv_io import tsv_reader, tsv_writer
 from qd.db import create_mongodb_client
 
 
+def create_tsvdataset_from_image_folder(root_folder, data):
+    from qd.process_image import load_image
+    dataset = TSVDataset(data)
+    def gen_rows():
+        all_full_file_name = [op.join(root, f) for root, dirnames, filenames in os.walk(root_folder)
+            for f in filenames]
+        hash_keys = set()
+        for full_file_name in tqdm(all_full_file_name):
+            im = load_image(full_file_name)
+            if im is not None:
+                key = full_file_name.replace(root_folder, '')
+                assert key not in hash_keys
+                hash_keys.add(key)
+                yield key, json_dump([]), base64.b64encode(read_to_buffer(full_file_name))
+    dataset.write_data(gen_rows(), 'train')
+
 def create_new_image_tsv_if_exif_rotated(data, split):
     dataset = TSVDataset(data)
     key_no_rotate_in_image = 'no_rotate_in_image'
