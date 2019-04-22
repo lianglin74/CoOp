@@ -90,6 +90,9 @@ def analyze_verify_box_task(result_files, result_file_type, outfile_res,
             group['Input.input_content'].iloc[0])
         all_answers = []
         for _, row in group['Answer.output'].iteritems():
+            # the output might be empty (nan) due to UHRS server error
+            if not row or isinstance(row, float):
+                continue
             all_answers.append([int(i) for i in row.split(';')])
         all_answers = np.array(all_answers).T
         assert(len(input_tasks) == len(all_answers))
@@ -237,6 +240,9 @@ def analyze_worker_quality(df_records, worker_quality_file=None, min_num_hp=5,
         num_correct_hp = 0
         hp_history = []
         for idx, row in group.iterrows():
+            # some answer columns are empty due to UHRS server error
+            if not row['Answer.output'] or row.isnull().values.any():
+                continue
             answer_list = row['Answer.output'].split(';')
             input_list = load_escaped_json(row['Input.input_content'])
             if len(answer_list) != len(input_list):
