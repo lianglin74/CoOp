@@ -31,6 +31,7 @@ from deprecated import deprecated
 from datetime import datetime
 from pprint import pformat
 from StringIO import StringIO
+from future.utils import viewitems
 from qd.cloud_storage import CloudStorage
 from qd.process_image import draw_bb, show_image, save_image
 from qd.process_image import show_images
@@ -51,6 +52,7 @@ from qd.qd_common import worth_create
 from qd.qd_common import write_to_file
 from qd.qd_common import write_to_yaml_file, load_from_yaml_file
 from qd.qd_common import float_tolorance_equal
+from qd.qd_common import is_positive_uhrs_verified, is_negative_uhrs_verified
 from qd.taxonomy import child_parent_print_tree2
 from qd.taxonomy import create_markdown_url
 from qd.taxonomy import disambibuity_noffsets
@@ -71,7 +73,9 @@ from qd.tsv_io import get_meta_file
 from qd.tsv_io import load_labels
 from qd.tsv_io import TSVDataset, TSVFile
 from qd.tsv_io import tsv_reader, tsv_writer
+from qd.tsv_io import is_verified_rect
 from qd.db import create_mongodb_client
+from qd.db import create_bbverification_db
 
 
 def find_best_matched_rect_idx(target, rects, check_class=True):
@@ -387,8 +391,6 @@ def ensure_upload_image_to_blob(data, split):
 
 @ensure_inject_decorate
 def ensure_inject_image(data, split):
-    from pymongo.errors import BulkWriteError
-
     dataset = TSVDataset(data)
     if not dataset.has(split):
         return
@@ -403,9 +405,6 @@ def ensure_inject_image(data, split):
         ('key', pymongo.ASCENDING),
         ],
         unique=True)
-    from StringIO import StringIO
-    from process_tsv import ImageTypeParser
-    from cloud_storage import CloudStorage
     all_data = []
 
     logging.info('injecting {} - {}'.format(data, split))
@@ -457,8 +456,6 @@ def update_pred_with_correctness(test_data, test_split,
         predict_file):
     client = create_mongodb_client()
     db = client['qd']
-    pred_collection = db['predict_result']
-    _gt = db['ground_truth']
     _pred = db['predict_result']
 
     # get the latest version of the gt
@@ -1407,7 +1404,6 @@ def detect_duplicate_key(tsv, duplicate_tsv):
             key_to_idx[key].append(i)
         else:
             key_to_idx[key] = [i]
-    found_error = False
     def gen_rows():
         for key in key_to_idx:
             idxs = key_to_idx[key]
@@ -1689,7 +1685,7 @@ def populate_dataset_details(data, check_image_details=False,
         label_tsv = dataset.get_data(split, 'label')
         duplicate_tsv = dataset.get_data(split, 'key_duplicate')
         if op.isfile(label_tsv) and not op.isfile(duplicate_tsv):
-            num_duplicate = detect_duplicate_key(label_tsv, duplicate_tsv)
+            detect_duplicate_key(label_tsv, duplicate_tsv)
 
     # generate lineidx if it is not generated
     for split in splits:
@@ -1833,7 +1829,6 @@ def add_node_to_ancestors(dataset):
             tax.name_to_ancestors_list], out_file)
 
 def populate_num_images_composite(dataset):
-    data = dataset.name
     data_with_bb = dataset.name + '_with_bb'
     data_no_bb = dataset.name + '_no_bb'
     datas = [data_with_bb, data_no_bb]
@@ -1900,7 +1895,6 @@ def create_index_composite_dataset(dataset):
 
     # for each data source, how many labels are contributed and how many are
     # not
-    source_dataset_names = [op.basename(op.dirname(t)) for t in source_tsvs]
     source_tsv_label_files = load_list_file(dataset.get_data(splitx,
         'origin.label'))
     source_tsv_labels = [TSVFile(t) for t in source_tsv_label_files]
@@ -4780,6 +4774,188 @@ def get_taxonomy_path(data):
     assert result is not None
     major, minor, revision = result.groups()
     return './aux_data/taxonomy10k/Tax{0}/Tax{0}V{1}'.format(major, minor)
+
+def uhrs_verify_db_merge_to_tsv(collection_name='uhrs_logo_verification'):
+    set_interpretation_result_for_uhrs_result(collection_name)
+    c = create_bbverification_db(collection_name=collection_name)
+    data_split_to_key_rects, all_id = c.get_completed_uhrs_result()
+    merge_uhrs_result_to_dataset(data_split_to_key_rects)
+    c.set_status_as_merged(all_id)
+
+def uhrs_merge_one(uhrs_rect, target_rects):
+    info = {'num_added': 0,
+            'num_removed': 0,
+            'verified_confirmed': 0,
+            'verified_removed': 0,
+            'non_verified_confirmed': 0,
+            'non_verified_removed': 0}
+    same_rect, iou = find_best_matched_rect(uhrs_rect, target_rects)
+    if iou < 0.8:
+        if is_positive_uhrs_verified(uhrs_rect):
+            target_rects.append(uhrs_rect)
+            info['num_added'] = 1
+        return info
+
+    if is_verified_rect(same_rect):
+        if is_positive_uhrs_verified(uhrs_rect):
+            info['verified_confirmed'] = 1
+        elif is_negative_uhrs_verified(uhrs_rect):
+            info['verified_removed'] = 1
+            target_rects.remove(same_rect)
+    else:
+        if is_positive_uhrs_verified(uhrs_rect):
+            info['non_verified_confirmed'] = 1
+        elif is_negative_uhrs_verified(uhrs_rect):
+            info['non_verified_removed'] = 1
+            target_rects.remove(same_rect)
+
+    same_rect['uhrs'] = {}
+    for t, v in viewitems(uhrs_rect['uhrs']):
+        same_rect['uhrs'][t] = v
+
+    return info
+
+def merge_uhrs_result_to_dataset(data_split_to_key_rects):
+    from qd.qd_common import list_to_dict
+    from qd.qd_common import json_dump
+    for (data, split), uhrs_key_rects in viewitems(data_split_to_key_rects):
+        logging.info((data, split))
+        dataset = TSVDataset(data)
+        uhrs_key_to_rects = list_to_dict(uhrs_key_rects, 0)
+        logging.info('number of image will be affected: {}'.format(len(uhrs_key_rects)))
+        info = {}
+        def gen_rows():
+            for key, str_rects in dataset.iter_data(split, 'label', -1,
+                    progress=True):
+                rects = json.loads(str_rects)
+                if key in uhrs_key_to_rects:
+                    uhrs_rects = uhrs_key_to_rects[key]
+                    del uhrs_key_to_rects[key]
+                else:
+                    uhrs_rects = []
+                for uhrs_rect in uhrs_rects:
+                    sub_info = uhrs_merge_one(uhrs_rect, rects)
+                    for k, v in viewitems(sub_info):
+                        info[k] = v + info.get(k, 0)
+                yield key, json_dump(rects)
+            assert len(uhrs_key_to_rects) == 0
+        def generate_info():
+            for k, v in viewitems(info):
+                yield k, v
+            for key, rects in viewitems(uhrs_key_to_rects):
+                yield key, json_dump(rects)
+        dataset.update_data(gen_rows(), split, 'label',
+                generate_info=generate_info())
+
+def set_interpretation_result_for_uhrs_result(collection_name='uhrs_logo_verification'):
+    c = create_bbverification_db(collection_name)
+    query = {'status': c.status_completed,
+            'interpretation_result': None}
+    positive_ids, negative_ids, uncertain_ids = [], [], []
+    for rect_info in tqdm(c.collection.find(query)):
+        rect = rect_info['rect']
+        rect.update({'uhrs': rect_info['uhrs_completed_result']})
+        if is_positive_uhrs_verified(rect):
+            positive_ids.append(rect_info['_id'])
+        elif is_negative_uhrs_verified(rect):
+            negative_ids.append(rect_info['_id'])
+        else:
+            uncertain_ids.append(rect_info['_id'])
+
+    logging.info('num pos ids = {}'.format(len(positive_ids)))
+    logging.info('num neg ids = {}'.format(len(negative_ids)))
+    logging.info('num uncertain ids = {}'.format(len(uncertain_ids)))
+
+    query = {'_id': {'$in': positive_ids}}
+    c.collection.update_many(filter=query,
+            update={'$set': {'interpretation_result': 1}})
+
+    query = {'_id': {'$in': negative_ids}}
+    c.collection.update_many(filter=query,
+            update={'$set': {'interpretation_result': -1}})
+
+    query = {'_id': {'$in': uncertain_ids}}
+    c.collection.update_many(filter=query,
+            update={'$set': {'interpretation_result': 0}})
+
+def uhrs_verify_db_closest_rect(collection, test_data, test_split, gt_key, p):
+    rect_infos = list(collection.find({'data': test_data,
+        'split': test_split,
+        'key': gt_key}))
+    rects = [rect_info['rect'] for rect_info in rect_infos]
+    best_idx, best_iou = find_best_matched_rect_idx(p, rects, check_class=True)
+
+    if best_idx is not None:
+        rect_info = rect_infos[best_idx]
+    else:
+        rect_info = None
+
+    return rect_info, best_iou
+
+
+def verify_prediction_by_db(pred_file, test_data, test_split, conf_th=0.3,
+        priority_tier=0):
+    from qd.process_tsv import ensure_upload_image_to_blob
+    from qd.process_tsv import parse_combine
+    ensure_upload_image_to_blob(test_data, test_split)
+
+    dataset = TSVDataset(test_data)
+    gt_iter = dataset.iter_data(test_split, 'label', version=-1)
+    pred_iter = tsv_reader(pred_file)
+    key_url_iter = dataset.iter_data(test_split, 'key.url')
+
+    db_task = []
+    num_task, num_exists, num_matched_gt, num_change_pri = 0, 0, 0, 0
+    c = create_bbverification_db()
+    for gt_row, pred_row, url_row in tqdm(zip(gt_iter, pred_iter,
+        key_url_iter)):
+        gt_key, gt_str_rects = gt_row
+        pred_key, pred_str_rects = pred_row
+        assert gt_key == pred_key == url_row[0]
+        source_data, source_split, source_key = parse_combine(gt_key)
+        if source_data is None and source_split is None:
+            source_data = test_data
+            source_split = test_split
+        gt_rects = json.loads(gt_str_rects)
+        pred_rects = json.loads(pred_str_rects)
+        for p in pred_rects:
+            if p['conf'] < conf_th:
+                continue
+            # check with the gt
+            _, best_iou = find_best_matched_rect(p, gt_rects)
+            if best_iou > 0.7:
+                num_matched_gt = 0
+                continue
+            best_rect_info, best_iou = uhrs_verify_db_closest_rect(c.collection, source_data,
+                    source_split, source_key, p)
+            if best_iou > 0.95:
+                num_exists = num_exists + 1
+                if best_rect_info['priority_tier'] != c.urgent_priority_tier and \
+                        best_rect_info['status'] == c.status_requested:
+                    c.collection.update_one(
+                            {'_id': best_rect_info['_id']},
+                            update={'$set': {'priority_tier': c.urgent_priority_tier}})
+                    num_change_pri = num_change_pri + 1
+                continue
+            p['from'] = pred_file
+            url = url_row[1]
+            task = {'url': url,
+                'data': source_data,
+                'split': source_split,
+                'key': source_key,
+                'rect': p,
+                'priority_tier': priority_tier,
+                'priority': 0.5}
+            num_task = num_task + 1
+            db_task.append(task)
+            if len(db_task) > 1000:
+                c.request_by_insert(db_task)
+                db_task = []
+    if len(db_task) > 0:
+        c.request_by_insert(db_task)
+        db_task = []
+    logging.info('#task = {}; #exists in db = {}; #matched gt = {}; #num pri change = {}'.format(
+        num_task, num_exists, num_matched_gt, num_change_pri))
 
 def process_tsv_main(**kwargs):
     if kwargs['type'] == 'gen_tsv':

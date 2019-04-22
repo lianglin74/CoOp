@@ -41,6 +41,16 @@ except ImportError:
     from urllib2 import HTTPError
 
 
+def is_positive_uhrs_verified(r):
+    uhrs = r['uhrs']
+    y, n = uhrs.get('1', 0), uhrs.get('2', 0)
+    return y > n
+
+def is_negative_uhrs_verified(r):
+    uhrs = r['uhrs']
+    y, n = uhrs.get('1', 0), uhrs.get('2', 0)
+    return n > y
+
 def float_tolorance_equal(d1, d2):
     from past.builtins import basestring
     if isinstance(d1, basestring) and isinstance(d2, basestring):
