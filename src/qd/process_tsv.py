@@ -74,6 +74,18 @@ from qd.tsv_io import tsv_reader, tsv_writer
 from qd.db import create_mongodb_client
 
 
+def find_best_matched_rect(target, rects, check_class=True):
+    target_class_lower = target['class'].lower()
+    if check_class:
+        same_class_rects = [r for r in rects if r['class'].lower() == target_class_lower]
+    else:
+        same_class_rects = rects
+    rect_ious = [(r, calculate_iou(r['rect'], target['rect']))
+        for r in same_class_rects]
+    if len(rect_ious) == 0:
+        return None, -1
+    return max(rect_ious, key=lambda r: r[-1])
+
 def create_tsvdataset_from_image_folder(root_folder, data):
     from qd.process_image import load_image
     dataset = TSVDataset(data)
