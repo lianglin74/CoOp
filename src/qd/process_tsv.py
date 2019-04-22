@@ -4892,9 +4892,8 @@ def uhrs_verify_db_closest_rect(collection, test_data, test_split, gt_key, p):
 
     return rect_info, best_iou
 
-
 def verify_prediction_by_db(pred_file, test_data, test_split, conf_th=0.3,
-        priority_tier=0):
+        priority_tier=1):
     from qd.process_tsv import ensure_upload_image_to_blob
     from qd.process_tsv import parse_combine
     ensure_upload_image_to_blob(test_data, test_split)
