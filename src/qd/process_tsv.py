@@ -74,6 +74,18 @@ from qd.tsv_io import tsv_reader, tsv_writer
 from qd.db import create_mongodb_client
 
 
+def find_best_matched_rect_idx(target, rects, check_class=True):
+    target_class_lower = target['class'].lower()
+    if check_class:
+        same_class_rects = [r for r in rects if r['class'].lower() == target_class_lower]
+    else:
+        same_class_rects = rects
+    idx_ious = [(i, calculate_iou(r['rect'], target['rect']))
+        for i, r in enumerate(same_class_rects)]
+    if len(idx_ious) == 0:
+        return None, -1
+    return max(idx_ious, key=lambda r: r[-1])
+
 def find_best_matched_rect(target, rects, check_class=True):
     target_class_lower = target['class'].lower()
     if check_class:

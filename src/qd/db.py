@@ -11,6 +11,10 @@ import logging
 from tqdm import tqdm
 from future.utils import viewitems
 from qd.tsv_io import is_verified_rect
+from qd.tsv_io import TSVDataset
+from qd.tsv_io import tsv_reader
+from qd.process_tsv import find_best_matched_rect, find_best_matched_rect_idx
+import simplejson as json
 
 def is_positive_uhrs_verified(r):
     uhrs = r['uhrs']
@@ -290,7 +294,6 @@ def uhrs_merge_one(uhrs_rect, target_rects):
             'verified_removed': 0,
             'non_verified_confirmed': 0,
             'non_verified_removed': 0}
-    from qd.process_tsv import find_best_matched_rect
     same_rect, iou = find_best_matched_rect(uhrs_rect, target_rects)
     if iou < 0.8:
         if is_positive_uhrs_verified(uhrs_rect):
@@ -318,9 +321,7 @@ def uhrs_merge_one(uhrs_rect, target_rects):
     return info
 
 def merge_uhrs_result_to_dataset(data_split_to_key_rects):
-    from qd.tsv_io import TSVDataset
     from qd.qd_common import list_to_dict
-    import simplejson as json
     from qd.qd_common import json_dump
     for (data, split), uhrs_key_rects in viewitems(data_split_to_key_rects):
         logging.info((data, split))
@@ -383,3 +384,81 @@ def set_interpretation_result_for_uhrs_result(collection_name='uhrs_logo_verific
     c.collection.update_many(filter=query,
             update={'$set': {'interpretation_result': 0}})
 
+def uhrs_verify_db_closest_rect(collection, test_data, test_split, gt_key, p):
+    rect_infos = list(collection.find({'data': test_data,
+        'split': test_split,
+        'key': gt_key}))
+    rects = [rect_info['rect'] for rect_info in rect_infos]
+    best_idx, best_iou = find_best_matched_rect_idx(p, rects, check_class=True)
+
+    if best_idx is not None:
+        rect_info = rect_infos[best_idx]
+    else:
+        rect_info = None
+
+    return rect_info, best_iou
+
+
+def verify_prediction_by_db(pred_file, test_data, test_split, conf_th=0.3,
+        priority_tier=0):
+    from qd.process_tsv import ensure_upload_image_to_blob
+    from qd.process_tsv import parse_combine
+    ensure_upload_image_to_blob(test_data, test_split)
+
+    dataset = TSVDataset(test_data)
+    gt_iter = dataset.iter_data(test_split, 'label', version=-1)
+    pred_iter = tsv_reader(pred_file)
+    key_url_iter = dataset.iter_data(test_split, 'key.url')
+
+    db_task = []
+    num_task, num_exists, num_matched_gt, num_change_pri = 0, 0, 0, 0
+    c = create_bbverification_db()
+    for gt_row, pred_row, url_row in tqdm(zip(gt_iter, pred_iter,
+        key_url_iter)):
+        gt_key, gt_str_rects = gt_row
+        pred_key, pred_str_rects = pred_row
+        assert gt_key == pred_key == url_row[0]
+        source_data, source_split, source_key = parse_combine(gt_key)
+        if source_data is None and source_split is None:
+            source_data = test_data
+            source_split = test_split
+        gt_rects = json.loads(gt_str_rects)
+        pred_rects = json.loads(pred_str_rects)
+        for p in pred_rects:
+            if p['conf'] < conf_th:
+                continue
+            # check with the gt
+            _, best_iou = find_best_matched_rect(p, gt_rects)
+            if best_iou > 0.7:
+                num_matched_gt = 0
+                continue
+            best_rect_info, best_iou = uhrs_verify_db_closest_rect(c.collection, source_data,
+                    source_split, source_key, p)
+            if best_iou > 0.95:
+                num_exists = num_exists + 1
+                if best_rect_info['priority_tier'] != c.urgent_priority_tier and \
+                        best_rect_info['status'] == c.status_requested:
+                    c.collection.update_one(
+                            {'_id': best_rect_info['_id']},
+                            update={'$set': {'priority_tier': c.urgent_priority_tier}})
+                    num_change_pri = num_change_pri + 1
+                continue
+            p['from'] = pred_file
+            url = url_row[1]
+            task = {'url': url,
+                'data': source_data,
+                'split': source_split,
+                'key': source_key,
+                'rect': p,
+                'priority_tier': priority_tier,
+                'priority': 0.5}
+            num_task = num_task + 1
+            db_task.append(task)
+            if len(db_task) > 1000:
+                c.request_by_insert(db_task)
+                db_task = []
+    if len(db_task) > 0:
+        c.request_by_insert(db_task)
+        db_task = []
+    logging.info('#task = {}; #exists in db = {}; #matched gt = {}; #num pri change = {}'.format(
+        num_task, num_exists, num_matched_gt, num_change_pri))
