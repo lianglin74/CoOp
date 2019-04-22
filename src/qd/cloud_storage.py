@@ -223,3 +223,13 @@ class CloudStorage(object):
         return self.block_blob_service.exists(
                 self.container_name, path)
 
+if __name__ == '__main__':
+    from qd.qd_common import init_logging
+    from pprint import pformat
+    from qd.qd_common import parse_general_args
+    init_logging()
+    kwargs = parse_general_args()
+    logging.info('param:\n{}'.format(pformat(kwargs)))
+    function_name = kwargs['type']
+    del kwargs['type']
+    locals()[function_name](**kwargs)
