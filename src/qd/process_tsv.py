@@ -4893,7 +4893,7 @@ def uhrs_verify_db_closest_rect(collection, test_data, test_split, gt_key, p):
     return rect_info, best_iou
 
 def verify_prediction_by_db(pred_file, test_data, test_split, conf_th=0.3,
-        priority_tier=1):
+        priority_tier=1, collection_name='uhrs_bounding_box_verification'):
     from qd.process_tsv import ensure_upload_image_to_blob
     from qd.process_tsv import parse_combine
     ensure_upload_image_to_blob(test_data, test_split)
@@ -4905,7 +4905,7 @@ def verify_prediction_by_db(pred_file, test_data, test_split, conf_th=0.3,
 
     db_task = []
     num_task, num_exists, num_matched_gt, num_change_pri = 0, 0, 0, 0
-    c = create_bbverification_db()
+    c = create_bbverification_db(collection_name)
     for gt_row, pred_row, url_row in tqdm(zip(gt_iter, pred_iter,
         key_url_iter)):
         gt_key, gt_str_rects = gt_row
