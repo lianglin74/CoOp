@@ -169,15 +169,17 @@
 
                             placed_positions[[Math.floor(text_x), Math.floor(text_y)]] = 'x'
 
-                            ctx.fillStyle = bk_color_format;
-                            ctx.fillRect(text_x, text_y - 14 + shift_y, ctx.measureText(label).width, 20)
+                            if (showlabel==true)
+                            {
+                                ctx.fillStyle = bk_color_format;
+                                ctx.fillRect(text_x, text_y - 14 + shift_y, ctx.measureText(label).width, 20)
 
-                            ctx.fillStyle = color_format;
-                            ctx.fillText(label, text_x, text_y + shift_y);
+                                ctx.fillStyle = color_format;
+                                ctx.fillText(label, text_x, text_y + shift_y);
+                            }
                         //}
 
                         ctx.strokeStyle = color_format;
-
                         ctx.lineWidth = 2;
                         
 
@@ -430,6 +432,8 @@
     <div id="label_checks">
         <input type="checkbox" onclick="onClickAllCheckbox()"></input>
         <label>Select/Unselect All</label>
+        <input type="checkbox" onclick="onClickShowlabel()"></input>
+        <label>Show/Hide label</label>
         <table id="type_table">
         </table>
         <table id="label_table">
@@ -484,6 +488,13 @@
             }
             onClick_abstraction()
         }
+
+        var showlabel = false        
+        function onClickShowlabel(){
+            showlabel = !showlabel
+            onClick_abstraction()
+        }
+
     </script>
 
     <script>
@@ -521,7 +532,6 @@
             }
             // document.write("two");
         }
-
 
         // Four images side by side
         function four() {
