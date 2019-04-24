@@ -16,6 +16,13 @@ def create_mongodb_client():
     return MongoClient(host)
 
 def create_bbverification_db(db_name='qd', collection_name='uhrs_bounding_box_verification'):
+    '''
+    use create_bbverificationdb_client since the naming is not precise
+    '''
+    return BoundingBoxVerificationDB(db_name, collection_name)
+
+def create_bbverificationdb_client(db_name='qd',
+        collection_name='uhrs_bounding_box_verification'):
     return BoundingBoxVerificationDB(db_name, collection_name)
 
 def objectid_to_str(result):
@@ -29,6 +36,12 @@ def ensure_objectid(result):
     for r in result:
         if type(r['_id']) is str:
             r['_id'] = ObjectId(r['_id'])
+
+def ensure_to_objectid(r):
+    if type(r) is str:
+        return ObjectId(r)
+    else:
+        return r
 
 class AnnotationDB(object):
     '''
@@ -99,6 +112,39 @@ class BoundingBoxVerificationDB(object):
         result = self.collection.aggregate(pipeline, allowDiskUse=True)
         return list(result)
 
+    def query_verified_correct_rects(self, data, split, key):
+        pipeline = [{'$match': {'data': data,
+                                'split': split,
+                                'key': key,
+                                'interpretation_result': 1,
+                                'status': {'$in': [self.status_completed,
+                                                   self.status_merged]}}},
+                    ]
+        return [info['rect'] for info in self.query_by_pipeline(pipeline)]
+
+    def query_verified_incorrect_rects(self, data, split, key):
+        pipeline = [{'$match': {'data': data,
+                                'split': split,
+                                'key': key,
+                                'interpretation_result': {'$ne': 1},
+                                'status': {'$in': [self.status_completed,
+                                                   self.status_merged]}}},
+                    ]
+        return [info['rect'] for info in self.query_by_pipeline(pipeline)]
+
+    def query_nonverified_rects(self, data, split, key):
+        pipeline = [{'$match': {'data': data,
+                                'split': split,
+                                'key': key,
+                                'status': {'$nin': [self.status_completed,
+                                                   self.status_merged]}}},
+                    ]
+        result = []
+        for info in self.query_by_pipeline(pipeline):
+            info['rect']['_id'] = str(info['_id'])
+            result.append(info['rect'])
+        return result
+
     def request_by_insert(self, all_box_task):
         def get_bb_task_id(rect_info):
             from .qd_common import hash_sha1
@@ -137,6 +183,11 @@ class BoundingBoxVerificationDB(object):
         self.update_status([r['_id'] for r in result],
                 self.status_retrieved)
         return objectid_to_str(result)
+
+    def update_priority_tier(self, all_id, new_priority_tier):
+        all_id = [ensure_to_objectid(i) for i in all_id]
+        self.collection.update_many({'_id': {'$in': all_id}},
+                                    {'$set': {'priority_tier': new_priority_tier}})
 
     def update_status(self, all_id, new_status, allowed_original_statuses=None):
         all_id = list(set(all_id))
@@ -197,10 +248,14 @@ class BoundingBoxVerificationDB(object):
         self.update_status(all_id, self.status_merged,
                 allowed_original_statuses=[self.status_completed])
 
-    def get_completed_uhrs_result(self):
+    def get_completed_uhrs_result(self, extra_match=None):
         merge_multiple_verification = False # True if we submit one rect multiple times, not tested
+        match_criteria = {'status': self.status_completed}
+        if extra_match:
+            match_criteria.update(extra_match)
+
         pipeline = [
-                {'$match': {'status': self.status_completed}},
+                {'$match': match_criteria},
                 ]
 
         if merge_multiple_verification:

@@ -97,7 +97,6 @@ def yolo_predict(**iparam):
     param['load_parameter'] = True
 
     set_if_not_exist(param, 'class_specific_nms', False)
-    set_if_not_exist(param, 'test_input_sizes', [416])
 
     logging.info(pformat(param))
     c = CaffeWrapper(**param)

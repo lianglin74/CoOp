@@ -4775,10 +4775,12 @@ def get_taxonomy_path(data):
     major, minor, revision = result.groups()
     return './aux_data/taxonomy10k/Tax{0}/Tax{0}V{1}'.format(major, minor)
 
-def uhrs_verify_db_merge_to_tsv(collection_name='uhrs_logo_verification'):
+def uhrs_verify_db_merge_to_tsv(collection_name='uhrs_logo_verification',
+        extra_match=None):
     set_interpretation_result_for_uhrs_result(collection_name)
     c = create_bbverification_db(collection_name=collection_name)
-    data_split_to_key_rects, all_id = c.get_completed_uhrs_result()
+    data_split_to_key_rects, all_id = c.get_completed_uhrs_result(
+            extra_match=extra_match)
     merge_uhrs_result_to_dataset(data_split_to_key_rects)
     c.set_status_as_merged(all_id)
 
