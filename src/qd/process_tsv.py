@@ -4905,7 +4905,7 @@ def verify_prediction_by_db(pred_file, test_data, test_split, conf_th=0.3,
 
     db_task = []
     num_task, num_exists, num_matched_gt, num_change_pri = 0, 0, 0, 0
-    c = create_bbverification_db(collection_name)
+    c = create_bbverification_db(collection_name=collection_name)
     for gt_row, pred_row, url_row in tqdm(zip(gt_iter, pred_iter,
         key_url_iter)):
         gt_key, gt_str_rects = gt_row
