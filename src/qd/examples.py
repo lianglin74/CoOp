@@ -1,13 +1,14 @@
 from qd.qd_common import init_logging
 from future.utils import viewitems
 from qd.qd_common import hash_sha1
+from collections import OrderedDict
 import copy
 
 
 # you can all all the functions prefixed with test_ without any input
 # parameter
 def update_parameters(param):
-    default_param = {'data': 'voc20',
+    default_param = {
             'max_iter': 10000,
             'effective_batch_size': 64}
 
@@ -25,15 +26,16 @@ def update_parameters(param):
         if k in param:
             infos.append('{}{}'.format(k, hash_sha1(param[k])[:5]))
 
-    direct_add_value_keys = {'effective_batch_size': 'BS',
+    direct_add_value_keys = OrderedDict({'effective_batch_size': 'BS',
             'max_iter': 'MaxIter',
             'max_epoch': 'MaxEpoch',
-            'num_extra_convs': 'ExtraConv'}
+            'last_fixed_param': 'LastFixed',
+            'num_extra_convs': 'ExtraConv'})
     for k, v in viewitems(direct_add_value_keys):
         if k in param:
             infos.append('{}{}'.format(v, param[k]))
 
-    true_false_keys = {'use_treestructure': ('Tree', None)}
+    true_false_keys = OrderedDict({'use_treestructure': ('Tree', None)})
     for k in true_false_keys:
         if k in param:
             if param[k] and true_false_keys[k][0]:
