@@ -1,8 +1,8 @@
 import numpy as np
 import cv2
 import os
-from qd_common import ensure_directory
-from qd_common import network_input_to_image
+from qd.qd_common import ensure_directory
+from qd.qd_common import network_input_to_image
 import matplotlib.pyplot as plt
 from random import random
 import logging

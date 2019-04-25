@@ -30,7 +30,10 @@ from deprecated import deprecated
 
 from datetime import datetime
 from pprint import pformat
-from StringIO import StringIO
+try:
+    from StringIO import StringIO
+except ImportError:
+    from io import StringIO
 from future.utils import viewitems
 from qd.cloud_storage import CloudStorage
 from qd.process_image import draw_bb, show_image, save_image
