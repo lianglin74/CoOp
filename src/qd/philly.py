@@ -297,6 +297,10 @@ class PhillyVC(object):
         self.src_config_path = 'src/qd/philly/config.py'
         self.dest_config_folder = '{}/code'.format(self.user_name)
 
+        self.blob_mount_point = kwargs['blob_mount_point']
+        self.config_param = kwargs['config_param']
+        self.docker = kwargs['docker']
+
     def sync_code(self, random_id):
         random_run = 'run{}.py'.format(random_id)
         self.random_id = random_id
@@ -440,10 +444,16 @@ class PhillyVC(object):
         else:
             registry = 'phillyregistry.azurecr.io'
             submit_url = 'https://philly/api/v2/submit'
-        #tag = 'v1.0'
-        #tag = 'py36pt1'
-        tag = 'py27pt1'
-        #tag = 'py3pt3'
+        tag = self.docker['tag']
+        assert len(extraParam) > 0
+        dict_param = {
+                'code_path': self.config_param['code_path'],
+                'data_folder': self.config_param['data_folder'],
+                'model_folder': self.config_param['model_folder'],
+                'output_folder': self.config_param['output_folder'],
+                'command': extraParam}
+        from qd.qd_common import dump_to_yaml_str
+        extraParam = base64.b64encode(dump_to_yaml_str(dict_param))
         data = {
             "ClusterId": cluster,
             "VcId": vc,
@@ -468,7 +478,7 @@ class PhillyVC(object):
             "IsMemCheck": False,
             "IsCrossRack": False,
             "Registry": registry,
-            "Repository": "philly/jobs/test/vig-qd-env",
+            "Repository": self.docker['image'],
             "Tag": tag,
             "CustomMPIArgs":None,
             "Timeout":None,
@@ -490,7 +500,7 @@ class PhillyVC(object):
         data['volumes'] = {'blob': {'type': 'blobfuseVolume',
             'storageAccount': blob_account,
             'containerName': blob_container,
-            'path': '/blob',
+            'path': self.blob_mount_point,
             }}
         data['credentials'] = {'storageAccounts': {blob_account: {
             '_comments': 'redentials for accessing the storage account.',
@@ -511,7 +521,6 @@ class PhillyVC(object):
         result_str = cmd_run(cmd, return_output=True)
 
         return result_str
-
 
     def submit_without_sync(self, extraParam, **submit_param):
         if 'isDebug' not in submit_param:

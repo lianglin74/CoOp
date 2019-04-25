@@ -5,9 +5,8 @@ import logging
 import zipfile
 import subprocess as sp
 import os.path as op
-import torch.distributed as dist
-import time
-import torch
+import base64
+import yaml
 
 def load_list_file(fname):
     with open(fname, 'r') as fp:
@@ -85,12 +84,8 @@ def releaseLock(locked_file_descriptor):
     ''' release exclusive lock file access '''
     locked_file_descriptor.close()
 
-def wrap_all(code_zip,
-        code_root,
-        input_folder,
-        command,
-        output_folder):
-
+def wrap_all(code_zip, code_root,
+        data_folder, model_folder, output_folder, command):
     lock_fd = acquireLock()
     if not op.isdir(code_root):
         cmd_run(['grep', 'Port', '/etc/ssh/sshd_config'])
@@ -107,25 +102,27 @@ def wrap_all(code_zip,
         cmd_run(['rm', 'models'], code_root)
         cmd_run(['rm', 'output'], code_root)
         cmd_run(['ln', '-s',
-            op.join(input_folder, 'data', 'qd_data'),
+            data_folder,
             op.join(code_root, 'data')])
         cmd_run(['ln',
             '-s',
-            op.join(input_folder, 'work', 'qd_models'),
+            model_folder,
             op.join(code_root, 'models')
             ])
-        qd_output = op.join(input_folder, 'work', 'qd_output')
 
-        cmd_run(['mkdir', '-p', qd_output])
+        cmd_run(['mkdir', '-p', output_folder])
 
         cmd_run(['sudo', 'chmod', 'a+rw',
-            qd_output], succeed=False)
+            output_folder], succeed=False)
 
-        cmd_run(['ln', '-s', qd_output, op.join(code_root, 'output')])
+        cmd_run(['ln', '-s', output_folder, op.join(code_root, 'output')])
 
         # compile the source code
         compile_qd(code_root)
     releaseLock(lock_fd)
+
+    if type(command) is str:
+        command = list(command.split(' '))
 
     if len(command) > 0:
         cmd_run(command, working_directory=code_root)
@@ -144,17 +141,14 @@ def link_nltk():
     if op.isdir(nltk_folder):
         os.symlink(nltk_folder, op.expanduser('~/nltk_data'))
 
+def load_from_yaml_str(s):
+    return yaml.load(s)
+
 def run_in_philly():
-    '''
-    extra_params: command
-    '''
+    extra_param = sys.argv[4]
+    dict_param = load_from_yaml_str(base64.b64decode(extra_param))
+
     logging.info('start')
-    _, input_folder, log_folder, model_folder = sys.argv[:4]
-    extra_params = sys.argv[4:]
-    logging.info("input data = {}".format(input_folder))
-    logging.info('log folder = {}'.format(log_folder))
-    logging.info('model folder = {}'.format(model_folder))
-    logging.info('extra param = {}'.format(' '.join(extra_params)))
 
     for k in os.environ:
         logging.info('{} = {}'.format(k, os.environ[k]))
@@ -165,43 +159,19 @@ def run_in_philly():
     update_ssh()
     link_nltk()
 
-    if len(extra_params) > 0 and extra_params[0].startswith('quickdetection'):
-        qd_zip = op.join(input_folder, 'code',
-                '{}.zip'.format(extra_params[0]))
-        command = extra_params[1:]
-    else:
-        qd_zip = op.join(input_folder, 'code', 'quickdetection.zip')
-        command = extra_params
-
-    wrap_all(qd_zip,
-            qd_root,
-            input_folder,
-            command,
-            model_folder)
+    wrap_all(dict_param['code_path'], qd_root,
+            dict_param['data_folder'], dict_param['model_folder'],
+            dict_param['output_folder'], dict_param['command'])
 
     # the permission should be changed because the output is there, but the
     # permission is for the docker job only and teh philly-fs cannot delete or
     # change it
     if get_mpi_rank():
         cmd_run(['sudo', 'chmod', '777',
-            op.join(input_folder, 'work', 'qd_output'),
+            dict_param['output_folder'],
             '-R'], succeed=False)
-
-def run_in_local():
-    qd_zip = 'quickdetection.zip'
-    qd_root = op.expanduser('~/code/tmp')
-    input_folder = op.expanduser('~')
-    output_folder = op.expanduser('~/tmp')
-
-    wrap_all(qd_zip,
-            qd_root,
-            input_folder,
-            ['ls'],
-            output_folder)
 
 if __name__ == '__main__':
     init_logging()
 
     run_in_philly()
-    #run_in_local()
-
