@@ -105,11 +105,12 @@ def pack_task_with_honey_pot(task_data, hp_data, hp_type, num_tasks_per_hit,
             output_content.append(line)
     else:
         # each hit shows only one task
-        ratio = int(num_tasks_per_hit / num_hp_per_hit)
+        ratio = int(num_tasks_per_hit / num_hp_per_hit) if num_hp_per_hit>0 else num_tasks_per_hit
         for start in np.arange(0, num_total_task, ratio):
             end = min(start + ratio, num_total_task)
             output_content.extend(task_data[start: end])
-            output_content.append(hp_gen.next())
+            if hp_gen:
+                output_content.append(hp_gen.next())
     return output_content
 
 
@@ -130,6 +131,16 @@ def write_task_file(data, filepath):
 def generate_task_files(task_type, label_file, hp_file, outbase,
                         hp_type, num_tasks_per_hit=10, num_hp_per_hit=2,
                         num_hits_per_file=2000):
+    """
+    Params:
+        label_file: tsv file containing labels to be verified,
+            columns: image_info, json list of bboxes, image_url
+        hp_file: txt file containing honey pot labels, used to
+            detect bad workers, each line is a question(json dict)
+        outfile: one column of "input_content", used to submit
+            UHRS/MTurk tasks
+    """
+
     if task_type == "VerifyImage":
         box_per_img="one"
     elif task_type == "VerifyBox":
