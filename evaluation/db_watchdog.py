@@ -146,13 +146,13 @@ def analyze_completed_task(res_file):
 
 def main():
     qd_common.init_logging()
-    args = VerificationConfig()
-    cur_db = db.create_bbverification_db()
-    # args = LogoVerificationConfig()
-    # cur_db = db.BoundingBoxVerificationDB(db_name=args.db_name, collection_name=args.collection_name)
+    db_configs = [VerificationConfig(), LogoVerificationConfig()]
 
     while True:
-        verify_bbox_db(cur_db, args)
+        for config in db_configs:
+            logging.info("scan {}: {}".format(config.db_name, config.collection_name))
+            cur_db = db.BoundingBoxVerificationDB(db_name=config.db_name, collection_name=config.collection_name)
+            verify_bbox_db(cur_db, config)
         time.sleep(300)
 
 if __name__ == "__main__":
