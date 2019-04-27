@@ -156,8 +156,9 @@ def run_in_philly():
     qd_root = op.join('/tmp', 'code', 'quickdetection')
 
     # usefull only in philly@ap. no hurt for other philly
-    update_ssh()
-    link_nltk()
+    if get_mpi_rank() == 0:
+        update_ssh()
+        link_nltk()
 
     wrap_all(dict_param['code_path'], qd_root,
             dict_param['data_folder'], dict_param['model_folder'],
@@ -166,7 +167,7 @@ def run_in_philly():
     # the permission should be changed because the output is there, but the
     # permission is for the docker job only and teh philly-fs cannot delete or
     # change it
-    if get_mpi_rank():
+    if get_mpi_rank() == 0:
         cmd_run(['sudo', 'chmod', '777',
             dict_param['output_folder'],
             '-R'], succeed=False)

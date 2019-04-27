@@ -641,7 +641,7 @@ def tsvdet_iter(caffenet, caffemodel, in_rows, key_idx,img_idx, pixel_mean,
         #gpus = [-1]
         gpus = [0]
     else:
-        gpus = kwargs.get('gpus', [0]) * 8
+        gpus = kwargs.get('gpus', [0]) * 4
 
     in_queue = mp.Queue(10 * len(gpus));  # thread/process safe
     if debug:

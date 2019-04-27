@@ -58,6 +58,10 @@ def get_to_copy_file_for_qdoutput(src_path, dest_path):
         to_copy.append((f, op.join(dest_snapshot, op.basename(f))))
     return to_copy
 
+def blob_upload(src, dst):
+    c = create_cloud_storage('vig')
+    c.az_upload2(src, dst)
+
 def blob_download_all_qdoutput(prefix):
     c = create_cloud_storage('vig')
     all_blob_name = list(c.list_blob_names(prefix))
@@ -199,6 +203,8 @@ class CloudStorage(object):
         cmd.append('cp')
         cmd.append(op.realpath(src_dir))
         url = 'https://{}.blob.core.windows.net'.format(self.account_name)
+        if dest_dir.startswith('/'):
+            dest_dir = dest_dir[1:]
         url = op.join(url, self.container_name, dest_dir)
         assert self.sas_token.startswith('?')
         data_url = url

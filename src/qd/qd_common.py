@@ -41,6 +41,18 @@ except ImportError:
     from urllib2 import HTTPError
 
 
+def make_by_pattern_result(data, pattern_results):
+    for p, result in pattern_results:
+        match_result = re.match(p, data)
+        if match_result is not None:
+            return result
+
+def make_by_pattern_maker(data, pattern_makers):
+    for p, maker in pattern_makers:
+        match_result = re.match(p, data)
+        if match_result is not None:
+            return maker()
+
 def is_positive_uhrs_verified(r):
     uhrs = r['uhrs']
     y, n = uhrs.get('1', 0), uhrs.get('2', 0)

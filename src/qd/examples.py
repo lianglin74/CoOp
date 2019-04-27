@@ -3,6 +3,8 @@ from future.utils import viewitems
 from qd.qd_common import hash_sha1
 from collections import OrderedDict
 import copy
+import logging
+from pprint import pformat
 
 
 # you can all all the functions prefixed with test_ without any input
@@ -26,16 +28,16 @@ def update_parameters(param):
         if k in param:
             infos.append('{}{}'.format(k, hash_sha1(param[k])[:5]))
 
-    direct_add_value_keys = OrderedDict({'effective_batch_size': 'BS',
-            'max_iter': 'MaxIter',
-            'max_epoch': 'MaxEpoch',
-            'last_fixed_param': 'LastFixed',
-            'num_extra_convs': 'ExtraConv'})
+    direct_add_value_keys = OrderedDict([('effective_batch_size', 'BS'),
+            ('max_iter', 'MaxIter'),
+            ('max_epoch', 'MaxEpoch'),
+            ('last_fixed_param', 'LastFixed'),
+            ('num_extra_convs', 'ExtraConv')])
     for k, v in viewitems(direct_add_value_keys):
         if k in param:
             infos.append('{}{}'.format(v, param[k]))
 
-    true_false_keys = OrderedDict({'use_treestructure': ('Tree', None)})
+    true_false_keys = OrderedDict([('use_treestructure', ('Tree', None))])
     for k in true_false_keys:
         if k in param:
             if param[k] and true_false_keys[k][0]:
@@ -104,3 +106,11 @@ def test_create_new_image_tsv_if_exif_rotated():
     from qd.process_tsv import create_new_image_tsv_if_exif_rotated
     create_new_image_tsv_if_exif_rotated('voc20', 'train')
 
+if __name__ == '__main__':
+    from qd.qd_common import parse_general_args
+    init_logging()
+    kwargs = parse_general_args()
+    logging.info('param:\n{}'.format(pformat(kwargs)))
+    function_name = kwargs['type']
+    del kwargs['type']
+    locals()[function_name](**kwargs)

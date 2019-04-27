@@ -16,6 +16,8 @@ import base64
 import copy
 import os
 
+from qd.qd_common import dump_to_yaml_str
+
 
 def get_philly_fs():
     return op.expanduser('~/code/philly/philly-fs.bash')
@@ -273,7 +275,6 @@ def print_table(a_to_bs, all_key=None):
         all_line.append(line)
     logging.info('info\n{}'.format('\n'.join(all_line)))
 
-
 class PhillyVC(object):
     def __init__(self, vc, cluster, user_name=None, **kwargs):
         self.vc = vc
@@ -294,12 +295,21 @@ class PhillyVC(object):
         self.use_blob_as_input = kwargs.get('use_blob_as_input', False)
         self.user_name = user_name
 
+        self.password = kwargs.get('password')
+
         self.src_config_path = 'src/qd/philly/config.py'
         self.dest_config_folder = '{}/code'.format(self.user_name)
 
         self.blob_mount_point = kwargs['blob_mount_point']
         self.config_param = kwargs['config_param']
         self.docker = kwargs['docker']
+
+    def get_data_folder_in_blob(self):
+        assert self.config_param['data_folder'].startswith(self.blob_mount_point)
+        result = self.config_param['data_folder'][len(self.blob_mount_point): ]
+        if result.startswith('/'):
+            result = result[1:]
+        return result
 
     def sync_code(self, random_id):
         random_run = 'run{}.py'.format(random_id)
@@ -315,9 +325,17 @@ class PhillyVC(object):
         zip_qd(random_abs_qd)
         copy_to_hdfs = not self.use_blob_as_input
         if infer_type(self.vc, self.cluster) == 'azure':
-            philly_upload_dir(random_abs_qd, '{}/code'.format(self.user_name),
-                    vc=self.vc,
-                    cluster=self.cluster, blob=True, copy_to_hdfs=copy_to_hdfs)
+            if self.use_blob_as_input:
+                self.config_param['code_path']
+                from qd.cloud_storage import blob_upload
+                assert self.config_param['code_path'].startswith(self.blob_mount_point)
+                rel_code_path = self.config_param['code_path'][
+                        len(self.blob_mount_point): ]
+                blob_upload(random_abs_qd, rel_code_path)
+            else:
+                philly_upload_dir(random_abs_qd, '{}/code'.format(self.user_name),
+                        vc=self.vc,
+                        cluster=self.cluster, blob=True, copy_to_hdfs=copy_to_hdfs)
         else:
             philly_upload(random_abs_qd, '{}/code'.format(self.user_name), vc=self.vc,
                     cluster=self.cluster)
@@ -435,8 +453,19 @@ class PhillyVC(object):
 
         return self.submit_without_sync(extraParam)
 
-    def philly_submit_v2(self, jobname, num_gpu, extraParam,
-            isDebug=False, multi_process=False):
+    def get_config_extra_param(self, command):
+        dict_param = {
+                'code_path': self.config_param['code_path'],
+                'data_folder': self.config_param['data_folder'],
+                'model_folder': self.config_param['model_folder'],
+                'output_folder': self.config_param['output_folder'],
+                'command': command}
+        extraParam = base64.b64encode(dump_to_yaml_str(dict_param))
+
+        return extraParam
+
+    def philly_submit_v2(self, jobname, num_gpu, command,
+            isDebug=False, multi_process=False, dry_run=False):
         cluster, vc = self.cluster, self.vc
         if cluster == 'philly-prod-cy4':
             submit_url = 'http://phillyonap/api/v2/submit'
@@ -445,15 +474,9 @@ class PhillyVC(object):
             registry = 'phillyregistry.azurecr.io'
             submit_url = 'https://philly/api/v2/submit'
         tag = self.docker['tag']
-        assert len(extraParam) > 0
-        dict_param = {
-                'code_path': self.config_param['code_path'],
-                'data_folder': self.config_param['data_folder'],
-                'model_folder': self.config_param['model_folder'],
-                'output_folder': self.config_param['output_folder'],
-                'command': extraParam}
-        from qd.qd_common import dump_to_yaml_str
-        extraParam = base64.b64encode(dump_to_yaml_str(dict_param))
+        assert len(command) > 0
+        extraParam = self.get_config_extra_param(command)
+        logging.info('extraParam: {}'.format(extraParam))
         data = {
             "ClusterId": cluster,
             "VcId": vc,
@@ -511,34 +534,40 @@ class PhillyVC(object):
 
         en_data = json.dumps(data)
 
-        user_name, password = get_philly_credential()
         cmd = ['curl', '-H', 'Content-Type: application/json',
             '-H', 'WWW-Authenticate: Negotiate',
             '-H', 'WWW-Authenticate: NTLM',
-            '--user', 'redmond\\{}:{}'.format(user_name, password),
+            '--user', 'redmond\\{}:{}'.format(self.user_name, self.password),
             '-X', 'POST', submit_url, '-k', '--ntlm',
             '-n', '-d', "{}".format(en_data)]
-        result_str = cmd_run(cmd, return_output=True)
 
-        return result_str
+        if not dry_run:
+            result_str = cmd_run(cmd, return_output=True)
+            return result_str
+
+    def submit(self, extraParam, **submit_param):
+        self.submit_without_sync(extraParam, **submit_param)
 
     def submit_without_sync(self, extraParam, **submit_param):
+        '''
+        use submit() because of bad naming here.
+        '''
         if 'isDebug' not in submit_param:
             submit_param['isDebug'] = self.isDebug
         result = self.philly_submit_v2(str(self.random_id), self.num_gpu,
                 extraParam,
                 **submit_param)
-
-        result = json.loads(result)
-        if 'error' in result:
-            logging.info(result['error'])
-            raise Exception
-        if 'ExceptionType' in result and result['ExceptionType']:
-            logging.info(result.get('StackTrace'))
-            raise Exception
-        job_id = result['jobId']
-        logging.info('job_id = {}'.format(job_id))
-        return job_id
+        if result:
+            result = json.loads(result)
+            if 'error' in result:
+                logging.info(result['error'])
+                raise Exception
+            if 'ExceptionType' in result and result['ExceptionType']:
+                logging.info(result.get('StackTrace'))
+                raise Exception
+            job_id = result['jobId']
+            logging.info('job_id = {}'.format(job_id))
+            return job_id
 
     def get_random_qd(self):
         return 'quickdetection_{}'.format(self.random_id)
@@ -634,6 +663,8 @@ class PhillyVC(object):
             cmd = ' '.join(result)
             logging.info(cmd)
             return cmd
+        else:
+            logging.info('no ip and port can be figured out')
 
     def get_http_prefix(self):
         if self.vc_type == 'ap':

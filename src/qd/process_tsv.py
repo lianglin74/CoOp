@@ -3347,6 +3347,42 @@ def create_trainX(train_ldtsi, extra_dtsi, tax, out_dataset,
 
     populate_output_num_images(train_ldtsik, 'toTrain', tax.root)
 
+def create_testX_db(test_ldtsi, tax, out_dataset):
+    t_to_ldsi = list_to_dict(test_ldtsi, 2)
+    for label_type in t_to_ldsi:
+        sources = []
+        sources_label = []
+        ldsi = t_to_ldsi[label_type]
+        d_to_lsi = list_to_dict(ldsi, 1)
+        k = 0
+        all_ki = []
+        with_bb = label_type == 'with_bb'
+        for dataset in d_to_lsi:
+            lsi = d_to_lsi[dataset]
+            s_to_li = list_to_dict(lsi, 1)
+            for split in s_to_li:
+                li = s_to_li[split]
+                idx = list_to_dict(li, 1).keys()
+                out_split = 'test{}'.format(k)
+                s_file = dataset.get_data(split)
+                sources.append(s_file)
+                converted_label = convert_label_db(dataset,
+                        split, idx, with_bb=with_bb)
+                for i in tqdm(idx):
+                    l = converted_label[i]
+                    l[1] = json.dumps(lift_one_image(l[1], tax))
+                    l[0] = '{}_{}_{}'.format(dataset.name, split, l[0])
+                all_ki.extend([(str(k), str(i)) for i in idx])
+                label_file = out_dataset[label_type].get_data(out_split, 'label')
+                tsv_writer(converted_label, label_file)
+                sources_label.append(label_file)
+                k = k + 1
+        write_to_file('\n'.join(sources),
+                out_dataset[label_type].get_data('testX'))
+        write_to_file('\n'.join(sources_label),
+                out_dataset[label_type].get_data('testX', 'label'))
+        tsv_writer(all_ki, out_dataset[label_type].get_shuffle_file('test'))
+
 def create_testX(test_ldtsi, tax, out_dataset):
     t_to_ldsi = list_to_dict(test_ldtsi, 2)
     for label_type in t_to_ldsi:
@@ -4133,10 +4169,9 @@ def build_tax_dataset_from_db(taxonomy_folder, **kwargs):
         ensure_directory(op.dirname(target_file))
         shutil.copy(dest, target_file)
 
-    create_testX(test_ldtsi, tax, out_dataset)
+    create_testX_db(test_ldtsi, tax, out_dataset)
 
     logging.info('done')
-
 
 def build_taxonomy_impl(taxonomy_folder, **kwargs):
     random.seed(777)
@@ -4960,6 +4995,25 @@ def verify_prediction_by_db(pred_file, test_data, test_split, conf_th=0.3,
         db_task = []
     logging.info('#task = {}; #exists in db = {}; #matched gt = {}; #num pri change = {}'.format(
         num_task, num_exists, num_matched_gt, num_change_pri))
+
+def convertcomposite_to_standard(data,
+        split='train', **kwargs):
+    dataset = TSVDataset(data)
+    if op.isfile(dataset.get_data(split, t='label')) and \
+            op.isfile(dataset.get_data(split)):
+        logging.info('file exists')
+        return
+    rows_image = dataset.iter_composite(split, t=None, version=None)
+    rows_label = dataset.iter_composite(split, t='label', version=None)
+    num_image = dataset.num_rows(split)
+    out_tsv = dataset.get_data(split)
+    logging.info('writing image tsv: {}'.format(out_tsv))
+    tsv_writer(((row_label[0], row_label[1], row_image[2]) for row_image, row_label
+            in tqdm(zip(rows_image, rows_label), total=num_image)),
+            out_tsv)
+    logging.info('writing image label tsv')
+    rows = dataset.iter_composite(split, t='label', version=None)
+    tsv_writer(tqdm(rows), dataset.get_data(split, t='label'))
 
 def process_tsv_main(**kwargs):
     if kwargs['type'] == 'gen_tsv':
