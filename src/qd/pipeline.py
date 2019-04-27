@@ -4,14 +4,20 @@ from pprint import pformat
 import copy
 import base64
 import re
+from future.utils import viewitems
+from collections import OrderedDict
+import copy
 
 from qd.process_tsv import convertcomposite_to_standard
-from qd.qd_common import load_from_yaml_file
 from qd.cloud_storage import create_cloud_storage
 from qd.philly import create_philly_client
+from qd.philly import convert_to_philly_extra_command
 from qd.tsv_io import TSVDataset
 from qd.qd_common import make_by_pattern_maker
 from qd.qd_common import make_by_pattern_result
+from qd.qd_common import load_from_yaml_file
+from qd.qd_common import hash_sha1
+from qd.qd_common import init_logging
 
 
 def get_all_test_data(exp):
@@ -56,15 +62,6 @@ def ensure_upload_data_for_philly_jobs(data):
             if op.isdir(dataset._data_root):
                 c.az_upload2(dataset._data_root, data_folder)
 
-def convert_to_philly_extra_command(param, script='scripts/tools.py'):
-    logging.info(pformat(param))
-    x = copy.deepcopy(param)
-    from qd.qd_common import dump_to_yaml_str
-    result = "python {} -bp {}".format(
-            script,
-            base64.b64encode(dump_to_yaml_str(x)).decode())
-    return result
-
 def philly_func_run(func, param, dry_run=False, **submit_param):
     if 'data' in param:
         ensure_upload_data_for_philly_jobs(param['data'])
@@ -78,3 +75,114 @@ def philly_func_run(func, param, dry_run=False, **submit_param):
     logging.info(extra_param)
     client.submit_without_sync(extra_param, dry_run=dry_run,
             **submit_param)
+
+def update_parameters(param):
+    default_param = {
+            'max_iter': 10000,
+            'effective_batch_size': 64}
+
+    for k, v in viewitems(default_param):
+        if k not in param:
+            param[k] = v
+
+    if 'expid' in param:
+        return
+    # we need to update expid so that the model folder contains the critical
+    # param information
+    infos = []
+    need_hash_sha_params = ['basemodel']
+    for k in need_hash_sha_params:
+        if k in param:
+            infos.append('{}{}'.format(k, hash_sha1(param[k])[:5]))
+
+    direct_add_value_keys = OrderedDict([('effective_batch_size', 'BS'),
+            ('max_iter', 'MaxIter'),
+            ('max_epoch', 'MaxEpoch'),
+            ('last_fixed_param', 'LastFixed'),
+            ('num_extra_convs', 'ExtraConv')])
+    for k, v in viewitems(direct_add_value_keys):
+        if k in param:
+            pk = param[k]
+            if type(pk) is str:
+                pk = pk.replace('/', '.')
+            infos.append('{}{}'.format(v, pk))
+
+    true_false_keys = OrderedDict([('use_treestructure', ('Tree', None))])
+    for k in true_false_keys:
+        if k in param:
+            if param[k] and true_false_keys[k][0]:
+                infos.append(true_false_keys[k][0])
+            elif not param[k] and true_false_keys[k][1]:
+                infos.append(true_false_keys[k][1])
+
+    non_expid_impact_keys = ['data', 'net', 'expid_prefix',
+            'test_data', 'test_split', 'test_version',
+            'dist_url_tcp_port', 'workers']
+
+    for k in param:
+        assert k in need_hash_sha_params or \
+                k in non_expid_impact_keys or \
+                k in direct_add_value_keys or \
+                k in true_false_keys, k
+
+    if 'expid_prefix' in param:
+        infos.insert(0, param['expid_prefix'])
+    param['expid'] = '_'.join(infos)
+
+def create_pipeline(kwargs):
+    from qd.qd_pytorch import YoloV2PtPipeline
+    return YoloV2PtPipeline(**kwargs)
+
+
+def load_pipeline(curr_param):
+    from qd.qd_pytorch import YoloV2PtPipeline
+    return YoloV2PtPipeline(load_parameter=True, **curr_param)
+
+def test_model_pipeline_eval_multi(all_test_data, param, **kwargs):
+    init_logging()
+    update_parameters(param)
+    pip = create_pipeline(param)
+    pip.ensure_train()
+    param['full_expid'] = pip.full_expid
+    for test_data_info in all_test_data:
+        curr_param = copy.deepcopy(param)
+        curr_param.update(test_data_info)
+        pip = load_pipeline(curr_param)
+        pip.ensure_predict()
+        pip.ensure_evaluate()
+
+def pipeline_eval_multi(param, all_test_data, **kwargs):
+    for test_data_info in all_test_data:
+        curr_param = copy.deepcopy(param)
+        curr_param.update(test_data_info)
+        pip = load_pipeline(curr_param)
+        pip.ensure_predict()
+        pip.ensure_evaluate()
+
+def test_model_pipeline(param):
+    '''
+    run the script by
+
+    mpirun -npernode 4 \
+            python script_with_this_function_called.py
+    '''
+    init_logging()
+    update_parameters(param)
+    pip = create_pipeline(param)
+
+    if param.get('monitor_train_only'):
+        pip.monitor_train()
+    else:
+        pip.ensure_train()
+        pip.ensure_predict()
+        pip.ensure_evaluate()
+
+
+if __name__ == '__main__':
+    from qd.qd_common import parse_general_args
+    init_logging()
+    kwargs = parse_general_args()
+    logging.info('param:\n{}'.format(pformat(kwargs)))
+    function_name = kwargs['type']
+    del kwargs['type']
+    locals()[function_name](**kwargs)

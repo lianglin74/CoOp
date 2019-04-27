@@ -667,8 +667,6 @@ class PhillyVC(object):
             cmd = ' '.join(result)
             logging.info(cmd)
             return cmd
-        else:
-            logging.info('no ip and port can be figured out')
 
     def get_http_prefix(self):
         if self.vc_type == 'ap':
@@ -723,21 +721,29 @@ class PhillyVC(object):
         else:
             philly_upload(file_from, file_target, self.vc, self.cluster)
 
-def submit_without_sync(template, **kwargs):
+def convert_to_philly_extra_command(param, script='scripts/tools.py'):
+    logging.info(pformat(param))
+    x = copy.deepcopy(param)
+    from qd.qd_common import dump_to_yaml_str
+    result = "python {} -bp {}".format(
+            script,
+            base64.b64encode(dump_to_yaml_str(x)).decode())
+    return result
+
+def submit_without_sync(cmd, **kwargs):
     isDebug = False
     all_extra_param = []
-    from qd_util import convert_to_philly_extra_command
-    if template == 'gc':
+    if cmd == 'gc':
         params = {'type': 'del_intermediate_models'}
         extra_param = convert_to_philly_extra_command(params,
                 script='garbage_collector')
         all_extra_param.append(extra_param)
-    elif template == 'ssh':
+    elif cmd == 'ssh':
         isDebug = True
         extra_param = 'ls'
         all_extra_param.append(extra_param)
     else:
-        raise Exception('unknown {}'.format(template))
+        all_extra_param.append(cmd)
     logging.info(all_extra_param)
     p = create_philly_client(isDebug=isDebug)
     if kwargs.get('real_submit', True):
@@ -813,7 +819,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Philly Interface')
     parser.add_argument('task_type',
             choices=['ssh', 'query', 'abort', 'submit', 'sync',
-                'update_config', 'gc', 'blame'])
+                'update_config', 'gc', 'blame', 'init'])
     parser.add_argument('-wl', '--with_log', default=False, action='store_true')
     parser.add_argument('-p', '--param', help='parameter string, yaml format',
             type=str)
@@ -825,47 +831,60 @@ def parse_args():
 
     parser.add_argument('-no-s', '--real_submit', default=True, action='store_false')
 
-    parser.add_argument('partial_ids', nargs=argparse.REMAINDER,
+    parser.add_argument('remainders', nargs=argparse.REMAINDER,
             type=str)
     return parser.parse_args()
 
+def ensure_init_config_files():
+    def infinite_check(config_file, config_template):
+        if not op.isfile(config_file):
+            logging.info('Please create {}. Template: {}'.format(
+                config_file, config_template))
+        while not op.isfile(config_file):
+            time.sleep(5)
+    config_file = './aux_data/configs/vigblob_account.yaml'
+    config_template = './aux_data/configs/vigblob_account.template.yaml'
+    infinite_check(config_file, config_template)
+
+    config_file = './aux_data/configs/philly_vc.yaml'
+    config_template = './aux_data/configs/philly_vc.template.yaml'
+    infinite_check(config_file, config_template)
+
+def init_philly_requirements():
+    ensure_init_config_files()
+    sync_code()
+
 def execute(task_type, **kwargs):
     if task_type == 'query':
-        if len(kwargs.get('partial_ids', [])) > 0:
-            assert len(kwargs['partial_ids']) == 1
-            tracking(kwargs['partial_ids'][0])
+        if len(kwargs.get('remainders', [])) > 0:
+            assert len(kwargs['remainders']) == 1
+            tracking(kwargs['remainders'][0])
         else:
             p = create_philly_client()
             p.query(**kwargs)
-        return True
     elif task_type == 'submit':
-        if len(kwargs['partial_ids']) == 0:
-            kwargs['partial_ids'] = ['yolo_master']
-        submit_without_sync(template=kwargs['partial_ids'][0], **kwargs)
-        return True
+        assert len(kwargs['remainders']) == 1
+        submit_without_sync(cmd=kwargs['remainders'][0], **kwargs)
     elif task_type == 'abort':
         p = create_philly_client()
-        for v in kwargs['partial_ids']:
+        for v in kwargs['remainders']:
             v = v.strip()
             _, job_id = p.search_job_id(v)
             p.abort(job_id)
-        return True
     elif task_type == 'blame':
         blame()
-        return True
     elif task_type == 'ssh':
-        assert len(kwargs['partial_ids']) == 1
-        ssh_into(kwargs['partial_ids'][0])
-        return True
+        assert len(kwargs['remainders']) == 1
+        ssh_into(kwargs['remainders'][0])
     elif task_type == 'sync':
         sync_code()
-        return True
     elif task_type == 'update_config':
         p = create_philly_client()
         p.update_config()
-        return True
+    elif task_type == 'init':
+        init_philly_requirements()
     else:
-        return False
+        assert 'Unknown {}'.format(task_type)
 
 if __name__ == '__main__':
     os.environ['LD_LIBRARY_PATH'] = '/opt/intel/mkl/lib/intel64'
