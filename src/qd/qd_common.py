@@ -41,6 +41,24 @@ except ImportError:
     from urllib2 import HTTPError
 
 
+def list_to_nested_dict(xs, idxes):
+    rest_idxes = set(range(len(xs[0]))).difference(idxes)
+    result = {}
+    for r in xs:
+        curr_result = result
+        for i in idxes[:-1]:
+            if r[i] not in curr_result:
+                curr_result[r[i]] = {}
+            curr_result = curr_result[r[i]]
+        key = r[idxes[-1]]
+        if key not in curr_result:
+            curr_result[key] = []
+        value = [r[i] for i in rest_idxes]
+        if len(value) == 1:
+            value = value[0]
+        curr_result[key].append(value)
+    return result
+
 def make_by_pattern_result(data, pattern_results):
     for p, result in pattern_results:
         match_result = re.match(p, data)

@@ -85,7 +85,7 @@ def load_pipeline(curr_param):
     from qd.qd_pytorch import YoloV2PtPipeline
     return YoloV2PtPipeline(load_parameter=True, **curr_param)
 
-def test_model_pipeline_eval_multi(all_test_data, param):
+def test_model_pipeline_eval_multi(all_test_data, param, **kwargs):
     init_logging()
     update_parameters(param)
     pip = create_pipeline(param)

@@ -1,3 +1,4 @@
+#!/usr/bin/python
 import os.path as op
 from qd.qd_common import retry_agent, cmd_run
 from qd.qd_common import ensure_directory
@@ -15,8 +16,11 @@ import re
 import base64
 import copy
 import os
+from collections import OrderedDict
 
 from qd.qd_common import dump_to_yaml_str
+from qd.qd_common import init_logging
+from qd.qd_common import list_to_nested_dict
 
 
 def get_philly_fs():
@@ -719,3 +723,153 @@ class PhillyVC(object):
         else:
             philly_upload(file_from, file_target, self.vc, self.cluster)
 
+def submit_without_sync(template, **kwargs):
+    isDebug = False
+    all_extra_param = []
+    from qd_util import convert_to_philly_extra_command
+    if template == 'gc':
+        params = {'type': 'del_intermediate_models'}
+        extra_param = convert_to_philly_extra_command(params,
+                script='garbage_collector')
+        all_extra_param.append(extra_param)
+    elif template == 'ssh':
+        isDebug = True
+        extra_param = 'ls'
+        all_extra_param.append(extra_param)
+    else:
+        raise Exception('unknown {}'.format(template))
+    logging.info(all_extra_param)
+    p = create_philly_client(isDebug=isDebug)
+    if kwargs.get('real_submit', True):
+        list(map(lambda extra_param: p.submit_without_sync(extra_param),
+                all_extra_param))
+
+def ssh_into(app_id):
+    p = create_philly_client()
+    app_info, app_id = p.search_job_id(app_id)
+    cmd_run(app_info['ssh'].split(' '),
+            stdin=None,
+            shell=True)
+
+def tracking(app_id):
+    p = create_philly_client()
+    _, app_id = p.search_job_id(app_id)
+    p.track_job_once(app_id)
+
+def sync_code():
+    p = create_philly_client(use_blob_as_input=True)
+    p.sync_code('')
+
+def list_to_dict_full(l, idx):
+    result = OrderedDict()
+    for x in l:
+        if x[idx] not in result:
+            result[x[idx]] = []
+        result[x[idx]].append(x)
+    return result
+
+def blame():
+    p = create_philly_client()
+    all_job_info = p.query_all_job(False)
+
+    all_username_status_gpus_queue = []
+    for job in all_job_info:
+        username = job['username']
+        status = job['status']
+        num_gpu = sum([len(d['gpus']) for d in job['detail']
+                if not d['isMaster']])
+        queue = job['queue']
+        all_username_status_gpus_queue.append((username, status,
+            num_gpu, queue))
+
+    status_to_username_to_gpus = list_to_nested_dict([x[:-1] for x in all_username_status_gpus_queue], [1, 0])
+    status_to_username_num_jobs_num_gpus = {}
+    for status, username_to_gpus in status_to_username_to_gpus.iteritems():
+        username_num_jobs_num_gpus = []
+        for username, all_gpus in username_to_gpus.iteritems():
+            username_num_jobs_num_gpus.append((username,
+                len(all_gpus), sum(all_gpus)))
+        status_to_username_num_jobs_num_gpus[status] = \
+            sorted(username_num_jobs_num_gpus, key=lambda x: -x[-1])
+    logging.info('\n{}'.format(pformat(status_to_username_num_jobs_num_gpus)))
+
+    status_to_queue_to_username_to_gpus = \
+        list_to_nested_dict(all_username_status_gpus_queue, [1, 3, 0])
+    status_to_queue_to_username_num_jobs_num_gpus = {}
+    for status, queue_to_username_to_gpus in status_to_queue_to_username_to_gpus.iteritems():
+        for queue, username_to_gpus in queue_to_username_to_gpus.iteritems():
+            username_num_jobs_num_gpus = []
+            for username, gpus in username_to_gpus.iteritems():
+                username_num_jobs_num_gpus.append(
+                        (username, len(gpus), sum(gpus)))
+            x = sorted(username_num_jobs_num_gpus, key=lambda x: -x[-1])
+            if status not in status_to_queue_to_username_num_jobs_num_gpus:
+                status_to_queue_to_username_num_jobs_num_gpus[status] = {}
+            status_to_queue_to_username_num_jobs_num_gpus[status][queue] = x
+    logging.info('\n{}'.format(pformat(status_to_queue_to_username_num_jobs_num_gpus)))
+
+def parse_args():
+    import argparse
+    parser = argparse.ArgumentParser(description='Philly Interface')
+    parser.add_argument('task_type',
+            choices=['ssh', 'query', 'abort', 'submit', 'sync',
+                'update_config', 'gc', 'blame'])
+    parser.add_argument('-wl', '--with_log', default=False, action='store_true')
+    parser.add_argument('-p', '--param', help='parameter string, yaml format',
+            type=str)
+    parser.add_argument('-c', '--cluster', default='sc2', type=str)
+    #parser.add_argument('-wg', '--with_gpu', default=True, action='store_true')
+    parser.add_argument('-no-wg', '--with_gpu', default=True, action='store_false')
+    #parser.add_argument('-m', '--with_meta', default=True, action='store_true')
+    parser.add_argument('-no-m', '--with_meta', default=True, action='store_false')
+
+    parser.add_argument('-no-s', '--real_submit', default=True, action='store_false')
+
+    parser.add_argument('partial_ids', nargs=argparse.REMAINDER,
+            type=str)
+    return parser.parse_args()
+
+def execute(task_type, **kwargs):
+    if task_type == 'query':
+        if len(kwargs.get('partial_ids', [])) > 0:
+            assert len(kwargs['partial_ids']) == 1
+            tracking(kwargs['partial_ids'][0])
+        else:
+            p = create_philly_client()
+            p.query(**kwargs)
+        return True
+    elif task_type == 'submit':
+        if len(kwargs['partial_ids']) == 0:
+            kwargs['partial_ids'] = ['yolo_master']
+        submit_without_sync(template=kwargs['partial_ids'][0], **kwargs)
+        return True
+    elif task_type == 'abort':
+        p = create_philly_client()
+        for v in kwargs['partial_ids']:
+            v = v.strip()
+            _, job_id = p.search_job_id(v)
+            p.abort(job_id)
+        return True
+    elif task_type == 'blame':
+        blame()
+        return True
+    elif task_type == 'ssh':
+        assert len(kwargs['partial_ids']) == 1
+        ssh_into(kwargs['partial_ids'][0])
+        return True
+    elif task_type == 'sync':
+        sync_code()
+        return True
+    elif task_type == 'update_config':
+        p = create_philly_client()
+        p.update_config()
+        return True
+    else:
+        return False
+
+if __name__ == '__main__':
+    os.environ['LD_LIBRARY_PATH'] = '/opt/intel/mkl/lib/intel64'
+    init_logging()
+    args = parse_args()
+    param = vars(args)
+    execute(**param)
