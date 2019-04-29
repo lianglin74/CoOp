@@ -393,7 +393,7 @@ def postfilter(im, scores, boxes, class_map, max_per_image=1000, thresh=0.005):
     return json.dumps(det_results)
 
 def detect_image(caffe_net, im, pixel_mean, all_names, stat=None, thresh=0,
-        yolo_tree=False, block_labels=None, **kwargs):
+        yolo_tree=False, all_label_to_thresh=None, **kwargs):
     '''
     this is not used in evaluation
     '''
@@ -414,10 +414,9 @@ def detect_image(caffe_net, im, pixel_mean, all_names, stat=None, thresh=0,
         for i, names in enumerate(all_names):
             scores, bbox = pick_blob_result(caffe_net, i)
             r = result2bblist3(im, scores, bbox, names, thresh, yolo_tree)
-            if block_labels:
-                current_block_labels = block_labels[i]
-                if current_block_labels:
-                    r = [s for s in r if s['class'] not in current_block_labels]
+            if all_label_to_thresh:
+                label_to_thresh = all_label_to_thresh[i]
+                r = [s for s in r if s['conf'] >= label_to_thresh.get(s['class'], 0)]
             bblist.extend(r)
 
     all_bb = [bb['rect'] for bb in bblist]
@@ -641,7 +640,7 @@ def tsvdet_iter(caffenet, caffemodel, in_rows, key_idx,img_idx, pixel_mean,
         #gpus = [-1]
         gpus = [0]
     else:
-        gpus = kwargs.get('gpus', [0]) * 4
+        gpus = kwargs.get('gpus', [0])
 
     in_queue = mp.Queue(10 * len(gpus));  # thread/process safe
     if debug:

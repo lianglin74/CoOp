@@ -455,7 +455,7 @@ def predict_one_view(im, full_expid, predict_file):
 
 def predict_one_yolo_view(im, full_expid, predict_file):
     model_param = predict_file.split('.caffemodel')[0] + '.caffemodel'
-    from demo_detection import predict_one
+    from qd.demo_detection import predict_one
     c = CaffeWrapper(full_expid=full_expid, load_parameter=True)
     test_proto_file = c._path_env['test_proto_file']
     model_param = op.join('output', full_expid, 'snapshot', model_param)
@@ -470,12 +470,12 @@ def predict_one_yolo_view(im, full_expid, predict_file):
     gpu = 0
     yolo_test_maintain_ratio = 'maintainRatio' in predict_file
     block_label_config = op.join('output', full_expid,
-            'multi_head_block_labels.yaml')
-    block_labels = load_from_yaml_file(block_label_config) if op.isfile(block_label_config) else None
+            'all_label_to_thresh.yaml')
+    all_label_to_thresh = load_from_yaml_file(block_label_config) if op.isfile(block_label_config) else None
     result = predict_one(im, test_proto_file, model_param, pixel_mean, all_label_names,
         source_image_tsv, thresh, gpu,
         yolo_test_maintain_ratio=yolo_test_maintain_ratio,
-        block_labels=block_labels)
+        all_label_to_thresh=all_label_to_thresh)
     th_file = op.splitext(predict_file)[0] + '.report.prec.threshold.tsv'
     th_file = op.join('output', full_expid, 'snapshot', th_file)
     logging.info('using {}'.format(th_file))
@@ -585,7 +585,7 @@ class CaffeWrapper(object):
         waitkey = 0 if source_image_tsv else 1
         thresh = 0.24
         gpu = 0
-        from demo_detection import predict_online
+        from qd.demo_detection import predict_online
         predict_online(test_proto_file, model_param, pixel_mean, labels,
                 source_image_tsv, thresh, waitkey, gpu)
 
