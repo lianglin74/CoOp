@@ -280,7 +280,8 @@ def print_table(a_to_bs, all_key=None):
     logging.info('info\n{}'.format('\n'.join(all_line)))
 
 class PhillyVC(object):
-    def __init__(self, vc, cluster, user_name=None, **kwargs):
+    def __init__(self, vc, cluster, user_name=None,
+            use_blob_as_input=True, **kwargs):
         self.vc = vc
         self.cluster = cluster
         vc_type = infer_type(vc, cluster)
@@ -296,13 +297,15 @@ class PhillyVC(object):
             else:
                 self.num_gpu = 1
         self.isDebug = kwargs.get('isDebug', False)
-        self.use_blob_as_input = kwargs.get('use_blob_as_input', False)
+        self.use_blob_as_input = use_blob_as_input
         self.user_name = user_name
 
         self.password = kwargs.get('password')
 
         self.src_config_path = 'src/qd/philly/config.py'
         self.dest_config_folder = '{}/code'.format(self.user_name)
+        self.dest_config_file = op.join(self.dest_config_folder,
+                op.basename(self.src_config_path))
 
         self.blob_mount_point = kwargs['blob_mount_point']
         self.config_param = kwargs['config_param']
@@ -387,7 +390,13 @@ class PhillyVC(object):
         return all_job_info
 
     def update_config(self):
-        self.upload_file(self.src_config_path, self.dest_config_folder)
+        if not self.use_blob_as_input:
+            self.upload_file(self.src_config_path, self.dest_config_folder)
+        else:
+            c = create_cloud_storage('vig')
+            c.az_upload2(self.src_config_path,
+                    op.join(self.dest_config_folder,
+                        op.basename(self.src_config_path)))
 
     def query(self, **kwargs):
         all_job_info = self.query_all_job()
@@ -481,6 +490,12 @@ class PhillyVC(object):
         assert len(command) > 0
         extraParam = self.get_config_extra_param(command)
         logging.info('extraParam: {}'.format(extraParam))
+        if self.use_blob_as_input:
+            config_file = op.join(self.blob_mount_point,
+                    self.dest_config_file)
+        else:
+            config_file = "/hdfs/{}/{}/{}".format(self.vc,
+                self.dest_config_folder, op.basename(self.src_config_path))
         data = {
             "ClusterId": cluster,
             "VcId": vc,
@@ -488,8 +503,7 @@ class PhillyVC(object):
             "UserName": self.user_name,
             "BuildId": 0,
             "ToolType": None,
-            "ConfigFile": "/hdfs/{}/{}/{}".format(self.vc,
-                self.dest_config_folder, op.basename(self.src_config_path)),
+            "ConfigFile": config_file,
             "Inputs": [{
                 "Name": "dataDir",
                 "Path": "/hdfs/{}/{}".format(self.vc, self.user_name)
