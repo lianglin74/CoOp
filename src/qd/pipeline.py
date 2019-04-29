@@ -117,7 +117,7 @@ def update_parameters(param):
 
     non_expid_impact_keys = ['data', 'net', 'expid_prefix',
             'test_data', 'test_split', 'test_version',
-            'dist_url_tcp_port', 'workers']
+            'dist_url_tcp_port', 'workers', 'force_train']
 
     for k in param:
         assert k in need_hash_sha_params or \

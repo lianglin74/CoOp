@@ -721,7 +721,9 @@ class TorchTrain(object):
             logging.info('skip to train')
             return
 
-        self._save_parameters()
+        if self.mpi_rank == 0:
+            self._save_parameters()
+
         ensure_directory(self.output_folder)
 
         logging.info(pformat(self.kwargs))

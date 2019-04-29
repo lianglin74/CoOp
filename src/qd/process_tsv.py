@@ -4816,6 +4816,7 @@ def get_taxonomy_path(data):
 def uhrs_verify_db_merge_to_tsv(collection_name='uhrs_logo_verification',
         extra_match=None):
     set_interpretation_result_for_uhrs_result(collection_name)
+    return
     c = create_bbverification_db(collection_name=collection_name)
     data_split_to_key_rects, all_id = c.get_completed_uhrs_result(
             extra_match=extra_match)
@@ -4888,8 +4889,8 @@ def merge_uhrs_result_to_dataset(data_split_to_key_rects):
                 generate_info=generate_info())
 
 def set_interpretation_result_for_uhrs_result(collection_name='uhrs_logo_verification'):
-    c = create_bbverification_db(collection_name)
-    query = {'status': c.status_completed,
+    c = create_bbverification_db(collection_name=collection_name)
+    query = {'status': {'$in': [c.status_merged, c.status_completed]},
             'interpretation_result': None}
     positive_ids, negative_ids, uncertain_ids = [], [], []
     for rect_info in tqdm(c.collection.find(query)):
