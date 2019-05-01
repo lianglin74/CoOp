@@ -9,17 +9,23 @@ import os
 from PIL import Image
 import shutil
 from tqdm import tqdm
-from urllib2 import Request, urlopen
+try:
+    # For Python 3.0 and later
+    from urllib.request import urlopen, Request
+except ImportError:
+    # Python 2
+    from urllib2 import urlopen, Request
 import uuid
 
 import _init_paths
 import logo.constants
-from scripts import qd_common, tsv_io, yolotrain, process_tsv
+from qd import qd_common, tsv_io, process_tsv
 import evaluation.utils
 from evaluation import eval_utils, generate_task, analyze_task
 
 
 def prop_pred_not_in_gt(model_name, det_expid, gt_cfg_file, conf_thres=0.4, label_prefix=""):
+    from qd import yolotrain
     rootpath = "/raid/data/uhrs/"
     uhrs_new_task_dir = "/raid/data/uhrs/status/new/"
 
@@ -210,7 +216,7 @@ def convert_local_images_to_b64(dirpath, labelmap, outfile, max_per_class=None):
 def scrape_image_parallel(label_counts, outfile, ext="jpg", query_format="{}"):
     """
     Scrapes images from Bing with terms in labelmap, formatted as query_format
-    label_counts: list of pair (term, num_to_scrape)
+    label_counts: list of list: term, num_to_scrape, query_keywords(optional)
     outfile: TSV file of img_key, json list of dict {"class":term}, url
     """
     if os.path.isfile(outfile):
@@ -239,11 +245,16 @@ def scrape_image_parallel(label_counts, outfile, ext="jpg", query_format="{}"):
     tsv_io.tsv_writer(gen_res(), outfile)
 
 
-def scrape_image(label_counts, ext, query_format):
+def scrape_image(args):
+    label_counts, ext, query_format = args
     ret = []
     for cols in label_counts:
         term, num_imgs = cols[0], int(cols[1])
-        query_term = query_format.format(term)
+        if len(cols) == 3:
+            query_term = cols[2]
+        else:
+            query_term = term
+        query_term = query_format.format(query_term)
         if ext and "png" in ext:
             trans_bg = True
         else:
@@ -262,7 +273,7 @@ def scrape_image(label_counts, ext, query_format):
             try:
                 im = qd_common.img_from_base64(base64.b64encode(im_bytes))
                 h, w, c = im.shape
-                assert c == 3
+                assert c == 3 or c == 4
             except:
                 continue
             # avoid key collision with existing images
@@ -298,7 +309,7 @@ def image_url_to_bytes(url):
         response.close()
         return data
     except Exception as e:
-        logging.info("error downloading: {}".format(e.message))
+        logging.info("error downloading: {}".format(e))
     return None
 
 def is_url_clean(url):

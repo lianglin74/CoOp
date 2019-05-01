@@ -217,3 +217,54 @@ def show_images(all_image, num_rows, num_cols):
     plt.show()
     plt.close()
 
+def file_to_base64_img(fpath, check_channel=True):
+    """ Read image file, ensure the image is valid with 3 channels
+    """
+    from qd.process_tsv import ImageTypeParser
+    import imageio
+
+    with open(fpath, 'rb') as fp:
+        img_bytes = fp.read()
+    parser = ImageTypeParser()
+    t = parser.parse_type(img_bytes)
+    imarr = None
+    if t in ["jpg", "jpeg", "png", "webp"]:
+        imarr = cv2.imread(fpath, cv2.IMREAD_UNCHANGED)
+    elif t == "gif":
+        gif = imageio.mimread(fpath)
+        imarr = gif[0]
+    else:
+        return None
+    if imarr is None or len(imarr.shape) != 3:
+        return None
+    # ensure dtype is uint8
+    if imarr.dtype is not np.dtype('uint8'):
+        # NOTE: no easy way to convert other dtype to uint8 color scale
+        # info = np.iinfo(imarr.dtype) # Get the information of the incoming image type
+        # imarr = imarr.astype(np.float64) / info.max # normalize the imarr to 0 - 1
+        # imarr = 255 * imarr # Now scale by 255
+        # imarr = imarr.astype(np.uint8)
+        return None
+
+    h, w, c = imarr.shape
+    assert(c == 3 or c == 4)
+    if check_channel and c == 4:
+        imarr = bgra_to_bgr_img_arr(imarr)
+        img_bytes = cv2.imencode('.jpg', imarr)[1].tostring()
+
+    if imarr.max() - imarr.min() < 5:
+        return None
+    return base64.b64encode(img_bytes)
+
+def bgra_to_bgr_img_arr(img_arr):
+    """ Convert BGRA to BGR, and transparent part to white
+    if using opencv built-in cv2.cvtColor(img_arr, cv2.COLOR_RGBA2RGB),
+    transparent part can be any color
+    """
+    h, w, c = img_arr.shape
+    assert(c == 4)
+    alpha_channel = img_arr[:, :, 3]
+    _, mask = cv2.threshold(alpha_channel, 254, 255, cv2.THRESH_BINARY)  # binarize mask
+    color = img_arr[:, :, :3]
+    new_img_arr = cv2.bitwise_not(cv2.bitwise_not(color, mask=mask))
+    return new_img_arr

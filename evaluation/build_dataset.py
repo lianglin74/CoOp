@@ -3,10 +3,10 @@ import json
 import os
 
 from evaluation.eval_utils import DetectionFile
-from scripts.process_tsv import populate_dataset_details
-from scripts.qd_common import load_from_yaml_file
-from scripts.taxonomy import Taxonomy
-from scripts.tsv_io import tsv_reader, tsv_writer, TSVDataset
+from qd.process_tsv import populate_dataset_details
+from qd.qd_common import load_from_yaml_file
+from qd.taxonomy import Taxonomy
+from qd.tsv_io import tsv_reader, tsv_writer, TSVDataset
 
 
 def sample_from_dataset(in_dataset_name, insplit, out_dataset_name, outsplit,

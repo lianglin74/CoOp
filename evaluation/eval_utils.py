@@ -7,10 +7,10 @@ import six
 from shutil import copyfile
 import yaml
 
-from scripts import tsv_io
-from scripts.tsv_io import TSVDataset
-from scripts.process_tsv import get_img_url2
-from scripts.qd_common import write_to_yaml_file
+from qd import tsv_io
+from qd.tsv_io import TSVDataset
+from qd.process_tsv import get_img_url2
+from qd.qd_common import write_to_yaml_file
 from evaluation.utils import read_from_file, write_to_file
 from evaluation.utils import search_bbox_in_list, is_valid_bbox, get_max_iou_idx, get_bbox_matching_map
 

@@ -13,8 +13,8 @@ import uuid
 
 import evaluation.utils
 from evaluation.utils import read_from_file, write_to_file, escape_json_obj, calculate_bbox_area
-from scripts.process_tsv import get_img_url2
-from scripts import deteval
+from qd.process_tsv import get_img_url2
+from qd import deteval
 from qd.tsv_io import TSVFile, TSVDataset, tsv_writer
 from qd import process_tsv
 

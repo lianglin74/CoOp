@@ -147,7 +147,6 @@ def set_bn_eval(m):
     classname = m.__class__.__name__
     if classname.find('BatchNorm') != -1:
         m.eval()
-        m.track_running_status = False
 
 def train(args, train_loader, model, criterion, optimizer, epoch, logger, accuracy):
     batch_time = AverageMeter()

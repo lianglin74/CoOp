@@ -8,7 +8,7 @@ import re
 import shutil
 
 import _init_paths
-from scripts import deteval
+from qd import deteval
 
 def list_files_in_dir(dirpath):
     return [os.path.join(dirpath, f) for f in os.listdir(dirpath)
