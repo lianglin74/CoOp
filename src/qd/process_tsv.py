@@ -81,6 +81,30 @@ from qd.db import create_mongodb_client
 from qd.db import create_bbverification_db
 
 
+def train_test_split(data_from, data_to, num_test=5000):
+    populate_dataset_details(data_from)
+    dataset_from = TSVDataset(data_from)
+    dataset_to = TSVDataset(data_to)
+
+    split_from = 'train'
+
+    num_total_image = dataset_from.num_rows(split_from)
+    total_idx = range(num_total_image)
+    random.seed(666)
+    random.shuffle(total_idx)
+    split_names = ['test', 'train']
+    all_split_idx = [total_idx[: num_test], total_idx[num_test:]]
+    for split_idx, split_name in zip(all_split_idx, split_names):
+        dataset_to.write_data(dataset_from.iter_data(split_from,
+            filter_idx=split_idx), split_name)
+        # all label file
+        v = 0
+        while dataset_from.has(split_from, 'label', version=v):
+            dataset_to.write_data(dataset_from.iter_data(split_from,
+                t='label', version=v, filter_idx=split_idx),
+                split_name, t='label', version=v)
+            v = v + 1
+
 def find_best_matched_rect_idx(target, rects, check_class=True):
     target_class_lower = target['class'].lower()
     if check_class:
