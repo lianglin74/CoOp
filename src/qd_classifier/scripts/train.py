@@ -19,14 +19,14 @@ from torchvision.models.resnet import model_urls
 
 import numpy as np
 
-from ..lib import layers
-from ..lib.dataset import TSVDataset, TSVDatasetPlusYaml
-from ..utils.parser import get_arg_parser
-from ..utils.data import get_data_loader
-from ..utils.train_utils import get_criterion, get_optimizer, get_scheduler, get_accuracy_calculator, train
-from ..utils.test import validate
-from ..utils.save_model import save_checkpoint
-from ..utils.logger import Logger, DistributedLogger
+from qd_classifier.lib import layers
+from qd_classifier.lib.dataset import TSVDataset, TSVDatasetPlusYaml
+from qd_classifier.utils.parser import get_arg_parser
+from qd_classifier.utils.data import get_data_loader
+from qd_classifier.utils.train_utils import get_criterion, get_optimizer, get_scheduler, get_accuracy_calculator, train
+from qd_classifier.utils.test import validate
+from qd_classifier.utils.save_model import save_checkpoint
+from qd_classifier.utils.logger import Logger, DistributedLogger
 
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")

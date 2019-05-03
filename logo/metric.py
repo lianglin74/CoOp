@@ -16,8 +16,7 @@ from logo import constants
 from qd.qd_common import init_logging, worth_create, read_to_buffer
 from qd.tsv_io import tsv_reader, tsv_writer, TSVDataset
 from qd import deteval, qd_common
-from scripts.yolotrain import yolo_predict
-from scripts.pytablemd import write_tablemd
+from qd.yolotrain import yolo_predict
 
 trained_dataset = "brand1048"
 trained_dataset_version = 2
@@ -43,8 +42,7 @@ tag5_expid = "pretrained_0.1_old"
 tag6_expid = "logo40can2"
 
 def main():
-    records = []
-    headings = ["Methods"] + ["mAP@{}".format(iou) for iou in iou_thres] * 4
+    records = ["Methods"] + ["mAP@{}".format(iou) for iou in iou_thres] * 4
 
     records.append(["1k logo detector"] + evaluate_detector(det1_expid))
     records.append(["logo/non-logo detector"] + evaluate_detector(det3_expid))
@@ -53,10 +51,7 @@ def main():
     records.append(["two-stage-ccs"] + evaluate_two_stage(det3_expid, tag4_expid))
 
     fpath = os.path.join(rootpath, "table")
-    fields = range(len(records[0]))
-    align = [('^', '<')] + [('^', '^')]*(len(headings) - 1)
-    with open(fpath, 'w') as fp:
-        write_tablemd(fp, records, fields, headings, align)
+    tsv_writer(records, fpath)
 
 
 def evaluate_two_stage(det_expid, tag_expid):

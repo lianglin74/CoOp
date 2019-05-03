@@ -97,9 +97,9 @@ def get_testdata_loader(args):
 
 
 def get_pt_transform(phase, args):
-    # NOTE: OpenCV loads image in BGR
-    bgr_normalize = transforms.Normalize(mean=[0.406, 0.456, 0.485],
-                                     std=[0.225, 0.224, 0.229])
+    rgb_normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                     std=[0.229, 0.224, 0.225])
+
     if args.input_size == 224:
         target_size = 256
         crop_size = 224
@@ -116,7 +116,7 @@ def get_pt_transform(phase, args):
                     transforms.Resize(target_size),
                     transforms.CenterCrop(crop_size),
                     transforms.ToTensor(),
-                    # bgr_normalize,
+                    # rgb_normalize,
                 ])
         else:
             test_transform = transforms.Compose([
@@ -124,7 +124,7 @@ def get_pt_transform(phase, args):
                     transforms.Resize(target_size),
                     transforms.CenterCrop(crop_size),
                     transforms.ToTensor(),
-                    bgr_normalize,
+                    rgb_normalize,
                 ])
         return test_transform
 
@@ -137,7 +137,7 @@ def get_pt_transform(phase, args):
                     transforms.ColorJitter(brightness=0.5, contrast=0, saturation=0.5, hue=0.1),
                     # transforms.RandomHorizontalFlip(0.5),
                     transforms.ToTensor(),
-                    bgr_normalize,
+                    rgb_normalize,
                 ])
         elif args.data_aug == 1:
             train_transform = transforms.Compose([
@@ -146,7 +146,7 @@ def get_pt_transform(phase, args):
                     # transforms.ColorJitter(brightness=(0.66667, 1.5), contrast=0, saturation=(0.66667, 1.5), hue=(-0.1, 0.1)),
                     # transforms.RandomHorizontalFlip(0.5),
                     transforms.ToTensor(),
-                    # bgr_normalize,
+                    # rgb_normalize,
                 ])
         elif args.data_aug == 2:
             train_transform = transforms.Compose([
@@ -157,7 +157,7 @@ def get_pt_transform(phase, args):
                     transforms.RandomResizedCrop(crop_size, scale=(0.25,1), ratio=(2./3., 3./2.)),
                     transforms.ColorJitter(brightness=0.5, contrast=0, saturation=0.5, hue=0.1),
                     transforms.ToTensor(),
-                    bgr_normalize,
+                    rgb_normalize,
                 ])
         elif args.data_aug == 3:
             train_transform = transforms.Compose([
@@ -168,7 +168,7 @@ def get_pt_transform(phase, args):
                     transforms.RandomResizedCrop(crop_size, scale=(0.25,1), ratio=(2./3., 3./2.)),
                     # transforms.ColorJitter(brightness=(0.66667, 1.5), contrast=0, saturation=(0.66667, 1.5), hue=(-0.1, 0.1)),
                     transforms.ToTensor(),
-                    bgr_normalize,
+                    rgb_normalize,
                 ])
         elif args.data_aug == 4:
             train_transform = transforms.Compose([
@@ -176,7 +176,7 @@ def get_pt_transform(phase, args):
                     transforms.RandomResizedCrop(crop_size, scale=(0.25,1), ratio=(2./3., 3./2.)),
                     transforms.RandomHorizontalFlip(0.5),
                     transforms.ToTensor(),
-                    bgr_normalize,
+                    rgb_normalize,
                 ])
         else:
             raise ValueError()

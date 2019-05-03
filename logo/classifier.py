@@ -16,8 +16,8 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 import _init_paths
-from tagging.scripts import extract, pred
-from tagging.utils import accuracy
+from qd_classifier.scripts import extract, pred
+from qd_classifier.utils import accuracy
 from qd.qd_common import calculate_iou, write_to_yaml_file, load_from_yaml_file, init_logging, ensure_directory, int_rect, is_valid_rect, worth_create
 from evaluation.eval_utils import DetectionFile
 from logo import constants

@@ -4,7 +4,7 @@ import json
 
 import torch
 
-from tagging.scripts import train, pred
+from qd_classfier.scripts import train, pred
 from qd import tsv_io, qd_common
 
 torch.manual_seed(2018)

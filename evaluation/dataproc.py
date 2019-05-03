@@ -7,6 +7,7 @@ import logging
 import multiprocessing as mp
 import os
 from PIL import Image
+import re
 import shutil
 from tqdm import tqdm
 try:
@@ -255,6 +256,7 @@ def scrape_image(args):
         else:
             query_term = term
         query_term = query_format.format(query_term)
+        query_term = clean_query_keywords(query_term)
         if ext and "png" in ext:
             trans_bg = True
         else:
@@ -285,6 +287,11 @@ def scrape_image(args):
             num_valid_img += 1
     return ret
 
+def clean_query_keywords(query_str):
+    replace_chars = ";/?:@=&<>#%\{\}|\\^~[]`"
+    for char in replace_chars:
+        query_str = query_str.replace(char, ' ')
+    return query_str
 
 def save_img_to_file(img_bytes, fpath):
     try:
