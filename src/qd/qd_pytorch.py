@@ -48,6 +48,53 @@ import re
 import glob
 
 
+def compare_caffeconverted_vs_pt(pt2, pt1):
+    state1 = torch.load(pt1)
+    state2 = torch.load(pt2)
+
+    sd1 = state1['state_dict']
+    for k in ['region_target.biases', 'region_target.seen_images']:
+        sd1[k] = state1[k]
+    sd2 = state2['state_dict']
+
+    key_mismatched = []
+    key_matched_size_inequal = []
+    key_matched_value_equal = []
+    key_matched_value_inequal = []
+    for k2 in sd2:
+        found = False
+        k2_in_match = k2
+        if k2_in_match in ['extra_conv19.weight', 'extra_conv20.weight']:
+            k2_in_match = k2_in_match.replace('.', '/')
+            k2_in_match = k2_in_match.replace('weight', 'conv.weight')
+        for k1 in sd1:
+            if not found:
+                if k2_in_match in k1:
+                    found = True
+                    break
+            else:
+                assert k2_in_match not in k1
+        if not found:
+            key_mismatched.append(k2)
+            continue
+        v2 = sd2[k2].cpu().float()
+        v1 = sd1[k1].cpu().float()
+        assert len(v1.shape) == len(v2.shape)
+        if not all(s1 == s2 for s1, s2 in zip(v1.shape, v2.shape)):
+            key_matched_size_inequal.append(k2)
+            continue
+        d = (v1 - v2).norm()
+        s = v1.norm()
+        if d <= 0.00001 * s:
+            key_matched_value_equal.append((k2, d, s, d / s))
+        else:
+            key_matched_value_inequal.append((k2, d, s, d / s))
+    logging.info(pformat(key_mismatched))
+    logging.info('key matched size inequal: \n{}'.format(pformat(key_matched_size_inequal)))
+    logging.info('key matched value equal: \n {}'.format(pformat(key_matched_value_equal)))
+    logging.info('key matched value not equal: \n{}'.format(
+        pformat(key_matched_value_inequal)))
+
 def synchronize():
     """
     from mask rcnn
