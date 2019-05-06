@@ -478,7 +478,8 @@ class PhillyVC(object):
         return extraParam
 
     def philly_submit_v2(self, jobname, num_gpu, command,
-            isDebug=False, multi_process=False, dry_run=False):
+            isDebug=False, multi_process=False, dry_run=False,
+            docker_tag=None):
         cluster, vc = self.cluster, self.vc
         if cluster == 'philly-prod-cy4':
             submit_url = 'http://phillyonap/api/v2/submit'
@@ -487,6 +488,8 @@ class PhillyVC(object):
             registry = 'phillyregistry.azurecr.io'
             submit_url = 'https://philly/api/v2/submit'
         tag = self.docker['tag']
+        if docker_tag:
+            tag = docker_tag
         assert len(command) > 0
         extraParam = self.get_config_extra_param(command)
         logging.info('extraParam: {}'.format(extraParam))

@@ -17,6 +17,11 @@ def put_text(im, text, bottomleft=(0,100),
             thickness=font_thickness)
     return cv2.getTextSize(text, font, font_scale, font_thickness)[0]
 
+def show_net_input_image(data):
+    all_image = network_input_to_image(data, [104, 117, 123])
+    for im in all_image:
+        show_image(im)
+
 def show_net_input(data, label, max_image_to_show=None):
     all_image = network_input_to_image(data, [104, 117, 123])
     num_image = label.shape[0]

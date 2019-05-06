@@ -376,7 +376,7 @@ class ProtoGenerator(object):
                 'lr_policy': lr_policy,
                 'gamma': 0.1,
                 'display': kwargs.get('display', 100),
-                'momentum': 0.9,
+                'momentum': kwargs.get('momentum', 0.9),
                 'weight_decay': kwargs.get('weight_decay', 0.0005),
                 'snapshot': snapshot,
                 'snapshot_prefix': op.relpath(snapshot_prefix),
@@ -1762,6 +1762,8 @@ class CaffeWrapper(object):
             if gpu >= 0:
                 caffe.set_device(gpu)
                 caffe.set_mode_gpu()
+            else:
+                caffe.set_mode_cpu()
             caffe.set_random_seed(777)
             solver = caffe.SGDSolver(str(solver_prototxt))
             if restore_snapshot_iter:
@@ -1772,14 +1774,16 @@ class CaffeWrapper(object):
 
             # visualize how the parameters are changed during the trainining.
             #visualize_train(solver)
-            while True:
-                solver.step(50)
+            for i in range(10):
+                solver.step(1)
+                solver.snapshot()
                 # the commented shows how to save some data blob and how to
                 # visualize the network input blob
-                #np.save('data.npy', solver.net.blobs['data'].data)
+                np.save('/tmp/caffe.data{}.npy'.format(i), solver.net.blobs['data'].data)
+                np.save('/tmp/caffe.label{}.npy'.format(i),
+                        solver.net.blobs['label'].data)
                 #show_net_input(solver.net.blobs['data'].data,
                         #solver.net.blobs['label'].data)
-
         else:
             logging.info('solver proto: {}'.format(solver_prototxt))
             logging.info('weights: {}'.format(pretrained_model))

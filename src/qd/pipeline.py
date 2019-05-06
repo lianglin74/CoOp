@@ -22,7 +22,10 @@ from qd.qd_common import init_logging
 
 def get_all_test_data(exp):
     pattern_to_test_datas = load_from_yaml_file('./aux_data/exp/pattern_to_test_datas.yaml')
-    return make_by_pattern_result(exp, pattern_to_test_datas)
+    result = make_by_pattern_result(exp, pattern_to_test_datas)
+    if result is None:
+        result = [{'test_data': exp, 'test_split': 'test'}]
+    return result
 
 def get_all_full_expid_by_data(exp):
     pattern_to_test_datas = load_from_yaml_file('./aux_data/exp/pattern_to_full_expids.yaml')
@@ -43,7 +46,7 @@ def ensure_upload_data_for_philly_jobs(data):
 
     c = create_cloud_storage('vig')
     philly_client = create_philly_client()
-    data_folder = philly_client.get_data_path_in_blob()
+    data_folder = philly_client.get_data_folder_in_blob()
     for d in all_data:
         dataset = TSVDataset(d)
         need_upload = False
@@ -70,16 +73,75 @@ def philly_func_run(func, param, dry_run=False, **submit_param):
     param['type'] = func.__name__
     client = create_philly_client(use_blob_as_input=True, isDebug=False)
     param['gpus'] = list(range(client.num_gpu))
+    if hasattr(func, 'func_code'):
+        # py2
+        code_file_name = func.func_code.co_filename
+    else:
+        # py3
+        code_file_name = func.__code__.co_filename
     extra_param = convert_to_philly_extra_command(param,
-            script=op.relpath(func.func_code.co_filename))
+            script=op.relpath(code_file_name))
     logging.info(extra_param)
     client.submit_without_sync(extra_param, dry_run=dry_run,
             **submit_param)
+
+def dict_get_all_path(d):
+    all_path = []
+    for k, v in viewitems(d):
+        if not isinstance(v, dict):
+            all_path.append(k)
+        else:
+            all_sub_path = dict_get_all_path(v)
+            all_path.extend([k + '$' + p for p in all_sub_path])
+    return all_path
+
+def dict_has_path(d, p):
+    ps = p.split('$')
+    cur_dict = d
+    while True:
+        if len(ps) > 0:
+            if ps[0] in cur_dict:
+                cur_dict = cur_dict[ps[0]]
+                ps = ps[1:]
+            else:
+                return False
+        else:
+            return True
+
+def dict_get_path_value(d, p):
+    ps = p.split('$')
+    cur_dict = d
+    while True:
+        if len(ps) > 0:
+            cur_dict = cur_dict[ps[0]]
+            ps = ps[1:]
+        else:
+            return cur_dict
 
 def update_parameters(param):
     default_param = {
             'max_iter': 10000,
             'effective_batch_size': 64}
+
+    direct_add_value_keys = OrderedDict([('effective_batch_size', 'BS'),
+            ('max_iter', 'MaxIter'),
+            ('max_epoch', 'MaxEpoch'),
+            ('last_fixed_param', 'LastFixed'),
+            ('num_extra_convs', 'ExtraConv'),
+            ('yolo_train_session_param$data_augmentation', 'Aug'),
+            ('momentum', 'Momentum'),
+            ])
+
+    non_expid_impact_keys = ['data', 'net', 'expid_prefix',
+            'test_data', 'test_split', 'test_version',
+            'dist_url_tcp_port', 'workers', 'force_train',
+            'pipeline_type', 'test_batch_size',
+            'yolo_train_session_param$debug_train',
+            'full_expid',
+            'display']
+
+    if param['pipeline_type'] == 'MaskRCNNPipeline':
+        non_expid_impact_keys.extend(['DATASETS', ''])
 
     for k, v in viewitems(default_param):
         if k not in param:
@@ -94,15 +156,9 @@ def update_parameters(param):
     for k in need_hash_sha_params:
         if k in param:
             infos.append('{}{}'.format(k, hash_sha1(param[k])[:5]))
-
-    direct_add_value_keys = OrderedDict([('effective_batch_size', 'BS'),
-            ('max_iter', 'MaxIter'),
-            ('max_epoch', 'MaxEpoch'),
-            ('last_fixed_param', 'LastFixed'),
-            ('num_extra_convs', 'ExtraConv')])
     for k, v in viewitems(direct_add_value_keys):
-        if k in param:
-            pk = param[k]
+        if dict_has_path(param, k):
+            pk = dict_get_path_value(param, k)
             if type(pk) is str:
                 pk = pk.replace('/', '.')
             infos.append('{}{}'.format(v, pk))
@@ -115,28 +171,41 @@ def update_parameters(param):
             elif not param[k] and true_false_keys[k][1]:
                 infos.append(true_false_keys[k][1])
 
-    non_expid_impact_keys = ['data', 'net', 'expid_prefix',
-            'test_data', 'test_split', 'test_version',
-            'dist_url_tcp_port', 'workers', 'force_train']
+    known_keys = []
+    known_keys.extend((k for k in need_hash_sha_params))
+    known_keys.extend((k for k in non_expid_impact_keys))
+    known_keys.extend((k for k in direct_add_value_keys))
+    known_keys.extend((k for k in true_false_keys))
 
-    for k in param:
-        assert k in need_hash_sha_params or \
-                k in non_expid_impact_keys or \
-                k in direct_add_value_keys or \
-                k in true_false_keys, k
+    all_path = dict_get_all_path(param)
+
+    invalid_keys = [k for k in all_path
+        if all(k != n and not k.startswith(n + '$') for n in known_keys)]
+
+    assert len(invalid_keys) == 0, pformat(invalid_keys)
 
     if 'expid_prefix' in param:
         infos.insert(0, param['expid_prefix'])
     param['expid'] = '_'.join(infos)
 
 def create_pipeline(kwargs):
-    from qd.qd_pytorch import YoloV2PtPipeline
-    return YoloV2PtPipeline(**kwargs)
+    pipeline_type = kwargs.get('pipeline_type', 'YoloV2PtPipeline')
+    if pipeline_type == 'YoloV2PtPipeline':
+        from qd.qd_pytorch import YoloV2PtPipeline
+        return YoloV2PtPipeline(**kwargs)
+    elif pipeline_type == 'MaskRCNNPipeline':
+        from qd.qd_maskrcnn import MaskRCNNPipeline
+        return MaskRCNNPipeline(**kwargs)
 
-
-def load_pipeline(curr_param):
-    from qd.qd_pytorch import YoloV2PtPipeline
-    return YoloV2PtPipeline(load_parameter=True, **curr_param)
+def load_pipeline(kwargs):
+    from qd.qd_pytorch import load_latest_parameters
+    kwargs_f = load_latest_parameters(op.join('output',
+        kwargs['full_expid']))
+    for k in kwargs_f:
+        if k not in kwargs:
+            # we can overwrite the parameter in the parameter file
+            kwargs[k] = kwargs_f[k]
+    return create_pipeline(kwargs)
 
 def test_model_pipeline_eval_multi(all_test_data, param, **kwargs):
     init_logging()

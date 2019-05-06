@@ -96,7 +96,6 @@ def solve(proto, snapshot, weights, gpus, timing, uid, rank, extract_blob,
     if extract_blob is not None:
         blob_queue.put(solver.net.blobs[extract_blob].data)
 
-
 def register_timing(solver, nccl):
     fprop = []
     bprop = []

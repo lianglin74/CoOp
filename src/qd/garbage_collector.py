@@ -11,19 +11,22 @@ def get_file_size(f):
         return 0
     return os.stat(f).st_size
 
-def del_intermediate_models(folder='./output', threshold_in_days=30):
+def del_intermediate_models(folder='./output', threshold_in_days=30,
+        must_have_in_folder=None, dry_run=False):
     logging.info('start')
     total_size = 0
-    for aname in iter_to_be_deleted(folder, threshold_in_days):
+    for aname in iter_to_be_deleted(folder, threshold_in_days,
+            must_have_in_folder):
         s = os.stat(aname)
         total_size = total_size + s.st_size
         logging.info('removing {} - {}'.format(aname,
             total_size/1024./1024./1024.))
-        try:
-            os.remove(aname)
-        except:
-            logging.info('failed: {}'.format(aname))
-            continue
+        if not dry_run:
+            try:
+                os.remove(aname)
+            except:
+                logging.info('failed: {}'.format(aname))
+                continue
     logging.info(total_size / 1024.0 / 1024.0 / 1024.0)
 
 def old_enough(fname, threshold_in_days):
@@ -33,9 +36,10 @@ def old_enough(fname, threshold_in_days):
     days = d / 3600. / 24.
     return days > threshold_in_days
 
-def iter_to_be_deleted(folder, threshold_in_days=30):
+def iter_to_be_deleted(folder, threshold_in_days=30, must_have_in_folder=None):
     iter_extract_pattern = '.*model_iter_([0-9]*)e?\..*'
-    must_have_in_folder = ['']
+    if must_have_in_folder is None:
+        must_have_in_folder = ['']
     total_size = 0
     for root, dirnames, file_names in os.walk(folder):
         total_size += sum([get_file_size(op.join(root, f)) for f in file_names])

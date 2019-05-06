@@ -205,7 +205,6 @@ if __name__ == '__main__':
         target_file),
         ssh_cmd)
 
-
 def process_exists(pid):
     try:
         os.kill(pid, 0)

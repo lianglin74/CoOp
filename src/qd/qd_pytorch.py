@@ -385,7 +385,7 @@ def torch_save(t, f):
     torch.save(t, f)
 
 def torch_load(filename):
-    return torch.load(filename)
+    return torch.load(filename, map_location=lambda storage, loc: storage)
 
 def get_philly_mpi_hosts():
     return load_list_file(op.expanduser('~/mpi-hosts'))
@@ -517,7 +517,7 @@ class TorchTrain(object):
         assert (self.batch_size % self.mpi_size) == 0
         self.batch_size = self.batch_size / self.mpi_size
         assert (self.test_batch_size % self.mpi_size) == 0
-        self.test_batch_size = self.test_batch_size / self.mpi_size
+        self.test_batch_size = self.test_batch_size // self.mpi_size
         self.initialized = False
 
     def __getattr__(self, key):
@@ -618,18 +618,12 @@ class TorchTrain(object):
         return criterion
 
     def _get_checkpoint_file(self, epoch=None, iteration=None):
-        if epoch is None and iteration is None:
-            assert self.max_epoch is not None or self.max_iter is not None
-            return self._get_checkpoint_file(self.max_epoch, self.max_iter)
-
-        if iteration is not None:
-            assert epoch is None
-            return op.join(self.output_folder, 'snapshot',
-                'model_iter_{}.pth.tar'.format(iteration))
-        else:
-            assert epoch is not None
-            return op.join(self.output_folder, 'snapshot',
-                    'model_iter_{}e.pth.tar'.format(epoch))
+        assert epoch is None, 'not supported'
+        if iteration is None:
+            iteration = self.max_iter
+        iteration = self.parse_iter(iteration)
+        return op.join(self.output_folder, 'snapshot',
+                "model_iter_{:07d}.pt".format(iteration))
 
     def _get_model(self, pretrained, num_class):
         model = models.__dict__[self.net](pretrained=pretrained)
@@ -884,6 +878,10 @@ class TorchTrain(object):
             epoch = self.max_epoch
         model_file = self._get_checkpoint_file(epoch=epoch, iteration=iteration)
         predict_result_file = self._get_predict_file(model_file)
+        if not op.isfile(model_file):
+            logging.info('ignore to run predict since {} does not exist'.format(
+                model_file))
+            return predict_result_file
 
         if not worth_create(model_file, predict_result_file) and not self.force_predict:
             logging.info('ignore to do prediction {}'.format(predict_result_file))
@@ -1028,6 +1026,17 @@ class TorchTrain(object):
         else:
             logging.info('unknown evaluate method = {}'.format(self.evaluate_method))
 
+    def parse_iter(self, i):
+        if self.num_train_images is None:
+            self.num_train_images = TSVDataset(self.data).num_rows('train')
+        def to_iter(e):
+            if type(e) is str and e.endswith('e'):
+                iter_each_epoch = 1. * self.num_train_images / self.effective_batch_size
+                return int(float(e[:-1]) * iter_each_epoch)
+            else:
+                return int(e)
+        return to_iter(i)
+
 class ModelPipeline(TorchTrain):
     pass
 
@@ -1039,6 +1048,7 @@ class YoloV2PtPipeline(ModelPipeline):
             'ovthresh': [0.5],
             'display': 100,
             'lr_policy': 'multifixed',
+            'momentum': 0.9,
             'workers': 4})
         self.num_train_images = None
 
@@ -1047,17 +1057,6 @@ class YoloV2PtPipeline(ModelPipeline):
         iteration = self.parse_iter(iteration)
         return op.join(self.output_folder, 'snapshot',
                 "model_{:07d}.pth".format(iteration))
-
-    def parse_iter(self, i):
-        if self.num_train_images is None:
-            self.num_train_images = TSVDataset(self.data).num_rows('train')
-        def to_iter(e):
-            if type(e) is str and e.endswith('e'):
-                iter_each_epoch = 1. * self.num_train_images / self.effective_batch_size
-                return int(float(e[:-1]) * iter_each_epoch)
-            else:
-                return int(e)
-        return to_iter(i)
 
     def train(self):
         dataset = TSVDataset(self.data)
@@ -1083,7 +1082,7 @@ class YoloV2PtPipeline(ModelPipeline):
         solver_param = {
                 'lr_policy': lr_policy,
                 'gamma': 0.1,
-                'momentum': 0.9,
+                'momentum': self.momentum,
                 'stagelr': self.stagelr,
                 'stageiter': stageiter,
                 'weight_decay': self.weight_decay,
@@ -1132,6 +1131,9 @@ class YoloV2PtPipeline(ModelPipeline):
                 'param.yaml')
         write_to_yaml_file(param, param_yaml)
 
+        if self.yolo_train_session_param is not None:
+            param.update(self.yolo_train_session_param)
+
         from mmod import yolo_train_session
         snapshot_file = yolo_train_session.main(param, log)
 
@@ -1166,6 +1168,9 @@ class YoloV2PtPipeline(ModelPipeline):
         param['use_treestructure'] = is_tree
         if is_tree:
             param['tree'] = dataset.get_tree_file()
+
+        if self.yolo_predict_session_param is not None:
+            param.update(self.yolo_predict_session_param)
 
         is_local_rank0 = self.mpi_local_rank == 0
         log = FileLogger(self.output_folder, is_master=self.is_master,
