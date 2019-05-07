@@ -174,7 +174,7 @@ class TSVFile(object):
             self.pid = os.getpid()
 
         if self.pid != os.getpid():
-            logging.info('re-open {} because the process id changed'.format(self.tsv_file))
+            # logging.info('re-open {} because the process id changed'.format(self.tsv_file))
             self._fp = open(self.tsv_file, 'r')
             self.pid = os.getpid()
 

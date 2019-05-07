@@ -8,7 +8,7 @@ from .taxonomy import LabelTree
 from sklearn import metrics;
 import matplotlib.pyplot as plt
 import glob;
-from pytablemd import write_tablemd
+from .pytablemd import write_tablemd
 from functools import partial
 from .qd_common import FileProgressingbar, worth_create
 import logging

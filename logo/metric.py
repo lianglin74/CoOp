@@ -313,6 +313,9 @@ def eval_classifier(gt_dataset_name, split, version, det_expid, tag_expid,
         evaluate_detection(gt_dataset_name, split, pred_file, eval_file,
                 region_only=False, version=version)
         eval_res= json.loads(read_to_buffer(eval_file))
+        # # calculate class AP
+        # class_ap = [(k, v) for k, v in eval_res["overall"][str(iou_thres)]["class_ap"].items()]
+        # class_ap = sorted(class_ap, key=lambda p: p[1])
         return eval_res["overall"][str(iou_thres)]["map"]
 
     # top1/5 acc on gt region
@@ -356,11 +359,12 @@ def run_all_eval_classifier():
         for tag_expid, tag_snap_id in tag_snap_pairs:
             for obj_thres in [0.1, 0.3, 0.5, 0.6]:
                 for topN in [1, 3, 5, 10]:
-                    res = [obj_thres, topN, tag_expid, tag_snap_id]
-                    res.extend(eval_classifier(gt_dataset_name, split, version, det_expid, tag_expid,
-                            tag_snap_id, labelmap=labelmap, iou_thres=0.5, enlarge_bbox=2.0, topN_rp=topN, obj_thres=obj_thres))
-                    # print(res)
-                    yield res
+                    for enlarge_bbox in [1, 2]:
+                        res = [obj_thres, topN, enlarge_bbox, tag_expid, tag_snap_id]
+                        res.extend(eval_classifier(gt_dataset_name, split, version, det_expid, tag_expid,
+                                tag_snap_id, labelmap=labelmap, iou_thres=0.5, enlarge_bbox=enlarge_bbox, topN_rp=topN, obj_thres=obj_thres))
+                        # print(res)
+                        yield res
     tsv_writer(gen_rows(), os.path.join(output_root, 'tmp.tsv'))
 
 

@@ -339,6 +339,9 @@ class CropClassTSVDatasetYaml(CropClassTSVDataset):
             cfg = yaml_cfg
 
         if session_name:
+            # NOTE: training and validation data must use the same labelmap
+            if "train" in cfg and "val" in cfg:
+                assert cfg["train"]["labelmap"] == cfg["val"]["labelmap"]
             cfg = cfg[session_name]
 
         tsv_file = cfg['tsv']
