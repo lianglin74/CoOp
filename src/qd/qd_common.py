@@ -41,6 +41,20 @@ except ImportError:
     from urllib2 import HTTPError
 
 
+def try_once(func):
+    def func_wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            import traceback
+            logging.info('ignore error \n{}'.format(str(e)))
+            traceback.print_exc()
+    return func_wrapper
+
+@try_once
+def try_delete(f):
+    os.remove(f)
+
 def list_to_nested_dict(xs, idxes):
     rest_idxes = set(range(len(xs[0]))).difference(idxes)
     result = {}
@@ -160,6 +174,8 @@ def zip_qd(out_zip):
             '\*.pyc',
             '-x',
             '\*.so',
+            '-x',
+            '\*.o',
             '-x',
             '\*src/CCSCaffe/docs/tutorial/\*',
             '-x',
@@ -1508,6 +1524,9 @@ def int_rect(rect, enlarge_factor=1.0, im_h=None, im_w=None):
 def is_valid_rect(rect):
     return len(rect) == 4 and rect[0] < rect[2] and rect[1] < rect[3]
 
+def pass_key_value_if_has(d_from, from_key, d_to, to_key):
+    if from_key in d_from:
+        d_to[to_key] = d_from[from_key]
 
 if __name__ == '__main__':
     init_logging()

@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 import os
 import sys
 import logging
@@ -145,6 +145,7 @@ def load_from_yaml_str(s):
     return yaml.load(s)
 
 def run_in_philly():
+    logging.info(sys.executable)
     extra_param = sys.argv[4]
     dict_param = load_from_yaml_str(base64.b64decode(extra_param))
 

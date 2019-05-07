@@ -561,10 +561,13 @@ class TorchTrain(object):
             self.is_master = True
         # adapt the batch size based on the mpi_size
         self.is_master = self.mpi_rank == 0
+
         assert (self.batch_size % self.mpi_size) == 0
         self.batch_size = self.batch_size / self.mpi_size
-        assert (self.test_batch_size % self.mpi_size) == 0
+
+        assert (self.test_batch_size % self.mpi_size) == 0, self.test_batch_size
         self.test_batch_size = self.test_batch_size // self.mpi_size
+
         self.initialized = False
 
     def __getattr__(self, key):
@@ -773,6 +776,11 @@ class TorchTrain(object):
         train_result = self.train()
         if self.distributed:
             synchronize()
+
+        # save the source code after training
+        if self.mpi_rank == 0 and not self.debug_train:
+            from qd.qd_common import zip_qd
+            zip_qd(op.join(self.output_folder, 'source_code'))
 
         return train_result
 
@@ -1074,10 +1082,10 @@ class TorchTrain(object):
             logging.info('unknown evaluate method = {}'.format(self.evaluate_method))
 
     def parse_iter(self, i):
-        if self.num_train_images is None:
-            self.num_train_images = TSVDataset(self.data).num_rows('train')
         def to_iter(e):
             if type(e) is str and e.endswith('e'):
+                if self.num_train_images is None:
+                    self.num_train_images = TSVDataset(self.data).num_rows('train')
                 iter_each_epoch = 1. * self.num_train_images / self.effective_batch_size
                 return int(float(e[:-1]) * iter_each_epoch)
             else:

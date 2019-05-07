@@ -56,6 +56,8 @@ from qd.qd_common import write_to_file
 from qd.qd_common import write_to_yaml_file, load_from_yaml_file
 from qd.qd_common import float_tolorance_equal
 from qd.qd_common import is_positive_uhrs_verified, is_negative_uhrs_verified
+from qd.qd_common import concat_files
+from qd.qd_common import try_delete
 from qd.taxonomy import child_parent_print_tree2
 from qd.taxonomy import create_markdown_url
 from qd.taxonomy import disambibuity_noffsets
@@ -80,6 +82,27 @@ from qd.tsv_io import is_verified_rect
 from qd.db import create_mongodb_client
 from qd.db import create_bbverification_db
 
+
+def delete_tsv_files(tsvs):
+    for t in tsvs:
+        if op.isfile(t):
+            try_delete(t)
+        line = op.splitext(t)[0] + '.lineidx'
+        if op.isfile(line):
+            try_delete(line)
+
+def concat_tsv_files(tsvs, out_tsv):
+    concat_files(tsvs, out_tsv)
+    sizes = [os.stat(t).st_size for t in tsvs]
+    sizes = np.cumsum(sizes)
+    all_idx = []
+    for i, t in enumerate(tsvs):
+        for idx in load_list_file(op.splitext(t)[0] + '.lineidx'):
+            if i == 0:
+                all_idx.append(idx)
+            else:
+                all_idx.append(str(int(idx) + sizes[i - 1]))
+    write_to_file('\n'.join(all_idx), op.splitext(out_tsv)[0] + '.lineidx')
 
 def train_test_split(data_from, data_to, num_test=5000):
     populate_dataset_details(data_from)

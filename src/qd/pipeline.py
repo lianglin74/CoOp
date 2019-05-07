@@ -65,13 +65,14 @@ def ensure_upload_data_for_philly_jobs(data):
             if op.isdir(dataset._data_root):
                 c.az_upload2(dataset._data_root, data_folder)
 
-def philly_func_run(func, param, dry_run=False, **submit_param):
+def philly_func_run(func, param, **submit_param):
     if 'data' in param:
         ensure_upload_data_for_philly_jobs(param['data'])
     assert func.__module__ != '__main__'
     assert 'type' not in param
     param['type'] = func.__name__
-    client = create_philly_client(use_blob_as_input=True, isDebug=False)
+    client = create_philly_client(use_blob_as_input=True,
+            **submit_param)
     param['gpus'] = list(range(client.num_gpu))
     if hasattr(func, 'func_code'):
         # py2
@@ -82,8 +83,8 @@ def philly_func_run(func, param, dry_run=False, **submit_param):
     extra_param = convert_to_philly_extra_command(param,
             script=op.relpath(code_file_name))
     logging.info(extra_param)
-    client.submit_without_sync(extra_param, dry_run=dry_run,
-            **submit_param)
+    logging.info(client.get_config_extra_param(extra_param))
+    client.submit_without_sync(extra_param)
 
 def dict_get_all_path(d):
     all_path = []
@@ -130,6 +131,8 @@ def update_parameters(param):
             ('num_extra_convs', 'ExtraConv'),
             ('yolo_train_session_param$data_augmentation', 'Aug'),
             ('momentum', 'Momentum'),
+            ('base_lr', 'LR'),
+            ('stageiter', 'StageIter')
             ])
 
     non_expid_impact_keys = ['data', 'net', 'expid_prefix',
@@ -137,6 +140,7 @@ def update_parameters(param):
             'dist_url_tcp_port', 'workers', 'force_train',
             'pipeline_type', 'test_batch_size',
             'yolo_train_session_param$debug_train',
+            'evaluate_method',
             'full_expid',
             'display']
 
@@ -144,8 +148,7 @@ def update_parameters(param):
         non_expid_impact_keys.extend(['DATASETS', ''])
 
     for k, v in viewitems(default_param):
-        if k not in param:
-            param[k] = v
+        assert k in param, 'set default outside'
 
     if 'expid' in param:
         return
@@ -161,6 +164,8 @@ def update_parameters(param):
             pk = dict_get_path_value(param, k)
             if type(pk) is str:
                 pk = pk.replace('/', '.')
+            elif type(pk) in [list, tuple]:
+                pk = '.'.join(map(str, pk))
             infos.append('{}{}'.format(v, pk))
 
     true_false_keys = OrderedDict([('use_treestructure', ('Tree', None))])

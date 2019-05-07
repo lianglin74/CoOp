@@ -310,6 +310,9 @@ class PhillyVC(object):
         self.blob_mount_point = kwargs['blob_mount_point']
         self.config_param = kwargs['config_param']
         self.docker = kwargs['docker']
+        self.dry_run = kwargs.get('dry_run')
+        self.multi_process = kwargs.get('multi_process')
+        self.docker_tag = kwargs.get('docker_tag')
 
     def get_data_folder_in_blob(self):
         assert self.config_param['data_folder'].startswith(self.blob_mount_point)
@@ -473,13 +476,11 @@ class PhillyVC(object):
                 'model_folder': self.config_param['model_folder'],
                 'output_folder': self.config_param['output_folder'],
                 'command': command}
-        extraParam = base64.b64encode(dump_to_yaml_str(dict_param))
+        extraParam = base64.b64encode(dump_to_yaml_str(dict_param)).decode()
 
         return extraParam
 
-    def philly_submit_v2(self, jobname, num_gpu, command,
-            isDebug=False, multi_process=False, dry_run=False,
-            docker_tag=None):
+    def philly_submit_v2(self, jobname, num_gpu, command):
         cluster, vc = self.cluster, self.vc
         if cluster == 'philly-prod-cy4':
             submit_url = 'http://phillyonap/api/v2/submit'
@@ -488,8 +489,8 @@ class PhillyVC(object):
             registry = 'phillyregistry.azurecr.io'
             submit_url = 'https://philly/api/v2/submit'
         tag = self.docker['tag']
-        if docker_tag:
-            tag = docker_tag
+        if self.docker_tag:
+            tag = self.docker_tag
         assert len(command) > 0
         extraParam = self.get_config_extra_param(command)
         logging.info('extraParam: {}'.format(extraParam))
@@ -499,6 +500,7 @@ class PhillyVC(object):
         else:
             config_file = "/hdfs/{}/{}/{}".format(self.vc,
                 self.dest_config_folder, op.basename(self.src_config_path))
+        logging.info('cmd:\n{} d d d {}'.format(config_file, extraParam))
         data = {
             "ClusterId": cluster,
             "VcId": vc,
@@ -512,7 +514,7 @@ class PhillyVC(object):
                 "Path": "/hdfs/{}/{}".format(self.vc, self.user_name)
             }],
             "Outputs": [],
-            "IsDebug": isDebug,
+            "IsDebug": self.isDebug,
             "CustomDockerName": None,
             "RackId": "anyConnected",
             "MinGPUs": num_gpu,
@@ -524,17 +526,16 @@ class PhillyVC(object):
             "Registry": registry,
             "Repository": self.docker['image'],
             "Tag": tag,
-            "CustomMPIArgs":None,
+            "CustomMPIArgs": 'env CUDA_CACHE_DISABLE=1 NCCL_IB_DISABLE=1 NCCL_SOCKET_IFNAME=eth0 NCCL_DEBUG=INFO OMP_NUM_THREADS=2',
             "Timeout":None,
             }
-        if not multi_process:
+        data["NumOfContainers"] = "1"
+        if not self.multi_process:
             data["OneProcessPerContainer"] = True
             data["DynamicContainerSize"] = False
-            data["NumOfContainers"] = "1"
         else:
             data["OneProcessPerContainer"] = False
             data["DynamicContainerSize"] = True
-            data["NumOfContainers"] = "1"
 
         blob_account  = 'vig'
         cloud_blob = create_cloud_storage(blob_account)
@@ -562,22 +563,19 @@ class PhillyVC(object):
             '-X', 'POST', submit_url, '-k', '--ntlm',
             '-n', '-d', "{}".format(en_data)]
 
-        if not dry_run:
+        if not self.dry_run:
             result_str = cmd_run(cmd, return_output=True)
             return result_str
 
     def submit(self, extraParam, **submit_param):
         self.submit_without_sync(extraParam, **submit_param)
 
-    def submit_without_sync(self, extraParam, **submit_param):
+    def submit_without_sync(self, extraParam):
         '''
         use submit() because of bad naming here.
         '''
-        if 'isDebug' not in submit_param:
-            submit_param['isDebug'] = self.isDebug
         result = self.philly_submit_v2(str(self.random_id), self.num_gpu,
-                extraParam,
-                **submit_param)
+                extraParam)
         if result:
             result = json.loads(result)
             if 'error' in result:
@@ -774,8 +772,8 @@ def ssh_into(app_id):
             stdin=None,
             shell=True)
 
-def tracking(app_id):
-    p = create_philly_client()
+def tracking(app_id, **kwargs):
+    p = create_philly_client(**kwargs)
     _, app_id = p.search_job_id(app_id)
     p.track_job_once(app_id)
 
@@ -791,8 +789,8 @@ def list_to_dict_full(l, idx):
         result[x[idx]].append(x)
     return result
 
-def blame():
-    p = create_philly_client()
+def blame(**kwargs):
+    p = create_philly_client(**kwargs)
     all_job_info = p.query_all_job(False)
 
     all_username_status_gpus_queue = []
@@ -875,21 +873,21 @@ def execute(task_type, **kwargs):
     if task_type == 'query':
         if len(kwargs.get('remainders', [])) > 0:
             assert len(kwargs['remainders']) == 1
-            tracking(kwargs['remainders'][0])
+            tracking(kwargs['remainders'][0], **kwargs)
         else:
-            p = create_philly_client()
+            p = create_philly_client(**kwargs)
             p.query(**kwargs)
     elif task_type == 'submit':
         assert len(kwargs['remainders']) == 1
         submit_without_sync(cmd=kwargs['remainders'][0], **kwargs)
     elif task_type == 'abort':
-        p = create_philly_client()
+        p = create_philly_client(**kwargs)
         for v in kwargs['remainders']:
             v = v.strip()
             _, job_id = p.search_job_id(v)
             p.abort(job_id)
     elif task_type == 'blame':
-        blame()
+        blame(**kwargs)
     elif task_type == 'ssh':
         assert len(kwargs['remainders']) == 1
         ssh_into(kwargs['remainders'][0])
