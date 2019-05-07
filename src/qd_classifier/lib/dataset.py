@@ -267,6 +267,10 @@ class CropClassTSVDataset(Dataset):
                 os.remove(self._bbox_idx_file)
             raise e
 
+        self.num_samples = 0
+        for _ in tsv_reader(self._bbox_idx_file):
+            self.num_samples += 1
+
     def label_dim(self):
         return len(self.label_to_idx)
 
@@ -275,13 +279,6 @@ class CropClassTSVDataset(Dataset):
 
     def get_labelmap(self):
         return self.labels
-
-    def _read_into_buffer(self, fpath, sep='\t'):
-        ret = []
-        with open(fpath, 'r') as fp:
-            for line in fp:
-                ret.append(line.strip().split(sep))
-        return ret
 
     def _generate_class_instance_index_parallel(self):
         """ For training: (img_idx, rect, label_idx)
@@ -313,7 +310,7 @@ class CropClassTSVDataset(Dataset):
             return cropped_img, label
 
     def __len__(self):
-        return self._bbox_idx_tsv.num_rows()
+        return self.num_samples
 
     def get_target(self, index):
         info = self._bbox_idx_tsv.seek(index)
