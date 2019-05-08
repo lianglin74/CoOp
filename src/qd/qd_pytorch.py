@@ -527,9 +527,11 @@ class TorchTrain(object):
                 'dataset_type': 'single',
                 'max_iter': 10,
                 'weight_decay': 0.0005,
-                'batch_size': 256,
+                'effective_batch_size': 256,
                 'pretrained': False,
                 'dist_url_tcp_port': 23456}
+
+        assert 'batch_size' not in kwargs, 'use effective_batch_size'
 
         self.data = kwargs.get('data', 'Unknown')
         self.net = kwargs.get('net', 'Unknown')
@@ -540,7 +542,7 @@ class TorchTrain(object):
         self.output_folder = op.join('output', self.full_expid)
         self.test_data = kwargs.get('test_data', self.data)
         self.test_batch_size = kwargs.get('test_batch_size',
-                self.batch_size)
+                self.effective_batch_size)
 
         self.mpi_rank = get_mpi_rank()
         self.mpi_size= get_mpi_size()
@@ -562,8 +564,8 @@ class TorchTrain(object):
         # adapt the batch size based on the mpi_size
         self.is_master = self.mpi_rank == 0
 
-        assert (self.batch_size % self.mpi_size) == 0
-        self.batch_size = self.batch_size / self.mpi_size
+        assert (self.effective_batch_size % self.mpi_size) == 0, (self.effective_batch_size, self.mpi_size)
+        self.batch_size = self.effective_batch_size / self.mpi_size
 
         assert (self.test_batch_size % self.mpi_size) == 0, self.test_batch_size
         self.test_batch_size = self.test_batch_size // self.mpi_size

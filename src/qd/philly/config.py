@@ -18,11 +18,25 @@ def load_list_file(fname):
 
 def init_logging():
     import socket
-    logging.basicConfig(level=logging.INFO,
-        format='%(asctime)s.%(msecs)03d {} %(process)d %(filename)s:%(lineno)s %(funcName)10s(): %(message)s'.format(
-            socket.gethostname()),
-        datefmt='%m-%d %H:%M:%S',
-    )
+    fmt = '%(asctime)s.%(msecs)03d {}-{} %(process)d %(filename)s:%(lineno)s %(funcName)10s(): %(message)s'.format(
+        socket.gethostname(), get_mpi_rank())
+
+    log_file = '/tmp/config_log/log_rank{}.txt'.format(get_mpi_rank())
+    ensure_directory(op.dirname(log_file))
+    file_handle = logging.FileHandler(log_file)
+    logger_fmt = logging.Formatter(fmt)
+    file_handle.setFormatter(fmt=logger_fmt)
+
+    ch = logging.StreamHandler(stream=sys.stdout)
+    ch.setLevel(logging.INFO)
+    formatter = logger_fmt
+    ch.setFormatter(formatter)
+
+    root = logging.getLogger()
+    root.handlers = []
+    root.setLevel(logging.INFO)
+    root.addHandler(file_handle)
+    root.addHandler(ch)
 
 def unzip(zip_file, target_folder):
     zip_ref = zipfile.ZipFile(zip_file, 'r')
@@ -76,8 +90,10 @@ import fcntl
 
 def acquireLock():
     ''' acquire exclusive lock file access '''
+    logging.info('start to acqure the lock')
     locked_file_descriptor = open('/tmp/lockfile.LOCK', 'w+')
     fcntl.lockf(locked_file_descriptor, fcntl.LOCK_EX)
+    logging.info('acqured')
     return locked_file_descriptor
 
 def releaseLock(locked_file_descriptor):
@@ -87,7 +103,9 @@ def releaseLock(locked_file_descriptor):
 def wrap_all(code_zip, code_root,
         data_folder, model_folder, output_folder, command):
     lock_fd = acquireLock()
+    logging.info('got the lock')
     if not op.isdir(code_root):
+        logging.info('setup the code')
         cmd_run(['grep', 'Port', '/etc/ssh/sshd_config'])
         cmd_run(['ifconfig'])
         cmd_run(['df', '-h'])
@@ -119,6 +137,8 @@ def wrap_all(code_zip, code_root,
 
         # compile the source code
         compile_qd(code_root)
+    else:
+        logging.info('skip to setup the code')
     releaseLock(lock_fd)
 
     if type(command) is str:

@@ -529,13 +529,17 @@ class PhillyVC(object):
             "CustomMPIArgs": 'env CUDA_CACHE_DISABLE=1 NCCL_IB_DISABLE=1 NCCL_SOCKET_IFNAME=eth0 NCCL_DEBUG=INFO OMP_NUM_THREADS=2',
             "Timeout":None,
             }
-        data["NumOfContainers"] = "1"
+        gpus_per_node = 4
+        assert cluster in ['sc2', 'wu1'], 'need to update gpus_per_node'
+        num_containers = (num_gpu + gpus_per_node - 1) // gpus_per_node
+        #data["NumOfContainers"] = "2"
+        data["NumOfContainers"] = str(num_containers)
         if not self.multi_process:
             data["OneProcessPerContainer"] = True
             data["DynamicContainerSize"] = False
         else:
             data["OneProcessPerContainer"] = False
-            data["DynamicContainerSize"] = True
+            data["DynamicContainerSize"] = False
 
         blob_account  = 'vig'
         cloud_blob = create_cloud_storage(blob_account)
@@ -838,7 +842,7 @@ def parse_args():
     parser.add_argument('-wl', '--with_log', default=False, action='store_true')
     parser.add_argument('-p', '--param', help='parameter string, yaml format',
             type=str)
-    parser.add_argument('-c', '--cluster', default='sc2', type=str)
+    parser.add_argument('-c', '--cluster', default=argparse.SUPPRESS, type=str)
     #parser.add_argument('-wg', '--with_gpu', default=True, action='store_true')
     parser.add_argument('-no-wg', '--with_gpu', default=True, action='store_false')
     #parser.add_argument('-m', '--with_meta', default=True, action='store_true')
