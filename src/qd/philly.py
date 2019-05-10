@@ -258,7 +258,18 @@ def attach_log_parsing_result(job_info):
         result = re.match(pattern, log)
         if result and result.groups():
             job_info['speed'], job_info['left'] = result.groups()
+            del job_info['latest_log']
             return
+
+        # 2019-05-10T04:29:11.340Z: [1,0]<stdout>:2019-05-10 04:29:11,341.341 trainer.py:111   do_train(): eta: 3 days, 17:56:14  iter: 440  loss: 2.3267 (2.3407)  loss_retina_cls: 1.2245 (1.2373)  loss_retina_reg: 1.0626 (1.1034)  time: 0.6675 (0.9005)  data: 0.0033 (0.2286)  lr: 0.002300  max mem: 4049
+        pattern = '.*: eta: (.*) iter.*'
+        result = re.match(pattern, log)
+        if result and result.groups():
+            job_info['speed'] = None
+            job_info['left'] = result.groups()[0]
+            del job_info['latest_log']
+            return
+    del job_info['latest_log']
 
 def print_table(a_to_bs, all_key=None):
     if len(a_to_bs) == 0:
@@ -315,6 +326,11 @@ class PhillyVC(object):
         self.dry_run = kwargs.get('dry_run')
         self.multi_process = kwargs.get('multi_process')
         self.docker_tag = kwargs.get('docker_tag')
+
+
+        # used in query()
+        self.query_with_gpu = kwargs.get('with_gpu')
+        self.query_with_log = kwargs.get('with_log')
 
     def get_data_folder_in_blob(self):
         assert self.config_param['data_folder'].startswith(self.blob_mount_point)
@@ -403,12 +419,12 @@ class PhillyVC(object):
                     op.join(self.dest_config_folder,
                         op.basename(self.src_config_path)))
 
-    def query(self, **kwargs):
+    def query(self):
         all_job_info = self.query_all_job()
         all_job_info = [j for j in all_job_info if j['status'] != 'Pass' and j['status'] !=
             'Failed' and j['status'] != 'Killed']
-        all_key = ['appID-s', 'data', 'elapsedTime', 'preempts']
-        if kwargs.get('with_gpu'):
+        all_key = ['appID-s', 'elapsedTime', 'retries', 'preempts']
+        if self.query_with_gpu:
             attach_gpu_utility(all_job_info)
             all_key.append('mem_used')
             all_key.append('gpu_util')
@@ -417,19 +433,29 @@ class PhillyVC(object):
             job_info['cluster'] = self.cluster
             job_info['vc'] = self.vc
             job_info['vc_type'] = self.vc_type
-        if kwargs.get('with_log'):
+        if self.query_with_log:
             for job_info in all_job_info:
                 attach_log(job_info)
                 attach_log_parsing_result(job_info)
             all_key.extend(['speed', 'left'])
         for j in all_job_info:
             j['appID-s'] = j['appID'][-4:]
-        keys = ['data', 'max_iters']
+        keys = ['data', 'net', 'max_iters', 'max_iter']
         for job_info in all_job_info:
             for k in keys:
-                job_info[k] = job_info['meta'].get('tools_param',
+                job_info[k] = job_info['meta'].get('param',
                         {}).get(k)
         all_key.extend(keys)
+        # remove the key if all value is None
+        all_key = [k for k in all_key if any(k in j and j[k] is not None for j in all_job_info)]
+
+        # find the keys whose values are the same
+        def all_equal(x):
+            assert len(x) > 0
+            return all(y == x[0] for y in x[1:])
+
+        all_key = [k for k in all_key if not all_equal([j.get(k) for j in all_job_info])]
+
         print_table(all_job_info, all_key=all_key)
         return all_job_info
 
@@ -449,12 +475,13 @@ class PhillyVC(object):
     def parse_meta_data(self, all_meta):
         for meta in all_meta:
             extraParam = meta['cmd']
-            re_result = re.match('.*python scripts/.*\.py -bp (.*)', extraParam)
+            re_result = re.match('.* -- (.*)', extraParam)
             if re_result and len(re_result.groups()) == 1:
                 ps = load_from_yaml_str(base64.b64decode(re_result.groups()[0]))
-                meta['tools_param'] = {}
-                for p in ps:
-                    meta['tools_param'][p] = ps[p]
+                command_parse = re.match('python .* -bp (.*)', ps['command'])
+                if command_parse:
+                    param = load_from_yaml_str(base64.b64decode(command_parse.groups()[0]))
+                    meta['param'] = param.get('param', {})
 
     def submit2(self, param):
         '''
@@ -877,7 +904,7 @@ def execute(task_type, **kwargs):
             tracking(kwargs['remainders'][0], **kwargs)
         else:
             p = create_philly_client(**kwargs)
-            p.query(**kwargs)
+            p.query()
     elif task_type == 'submit':
         assert len(kwargs['remainders']) == 1
         submit_without_sync(cmd=kwargs['remainders'][0], **kwargs)
@@ -900,7 +927,7 @@ def execute(task_type, **kwargs):
     elif task_type == 'sync':
         sync_code()
     elif task_type == 'update_config':
-        p = create_philly_client()
+        p = create_philly_client(**kwargs)
         p.update_config()
     elif task_type == 'init':
         init_philly_requirements()
