@@ -45,7 +45,6 @@ def infer_type(vc, cluster):
         return 'azure'
     assert False
 
-
 def philly_input_run(cmd, return_output=False):
     # the username here is not improved since we do not use this function any
     # longer. Keep it here for reference only.
@@ -292,9 +291,6 @@ class PhillyVC(object):
         random_qd = 'quickdetection{}'.format(random_id)
         random_abs_qd = op.join('/tmp', '{}.zip'.format(random_qd))
         logging.info('{}'.format(random_qd))
-        cmd = ['cp', './scripts/run.py', './tmp_run/{}'.format(random_run)]
-        code_qd = os.getcwd()
-        cmd_run(cmd, working_dir=code_qd)
         from qd.qd_common import zip_qd
         zip_qd(random_abs_qd)
         copy_to_hdfs = not self.use_blob_as_input
