@@ -182,18 +182,6 @@ def create_philly_client(**kwargs):
         param['password'] = os.environ['PHILLY_PASSWORD']
     return PhillyVC(**param)
 
-def get_philly_credential():
-    config = load_from_yaml_file('./aux_data/configs/philly_vc.yaml')
-    return config['user_name'], config['password']
-
-def philly_rest_api(CMD):
-    user_name, password = get_philly_credential()
-    cmd = ['curl', '-k', '--ntlm', '--user',
-            '"redmond\\{}:{}"'.format(user_name, password),
-            '"{}"'.format(CMD)]
-    result_str = cmd_run(cmd, shell=True, return_output=True)
-    return result_str
-
 def decode_extra_param(extraParam):
     re_result = re.match('.*python scripts/.*\.py -bp (.*)', extraParam)
     if re_result and len(re_result.groups()) == 1:
@@ -207,48 +195,6 @@ def get_http_prefix(vc_type):
         return 'https://philly'
     else:
         return 'https://philly'
-
-def attach_log(job_info):
-    cluster = job_info['cluster']
-    vc = job_info['vc']
-    vc_type = job_info['vc_type']
-    job_id = job_info['appID']
-    http_prefix = get_http_prefix(vc_type)
-
-    job_info['latest_log'] = philly_job_log(cluster, vc, http_prefix, job_id)
-
-def philly_job_log(cluster, vc, http_prefix, job_id, logRev='latest'):
-    cmd_str = \
-        '{}/api/log?clusterId={}&vcId={}&jobId={}&jobType=cust&logType=stdout&logRev={}&content=partial'.format(
-            http_prefix,
-            cluster,
-            vc,
-            job_id, logRev)
-    result = philly_rest_api(cmd_str)
-
-    if 'WARNING' in result and 'too big for preview' in result:
-        # wget https://storage.sc2.philly.selfhost.corp.microsoft.com/input/sys/jobs/application_1544809666047_4657/stdout/1/stdout.txt
-        from qd_common import url_to_str
-        result = url_to_str('https://storage.{}.philly.selfhost.corp.microsoft.com/input/sys/jobs/{}/stdout/1/stdout.txt'.format(
-            cluster, job_id))
-    return result
-
-def attach_gpu_utility(all_job_info):
-    for job_info in all_job_info:
-        if not job_info['ssh']:
-            continue
-        try:
-            gpu_result = cmd_run('{} nvidia-smi'.format(
-                job_info['ssh']).split(' '), shell=True, return_output=True)
-            from gpu_util import parse_gpu_usage_dict
-            gpu_info = parse_gpu_usage_dict(gpu_result)
-            import numpy as np
-            gpu_info = {t: np.mean([g[t] for g in gpu_info]) for t in ['mem_used',
-                    'mem_total', 'gpu_util']}
-            for k in gpu_info:
-                job_info[k] = gpu_info[k]
-        except Exception as e:
-            logging.info(str(e))
 
 def attach_log_parsing_result(job_info):
     logs = job_info['latest_log']
@@ -378,7 +324,7 @@ class PhillyVC(object):
     def abort(self, application_id):
         cmd = 'https://philly/api/abort?clusterId={}&jobId={}'.format(
                 self.cluster, application_id)
-        philly_rest_api(cmd)
+        self.philly_rest_api(cmd)
 
     def query_all_job(self, my_own=True):
         cmd="{}/api/list?".format(self.get_http_prefix())
@@ -389,7 +335,7 @@ class PhillyVC(object):
             param.append('userName={}'.format(self.user_name))
         cmd += '&'.join(param)
         while True:
-            result = philly_rest_api(cmd)
+            result = self.philly_rest_api(cmd)
             result = json.loads(result)
             if 'ExceptionType' in result:
                 logging.info(pformat(result))
@@ -419,13 +365,34 @@ class PhillyVC(object):
                     op.join(self.dest_config_folder,
                         op.basename(self.src_config_path)))
 
+    def attach_log(self, job_info):
+        job_id = job_info['appID']
+        job_info['latest_log'] = self.philly_job_log(job_id)
+
+    def attach_gpu_utility(self, all_job_info):
+        for job_info in all_job_info:
+            if not job_info['ssh']:
+                continue
+            try:
+                gpu_result = cmd_run('{} nvidia-smi'.format(
+                    job_info['ssh']).split(' '), shell=True, return_output=True)
+                from gpu_util import parse_gpu_usage_dict
+                gpu_info = parse_gpu_usage_dict(gpu_result)
+                import numpy as np
+                gpu_info = {t: np.mean([g[t] for g in gpu_info]) for t in ['mem_used',
+                        'mem_total', 'gpu_util']}
+                for k in gpu_info:
+                    job_info[k] = gpu_info[k]
+            except Exception as e:
+                logging.info(str(e))
+
     def query(self):
         all_job_info = self.query_all_job()
         all_job_info = [j for j in all_job_info if j['status'] != 'Pass' and j['status'] !=
             'Failed' and j['status'] != 'Killed']
         all_key = ['appID-s', 'elapsedTime', 'retries', 'preempts']
         if self.query_with_gpu:
-            attach_gpu_utility(all_job_info)
+            self.attach_gpu_utility(all_job_info)
             all_key.append('mem_used')
             all_key.append('gpu_util')
         self.attach_meta(all_job_info)
@@ -435,7 +402,7 @@ class PhillyVC(object):
             job_info['vc_type'] = self.vc_type
         if self.query_with_log:
             for job_info in all_job_info:
-                attach_log(job_info)
+                self.attach_log(job_info)
                 attach_log_parsing_result(job_info)
             all_key.extend(['speed', 'left'])
         for j in all_job_info:
@@ -732,7 +699,7 @@ class PhillyVC(object):
                 self.cluster,
                 self.vc,
                 job_id, logRev)
-        result = philly_rest_api(cmd_str)
+        result = self.philly_rest_api(cmd_str)
 
         if 'WARNING' in result and 'too big for preview' in result:
             # wget https://storage.sc2.philly.selfhost.corp.microsoft.com/input/sys/jobs/application_1544809666047_4657/stdout/1/stdout.txt
@@ -749,7 +716,7 @@ class PhillyVC(object):
                     self.cluster,
                     self.vc,
                     job_id)
-        result = philly_rest_api(cmd_str)
+        result = self.philly_rest_api(cmd_str)
         return result
 
     def philly_job_meta(self, job_id):
@@ -759,7 +726,7 @@ class PhillyVC(object):
                     self.cluster,
                     self.vc,
                     job_id)
-        result = philly_rest_api(cmd_str)
+        result = self.philly_rest_api(cmd_str)
         return result
 
     def upload_file(self, file_from, file_target):
@@ -769,6 +736,15 @@ class PhillyVC(object):
                     self.cluster, blob=blob)
         else:
             philly_upload(file_from, file_target, self.vc, self.cluster)
+
+    def philly_rest_api(self, CMD):
+        user_name, password = self.user_name, self.password
+        cmd = ['curl', '-k', '--ntlm', '--user',
+                '"redmond\\{}:{}"'.format(user_name, password),
+                '"{}"'.format(CMD)]
+        result_str = cmd_run(cmd, shell=True, return_output=True)
+        return result_str
+
 
 def convert_to_philly_extra_command(param, script='scripts/tools.py'):
     logging.info(pformat(param))
