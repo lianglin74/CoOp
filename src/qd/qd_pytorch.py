@@ -610,8 +610,6 @@ class TorchTrain(object):
                     'init_method': dist_url,
                     'rank': self.mpi_rank,
                     'world_size': self.mpi_size}
-            if self.init_method_type != 'env':
-                init_param['group_name'] = hash_sha1(self.kwargs)
             # always set the device at the very beginning
             torch.cuda.set_device(self.mpi_local_rank)
             logging.info('init param: \n{}'.format(pformat(init_param)))
@@ -622,9 +620,6 @@ class TorchTrain(object):
             # whole program first, but worker B still needs to talk with A. In
             # that case, worker B will never return and will hang there
             synchronize()
-            if self.mpi_rank != 0:
-                # only print the fatal one
-                logging.getLogger().setLevel(50)
         self._initialized = True
 
     def _get_dataset(self, data, split, stage, labelmap):
@@ -728,23 +723,26 @@ class TorchTrain(object):
         save_parameters(self.kwargs, self.output_folder)
 
     def _setup_logging(self):
-        if self.mpi_rank == 0:
-            log_file = op.join(self.output_folder,
-                'log_{}.txt'.format(datetime.now().strftime('%Y_%m_%d_%H_%M_%S')))
-            ensure_directory(op.dirname(log_file))
-            file_handle = logging.FileHandler(log_file)
-            logger_fmt = logging.Formatter('%(asctime)s.%(msecs)03d %(filename)s:%(lineno)s %(funcName)10s(): %(message)s')
-            file_handle.setFormatter(fmt=logger_fmt)
+        # all ranker outputs the log to a file
+        # only rank 0 print the log to console
+        log_file = op.join(self.output_folder,
+            'log_{}_rank{}.txt'.format(
+                datetime.now().strftime('%Y_%m_%d_%H_%M_%S'),
+                self.mpi_rank))
+        ensure_directory(op.dirname(log_file))
+        file_handle = logging.FileHandler(log_file)
+        logger_fmt = logging.Formatter('%(asctime)s.%(msecs)03d %(filename)s:%(lineno)s %(funcName)10s(): %(message)s')
+        file_handle.setFormatter(fmt=logger_fmt)
 
+        root = logging.getLogger()
+        root.handlers = []
+        root.setLevel(logging.INFO)
+        root.addHandler(file_handle)
+
+        if self.mpi_rank == 0:
             ch = logging.StreamHandler(stream=sys.stdout)
             ch.setLevel(logging.INFO)
-            formatter = logger_fmt
-            ch.setFormatter(formatter)
-
-            root = logging.getLogger()
-            root.handlers = []
-            root.setLevel(logging.INFO)
-            root.addHandler(file_handle)
+            ch.setFormatter(logger_fmt)
             root.addHandler(ch)
 
     def get_latest_checkpoint(self):
@@ -759,13 +757,13 @@ class TorchTrain(object):
     def ensure_train(self):
         self._ensure_initialized()
 
-        # we need this folder, normally. just create a folder here
-        ensure_directory(op.join(self.output_folder, 'snapshot'))
-
-        last_model_file = self._get_checkpoint_file(self.max_epoch, self.max_iter)
+        last_model_file = self._get_checkpoint_file()
+        logging.info('last model file = {}'.format(last_model_file))
         if op.isfile(last_model_file) and not self.force_train:
             logging.info('skip to train')
             return
+
+        ensure_directory(op.join(self.output_folder, 'snapshot'))
 
         if self.mpi_rank == 0:
             self._save_parameters()
@@ -776,8 +774,7 @@ class TorchTrain(object):
         logging.info('torch version = {}'.format(torch.__version__))
 
         train_result = self.train()
-        if self.distributed:
-            synchronize()
+        synchronize()
 
         # save the source code after training
         if self.mpi_rank == 0 and not self.debug_train:

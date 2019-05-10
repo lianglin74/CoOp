@@ -22,11 +22,9 @@ from maskrcnn_benchmark.modeling.detector import build_detection_model
 from maskrcnn_benchmark.utils.checkpoint import DetectronCheckpointer
 from maskrcnn_benchmark.utils.comm import synchronize, get_rank
 from maskrcnn_benchmark.utils.comm import is_main_process
-from maskrcnn_benchmark.utils.comm import scatter_gather
 from maskrcnn_benchmark.utils.comm import synchronize, get_rank
 from maskrcnn_benchmark.utils.checkpoint import DetectronCheckpointer
 from maskrcnn_benchmark.utils.comm import get_world_size
-from maskrcnn_benchmark.solver import make_optimizer
 from maskrcnn_benchmark.solver import make_lr_scheduler
 from maskrcnn_benchmark.engine.trainer import do_train
 from qd.qd_pytorch import ModelPipeline
@@ -38,16 +36,16 @@ from qd.qd_common import list_to_dict
 from qd.qd_common import calculate_image_ap
 from qd.qd_common import set_if_not_exist
 from qd.qd_common import load_from_yaml_file
+from qd.qd_common import calculate_iou
+from qd.qd_common import get_mpi_rank, get_mpi_size
+from qd.tsv_io import TSVDataset
+from qd.tsv_io import tsv_reader, tsv_writer
+from qd.process_tsv import TSVFile, convert_one_label
+from qd.qd_pytorch import ModelPipeline
 from yacs.config import CfgNode
 import os.path as op
 from tqdm import tqdm
-from qd.tsv_io import TSVDataset
-from qd.qd_common import get_mpi_rank, get_mpi_size
-from qd.process_tsv import TSVFile, convert_one_label
-from qd.tsv_io import tsv_reader, tsv_writer
-from qd.qd_common import calculate_iou
-
-from qd.qd_pytorch import ModelPipeline
+from apex import amp
 
 def merge_dict_to_cfg(dict_param, cfg):
     """merge the key, value pair in dict_param into cfg
@@ -72,12 +70,20 @@ def merge_dict_to_cfg(dict_param, cfg):
     cfg.merge_from_other_cfg(CfgNode(trimed_param))
 
 def train(cfg, local_rank, distributed):
+    logging.info('start to train')
     model = build_detection_model(cfg)
     device = torch.device(cfg.MODEL.DEVICE)
     model.to(device)
 
     optimizer = make_optimizer(cfg, model)
     scheduler = make_lr_scheduler(cfg, optimizer)
+
+    # Initialize mixed-precision training
+    use_mixed_precision = cfg.DTYPE == "float16"
+    amp_opt_level = 'O1' if use_mixed_precision else 'O0'
+    logging.info('start to amp init')
+    model, optimizer = amp.initialize(model, optimizer, opt_level=amp_opt_level)
+    logging.info('end amp init')
 
     if distributed:
         model = torch.nn.parallel.DistributedDataParallel(
@@ -95,7 +101,9 @@ def train(cfg, local_rank, distributed):
     checkpointer = DetectronCheckpointer(
         cfg, model, optimizer, scheduler, output_dir, save_to_disk
     )
+
     extra_checkpoint_data = checkpointer.load(cfg.MODEL.WEIGHT)
+
     arguments.update(extra_checkpoint_data)
 
     data_loader = make_data_loader(
@@ -386,7 +394,11 @@ class MaskRCNNPipeline(ModelPipeline):
         self._default.update({'workers': 4})
 
         maskrcnn_root = op.join('src', 'maskrcnn-benchmark')
-        cfg_file = op.join(maskrcnn_root, 'configs', self.net + '.yaml')
+        if self.net.startswith('retinanet'):
+            cfg_file = op.join(maskrcnn_root, 'configs', 'retinanet',
+                    self.net + '.yaml')
+        else:
+            cfg_file = op.join(maskrcnn_root, 'configs', self.net + '.yaml')
         param = load_from_yaml_file(cfg_file)
         self.kwargs.update(param)
 
@@ -444,6 +456,14 @@ class MaskRCNNPipeline(ModelPipeline):
         return last_iter
 
     def train_by_maskrcnn(self):
+        import os
+        # mask_rcnn's downloading function has race issue: if the model folder
+        # does not exist, all workers will mkdir(), which will crash. We do not
+        # want to make the code change in maskrcnnn for the ease of code merge.
+        torch_home = os.path.expanduser(os.getenv("TORCH_HOME", "~/.torch"))
+        model_dir = os.getenv("TORCH_MODEL_ZOO", os.path.join(torch_home, "models"))
+        ensure_directory(model_dir)
+
         train(cfg, self.mpi_local_rank, self.distributed)
 
     def append_predict_param(self, cc):

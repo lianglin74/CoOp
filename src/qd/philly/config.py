@@ -188,10 +188,10 @@ def run_in_philly():
     # the permission should be changed because the output is there, but the
     # permission is for the docker job only and teh philly-fs cannot delete or
     # change it
-    if get_mpi_rank() == 0:
-        cmd_run(['sudo', 'chmod', '777',
-            dict_param['output_folder'],
-            '-R'], succeed=False)
+    #if get_mpi_rank() == 0:
+        #cmd_run(['sudo', 'chmod', '777',
+            #dict_param['output_folder'],
+            #'-R'], succeed=False)
 
 if __name__ == '__main__':
     init_logging()

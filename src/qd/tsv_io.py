@@ -150,7 +150,7 @@ class TSVFile(object):
             tmp_lineidx = op.join('/tmp', self.lineidx)
             ensure_directory(op.dirname(tmp_tsvfile))
 
-            from qd_common import ensure_copy_file
+            from qd.qd_common import ensure_copy_file
             ensure_copy_file(self.tsv_file, tmp_tsvfile)
             ensure_copy_file(self.lineidx, tmp_lineidx)
 

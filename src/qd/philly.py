@@ -178,6 +178,8 @@ def philly_upload(src_file, dest_dir, vc='input', cluster='philly-prod-cy4'):
 def create_philly_client(**kwargs):
     param = load_from_yaml_file('./aux_data/configs/philly_vc.yaml')
     param.update(kwargs)
+    if not param.get('password'):
+        param['password'] = os.environ['PHILLY_PASSWORD']
     return PhillyVC(**param)
 
 def get_philly_credential():
@@ -405,9 +407,11 @@ class PhillyVC(object):
         all_job_info = self.query_all_job()
         all_job_info = [j for j in all_job_info if j['status'] != 'Pass' and j['status'] !=
             'Failed' and j['status'] != 'Killed']
-        all_key = ['appID-s', 'data', 'elapsedTime', 'mem_used', 'gpu_util']
+        all_key = ['appID-s', 'data', 'elapsedTime', 'preempts']
         if kwargs.get('with_gpu'):
             attach_gpu_utility(all_job_info)
+            all_key.append('mem_used')
+            all_key.append('gpu_util')
         self.attach_meta(all_job_info)
         for job_info in all_job_info:
             job_info['cluster'] = self.cluster
@@ -426,7 +430,6 @@ class PhillyVC(object):
                 job_info[k] = job_info['meta'].get('tools_param',
                         {}).get(k)
         all_key.extend(keys)
-        #all_key.append('ssh')
         print_table(all_job_info, all_key=all_key)
         return all_job_info
 
@@ -763,18 +766,12 @@ def submit_without_sync(cmd, **kwargs):
         all_extra_param.append(extra_param)
     else:
         all_extra_param.append(cmd)
+    kwargs.update({'isDebug': isDebug})
     logging.info(all_extra_param)
-    p = create_philly_client(isDebug=isDebug)
+    p = create_philly_client(**kwargs)
     if kwargs.get('real_submit', True):
         list(map(lambda extra_param: p.submit_without_sync(extra_param),
                 all_extra_param))
-
-def ssh_into(app_id):
-    p = create_philly_client()
-    app_info, app_id = p.search_job_id(app_id)
-    cmd_run(app_info['ssh'].split(' '),
-            stdin=None,
-            shell=True)
 
 def tracking(app_id, **kwargs):
     p = create_philly_client(**kwargs)
@@ -894,7 +891,12 @@ def execute(task_type, **kwargs):
         blame(**kwargs)
     elif task_type == 'ssh':
         assert len(kwargs['remainders']) == 1
-        ssh_into(kwargs['remainders'][0])
+        app_id = kwargs['remainders'][0]
+        p = create_philly_client(**kwargs)
+        app_info, app_id = p.search_job_id(app_id)
+        cmd_run(app_info['ssh'].split(' '),
+                stdin=None,
+                shell=True)
     elif task_type == 'sync':
         sync_code()
     elif task_type == 'update_config':
