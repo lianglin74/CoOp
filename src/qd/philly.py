@@ -413,6 +413,7 @@ class PhillyVC(object):
                 job_info[k] = job_info['meta'].get('param',
                         {}).get(k)
         all_key.extend(keys)
+
         # remove the key if all value is None
         all_key = [k for k in all_key if any(k in j and j[k] is not None for j in all_job_info)]
 
@@ -421,7 +422,8 @@ class PhillyVC(object):
             assert len(x) > 0
             return all(y == x[0] for y in x[1:])
 
-        all_key = [k for k in all_key if not all_equal([j.get(k) for j in all_job_info])]
+        if len(all_job_info) > 1:
+            all_key = [k for k in all_key if not all_equal([j.get(k) for j in all_job_info])]
 
         print_table(all_job_info, all_key=all_key)
         return all_job_info
@@ -745,7 +747,6 @@ class PhillyVC(object):
         result_str = cmd_run(cmd, shell=True, return_output=True)
         return result_str
 
-
 def convert_to_philly_extra_command(param, script='scripts/tools.py'):
     logging.info(pformat(param))
     x = copy.deepcopy(param)
@@ -869,10 +870,6 @@ def ensure_init_config_files():
     config_template = './aux_data/configs/philly_vc.template.yaml'
     infinite_check(config_file, config_template)
 
-def init_philly_requirements():
-    ensure_init_config_files()
-    sync_code()
-
 def execute(task_type, **kwargs):
     if task_type == 'query':
         if len(kwargs.get('remainders', [])) > 0:
@@ -906,7 +903,10 @@ def execute(task_type, **kwargs):
         p = create_philly_client(**kwargs)
         p.update_config()
     elif task_type == 'init':
-        init_philly_requirements()
+        ensure_init_config_files()
+        p = create_philly_client(**kwargs)
+        p.update_config()
+        sync_code()
     else:
         assert 'Unknown {}'.format(task_type)
 
