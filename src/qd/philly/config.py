@@ -59,8 +59,18 @@ def ensure_directory(path):
     if path == '' or path == '.':
         return
     if path != None and len(path) > 0:
+        assert not op.isfile(path), '{} is a file'.format(path)
         if not os.path.exists(path) and not op.islink(path):
-            os.makedirs(path)
+            try:
+                os.makedirs(path)
+            except OSError:
+                if os.path.isdir(path):
+                    # another process has done makedir
+                    pass
+                else:
+                    raise
+        # we should always check if it succeeds.
+        assert op.isdir(path), 'failed'
 
 def compile_qd(folder):
     path = os.environ['PATH']
