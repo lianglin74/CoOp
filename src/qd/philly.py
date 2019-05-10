@@ -285,7 +285,6 @@ class PhillyVC(object):
         return result
 
     def sync_code(self, random_id):
-        random_run = 'run{}.py'.format(random_id)
         self.random_id = random_id
 
         random_qd = 'quickdetection{}'.format(random_id)
@@ -778,10 +777,6 @@ def tracking(app_id, **kwargs):
     _, app_id = p.search_job_id(app_id)
     p.track_job_once(app_id)
 
-def sync_code():
-    p = create_philly_client(use_blob_as_input=True)
-    p.sync_code('')
-
 def list_to_dict_full(l, idx):
     result = OrderedDict()
     for x in l:
@@ -894,7 +889,8 @@ def execute(task_type, **kwargs):
                 stdin=None,
                 shell=True)
     elif task_type == 'sync':
-        sync_code()
+        p = create_philly_client(**kwargs)
+        p.sync_code('')
     elif task_type == 'update_config':
         p = create_philly_client(**kwargs)
         p.update_config()
@@ -902,7 +898,7 @@ def execute(task_type, **kwargs):
         ensure_init_config_files()
         p = create_philly_client(**kwargs)
         p.update_config()
-        sync_code()
+        p.sync_code('')
     else:
         assert 'Unknown {}'.format(task_type)
 
