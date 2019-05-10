@@ -1082,7 +1082,7 @@ def read_lines(file_name):
             yield line
 
 def read_to_buffer(file_name):
-    with open(file_name, 'r') as fp:
+    with open(file_name, 'rb') as fp:
         all_line = fp.read()
     return all_line
 
