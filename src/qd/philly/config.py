@@ -63,7 +63,7 @@ def ensure_directory(path):
         if not os.path.exists(path) and not op.islink(path):
             try:
                 os.makedirs(path)
-            except OSError:
+            except:
                 if os.path.isdir(path):
                     # another process has done makedir
                     pass
