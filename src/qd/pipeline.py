@@ -119,12 +119,26 @@ def dict_get_path_value(d, p):
         else:
             return cur_dict
 
+def except_to_update_for_stageiter(param):
+    if param.get('net', '').startswith('e2e'):
+        stageiter = param.get('stageiter', (0, 0))
+        max_iter = param.get('max_iter', 0)
+        if len(stageiter) == 2 and \
+                stageiter[0] == 6 * max_iter // 9 and \
+                stageiter[1] == 8 * max_iter // 9:
+            return True
+    return False
+
 def update_parameters(param):
     default_param = {
             'max_iter': 10000,
             'effective_batch_size': 64}
 
-    direct_add_value_keys = OrderedDict([('effective_batch_size', 'BS'),
+    direct_add_value_keys = [
+            # first value is the key, the second is the name in the folder; the
+            # third is the excpdetion condidtion
+            ('train_version', 'V'),
+            ('effective_batch_size', 'BS'),
             ('max_iter', 'MaxIter'),
             ('max_epoch', 'MaxEpoch'),
             ('last_fixed_param', 'LastFixed'),
@@ -132,15 +146,17 @@ def update_parameters(param):
             ('yolo_train_session_param$data_augmentation', 'Aug'),
             ('momentum', 'Momentum'),
             ('base_lr', 'LR'),
-            ('stageiter', 'StageIter')
-            ])
+            ('stageiter', 'StageIter', except_to_update_for_stageiter),
+            ('INPUT$MIN_SIZE_TRAIN', 'Min'),
+            ('INPUT$MAX_SIZE_TRAIN', 'Max'),
+            ]
 
     non_expid_impact_keys = ['data', 'net', 'expid_prefix',
             'test_data', 'test_split', 'test_version',
             'dist_url_tcp_port', 'workers', 'force_train',
             'pipeline_type', 'test_batch_size',
             'yolo_train_session_param$debug_train',
-            'evaluate_method',
+            'evaluate_method', 'debug_train',
             'full_expid',
             'display']
 
@@ -159,9 +175,12 @@ def update_parameters(param):
     for k in need_hash_sha_params:
         if k in param:
             infos.append('{}{}'.format(k, hash_sha1(param[k])[:5]))
-    for k, v in viewitems(direct_add_value_keys):
+    for setting in direct_add_value_keys:
+        k, v = setting[:2]
         if dict_has_path(param, k):
             pk = dict_get_path_value(param, k)
+            if len(setting) == 3 and setting[2](param):
+                continue
             if type(pk) is str:
                 pk = pk.replace('/', '.')
             elif type(pk) in [list, tuple]:
@@ -179,7 +198,7 @@ def update_parameters(param):
     known_keys = []
     known_keys.extend((k for k in need_hash_sha_params))
     known_keys.extend((k for k in non_expid_impact_keys))
-    known_keys.extend((k for k in direct_add_value_keys))
+    known_keys.extend((s[0] for s in direct_add_value_keys))
     known_keys.extend((k for k in true_false_keys))
 
     all_path = dict_get_all_path(param)
@@ -212,9 +231,8 @@ def load_pipeline(kwargs):
             kwargs[k] = kwargs_f[k]
     return create_pipeline(kwargs)
 
-def test_model_pipeline_eval_multi(all_test_data, param, **kwargs):
+def pipeline_train_eval_multi(all_test_data, param, **kwargs):
     init_logging()
-    update_parameters(param)
     pip = create_pipeline(param)
     pip.ensure_train()
     param['full_expid'] = pip.full_expid

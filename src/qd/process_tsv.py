@@ -4759,6 +4759,28 @@ def convert_uhrs_result_back_to_sources(in_tsv, debug=True, tree_file=None):
                 logging.info('equal - {} - {}'.format(data, split))
         populate_dataset_details(data)
 
+def merge_multi_by_key(tsv_file1, all_tsv_file2, out_tsv,
+        from_flag1, all_from_flag2):
+    files = [tsv_file1]
+    files.extend(all_tsv_file2)
+    all_key_rects = [load_key_rects(tsv_reader(f)) for f in files]
+    all_key_to_rects = [{key: rects for key, rects in key_rects}
+        for key_rects in all_key_rects]
+    keys = [key for key, _ in all_key_rects[0]]
+    flags = [from_flag1]
+    flags.extend(all_from_flag2)
+    def gen_rows():
+        for key in keys:
+            all_rects = [key_to_rects[key] for key_to_rects in all_key_to_rects]
+            for rects, f in zip(all_rects, flags):
+                for r in rects:
+                    r['from'] = f
+            rects = all_rects[0]
+            for r in all_rects[1:]:
+                rects.extend(r)
+            yield key, json_dump(rects)
+    tsv_writer(gen_rows(), out_tsv)
+
 def merge_by_key(tsv_file1, tsv_file2, out_tsv,
         from_flag1='', from_flag2=''):
     files = [tsv_file1, tsv_file2]

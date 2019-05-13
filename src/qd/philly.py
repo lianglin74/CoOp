@@ -235,7 +235,7 @@ def print_table(a_to_bs, all_key=None):
     for a_to_b in a_to_bs:
         line = row_format.format(*[str(a_to_b.get(k, '')) for k in all_key])
         all_line.append(line)
-    logging.info('info\n{}'.format('\n'.join(all_line)))
+    logging.info('\n{}'.format('\n'.join(all_line)))
 
 class PhillyVC(object):
     def __init__(self, vc, cluster, user_name=None,
@@ -271,7 +271,6 @@ class PhillyVC(object):
         self.dry_run = kwargs.get('dry_run')
         self.multi_process = kwargs.get('multi_process')
         self.docker_tag = kwargs.get('docker_tag')
-
 
         # used in query()
         self.query_with_gpu = kwargs.get('with_gpu')
@@ -409,15 +408,16 @@ class PhillyVC(object):
                         {}).get(k)
         all_key.extend(keys)
 
-        # remove the key if all value is None
-        all_key = [k for k in all_key if any(k in j and j[k] is not None for j in all_job_info)]
-
         # find the keys whose values are the same
         def all_equal(x):
             assert len(x) > 0
             return all(y == x[0] for y in x[1:])
 
         if len(all_job_info) > 1:
+            equal_keys = [k for k in all_key if all_equal([j.get(k) for j in all_job_info])]
+            if len(equal_keys) > 0:
+                logging.info('equal key values for all jobs')
+                print_table(all_job_info[0:1], all_key=equal_keys)
             all_key = [k for k in all_key if not all_equal([j.get(k) for j in all_job_info])]
 
         print_table(all_job_info, all_key=all_key)
@@ -495,6 +495,11 @@ class PhillyVC(object):
             config_file = "/hdfs/{}/{}/{}".format(self.vc,
                 self.dest_config_folder, op.basename(self.src_config_path))
         logging.info('cmd:\n{} d d d {}'.format(config_file, extraParam))
+        custom_mpi_args = 'env CUDA_CACHE_DISABLE=1 NCCL_IB_DISABLE=1 NCCL_SOCKET_IFNAME=eth0 NCCL_DEBUG=INFO OMP_NUM_THREADS=2'
+        if num_gpu > 4:
+            # without this flag, distributed training will crash in multi-node
+            # more information: https://github.com/horovod/horovod/issues/893
+            custom_mpi_args += ' NCCL_TREE_THRESHOLD=0'
         data = {
             "ClusterId": cluster,
             "VcId": vc,
@@ -520,7 +525,7 @@ class PhillyVC(object):
             "Registry": registry,
             "Repository": self.docker['image'],
             "Tag": tag,
-            "CustomMPIArgs": 'env CUDA_CACHE_DISABLE=1 NCCL_IB_DISABLE=1 NCCL_SOCKET_IFNAME=eth0 NCCL_DEBUG=INFO OMP_NUM_THREADS=2',
+            "CustomMPIArgs": custom_mpi_args,
             "Timeout":None,
             }
         gpus_per_node = 4
@@ -835,6 +840,7 @@ def parse_args():
     parser.add_argument('-p', '--param', help='parameter string, yaml format',
             type=str)
     parser.add_argument('-c', '--cluster', default=argparse.SUPPRESS, type=str)
+    parser.add_argument('-n', '--num_gpu', default=argparse.SUPPRESS, type=int)
     #parser.add_argument('-wg', '--with_gpu', default=True, action='store_true')
     parser.add_argument('-no-wg', '--with_gpu', default=True, action='store_false')
     #parser.add_argument('-m', '--with_meta', default=True, action='store_true')

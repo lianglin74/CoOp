@@ -424,7 +424,8 @@ def save_parameters(param, folder):
     write_to_yaml_file(param, op.join(folder,
         'parameters_{}.yaml'.format(time_str)))
     # save the env parameters
-    write_to_yaml_file(os.environ, op.join(folder,
+    # convert it to dict for py3
+    write_to_yaml_file(dict(os.environ), op.join(folder,
         'env_{}.yaml'.format(time_str)))
 
 def torch_save(t, f):
