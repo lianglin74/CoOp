@@ -20,6 +20,7 @@ def get_data_loader(args, logger=None):
         train_dataset = CropClassTSVDatasetYamlList(args.data, session_name='train', transform=train_transform, enlarge_bbox=args.enlarge_bbox)
     else:
         raise NotImplementedError()
+    labelmap = train_dataset.get_labelmap()
 
     if args.balance_sampler:
         assert not args.balance_class
@@ -36,9 +37,9 @@ def get_data_loader(args, logger=None):
         num_workers=args.workers, pin_memory=True, sampler=train_sampler)
 
     if args.data.endswith('.yaml'):
-        val_dataset = CropClassTSVDatasetYaml(args.data, session_name='val', transform=test_transform, enlarge_bbox=args.enlarge_bbox)
+        val_dataset = CropClassTSVDatasetYaml(args.data, session_name='val', labelmap=labelmap, transform=test_transform, enlarge_bbox=args.enlarge_bbox)
     elif args.data.endswith('.yamllst'):
-        val_dataset = CropClassTSVDatasetYamlList(args.data, session_name='val', transform=test_transform, enlarge_bbox=args.enlarge_bbox)
+        val_dataset = CropClassTSVDatasetYamlList(args.data, session_name='val', labelmap=labelmap, transform=test_transform, enlarge_bbox=args.enlarge_bbox)
     else:
         raise NotImplementedError()
 

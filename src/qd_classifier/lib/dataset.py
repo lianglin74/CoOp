@@ -253,7 +253,7 @@ class CropClassTSVDataset(Dataset):
         self._enlarge_bbox = enlarge_bbox
         self._label_counts = None
 
-        _cache_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "cache")
+        _cache_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".cache")
         self._bbox_idx_file = os.path.join(_cache_dir, "{}.tsv".format(
                 hash_sha1((tsvfile, labelfile if labelfile else "", str(for_test), str(enlarge_bbox)))))
         try:
@@ -353,13 +353,21 @@ class CropClassTSVDatasetYaml(CropClassTSVDataset):
             for_test=for_test, transform=transform, logger=logger, enlarge_bbox=enlarge_bbox)
 
 class CropClassTSVDatasetYamlList():
-    def __init__(self, yaml_lst_file, session_name, transform=None, logger=None, enlarge_bbox=1.0):
-        # combine labelmap from multiple datasets
-        self.yaml_cfgs, labelmap = self.load_yaml_list(yaml_lst_file, session_name)
-        self.labels = labelmap
+    """ Takes Yamllst file to concatenate several datasets.
+    Each line is the path to yaml file and weights (optional, default is 1)
+    """
+    def __init__(self, yaml_lst_file, session_name, labelmap=None,
+                transform=None, logger=None, enlarge_bbox=1.0):
+        self.yaml_cfgs, genarated_labelmap = self.load_yaml_list(yaml_lst_file, session_name)
+        if not labelmap:
+            # if labelmap is not provided, combine labelmap from multiple datasets
+            self.labels = genarated_labelmap
+        else:
+            # if labelmap is provided (must be list), use it. This is designed for validation set
+            self.labels = labelmap
         self.label_to_idx = {l: idx for idx, l in enumerate(self.labels)}
 
-        self.datasets = [CropClassTSVDatasetYaml(yaml_cfg, labelmap=labelmap,
+        self.datasets = [CropClassTSVDatasetYaml(yaml_cfg, labelmap=self.labels,
                 transform=transform, logger=logger, enlarge_bbox=enlarge_bbox)
                 for yaml_cfg in self.yaml_cfgs]
         self.dataset_lengths = [len(d) for d in self.datasets]
@@ -392,10 +400,12 @@ class CropClassTSVDatasetYamlList():
         for parts in tsv_reader(yaml_lst_file):
             f = parts[0]
             assert(os.path.isfile(f))
-            cfg = load_from_yaml_file(f)[session_name]
-            for p in tsv_reader(cfg["labelmap"]):
-                labelset.add(p[0])
-            yaml_cfgs.append(cfg)
+            cfg = load_from_yaml_file(f)
+            if session_name in cfg:
+                cfg = cfg[session_name]
+                for p in tsv_reader(cfg["labelmap"]):
+                    labelset.add(p[0])
+                yaml_cfgs.append(cfg)
         return yaml_cfgs, [l for l in labelset]
 
     @property
