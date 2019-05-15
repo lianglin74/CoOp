@@ -1,3 +1,4 @@
+import collections
 try:
     # Python 2/3 compatibility
     import izip as zip
@@ -20,7 +21,7 @@ TASK_CONFIGS = {
     "uhrs_logo_verification": {CFG_IOU: 0.5, CFG_REQUIRED_FIELDS: ["class", "rect"]}
 }
 
-def submit_task(gt_dataset_name, gt_split, pred_file, collection_name,
+def submit_to_verify(gt_dataset_name, gt_split, pred_file, collection_name,
             conf_thres=0, gt_version=-1, is_urgent=False):
     """ Submits UHRS verification task to qd database
     Args:
@@ -90,3 +91,35 @@ def submit_task(gt_dataset_name, gt_split, pred_file, collection_name,
     cur_db = BoundingBoxVerificationDB(db_name = 'qd', collection_name = collection_name)
     cur_db.request_by_insert(all_bb_tasks)
 
+def download_merge_correct_to_gt(gt_dataset_name, gt_split, collection_name):
+    # query completed results
+    cur_db = BoundingBoxVerificationDB(db_name = 'qd', collection_name = collection_name)
+    data_split_to_key_rects, all_id = cur_db.get_completed_uhrs_result(
+            extra_match={'data': gt_dataset_name, 'split': gt_split})
+    key_rects = data_split_to_key_rects[(gt_dataset_name, gt_split)]
+
+    # get bboxes verified as correct
+    key2rects = collections.defaultdict(list)
+    for key, rect in key_rects:
+        if is_uhrs_consensus_correct(rect["uhrs"]):
+            key2rects[key].append(rect)
+    def gen_correct_labels():
+        for key in key2rects:
+            yield key, key2rects[key]
+
+    # merge correct bboxes to ground truth
+    from evaluation.eval_utils import add_label_to_dataset
+    dataset = TSVDataset(gt_dataset_name)
+    add_label_to_dataset(dataset, gt_split, TASK_CONFIGS[collection_name][CFG_IOU],
+                         gen_correct_labels(), label_key_type="key")
+
+def is_uhrs_consensus_correct(uhrs_res):
+    """ From UHRS feedback, "1" -> Yes, "2" -> No, "3" -> Can't judge
+    Consensus correct means more people select "1" than "2"
+    """
+    if "1" in uhrs_res:
+        if "2" not in uhrs_res and uhrs_res["1"] > 0:
+            return True
+        elif "2" in uhrs_res and uhrs_res["1"] > uhrs_res["2"]:
+            return True
+    return False
