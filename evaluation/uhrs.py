@@ -188,6 +188,8 @@ class UhrsTaskManager():
             return 86329
         elif task_group == "crowdsource_verify_box":
             return 91381
+        elif task_group == "crowdsource_verify_tag":
+            return 91759
         elif task_group == "test":
             return 88209
         elif task_group == "internal_verify_box":
