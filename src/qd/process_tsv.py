@@ -5215,6 +5215,50 @@ def merge_prediction_to_gt(prediction_file, gts, im_rows, dataset, split,
         dataset.update_data(gen_rows(), split, 'label',
                 generate_info=gen_info())
 
+def generate_labels_to_verify(predict_file, data, split, th,
+        pred_to_gt, output_file):
+    dataset = TSVDataset(data)
+    if op.isfile(op.join(dataset._data_root, 'root.yaml')):
+        tax = Taxonomy(load_from_yaml_file(op.join(dataset._data_root, 'root.yaml')))
+    else:
+        tax = None
+    gt_key_rects = [(row[0], json.loads(row[1])) for row in tqdm(dataset.iter_data(split,
+        'label', version=-1))]
+    logging.info('loading pred')
+    pred_key_to_rects = {}
+    for row in tqdm(tsv_reader(predict_file)):
+        key = row[0]
+        rects = json.loads(row[1])
+        pred_key_to_rects[key] = [r for r in rects if r['conf'] > th]
+
+    def gen_rows(pred_to_gt=True):
+        logging.info('start to writting')
+        for key, gt_rects in tqdm(gt_key_rects):
+            rects2 = lift_one_image(gt_rects, tax)
+            del gt_rects[:]
+            gt_rects.extend(rects2)
+            pred_rects = pred_key_to_rects.get(key)
+            if pred_rects is None:
+                continue
+            need_confirm = []
+            if pred_to_gt:
+                for pr in pred_rects:
+                    if not onebb_in_list_of_bb(pr, gt_rects):
+                        need_confirm.append(pr)
+            else:
+                for g in gt_rects:
+                    if len(g) == 2:
+                        assert 'class' in g and 'rect' in g
+                        continue
+                    if not onebb_in_list_of_bb(g, pred_rects):
+                        need_confirm.append(g)
+            yield key, json.dumps(need_confirm)
+
+    tsv_writer(gen_rows(pred_to_gt=pred_to_gt), output_file)
+
+def onebb_in_list_of_bb(bb, bbs):
+    bbs = [b for b in bbs if b['class'] == bb['class']]
+    return any(calculate_iou(b['rect'], bb['rect']) > 0.5 for b in bbs)
 
 def process_tsv_main(**kwargs):
     if kwargs['type'] == 'gen_tsv':
