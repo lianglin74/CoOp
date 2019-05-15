@@ -38,6 +38,7 @@ from future.utils import viewitems
 from qd.cloud_storage import CloudStorage
 from qd.process_image import draw_bb, show_image, save_image
 from qd.process_image import show_images
+from qd.process_image import draw_rects
 from qd.qd_common import calculate_image_ap
 from qd.qd_common import calculate_iou
 from qd.qd_common import dict_to_list
@@ -5083,6 +5084,137 @@ def convertcomposite_to_standard(data,
     logging.info('writing image label tsv')
     rows = dataset.iter_composite(split, t='label', version=None)
     tsv_writer(tqdm(rows), dataset.get_data(split, t='label'))
+
+def gen_merged_candidate(prediction_file,
+        gts, srclabel_to_destlabel=None, **kwargs):
+    # we will only consider the bounding box if the prob is larger than 0.7
+    prob_th = kwargs['merge_min_prob']
+    prob_th_max = kwargs['merge_max_prob']
+    # we will add the bounding box only if the iou is lower than 0.7 to avoid
+    # duplicate addition
+    iou_th = kwargs['merge_max_iou']
+    aug_labels = kwargs['aug_labels']
+    key_to_pred = {}
+    prediction = tsv_reader(prediction_file)
+    logging.info('loading prediction: {}'.format(prediction_file))
+    for p in tqdm(prediction):
+        assert len(p) == 2
+        key = p[0]
+        rects = json.loads(p[1])
+        key_to_pred[key] = rects
+    num_image = 0
+    num_added = 0
+    for gt in tqdm(gts):
+        assert len(gt) == 2
+        num_image = num_image + 1
+        key = gt[0]
+        g_rects = json.loads(gt[1])
+        origin_g_rects = copy.deepcopy(g_rects)
+        add_rects = []
+        if key not in key_to_pred:
+            yield key, origin_g_rects, add_rects, g_rects
+            continue
+        p_rects = key_to_pred[key]
+        p_rects = [r for r in p_rects if r['conf'] > prob_th and
+                r['conf'] <= prob_th_max]
+        if aug_labels is not None:
+            p_rects = [r for r in p_rects if r['class'] in aug_labels]
+        if srclabel_to_destlabel:
+            p_rects = [r for r in p_rects if r['class'] in srclabel_to_destlabel]
+            for r in p_rects:
+                r['class'] = srclabel_to_destlabel[r['class']]
+        p_rects = sorted(p_rects, key=lambda x: -x['conf'])
+        for p_rect in p_rects:
+            is_add = True
+            ious = [calculate_iou(p_rect['rect'], g_rect['rect'])
+                    for g_rect in g_rects]
+            if len(ious) > 0 and max(ious) > iou_th:
+                is_add = False
+            if is_add:
+                num_added = num_added + 1
+                p_rect['from'] = prediction_file
+                # add p_rect
+                add_rects.append(p_rect)
+                g_rects.append(p_rect)
+        yield key, origin_g_rects, add_rects, g_rects
+    logging.info('num_image = {}'.format(num_image))
+    logging.info('num_added = {}'.format(num_added))
+
+
+def merge_prediction_to_gt(prediction_file, gts, im_rows, dataset, split,
+        **param):
+    dataset.iter_data(split, 'label')
+    gts2 = gen_merged_candidate(prediction_file, gts, **param)
+    if im_rows is not None:
+        if False:
+            # show image
+            for gt2, im_row in zip(gts2, im_rows):
+                assert gt2[0] == im_row[0]
+                im = img_from_base64(im_row[-1])
+                origin_rects = gt2[1]
+                add_rects = gt2[2]
+                merged_rects = gt2[3]
+                if len(add_rects) == 0:
+                    continue
+                im_origin_gt = np.copy(im)
+                draw_bb(im_origin_gt, [r['rect'] for r in origin_rects],
+                        [r['class'] for r in origin_rects])
+                im_add = np.copy(im)
+                draw_bb(im_add, [r['rect'] for r in add_rects],
+                        [r['class'] for r in add_rects],
+                        [r['conf'] for r in add_rects])
+                im_merged = np.copy(im)
+                draw_bb(im_merged, [r['rect'] for r in merged_rects],
+                        [r['class'] for r in merged_rects])
+                logging.info(pformat(add_rects))
+                show_images([im_origin_gt, im_add, im_merged], 1, 3)
+        else:
+            # save image
+            for i, (gt2, im_row) in enumerate(zip(gts2, im_rows)):
+                assert gt2[0] == im_row[0]
+                im = img_from_base64(im_row[-1])
+                origin_rects = gt2[1]
+                add_rects = gt2[2]
+                merged_rects = gt2[3]
+                if len(add_rects) == 0:
+                    continue
+                im_origin_gt = np.copy(im)
+                draw_rects(origin_rects, im_origin_gt)
+                add_class = list(set([r['class'] for r in add_rects]))
+                for c in add_class:
+                    c_rects = [r for r in add_rects if r['class'] == c]
+                    im_add = np.copy(im)
+                    draw_rects(c_rects, im_add, add_label=False)
+                    im_origin = np.copy(im)
+                    draw_rects(origin_rects, im_origin)
+                    im_merged = np.copy(im)
+                    draw_rects(merged_rects, im_merged)
+                    top = np.concatenate((im, im_add), 1)
+                    bottom = np.concatenate((im_origin, im_merged), 1)
+                    x = np.concatenate((top, bottom), 0)
+                    save_image(x, '/mnt/jianfw_desk/add_image/{}/{}.jpg'.format(
+                        c, im_row[0]))
+    else:
+        meta = {'num_image': 0,
+                'num_added_total': 0,
+                'from': prediction_file}
+        all_added = []
+        def gen_rows():
+            for key, origin_rects, add_rects, merged_rects in gts2:
+                all_added.append((key, add_rects))
+                meta['num_added_total'] = meta['num_added_total']+len(add_rects)
+                meta['num_image'] = meta['num_image'] + 1
+                yield key, json_dump(merged_rects)
+        # we will not change the files if they are the same
+        def gen_info():
+            meta['num_added_each'] = 1. * meta['num_added_total'] / meta['num_image']
+            for k, v in viewitems(meta):
+                yield k, v
+            for k, rects in all_added:
+                yield k, json_dump(rects)
+        dataset.update_data(gen_rows(), split, 'label',
+                generate_info=gen_info())
+
 
 def process_tsv_main(**kwargs):
     if kwargs['type'] == 'gen_tsv':

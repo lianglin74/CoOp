@@ -8,6 +8,18 @@ import matplotlib.pyplot as plt
 from random import random
 import logging
 
+
+def draw_rects(rects, im=None, add_label=True):
+    if im is None:
+        im = np.zeros((1000, 1000, 3), dtype=np.uint8)
+    if add_label:
+        draw_bb(im, [r['rect'] for r in rects],
+                [r['class'] for r in rects])
+    else:
+        draw_bb(im, [r['rect'] for r in rects],
+                ['' for r in rects])
+    return im
+
 def put_text(im, text, bottomleft=(0,100),
         color=(255,255,255), font_scale=0.5,
         font_thickness=1):
