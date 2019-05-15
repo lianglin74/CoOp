@@ -5234,9 +5234,10 @@ def generate_labels_to_verify(predict_file, data, split, th,
     def gen_rows(pred_to_gt=True):
         logging.info('start to writting')
         for key, gt_rects in tqdm(gt_key_rects):
-            rects2 = lift_one_image(gt_rects, tax)
-            del gt_rects[:]
-            gt_rects.extend(rects2)
+            if tax is not None:
+                rects2 = lift_one_image(gt_rects, tax)
+                del gt_rects[:]
+                gt_rects.extend(rects2)
             pred_rects = pred_key_to_rects.get(key)
             if pred_rects is None:
                 continue
