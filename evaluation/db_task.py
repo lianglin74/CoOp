@@ -8,7 +8,7 @@ import logging
 import os
 import os.path as op
 
-from evaluation.utils import search_bbox_in_list
+from qd.qd_common import calculate_iou
 from qd.tsv_io import TSVDataset, tsv_reader
 from qd.db import BoundingBoxVerificationDB
 
@@ -62,20 +62,31 @@ def submit_task(gt_dataset_name, gt_split, pred_file, collection_name,
             # NOTE: if exists a gt bbox, s.t., "class" is equal in case-insensitive mode,
             # AND "rect" IoU > thres, then the bbox will be treated correct, and will NOT
             # be verified
-            if search_bbox_in_list(bbox, gt_bboxes, cfg[CFG_IOU]) < 0:
-                if "conf" not in bbox or bbox["conf"] >= thres:
-                    num_verify += 1
-                    all_bb_tasks.append({
-                        "url": url,
-                        "split": gt_split,
-                        "key": key,
-                        "data": gt_dataset_name,
-                        'priority_tier': priority_tier,
-                        'priority': 1,
-                        "rect": bbox
-                    })
+            is_in_gt = False
+            for gt_bbox in gt_bboxes:
+                if bbox["class"].lower() == gt_bbox["class"].lower() and \
+                            (cfg[CFG_IOU] == 0 or calculate_iou(bbox["rect"], gt_bbox["rect"]) > cfg[CFG_IOU]):
+                    is_in_gt = True
+                    break
+            if is_in_gt:
+                continue
 
-    logging.info("#total bboxes: {}, #submit: {}".format(num_total_bboxes, num_verify))
+            if "conf" not in bbox or bbox["conf"] >= conf_thres:
+                num_verify += 1
+                if "rect" not in bbox:
+                    bbox["rect"] = "DUMMY"  # for tag results
+                all_bb_tasks.append({
+                    "url": url,
+                    "split": gt_split,
+                    "key": key,
+                    "data": gt_dataset_name,
+                    'priority_tier': priority_tier,
+                    'priority': 1,
+                    "rect": bbox
+                })
+
+    logging.info("#total bboxes: {}, #in gt: {}, #submit: {}"
+            .format(num_total_bboxes, num_total_bboxes-num_verify, num_verify))
     cur_db = BoundingBoxVerificationDB(db_name = 'qd', collection_name = collection_name)
     cur_db.request_by_insert(all_bb_tasks)
 
