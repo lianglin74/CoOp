@@ -69,6 +69,7 @@ def read_to_character(fp, c):
     return ''.join(result)
 
 class TSVFile(object):
+    # TODO: close the pointer of _fp
     def __init__(self, tsv_file, cache_policy=None):
         self.tsv_file = tsv_file
         self.lineidx = op.splitext(tsv_file)[0] + '.lineidx'
@@ -617,7 +618,7 @@ def tsv_reader(tsv_file_name, sep='\t'):
             yield [x.strip() for x in line.split(sep)]
 
 def csv_reader(tsv_file_name):
-    tsv_reader(tsv_file_name, ',')
+    return tsv_reader(tsv_file_name, ',')
 
 def get_meta_file(tsv_file):
     return op.splitext(tsv_file)[0] + '.meta.yaml'

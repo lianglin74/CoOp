@@ -3197,7 +3197,7 @@ def convert_label_db(dataset, split, idx, with_bb):
     result = None
     label_mapper = dataset._sourcelabel_to_targetlabels
     queried = []
-    for row_with_idx in tqdm(dataset.iter_gt_image(split, idx=idx)):
+    for row_with_idx in tqdm(dataset.iter_gt(split, idx=idx)):
         i = row_with_idx[0]
         queried.append(i)
         row = list(row_with_idx[1:])
@@ -3730,6 +3730,14 @@ def test():
     save_image(im, '/mnt/jianfw_desk/a.png')
     import ipdb;ipdb.set_trace(context=15)
 
+def trim_rects_from_db(rects):
+    keys = ['_id', 'create_time', 'idx_in_split',
+            'key', 'split', 'data']
+    for rect in rects:
+        for k in keys:
+            if k in rect:
+                del rect[k]
+
 class TSVDatasetDB(object):
     def __init__(self, name):
         self.name = name
@@ -3737,12 +3745,36 @@ class TSVDatasetDB(object):
         self._gt = self._db['qd']['ground_truth']
         self._image = self._db['qd']['image']
 
+    def iter_gt(self, split, version=None, version_by_time=None,
+            idx=None, bb_type='with_bb'):
+        # query the image db first and then attach the gt information
+        match = {'data': self.name,
+                 'split': split}
+        if idx:
+            match['idx_in_split'] = {'$in': list(idx)}
+        lookup_pipeline = self._get_gt_rect_pipeline(
+                split, version, version_by_time, bb_type,
+                extra_filter={'$eq': ['$key', '$$key']},
+                in_lookup=True)
+        pipeline = [{'$match': match},
+                    {'$lookup': {'from': 'ground_truth',
+                                 'let': {'key': '$key'},
+                                 'pipeline': lookup_pipeline,
+                                 'as': 'rects'
+                                 }}]
+        for row in self._image.aggregate(pipeline, allowDiskUse=True):
+            trim_rects_from_db(row['rects'])
+            yield row['idx_in_split'], row['key'], row['rects']
+
+    @deprecated('use iter_gt since this function will not return the image with no bb')
     def iter_gt_image(self, split, version=None, version_by_time=None,
             idx=None, bb_type='with_bb'):
+        # deprecated. use iter_gt since this function will not return anything
+        # if the image in idx has no box
         # if idx is not none, here we do not guarrentee the order is kept.
         # Thus, we also return the index of the image
         if idx:
-            extra_filter = {'idx_in_split': {'$in': idx}}
+            extra_filter = {'idx_in_split': {'$in': list(idx)}}
         else:
             extra_filter = None
         pipeline = self._get_gt_rect_pipeline(split,
@@ -3752,7 +3784,7 @@ class TSVDatasetDB(object):
                                     'key': {'$first': '$key'},
                                     'rects': {'$push': '$$ROOT'}}})
         logging.info(pformat(pipeline))
-        for result in self._gt.aggregate(pipeline):
+        for result in self._gt.aggregate(pipeline, allowDiskUse=True):
             for rect in result['rects']:
                 if '_id' in rect:
                     del rect['_id']
@@ -3761,20 +3793,36 @@ class TSVDatasetDB(object):
             yield result['_id'], result['key'], result['rects']
 
     def _get_gt_rect_pipeline(self, split, version, version_by_time,
-            bb_type, extra_filter):
-        match = {'data': self.name,
-                 'split': split}
+            bb_type, extra_filter, in_lookup=False):
+        if not in_lookup:
+            match = {'data': self.name,
+                     'split': split}
+        else:
+            match_condition = []
+            match_condition.append({'$eq': ['$data', self.name]})
+            match_condition.append({'$eq': ['$split', split]})
         if extra_filter:
-            match.update(extra_filter)
+            if not in_lookup:
+                match.update(extra_filter)
+            else:
+                match_condition.append(extra_filter)
         if version_by_time:
-            match['create_time'] = {'$lte': version_by_time}
+            if not in_lookup:
+                match['create_time'] = {'$lte': version_by_time}
+            else:
+                match_condition.append({'$lte': ['$create_time', version_by_time]})
             sort_by = 'create_time'
         else:
             if version is None:
                 version = 0
             if version != -1:
-                match['version'] = {'$lte': version}
+                if not in_lookup:
+                    match['version'] = {'$lte': version}
+                else:
+                    match_condition.append({'$lte': ['$version', version]})
             sort_by = 'version'
+        if in_lookup:
+            match = {'$expr': {'$and': match_condition}}
         sort_value = OrderedDict() # use ordered since dict is non-ordered
         sort_value[sort_by] = -1
         sort_value['contribution'] = -1
@@ -3805,7 +3853,7 @@ class TSVDatasetDB(object):
             # we do not add any filter here. Thus it is no_bb + with_bb
         pipeline = self._get_gt_rect_pipeline(split, version, version_by_time,
                 bb_type, extra_filter)
-        return self._gt.aggregate(pipeline)
+        return self._gt.aggregate(pipeline, allowDiskUse=True)
 
     def num_rows(self, split):
         pipeline = [{'$match': {'data': self.name, 'split': split}},
@@ -5066,8 +5114,9 @@ def verify_prediction_by_db(pred_file, test_data, test_split, conf_th=0.3,
     logging.info('#task = {}; #exists in db = {}; #matched gt = {}; #num pri change = {}'.format(
         num_task, num_exists, num_matched_gt, num_change_pri))
 
+
 def convertcomposite_to_standard(data,
-        split='train', **kwargs):
+        split='train', ignore_image=False, **kwargs):
     dataset = TSVDataset(data)
     if op.isfile(dataset.get_data(split, t='label')) and \
             op.isfile(dataset.get_data(split)):
@@ -5077,10 +5126,11 @@ def convertcomposite_to_standard(data,
     rows_label = dataset.iter_composite(split, t='label', version=None)
     num_image = dataset.num_rows(split)
     out_tsv = dataset.get_data(split)
-    logging.info('writing image tsv: {}'.format(out_tsv))
-    tsv_writer(((row_label[0], row_label[1], row_image[2]) for row_image, row_label
-            in tqdm(zip(rows_image, rows_label), total=num_image)),
-            out_tsv)
+    if not ignore_image:
+        logging.info('writing image tsv: {}'.format(out_tsv))
+        tsv_writer(((row_label[0], row_label[1], row_image[2]) for row_image, row_label
+                in tqdm(zip(rows_image, rows_label), total=num_image)),
+                out_tsv)
     logging.info('writing image label tsv')
     rows = dataset.iter_composite(split, t='label', version=None)
     tsv_writer(tqdm(rows), dataset.get_data(split, t='label'))

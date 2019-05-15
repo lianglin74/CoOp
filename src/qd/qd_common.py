@@ -665,7 +665,53 @@ def get_all_tree_data():
     return [name for name in names
         if op.isfile(op.join('data', name, 'root_enriched.yaml'))]
 
+def test_parse_test_data_with_version():
+    pred_data_split_versions = [
+            ('model_iter_368408.caffemodel.Tax1300V14.1_OpenImageV4_448Test_with_bb.train.maintainRatio.OutTreePath.TreeThreshold0.1.ClsIndependentNMS.predict',
+                'Tax1300V14.1_OpenImageV4_448Test_with_bb', 'train', 0),
+            ('model_iter_0090000.pt.coco2017Full.test.predict.coco_box.report',
+                'coco2017Full', 'test', 0),
+            ('model_iter_10000.caffemodel.voc20.maintainRatio.report',
+                'voc20', 'test', 0),
+            ('model_iter_2.caffemodel.voc20.test.report',
+                'voc20', 'test', 0),
+            ('model_iter_271598.caffemodel.Top100Instagram_with_bb.test.maintainRatio.OutTreePath.TreeThreshold0.1.ClsIndependentNMS.v5.report',
+                'Top100Instagram_with_bb', 'test', 5),
+            ]
+    for f, d, s, v in pred_data_split_versions:
+        od, os, ov = parse_test_data_with_version(f)
+        assert od == d
+        assert s == os
+        assert ov == v
+
+def parse_test_data_with_version(predict_file):
+    # run test_parse_test_data_with_version() if any change is made to this
+    # function
+    pattern = \
+        'model(?:_iter)?_-?[0-9]*[e]?\.(?:caffemodel|pth\.tar|pth|pt)\.(.*)\.(train|trainval|test).*?(\.v[0-9])?\.(?:predict|report)'
+    match_result = re.match(pattern, predict_file)
+    if match_result is None:
+        pattern = \
+            'model(?:_iter)?_-?[0-9]*[e]?\.(?:caffemodel|pth\.tar|pth|pt)\.([^\.]*).*?(\.v[0-9])?\.(?:predict|report)'
+        match_result = re.match(pattern, predict_file)
+        assert match_result
+        result = match_result.groups()
+        if result[1] is None:
+            v = 0
+        else:
+            v = int(result[1][2])
+        return result[0], 'test', v
+    else:
+        assert match_result
+        result = match_result.groups()
+        if result[2] is None:
+            v = 0
+        else:
+            v = int(result[2][2])
+        return result[0], result[1], v
+
 def parse_test_data(predict_file):
+    logging.info('use parse_test_data_with_version')
     # e.g. 'model_iter_368408.caffemodel.Tax1300V14.1_OpenImageV4_448Test_with_bb.train.maintainRatio.OutTreePath.TreeThreshold0.1.ClsIndependentNMS.predict'
     pattern = 'model(?:_iter)?_[0-9]*[e]?\.(?:caffemodel|pth\.tar|pth)\.(.*)\.(train|trainval|test)\..*\.predict'
     match_result = re.match(pattern, predict_file)
@@ -695,12 +741,15 @@ def parse_data(full_expid):
     return [c for c in candidates if len(c) == max_length][0]
 
 def parse_iteration(file_name):
-    r = re.match('.*model_iter_([0-9]*)\..*', file_name)
-    if r is None:
-        r = re.match('.*model_iter_([0-9]*)e\..*', file_name)
-        if r is None:
-            return -1
-    return int(float(r.groups()[0]))
+    patterns = ['.*model(?:_iter)?_([0-9]*)\..*',
+                '.*model(?:_iter)?_([0-9]*)e\..*',
+                ]
+    for p in patterns:
+        r = re.match(p, file_name)
+        if r is not None:
+            return int(float(r.groups()[0]))
+    logging.info('unable to parse the iterations for {}'.format(file_name))
+    return -2
 
 def parse_snapshot_rank(predict_file):
     '''
