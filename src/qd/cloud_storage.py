@@ -1,3 +1,4 @@
+import sys
 import os.path as op
 from azure.storage.blob import BlockBlobService
 from azure.storage.common.storageclient import logger
@@ -141,10 +142,16 @@ class CloudStorage(object):
                     self.container_name,
                     name)
         else:
-            self.block_blob_service.create_blob_from_stream(
-                    self.container_name,
-                    name,
-                    s)
+            if sys.version_info.major == 3 and type(s) is bytes:
+                self.block_blob_service.create_blob_from_bytes(
+                        self.container_name,
+                        name,
+                        s)
+            else:
+                self.block_blob_service.create_blob_from_stream(
+                        self.container_name,
+                        name,
+                        s)
             return self.block_blob_service.make_blob_url(
                     self.container_name,
                     name)
@@ -195,6 +202,25 @@ class CloudStorage(object):
             azcopy_upload(src_dir, dest_url, self.account_key)
         else:
             raise Exception
+
+    def az_sync(self, src_dir, dest_dir):
+        assert self.sas_token
+        cmd = []
+        cmd.append(op.expanduser('~/code/azcopy/azcopy'))
+        cmd.append('sync')
+        cmd.append(op.realpath(src_dir))
+        url = 'https://{}.blob.core.windows.net'.format(self.account_name)
+        if dest_dir.startswith('/'):
+            dest_dir = dest_dir[1:]
+        url = op.join(url, self.container_name, dest_dir)
+        assert self.sas_token.startswith('?')
+        data_url = url
+        url = url + self.sas_token
+        cmd.append(url)
+        if op.isdir(src_dir):
+            cmd.append('--recursive')
+        cmd_run(cmd)
+        return data_url, url
 
     def az_upload2(self, src_dir, dest_dir):
         assert self.sas_token

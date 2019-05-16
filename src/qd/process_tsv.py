@@ -398,9 +398,13 @@ def upload_image_to_blob(data, split):
         s = CloudStorage()
         def gen_rows():
             for key, _, str_im in tqdm(dataset.iter_data(split)):
-                url_key = map_image_key_to_url_key((data, split, key))
-                url = s.upload_stream(StringIO(base64.b64decode(str_im)),
-                        'images/' + url_key)
+                url_key = map_image_key_to_url_key(data, split, key)
+                if sys.version_info.major == 3:
+                    url = s.upload_stream(base64.b64decode(str_im),
+                            'images/' + url_key + '.jpg')
+                else:
+                    url = s.upload_stream(StringIO(base64.b64decode(str_im)),
+                            'images/' + url_key)
                 yield key, url
         dataset.write_data(gen_rows(), split, 'key.url')
     else:
@@ -431,8 +435,12 @@ def upload_image_to_blob_by_idx(args):
     def gen_rows():
         for key, _, str_im in tqdm(dataset.iter_data(split, filter_idx=idxes)):
             url_key = map_image_key_to_url_key(data, split, key)
-            url = s.upload_stream(StringIO(base64.b64decode(str_im)),
-                    'images/' + url_key + '.jpg')
+            if sys.version_info.major == 3:
+                url = s.upload_stream(base64.b64decode(str_im),
+                        'images/' + url_key + '.jpg')
+            else:
+                url = s.upload_stream(StringIO(base64.b64decode(str_im)),
+                        'images/' + url_key)
             yield key, url
     dataset.write_data(gen_rows(), split, t)
 
@@ -1617,6 +1625,25 @@ def ensure_create_inverted_tsv_for_each(args):
             dataset.write_data(gen_inverted_rows(inverted_result[k]),
                     split, k, v)
 
+def extract_from_data_source(data, split, t):
+    assert t != 'label'
+    dataset = TSVDataset(data)
+    all_data_split = dataset.load_composite_source_data_split(split)
+    source_data_to_dataset = {}
+    label_iter = dataset.iter_data(split, 'label')
+    shuffle_iter = tsv_reader(dataset.get_shuffle_file(split))
+    def gen_rows():
+        for (idx_source, idx_row), label_row in zip(shuffle_iter, label_iter):
+            idx_source, idx_row = int(idx_source), int(idx_row)
+            source_data, source_split = all_data_split[idx_source]
+            if source_data not in source_data_to_dataset:
+                source_data_to_dataset[source_data] = TSVDataset(source_data)
+            source_dataset = source_data_to_dataset[source_data]
+            source_key, str_t = source_dataset.seek_by_idx(idx_row, source_split, t)
+            assert label_row[0] == '_'.join([source_data, source_split, source_key])
+            yield label_row[0], str_t
+    dataset.write_data(gen_rows(), split, t)
+
 def populate_dataset_details(data, check_image_details=False,
         splits=None, check_box=False):
     logging.info(data)
@@ -1640,6 +1667,9 @@ def populate_dataset_details(data, check_image_details=False,
                         img_from_base64(row[-1]).shape[:2]))) for
                         row in rows), split, 'hw')
                 else:
+                    if dataset.has(split + 'X'):
+                        extract_from_data_source(data, split, 'hw')
+                        continue
                     from pathos.multiprocessing import ProcessingPool as Pool
                     num_worker = 128
                     num_tasks = num_worker * 3
@@ -1946,97 +1976,80 @@ def create_index_composite_dataset(dataset):
 
     # for each data source, how many labels are contributed and how many are
     # not
-    source_tsv_label_files = load_list_file(dataset.get_data(splitx,
-        'origin.label'))
-    source_tsv_labels = [TSVFile(t) for t in source_tsv_label_files]
-    trainX_label_file = dataset.get_data(splitx, 'label')
-    all_dest_label_file = load_list_file(trainX_label_file)
-    dest_labels = [TSVFile(f) for f in all_dest_label_file]
-    all_idxSource_sourceLabel_destLabel = []
-    logging.info('each datasource and each idx row')
-    idxSource_to_numRect = {}
-    all_idxSource_numSourceRects_numDestRects = []
-    for idx_source, idx_row in tqdm(all_idxSource_idxRow):
-        source_rects = json.loads(source_tsv_labels[idx_source].seek(idx_row)[-1])
-        dest_rects = json.loads(dest_labels[idx_source].seek(idx_row)[-1])
-        if idx_source not in idxSource_to_numRect:
-            idxSource_to_numRect[idx_source] = 0
-        idxSource_to_numRect[idx_source] = idxSource_to_numRect[idx_source] + \
-            len(dest_rects)
-        all_idxSource_numSourceRects_numDestRects.append((
-            idx_source, len(source_rects), len(dest_rects)))
-        for r in dest_rects:
-            all_idxSource_sourceLabel_destLabel.append((idx_source,
-                r.get('class_from', r['class']), r['class']))
-    idxSource_to_numSourceRects_numDestRects = list_to_dict(
-            all_idxSource_numSourceRects_numDestRects, 0)
-    idxSource_to_numSourceRects_numDestRect = {idxSource: [sum(x1 for x1, x2 in idxSource_to_numSourceRects_numDestRects[idxSource]),
-             sum(x2 for x1, x2 in idxSource_to_numSourceRects_numDestRects[idxSource])]
-        for idxSource in idxSource_to_numSourceRects_numDestRects}
+    if op.isfile(dataset.get_data(splitx, 'origin.label')):
+        source_tsv_label_files = load_list_file(dataset.get_data(splitx,
+            'origin.label'))
+        source_tsv_labels = [TSVFile(t) for t in source_tsv_label_files]
+        trainX_label_file = dataset.get_data(splitx, 'label')
+        all_dest_label_file = load_list_file(trainX_label_file)
+        dest_labels = [TSVFile(f) for f in all_dest_label_file]
+        all_idxSource_sourceLabel_destLabel = []
+        logging.info('each datasource and each idx row')
+        idxSource_to_numRect = {}
+        all_idxSource_numSourceRects_numDestRects = []
+        for idx_source, idx_row in tqdm(all_idxSource_idxRow):
+            source_rects = json.loads(source_tsv_labels[idx_source].seek(idx_row)[-1])
+            dest_rects = json.loads(dest_labels[idx_source].seek(idx_row)[-1])
+            if idx_source not in idxSource_to_numRect:
+                idxSource_to_numRect[idx_source] = 0
+            idxSource_to_numRect[idx_source] = idxSource_to_numRect[idx_source] + \
+                len(dest_rects)
+            all_idxSource_numSourceRects_numDestRects.append((
+                idx_source, len(source_rects), len(dest_rects)))
+            for r in dest_rects:
+                all_idxSource_sourceLabel_destLabel.append((idx_source,
+                    r.get('class_from', r['class']), r['class']))
+        idxSource_to_numSourceRects_numDestRects = list_to_dict(
+                all_idxSource_numSourceRects_numDestRects, 0)
+        idxSource_to_numSourceRects_numDestRect = {idxSource: [sum(x1 for x1, x2 in idxSource_to_numSourceRects_numDestRects[idxSource]),
+                 sum(x2 for x1, x2 in idxSource_to_numSourceRects_numDestRects[idxSource])]
+            for idxSource in idxSource_to_numSourceRects_numDestRects}
 
-    dataset.write_data([(source_tsvs[idxSource],
-        idxSource_to_numSourceRects_numDestRect[idxSource][1],
-        idxSource_to_numSourceRects_numDestRect[idxSource][0])
-        for idxSource in range(len(source_tsvs))],
-        splitx, 'tsvsource.numdestbbs.numsrcbbs')
+        dataset.write_data([(source_tsvs[idxSource],
+            idxSource_to_numSourceRects_numDestRect[idxSource][1],
+            idxSource_to_numSourceRects_numDestRect[idxSource][0])
+            for idxSource in range(len(source_tsvs))],
+            splitx, 'tsvsource.numdestbbs.numsrcbbs')
 
-    sourcetsv_to_num_rect = {source_tsvs[idx_source]: idxSource_to_numRect[idx_source]
-            for idx_source in idxSource_to_numRect}
-    dataset.write_data([(s, sourcetsv_to_num_rect[s]) for s in source_tsvs],
-        splitx, 'numRectsPerSource')
-    idxSource_to_sourceLabel_destLabels = list_to_dict(
-            all_idxSource_sourceLabel_destLabel, 0)
-    source_numSourceLabels = [(s, 0) for s in source_tsvs]
-    source_includedSourceLabels = [(s, []) for s in source_tsvs]
-    for idxSource in idxSource_to_sourceLabel_destLabels:
-        sourceLabel_destLabels = idxSource_to_sourceLabel_destLabels[idxSource]
-        sourceLabel_to_destLabels = list_to_dict(sourceLabel_destLabels, 0)
-        source_numSourceLabels[idxSource] = (source_tsvs[idxSource],
-                len(sourceLabel_to_destLabels))
-        source_includedSourceLabels[idxSource][1].extend(
-                sourceLabel_to_destLabels.keys())
+        sourcetsv_to_num_rect = {source_tsvs[idx_source]: idxSource_to_numRect[idx_source]
+                for idx_source in idxSource_to_numRect}
+        dataset.write_data([(s, sourcetsv_to_num_rect[s]) for s in source_tsvs],
+            splitx, 'numRectsPerSource')
 
-    dataset.write_data([(n, str(i)) for (n, i) in source_numSourceLabels],
-            splitx, 'numCategoriesPerSource')
+        idxSource_to_sourceLabel_destLabels = list_to_dict(
+                all_idxSource_sourceLabel_destLabel, 0)
+        source_numSourceLabels = [(s, 0) for s in source_tsvs]
+        source_includedSourceLabels = [(s, []) for s in source_tsvs]
+        for idxSource in idxSource_to_sourceLabel_destLabels:
+            sourceLabel_destLabels = idxSource_to_sourceLabel_destLabels[idxSource]
+            sourceLabel_to_destLabels = list_to_dict(sourceLabel_destLabels, 0)
+            source_numSourceLabels[idxSource] = (source_tsvs[idxSource],
+                    len(sourceLabel_to_destLabels))
+            source_includedSourceLabels[idxSource][1].extend(
+                    sourceLabel_to_destLabels.keys())
 
-    # save teh list of included labels
-    sourceDataset_to_includedSourceLabels = {}
-    for source, sourceLabels in source_includedSourceLabels:
-        source_dataset_name = op.basename(op.dirname(source))
-        if source_dataset_name not in sourceDataset_to_includedSourceLabels:
-            sourceDataset_to_includedSourceLabels[source_dataset_name] = []
-        sourceDataset_to_includedSourceLabels[source_dataset_name].extend(sourceLabels)
-    for source_dataset_name in sourceDataset_to_includedSourceLabels:
-        sourceDataset_to_includedSourceLabels[source_dataset_name] = \
-                set(sourceDataset_to_includedSourceLabels[source_dataset_name])
+        dataset.write_data([(n, str(i)) for (n, i) in source_numSourceLabels],
+                splitx, 'numCategoriesPerSource')
 
-    tsv_writer([(n, ','.join(sourceDataset_to_includedSourceLabels[n])) for n in
-        sourceDataset_to_includedSourceLabels], op.join(dataset._data_root,
-            'trainX.includeCategoriesPerSourceDataset.tsv'))
+        # save teh list of included labels
+        sourceDataset_to_includedSourceLabels = {}
+        for source, sourceLabels in source_includedSourceLabels:
+            source_dataset_name = op.basename(op.dirname(source))
+            if source_dataset_name not in sourceDataset_to_includedSourceLabels:
+                sourceDataset_to_includedSourceLabels[source_dataset_name] = []
+            sourceDataset_to_includedSourceLabels[source_dataset_name].extend(sourceLabels)
+        for source_dataset_name in sourceDataset_to_includedSourceLabels:
+            sourceDataset_to_includedSourceLabels[source_dataset_name] = \
+                    set(sourceDataset_to_includedSourceLabels[source_dataset_name])
 
-    tsv_writer([(n, get_nick_name(noffset_to_synset(s)) if is_noffset(s) else
-        s) for n in sourceDataset_to_includedSourceLabels
-          for s in sourceDataset_to_includedSourceLabels[n]],
-          op.join(dataset._data_root, 'trainX.includeCategoriesPerSourceDatasetReadable.tsv'))
+        tsv_writer([(n, ','.join(sourceDataset_to_includedSourceLabels[n])) for n in
+            sourceDataset_to_includedSourceLabels], op.join(dataset._data_root,
+                'trainX.includeCategoriesPerSourceDataset.tsv'))
 
-    #sourceDataset_to_excludeSourceLabels = {}
-    ## find out the excluded label list
-    #for source_dataset_name in sourceDataset_to_includedSourceLabels:
-        #source_dataset = TSVDataset(source_dataset_name)
-        #full_label_names = set(source_dataset.load_labelmap())
-        #included_labels = sourceDataset_to_includedSourceLabels[source_dataset_name]
-        #for l in included_labels:
-            ## if l is not in the full_label_names, it will throw exceptions
-            #full_label_names.remove(l)
-        #sourceDataset_to_excludeSourceLabels[source_dataset_name] = full_label_names
-
-    #tsv_writer([(n, ','.join(v)) for (n, v) in
-        #sourceDataset_to_excludeSourceLabels.iteritems()], op.join(dataset._data_root,
-            #'trainX.excludeCategoriesPerSourceDataset.tsv'))
-
-    #tsv_writer([(n, get_nick_name(noffset_to_synset(s)) if is_noffset(s) else
-        #s) for (n, v) in sourceDataset_to_excludeSourceLabels.iteritems() for s in v],
-        #op.join(dataset._data_root, 'trainX.excludeCategoriesPerSourceDatasetReadable.tsv'))
+        tsv_writer([(n, get_nick_name(noffset_to_synset(s)) if is_noffset(s) else
+            s) for n in sourceDataset_to_includedSourceLabels
+              for s in sourceDataset_to_includedSourceLabels[n]],
+              op.join(dataset._data_root, 'trainX.includeCategoriesPerSourceDatasetReadable.tsv'))
 
 class TSVTransformer(object):
     def __init__(self):
@@ -3728,7 +3741,6 @@ def test():
     rects = json.loads(str_rects)
     draw_rects(im, rects)
     save_image(im, '/mnt/jianfw_desk/a.png')
-    import ipdb;ipdb.set_trace(context=15)
 
 def trim_rects_from_db(rects):
     keys = ['_id', 'create_time', 'idx_in_split',

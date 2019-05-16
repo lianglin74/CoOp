@@ -61,7 +61,6 @@ class AnnotationDB(object):
     def insert_acc(self, **kwargs):
         if 'create_time' not in kwargs:
             kwargs['create_time'] = datetime.now()
-        assert 'acc' in kwargs
         self._acc.insert_one(kwargs)
 
     def iter_acc(self, **query):

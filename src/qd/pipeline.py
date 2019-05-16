@@ -49,7 +49,6 @@ def ensure_upload_data_for_philly_jobs(data):
     data_folder = philly_client.get_data_folder_in_blob()
     for d in all_data:
         dataset = TSVDataset(d)
-        need_upload = False
         for split in ['train', 'test']:
             splitx = split + 'X'
             if op.isfile(dataset.get_data(splitx)) and d.endswith('_with_bb'):
@@ -58,12 +57,8 @@ def ensure_upload_data_for_philly_jobs(data):
                     d,
                     split)):
                     convertcomposite_to_standard(d, split)
-                    need_upload = True
-        if not c.exists('{}/{}/labelmap.txt'.format(data_folder, d)):
-            need_upload = True
-        if need_upload:
-            if op.isdir(dataset._data_root):
-                c.az_upload2(dataset._data_root, data_folder)
+        if op.isdir(dataset._data_root):
+            c.az_sync(dataset._data_root, op.join(data_folder, d))
 
 def philly_func_run(func, param, **submit_param):
     if 'data' in param:
@@ -137,7 +132,7 @@ def update_parameters(param):
     direct_add_value_keys = [
             # first value is the key, the second is the name in the folder; the
             # third is the excpdetion condidtion
-            ('train_version', 'V'),
+            ('train_version', 'V', lambda p: p['train_version'] == 0),
             ('effective_batch_size', 'BS'),
             ('max_iter', 'MaxIter'),
             ('max_epoch', 'MaxEpoch'),
