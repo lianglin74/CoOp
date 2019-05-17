@@ -26,7 +26,6 @@ from maskrcnn_benchmark.utils.comm import synchronize, get_rank
 from maskrcnn_benchmark.utils.checkpoint import DetectronCheckpointer
 from maskrcnn_benchmark.utils.comm import get_world_size
 from maskrcnn_benchmark.solver import make_lr_scheduler
-from maskrcnn_benchmark.engine.trainer import do_train
 from qd.qd_pytorch import ModelPipeline
 from qd.qd_pytorch import torch_load, torch_save
 from qd.qd_common import ensure_directory
@@ -38,6 +37,8 @@ from qd.qd_common import set_if_not_exist
 from qd.qd_common import load_from_yaml_file
 from qd.qd_common import calculate_iou
 from qd.qd_common import get_mpi_rank, get_mpi_size
+from qd.qd_common import pass_key_value_if_has
+from qd.qd_common import dump_to_yaml_str
 from qd.tsv_io import TSVDataset
 from qd.tsv_io import tsv_reader, tsv_writer
 from qd.process_tsv import TSVFile, convert_one_label
@@ -218,7 +219,6 @@ class GeneralizedRCNNExtractModel(torch.nn.Module):
         result = cat_boxlist(result)
         return result
 
-
 def make_extract_model(model, feature_name):
     if type(model) == maskrcnn_benchmark.modeling.detector.generalized_rcnn.GeneralizedRCNN:
         model = GeneralizedRCNNExtractModel(model, feature_name)
@@ -386,7 +386,6 @@ def test(cfg, model, distributed, predict_files, label_id_to_label,
                 reorder_tsv_keys(predict_file, ordered_keys, predict_file)
         synchronize()
 
-
 class MaskRCNNPipeline(ModelPipeline):
     def __init__(self, **kwargs):
         super(MaskRCNNPipeline, self).__init__(**kwargs)
@@ -411,8 +410,15 @@ class MaskRCNNPipeline(ModelPipeline):
 
         self.kwargs['SOLVER']['IMS_PER_BATCH'] = int(self.effective_batch_size)
         self.kwargs['SOLVER']['MAX_ITER'] = self.parse_iter(self.max_iter)
-        self.kwargs['DATASETS']['TRAIN'] = ('{}$train'.format(self.data),)
-        self.kwargs['DATASETS']['TEST'] = ('{}${}'.format(self.test_data, self.test_split),)
+        train_arg = {'data': self.data,
+                'split': 'train'}
+        if self.MaskTSVDataset is not None:
+            train_arg.update(self.MaskTSVDataset)
+        self.kwargs['DATASETS']['TRAIN'] = ('${}'.format(
+            dump_to_yaml_str(train_arg).decode()),)
+        test_arg = {'data': self.test_data, 'split': self.test_split}
+        self.kwargs['DATASETS']['TEST'] = ('${}'.format(
+            dump_to_yaml_str(test_arg).decode()),)
         self.kwargs['OUTPUT_DIR'] = op.join('output', self.full_expid, 'snapshot')
         # the test_batch_size is the size for each rank. We call the mask-rcnn
         # API, which should be the batch size for all rank
@@ -420,21 +426,20 @@ class MaskRCNNPipeline(ModelPipeline):
         self.kwargs['DATALOADER']['NUM_WORKERS'] = self.workers
         self.kwargs['MODEL']['ROI_BOX_HEAD']['NUM_CLASSES'] = len(TSVDataset(self.data).load_labelmap()) + 1
 
-        from qd.qd_common import pass_key_value_if_has
-
-        pass_key_value_if_has(self.kwargs, 'stageiter',
-                self.kwargs['SOLVER'], 'STEPS')
+        if self.stageiter:
+            self.kwargs['SOLVER']['STEPS'] = tuple([self.parse_iter(i) for i in self.stageiter])
+        else:
+            self.kwargs['SOLVER']['STEPS'] = (6*self.kwargs['SOLVER']['MAX_ITER']//9,
+                    8*self.kwargs['SOLVER']['MAX_ITER']//9)
         pass_key_value_if_has(self.kwargs, 'base_lr',
                 self.kwargs['SOLVER'], 'BASE_LR')
-
 
         # use self.kwargs instead  of kwargs because we might load parameters
         # from local disk not from the input argument
         merge_dict_to_cfg(self.kwargs, cfg)
 
         # train -> iter
-        assert 'max_iter' not in self.kwargs or \
-                self.kwargs['max_iter'] == cfg.SOLVER.MAX_ITER
+        # next time, we dont need to parse it again
         self.kwargs['max_iter'] = cfg.SOLVER.MAX_ITER
 
         # evaluation

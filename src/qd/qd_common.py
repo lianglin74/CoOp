@@ -31,6 +31,7 @@ import shutil
 import argparse
 import subprocess as sp
 from datetime import datetime
+from future.utils import viewitems
 try:
     # py3
     from urllib.request import urlopen
@@ -216,7 +217,7 @@ def iter_swap_param(swap_params):
     while True:
         result = {}
         for p, i in zip(swap_params, idx):
-            result[p[0]] = p[1][i]
+            dict_update_path_value(result, p[0], p[1][i])
         yield result
 
         for i in range(num - 1, -1, -1):
@@ -1578,6 +1579,61 @@ def is_valid_rect(rect):
 def pass_key_value_if_has(d_from, from_key, d_to, to_key):
     if from_key in d_from:
         d_to[to_key] = d_from[from_key]
+
+def dict_update_nested_dict(a, b):
+    for k, v in viewitems(b):
+        if k not in a:
+            a[k] = v
+        else:
+            if isinstance(a[k], dict) and isinstance(v, dict):
+                dict_update_nested_dict(a[k], v)
+            else:
+                a[k] = v
+
+def dict_get_all_path(d):
+    all_path = []
+    for k, v in viewitems(d):
+        if not isinstance(v, dict):
+            all_path.append(k)
+        else:
+            all_sub_path = dict_get_all_path(v)
+            all_path.extend([k + '$' + p for p in all_sub_path])
+    return all_path
+
+def dict_has_path(d, p):
+    ps = p.split('$')
+    cur_dict = d
+    while True:
+        if len(ps) > 0:
+            if ps[0] in cur_dict:
+                cur_dict = cur_dict[ps[0]]
+                ps = ps[1:]
+            else:
+                return False
+        else:
+            return True
+
+def dict_update_path_value(d, p, v):
+    ps = p.split('$')
+    while True:
+        if len(ps) == 1:
+            d[ps[0]] = v
+            break
+        else:
+            if ps[0] not in d:
+                d[ps[0]] = {}
+            d = d[ps[0]]
+            ps = ps[1:]
+
+def dict_get_path_value(d, p):
+    ps = p.split('$')
+    cur_dict = d
+    while True:
+        if len(ps) > 0:
+            cur_dict = cur_dict[ps[0]]
+            ps = ps[1:]
+        else:
+            return cur_dict
 
 if __name__ == '__main__':
     init_logging()

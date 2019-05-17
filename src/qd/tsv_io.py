@@ -90,7 +90,11 @@ class TSVFile(object):
     def seek(self, idx):
         self._ensure_tsv_opened()
         self._ensure_lineidx_loaded()
-        pos = self._lineidx[idx]
+        try:
+            pos = self._lineidx[idx]
+        except:
+            logging.info('{}-{}'.format(self.tsv_file, idx))
+            raise
         self._fp.seek(pos)
         return [s.strip() for s in self._fp.readline().split('\t')]
 

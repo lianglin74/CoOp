@@ -18,6 +18,7 @@ from qd.qd_common import make_by_pattern_result
 from qd.qd_common import load_from_yaml_file
 from qd.qd_common import hash_sha1
 from qd.qd_common import init_logging
+from qd.qd_common import dict_has_path, dict_get_path_value, dict_get_all_path
 
 
 def get_all_test_data(exp):
@@ -81,39 +82,6 @@ def philly_func_run(func, param, **submit_param):
     logging.info(client.get_config_extra_param(extra_param))
     client.submit_without_sync(extra_param)
 
-def dict_get_all_path(d):
-    all_path = []
-    for k, v in viewitems(d):
-        if not isinstance(v, dict):
-            all_path.append(k)
-        else:
-            all_sub_path = dict_get_all_path(v)
-            all_path.extend([k + '$' + p for p in all_sub_path])
-    return all_path
-
-def dict_has_path(d, p):
-    ps = p.split('$')
-    cur_dict = d
-    while True:
-        if len(ps) > 0:
-            if ps[0] in cur_dict:
-                cur_dict = cur_dict[ps[0]]
-                ps = ps[1:]
-            else:
-                return False
-        else:
-            return True
-
-def dict_get_path_value(d, p):
-    ps = p.split('$')
-    cur_dict = d
-    while True:
-        if len(ps) > 0:
-            cur_dict = cur_dict[ps[0]]
-            ps = ps[1:]
-        else:
-            return cur_dict
-
 def except_to_update_for_stageiter(param):
     if param.get('net', '').startswith('e2e'):
         stageiter = param.get('stageiter', (0, 0))
@@ -124,6 +92,12 @@ def except_to_update_for_stageiter(param):
             return True
     return False
 
+def except_to_update_for_version(param):
+    return param.get('MaskTSVDataset', {}).get('version') in [0, None]
+
+def except_to_update_for_remove_bg_image(param):
+    return param.get('MaskTSVDataset', {}).get('remove_images_without_annotations', True)
+
 def update_parameters(param):
     default_param = {
             'max_iter': 10000,
@@ -132,7 +106,9 @@ def update_parameters(param):
     direct_add_value_keys = [
             # first value is the key, the second is the name in the folder; the
             # third is the excpdetion condidtion
-            ('train_version', 'V', lambda p: p['train_version'] == 0),
+            ('MaskTSVDataset$version', 'V', except_to_update_for_version),
+            ('MaskTSVDataset$remove_images_without_annotations', 'RemoveEmpty',
+                except_to_update_for_remove_bg_image),
             ('effective_batch_size', 'BS'),
             ('max_iter', 'MaxIter'),
             ('max_epoch', 'MaxEpoch'),
@@ -228,7 +204,10 @@ def load_pipeline(kwargs):
 
 def pipeline_train_eval_multi(all_test_data, param, **kwargs):
     init_logging()
-    pip = create_pipeline(param)
+    curr_param = copy.deepcopy(param)
+    if len(all_test_data) > 0:
+        curr_param.update(all_test_data[0])
+    pip = create_pipeline(curr_param)
     pip.ensure_train()
     param['full_expid'] = pip.full_expid
     for test_data_info in all_test_data:
