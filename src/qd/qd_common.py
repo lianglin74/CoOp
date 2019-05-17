@@ -181,7 +181,9 @@ def zip_qd(out_zip):
             '-x',
             '\*src/CCSCaffe/matlab/\*',
             '-x',
-            '\*.git\*']
+            '\*.git\*',
+            '-x',
+            '\*src/qd_classifier/.cache/\*']
     cmd_run(cmd, working_dir=os.getcwd(), shell=True)
 
 def retry_agent(func, *args, **kwargs):

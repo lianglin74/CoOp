@@ -39,23 +39,34 @@ def main(args):
 
     best_prec1 = 0
 
-    args.distributed = args.world_size > 1
+    num_gpus = int(os.environ["WORLD_SIZE"]) if "WORLD_SIZE" in os.environ else 1
+    print("WORLD_SIZE = {}".format(os.environ["WORLD_SIZE"] if "WORLD_SIZE" in os.environ else -1))
+    args.distributed = num_gpus > 1
+
+    if args.distributed:
+        print("Init distributed training on local_rank {}".format(args.local_rank))
+        torch.cuda.set_device(args.local_rank)
+        dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url)
+        if not dist.is_available():
+            return
+        if not dist.is_initialized():
+            return
+        world_size = dist.get_world_size()
+        if world_size == 1:
+            return
+        dist.barrier()
 
     if not args.distributed:
         logger = Logger(args.output_dir, args.prefix)
     else:
         try:
-            logger = DistributedLogger(args.output_dir, args.prefix, args.rank)
+            logger = DistributedLogger(args.output_dir, args.prefix, args.local_rank)
         except:
-            logger.info('Cannot create logger, rank:', args.rank)
+            logger.info('Cannot create logger, rank:', args.local_rank)
 
     logger.info('distributed? {}'.format(args.distributed))
 
-    if args.distributed:
-        dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
-                                world_size=args.world_size)
-
-    if args.rank == 0:
+    if args.local_rank == 0:
         logger.info('called with arguments: {}'.format(args))
 
     # Data loading code
@@ -91,7 +102,7 @@ def main(args):
             model = torch.nn.DataParallel(model).cuda()
     else:
         model.cuda()
-        model = torch.nn.parallel.DistributedDataParallel(model)
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.local_rank], output_device=args.local_rank)
 
     # get loss function (criterion), optimizer, and scheduler (for learning rate)
     class_weights = None
@@ -145,15 +156,16 @@ def main(args):
         # train for one epoch
         train(args, train_loader, model, criterion, optimizer, epoch, logger, accuracy)
 
-        if args.rank == 0:
-            # evaluate on validation set
-            prec1 = validate(val_loader, model, criterion, logger)
+        # evaluate on validation set
+        prec1 = validate(val_loader, model, criterion, logger)
 
-            # remember best prec@1 and save checkpoint
-            is_best = prec1 > best_prec1
-            if is_best:
-                best_epoch = epoch
-            best_prec1 = max(prec1, best_prec1)
+        # remember best prec@1 and save checkpoint
+        is_best = prec1 > best_prec1
+        if is_best:
+            best_epoch = epoch
+        best_prec1 = max(prec1, best_prec1)
+
+        if args.local_rank == 0:
             save_checkpoint({
                 'epoch': epoch + 1,
                 'arch': args.arch,

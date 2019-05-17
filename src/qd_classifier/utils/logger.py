@@ -26,7 +26,10 @@ class Logger(object):
 class DistributedLogger(Logger):
     def __init__(self, root_output_path, logger_name, rank):
         try:
-            os.makedirs(root_output_path)
+            if not os.path.exists(root_output_path):
+                os.makedirs(root_output_path)
+            for handler in logging.root.handlers:
+                logging.root.removeHandler(handler)
         except:
             pass
 

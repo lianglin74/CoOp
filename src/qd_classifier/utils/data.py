@@ -23,7 +23,7 @@ def get_data_loader(args, logger=None):
     labelmap = train_dataset.get_labelmap()
 
     if args.balance_sampler:
-        assert not args.balance_class
+        assert not args.balance_class and not args.distributed
         train_sampler = make_class_balanced_sampler(train_dataset)
     else:
         if args.distributed:
@@ -152,9 +152,9 @@ def get_pt_transform(phase, args):
         elif args.data_aug == 2:
             train_transform = transforms.Compose([
                     transforms.ToPILImage(),
-                    transforms.RandomAffine(0, shear=15),
+                    # transforms.RandomAffine(0, shear=15),
                     transforms.RandomAffine(degrees=10),
-                    transforms.RandomAffine(0, shear=15),
+                    # transforms.RandomAffine(0, shear=15),
                     transforms.RandomResizedCrop(crop_size, scale=(0.25,1), ratio=(2./3., 3./2.)),
                     transforms.ColorJitter(brightness=0.5, contrast=0, saturation=0.5, hue=0.1),
                     transforms.ToTensor(),
