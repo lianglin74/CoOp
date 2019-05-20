@@ -4,6 +4,7 @@ try:
     import izip as zip
 except ImportError:
     pass
+from future.utils import viewitems
 import json
 import logging
 import os
@@ -91,27 +92,28 @@ def submit_to_verify(gt_dataset_name, gt_split, pred_file, collection_name,
     cur_db = BoundingBoxVerificationDB(db_name = 'qd', collection_name = collection_name)
     cur_db.request_by_insert(all_bb_tasks)
 
-def download_merge_correct_to_gt(gt_dataset_name, gt_split, collection_name):
+def download_merge_correct_to_gt(collection_name, gt_dataset_name=None, gt_split=None):
+    cfg = TASK_CONFIGS[collection_name]
+    tag_only = (collection_name == "uhrs_tag_verification")
     # query completed results
     cur_db = BoundingBoxVerificationDB(db_name = 'qd', collection_name = collection_name)
-    data_split_to_key_rects, all_id = cur_db.get_completed_uhrs_result(
-            extra_match={'data': gt_dataset_name, 'split': gt_split})
-    key_rects = data_split_to_key_rects[(gt_dataset_name, gt_split)]
+    extra_match = {}
+    if gt_dataset_name:
+        extra_match['data'] = gt_dataset_name
+    if gt_split:
+        extra_match['split'] = gt_split
+    data_split_to_key_rects, all_id = cur_db.get_completed_uhrs_result(extra_match=extra_match)
 
-    # get bboxes verified as correct
-    key2rects = collections.defaultdict(list)
-    for key, rect in key_rects:
-        if is_uhrs_consensus_correct(rect["uhrs"]):
-            key2rects[key].append(rect)
-    def gen_correct_labels():
-        for key in key2rects:
-            yield key, key2rects[key]
+    # check rect format
+    for (data, split), uhrs_key_rects in viewitems(data_split_to_key_rects):
+        for _, rect in uhrs_key_rects:
+            assert(all([k in rect for k in cfg[CFG_REQUIRED_FIELDS]]))
+            if tag_only and "rect" in rect:
+                del rect["rect"]
 
-    # merge correct bboxes to ground truth
-    from evaluation.eval_utils import add_label_to_dataset
-    dataset = TSVDataset(gt_dataset_name)
-    add_label_to_dataset(dataset, gt_split, TASK_CONFIGS[collection_name][CFG_IOU],
-                         gen_correct_labels(), label_key_type="key")
+    # merge verified correct to ground truth
+    from qd import process_tsv
+    process_tsv.merge_uhrs_result_to_dataset(data_split_to_key_rects, tag_only=tag_only)
 
 def is_uhrs_consensus_correct(uhrs_res):
     """ From UHRS feedback, "1" -> Yes, "2" -> No, "3" -> Can't judge
@@ -123,3 +125,24 @@ def is_uhrs_consensus_correct(uhrs_res):
         elif "2" in uhrs_res and uhrs_res["1"] > uhrs_res["2"]:
             return True
     return False
+
+if __name__ == "__main__":
+    from qd.qd_common import init_logging
+    init_logging()
+    gt_dataset_name = "coco_tag"
+    gt_split = "train"
+    pred_file = [MODIFY_PATH_HERE]
+    collection_name = "uhrs_tag_verification"
+
+    # NOTE: this script must be called from quickdetection/
+    # Use is_urgent=True for unblocking evalution, False for other tasks
+    submit_to_verify(gt_dataset_name, gt_split, pred_file, collection_name,
+            conf_thres=0, gt_version=-1, is_urgent=True)
+
+    # After submitting tasks, check the progress at:
+    # verify tag -> https://prod.uhrs.playmsn.com/Manage/Task/TaskList?hitappid=35851
+    # verify bbox -> https://prod.uhrs.playmsn.com/Manage/Task/TaskList?hitAppId=35716&taskOption=0&project=-1&taskGroupId=-1
+
+    # When the tasks above are all finished, call this function to merge the verified
+    # correct results to ground truth dataset
+    # download_merge_correct_to_gt(collection_name, gt_dataset_name=gt_dataset_name, gt_split=gt_split)

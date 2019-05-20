@@ -141,14 +141,17 @@ def find_best_matched_rect_idx(target, rects, check_class=True):
         return None, -1
     return max(idx_ious, key=lambda r: r[-1])
 
-def find_best_matched_rect(target, rects, check_class=True):
+def find_best_matched_rect(target, rects, check_class=True, check_iou=True):
     target_class_lower = target['class'].lower()
     if check_class:
         same_class_rects = [r for r in rects if r['class'].lower() == target_class_lower]
     else:
         same_class_rects = rects
-    rect_ious = [(r, calculate_iou(r['rect'], target['rect']))
-        for r in same_class_rects]
+    if check_iou:
+        rect_ious = [(r, calculate_iou(r['rect'], target['rect']))
+            for r in same_class_rects]
+    else:
+        rect_ious = [(r, 1) for r in same_class_rects]
     if len(rect_ious) == 0:
         return None, -1
     return max(rect_ious, key=lambda r: r[-1])
@@ -4952,14 +4955,14 @@ def uhrs_verify_db_merge_to_tsv(collection_name='uhrs_logo_verification',
     merge_uhrs_result_to_dataset(data_split_to_key_rects)
     c.set_status_as_merged(all_id)
 
-def uhrs_merge_one(uhrs_rect, target_rects):
+def uhrs_merge_one(uhrs_rect, target_rects, tag_only=False):
     info = {'num_added': 0,
             'num_removed': 0,
             'verified_confirmed': 0,
             'verified_removed': 0,
             'non_verified_confirmed': 0,
             'non_verified_removed': 0}
-    same_rect, iou = find_best_matched_rect(uhrs_rect, target_rects)
+    same_rect, iou = find_best_matched_rect(uhrs_rect, target_rects, check_iou=(not tag_only))
     if iou < 0.8:
         if is_positive_uhrs_verified(uhrs_rect):
             target_rects.append(uhrs_rect)
@@ -4985,7 +4988,7 @@ def uhrs_merge_one(uhrs_rect, target_rects):
 
     return info
 
-def merge_uhrs_result_to_dataset(data_split_to_key_rects):
+def merge_uhrs_result_to_dataset(data_split_to_key_rects, tag_only=False):
     from qd.qd_common import list_to_dict
     from qd.qd_common import json_dump
     for (data, split), uhrs_key_rects in viewitems(data_split_to_key_rects):
@@ -5004,7 +5007,7 @@ def merge_uhrs_result_to_dataset(data_split_to_key_rects):
                 else:
                     uhrs_rects = []
                 for uhrs_rect in uhrs_rects:
-                    sub_info = uhrs_merge_one(uhrs_rect, rects)
+                    sub_info = uhrs_merge_one(uhrs_rect, rects, tag_only=tag_only)
                     for k, v in viewitems(sub_info):
                         info[k] = v + info.get(k, 0)
                 yield key, json_dump(rects)

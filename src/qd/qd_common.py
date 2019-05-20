@@ -442,7 +442,7 @@ def calculate_correlation_between_terms(iter1, iter2):
 def json_dump(obj):
     # order the keys so that each operation is deterministic though it might be
     # slower
-    return json.dumps(obj, sort_keys=True)
+    return json.dumps(obj, sort_keys=True, separators=(',', ':'))
 
 def set_if_not_exist(d, key, value):
     if key not in d:
