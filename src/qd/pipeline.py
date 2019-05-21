@@ -44,6 +44,9 @@ def get_all_related_data_for_philly_jobs(data):
 
 def ensure_upload_data_for_philly_jobs(data):
     all_data = get_all_related_data_for_philly_jobs(data)
+    for d in all_data:
+        from qd.process_tsv import populate_dataset_details
+        populate_dataset_details(d, check_image_details=True)
 
     c = create_cloud_storage('vig')
     philly_client = create_philly_client()
@@ -191,6 +194,9 @@ def create_pipeline(kwargs):
     elif pipeline_type == 'MaskRCNNPipeline':
         from qd.qd_maskrcnn import MaskRCNNPipeline
         return MaskRCNNPipeline(**kwargs)
+    elif pipeline_type == 'MMDetPipeline':
+        from qd.qd_mmdetection import MMDetPipeline
+        return MMDetPipeline(**kwargs)
 
 def load_pipeline(kwargs):
     from qd.qd_pytorch import load_latest_parameters
@@ -242,7 +248,6 @@ def test_model_pipeline(param):
         pip.ensure_train()
         pip.ensure_predict()
         pip.ensure_evaluate()
-
 
 if __name__ == '__main__':
     from qd.qd_common import parse_general_args

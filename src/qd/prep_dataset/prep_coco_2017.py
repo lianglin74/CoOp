@@ -134,8 +134,19 @@ def test_prep_coco():
         tsv_writer(generate_tsv_row(), op.join(out_folder, datasets[1] +
             '.tsv'))
 
+def test_generate_label_to_catid():
+    coco_root = op.expanduser('~/data/raw_data/raw_coco/')
+    ann_folder = op.join(coco_root, "annotations");
+    from qd.qd_common import read_to_buffer
+    x = json.loads(read_to_buffer(op.join(ann_folder,
+        'instances_train2017.json')))
+    cat = x['categories']
+    from qd.qd_common import write_to_yaml_file
+    write_to_yaml_file(cat, './data/coco2017Full/coco_categories.yaml')
+
 if __name__ == '__main__':
     init_logging()
     #test_prep_coco()
     test_prep_coco_full()
+    test_generate_label_to_catid()
 

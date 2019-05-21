@@ -26,6 +26,7 @@ from pprint import pformat
 import logging
 import torch
 from torch.utils.data import Dataset
+import random
 import torch.nn as nn
 import torch.nn.parallel
 import torch.backends.cudnn as cudnn
@@ -167,7 +168,35 @@ class CompositeTSVFile():
         self.tsvs = [TSVFile(f, self.cache_policy) for f in load_list_file(self.list_file)]
         self.initialized = True
 
+class TSVSplitProperty(Dataset):
+    '''
+    one instance of this class mean one tsv file or one composite tsv, it could
+    be label tsv, or hw tsv, or image tsv
+    '''
+    def __init__(self, data, split, t, version=0, cache_policy=None):
+        dataset = TSVDataset(data)
+        if op.isfile(dataset.get_data(split, t, version)):
+            self.tsv = TSVFile(dataset.get_data(split, t, version),
+                    cache_policy)
+        else:
+            splitX = split + 'X'
+            list_file = dataset.get_data(splitX, t)
+            seq_file = dataset.get_shuffle_file(split)
+            self.tsv = CompositeTSVFile(list_file, seq_file, cache_policy)
+            assert version == 0
+
+    def __getitem__(self, index):
+        row = self.tsv[index]
+        return row
+
+    def __len__(self):
+        return len(self.tsv)
+
 class TSVSplit(Dataset):
+    '''
+    prefer to use TSVSplitProperty, which is more general. One example is to
+    read the hw property
+    '''
     def __init__(self, data, split, version=0, cache_policy=None):
         dataset = TSVDataset(data)
         if op.isfile(dataset.get_data(split)):
@@ -501,6 +530,12 @@ def ensure_create_evaluate_meta_file(evaluate_file):
         if op.isfile(from_file) and worth_create(from_file, simple_file):
             copyfile(from_file, simple_file)
 
+def init_random_seed(random_seed):
+    random.seed(random_seed)
+    np.random.seed(random_seed)
+    torch.manual_seed(random_seed)
+    torch.cuda.manual_seed_all(random_seed)
+
 class TorchTrain(object):
     def __init__(self, **kwargs):
         if 'load_parameter' in kwargs and kwargs['load_parameter']:
@@ -530,7 +565,9 @@ class TorchTrain(object):
                 'weight_decay': 0.0005,
                 'effective_batch_size': 256,
                 'pretrained': False,
-                'dist_url_tcp_port': 23456}
+                'dist_url_tcp_port': 23456,
+                'random_seed': 6,
+                'cudnn_benchmark': False}
 
         assert 'batch_size' not in kwargs, 'use effective_batch_size'
 
@@ -566,7 +603,7 @@ class TorchTrain(object):
         self.is_master = self.mpi_rank == 0
 
         assert (self.effective_batch_size % self.mpi_size) == 0, (self.effective_batch_size, self.mpi_size)
-        self.batch_size = self.effective_batch_size / self.mpi_size
+        self.batch_size = self.effective_batch_size // self.mpi_size
 
         assert (self.test_batch_size % self.mpi_size) == 0, self.test_batch_size
         self.test_batch_size = self.test_batch_size // self.mpi_size
@@ -599,6 +636,10 @@ class TorchTrain(object):
     def _ensure_initialized(self):
         if self._initialized:
             return
+
+        init_random_seed(self.random_seed)
+        if self.cudnn_benchmark:
+            torch.backends.cudnn.benchmark = True
 
         self._setup_logging()
         # in torch 0.4, torch.randperm only supports cpu. if we set it as

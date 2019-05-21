@@ -5326,100 +5326,87 @@ def onebb_in_list_of_bb(bb, bbs):
     bbs = [b for b in bbs if b['class'] == bb['class']]
     return any(calculate_iou(b['rect'], bb['rect']) > 0.5 for b in bbs)
 
-def process_tsv_main(**kwargs):
-    if kwargs['type'] == 'gen_tsv':
-        input_folder = kwargs['input']
-        output_folder = kwargs['ouput']
-        gen_tsv_from_labeling(input_folder, output_folder)
-    elif kwargs['type'] == 'gen_term_list':
-        tax_folder = kwargs['input']
-        term_list = kwargs['output']
-        gen_term_list(tax_folder, term_list)
-    elif kwargs['type'] == 'gen_noffset':
-        tax_input_folder = kwargs['input']
-        tax_output_folder = kwargs['output']
-        gen_noffset(tax_input_folder, tax_output_folder)
-    elif kwargs['type'] == 'ambigous_noffset':
-        tax_input_folder = kwargs['input']
-        ambigous_file_out = kwargs['output']
-        output_ambigous_noffsets_main(tax_input_folder, ambigous_file_out)
-    elif kwargs['type'] == 'standarize_crawled':
-        tsv_input = kwargs['input']
-        tsv_output = kwargs['output']
-        standarize_crawled(tsv_input, tsv_output)
-    elif kwargs['type'] == 'taxonomy_to_tsv':
-        taxonomy_folder = kwargs['input']
-        build_taxonomy_impl(taxonomy_folder, **kwargs)
-    elif kwargs['type'] == 'build_data_index':
-        data = kwargs['input']
-        populate_dataset_details(data)
-    elif kwargs['type'] == 'build_all_data_index':
-        populate_all_dataset_details()
-    elif kwargs['type'] == 'extract_for_uhrs':
-        taxonomy_folder = kwargs['input']
-        data = kwargs['data']
-        build_taxonomy_impl(taxonomy_folder,
-                data=data,
-                datas=get_data_sources(),
-                max_image_per_label=kwargs.get('max_image_per_label', 10000000),
-                min_image_per_label=kwargs.get('min_image_per_label', 0),
-                num_test=0)
-        convert_to_uhrs_with_url(data + '_with_bb')
-    elif kwargs['type'] == 'merge_labels':
-        in_tsv = kwargs['input']
-        convert_uhrs_result_back_to_sources(in_tsv, debug=False)
-    elif kwargs['type'] == 'ensure_inject_dataset':
-        ensure_inject_dataset(kwargs['data'])
-    elif kwargs['type'] == 'ensure_inject_expid':
-        ensure_inject_expid(kwargs['full_expid'])
-    else:
-        logging.info('unknown task {}'.format(kwargs['type']))
+def inject_accuracy():
+    all_full_expid = os.listdir('./output')
+    from qd.db import create_annotation_db
+    c = create_annotation_db()
+    for full_expid in tqdm(all_full_expid):
+        all_predict = glob.glob(op.join('output', full_expid, 'snapshot',
+            '*.predict'))
+        all_predict.extend(glob.glob(op.join('output', full_expid, 'snapshot',
+            '*.predict.tsv')))
 
-def parse_args():
-    parser = argparse.ArgumentParser(description='TSV Management')
-    parser.add_argument('-c', '--config_file', help='config file',
-            type=str)
-    parser.add_argument('-t', '--type', help='what type it is: gen_tsv',
-            type=str, required=False)
-    parser.add_argument('-i', '--input', help='input',
-            type=str, required=False)
-    parser.add_argument('-p', '--prototxt', help='proto file',
-            type=str, required=False)
-    parser.add_argument('-m', '--model', help='model file',
-            type=str, required=False)
-    parser.add_argument('-o', '--output', help='output',
-            type=str, required=False)
-    parser.add_argument('-d', '--datas',
-            default=argparse.SUPPRESS,
-            nargs='*',
-            help='which data are used for taxonomy_to_tsv',
-            type=str,
-            required=False)
-    parser.add_argument('-da', '--data',
-            default=argparse.SUPPRESS,
-            help='the dataset name under data/',
-            type=str,
-            required=False)
-    parser.add_argument('-fe', '--full_expid',
-            default=argparse.SUPPRESS,
-            type=str,
-            required=False)
-    parser.add_argument('-maxi', '--max_image_per_label',
-            default=argparse.SUPPRESS,
-            type=int,
-            required=False)
-    parser.add_argument('-mini', '--min_image_per_label',
-            default=argparse.SUPPRESS,
-            type=int,
-            required=False)
-    return parser.parse_args()
+        all_report = glob.glob(op.join('output', full_expid, 'snapshot', '*.report'))
+        for report_file in all_report:
+            try:
+                predict_file = find_predict_file(report_file, all_predict)
+            except:
+                logging.info('cannot find pred for {} from \n{}'.format(
+                    report_file, '\n'.join(all_predict)))
+                continue
+            from qd.qd_common import parse_test_data_with_version
+            try:
+                test_data, test_split, test_version = parse_test_data_with_version(op.basename(report_file))
+            except:
+                continue
+            info = {'full_expid': full_expid,
+                    'predict_file': op.basename(predict_file),
+                    'report_file': op.basename(report_file),
+                    'test_data': test_data,
+                    'test_split': test_split,
+                    'test_version': test_version,
+                    }
+            if 'coco_box' in report_file:
+                acc = load_from_yaml_file(report_file)
+            else:
+                map_json_file = report_file + '.map.json'
+                if op.isfile(map_json_file):
+                    x = json.loads(read_to_buffer(map_json_file))
+                    acc = {}
+                    for k1 in x:
+                        for k2 in x[k1]:
+                            for k3 in x[k1][k2]:
+                                k = '{}${}${}'.format(k1, k2, k3)
+                                acc[k] = x[k1][k2][k3]
+                else:
+                    continue
+            for k in list(acc.keys()):
+                curr = copy.deepcopy(info)
+                curr['metric_name'] = k
+                if c.exist_acc(**curr):
+                    continue
+                curr['metric_value'] = acc[k]
+                c.insert_acc(**curr)
+
+def find_predict_file(report_file, all_predict):
+    found = False
+    for p in all_predict:
+        if p + '.report' == report_file:
+            assert not found
+            found = True
+            result = p
+            return p
+        if p.endswith('.predict'):
+            ps = p[: -len('.predict')]
+        elif p.endswith('.predict.tsv'):
+            ps = p[: -len('.predict.tsv')]
+        else:
+            continue
+        if report_file.startswith(ps):
+            rs = report_file[len(ps):]
+            pattern = '(\.predict)?(\.coco_box)?(\.top1)?(\.v[0-9]*)?\.report'
+            if re.match(pattern, rs):
+                assert not found
+                found = True
+                result = p
+    assert found
+    return result
 
 if __name__ == '__main__':
+    from qd.qd_common import parse_general_args
     init_logging()
-    args = parse_args()
-    kwargs = vars(args)
-    if kwargs.get('config_file'):
-        logging.info('loading parameter from {}'.format(kwargs['config_file']))
-        kwargs = load_from_yaml_file(kwargs['config_file'])
-    process_tsv_main(**kwargs)
-
+    kwargs = parse_general_args()
+    logging.info('param:\n{}'.format(pformat(kwargs)))
+    function_name = kwargs['type']
+    del kwargs['type']
+    locals()[function_name](**kwargs)

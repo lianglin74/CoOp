@@ -97,6 +97,11 @@ def draw_dotted_rect(img,pt1,pt2,color,thickness=1):
     pts = [pt1,(pt2[0],pt1[1]),pt2,(pt1[0],pt2[1])]
     drawpoly(img,pts,color,thickness,style='dotted')
 
+__label_to_color = {}
+__gold_colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255),
+        (0, 255, 255),
+        ]
+
 def draw_bb(im, all_rect, all_label,
         probs=None,
         color=None,
@@ -122,13 +127,12 @@ def draw_bb(im, all_rect, all_label,
     dist_label = set(all_label)
     if color is None:
         color = {}
-        import qd_const
-        color = qd_const.label_to_color
+        color = __label_to_color
         for l in dist_label:
             if l in color:
                 continue
-            if len(qd_const.gold_colors) > 0:
-                color[l] = qd_const.gold_colors.pop()
+            if len(__gold_colors) > 0:
+                color[l] = __gold_colors.pop()
     for i, l in enumerate(dist_label):
         if l in color:
             continue

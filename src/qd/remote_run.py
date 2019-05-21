@@ -131,8 +131,9 @@ def remote_run(str_cmd, ssh_info, return_output=False):
         # don't use anaconda since caffe is slower under anaconda because of the
         # data preprocessing. not i/o
         cs.append('source ~/.bashrc')
-        #cs.append('export PATH=$HOME/anaconda3/bin:$PATH')
-        #cs.append('export LD_LIBRARY_PATH=$HOME/anaconda3/lib:$LD_LIBRARY_PATH')
+        if 'conda' in get_executable():
+            cs.append('export PATH=$HOME/anaconda3/bin:\$PATH')
+            cs.append('export LD_LIBRARY_PATH=$HOME/anaconda3/lib:\$LD_LIBRARY_PATH')
         cs.append('export PATH=/usr/local/nvidia/bin:\$PATH')
         cs.append('export PYTHONPATH=/tmp/code/quickdetection/src/CCSCaffe/python:\$PYTHONPATH')
         prefix = ' && '.join(cs) + ' && '

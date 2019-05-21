@@ -42,7 +42,6 @@ from qd.qd_common import dump_to_yaml_str
 from qd.tsv_io import TSVDataset
 from qd.tsv_io import tsv_reader, tsv_writer
 from qd.process_tsv import TSVFile, convert_one_label
-from qd.qd_pytorch import ModelPipeline
 from yacs.config import CfgNode
 import os.path as op
 from tqdm import tqdm
