@@ -5,6 +5,7 @@ from qd.qd_common import ensure_directory
 from qd.qd_common import load_from_yaml_file
 from qd.qd_common import load_from_yaml_str
 from qd.qd_common import url_to_str
+from qd.qd_common import dict_update_nested_dict
 from qd.cloud_storage import create_cloud_storage
 import logging
 import simplejson as json
@@ -114,7 +115,10 @@ def philly_mkdir(dest_dir, vc, cluster):
     philly_run(sub_cmd, vc, cluster)
 
 def upload_through_blob(src_dir, dest_dir, vc, cluster, **kwargs):
-    assert len(dest_dir) > 0 and dest_dir[0] != '/' and dest_dir[0] != '\\'
+    assert (len(dest_dir) > 0 and \
+            dest_dir[0] != '/' and \
+            dest_dir[0] != '\\' and \
+            dest_dir[-1] == '/')
     account = 'vig'
     dest_url = op.join('https://{}.blob.core.windows.net/data',
             account,
@@ -122,7 +126,7 @@ def upload_through_blob(src_dir, dest_dir, vc, cluster, **kwargs):
             op.basename(src_dir))
 
     c = create_cloud_storage(account)
-    dest_url, _ = c.az_upload2(src_dir, op.join(dest_dir, op.basename(src_dir)))
+    dest_url, _ = c.az_sync(src_dir, op.join(dest_dir, op.basename(src_dir)))
     if kwargs.get('copy_to_hdfs', True):
         env = {'AZURE_STORAGE_ACCESS_KEY': c.account_key}
 
@@ -176,7 +180,7 @@ def philly_upload(src_file, dest_dir, vc='input', cluster='philly-prod-cy4'):
 
 def create_philly_client(**kwargs):
     param = load_from_yaml_file('./aux_data/configs/philly_vc.yaml')
-    param.update(kwargs)
+    dict_update_nested_dict(param, kwargs)
     if not param.get('password'):
         param['password'] = os.environ['PHILLY_PASSWORD']
     return PhillyVC(**param)
@@ -384,7 +388,7 @@ class PhillyVC(object):
         all_job_info = self.query_all_job()
         all_job_info = [j for j in all_job_info if j['status'] != 'Pass' and j['status'] !=
             'Failed' and j['status'] != 'Killed']
-        all_key = ['appID-s', 'elapsedTime', 'retries', 'preempts']
+        all_key = ['status', 'appID-s', 'elapsedTime', 'retries', 'preempts']
         if self.query_with_gpu:
             self.attach_gpu_utility(all_job_info)
             all_key.append('mem_used')
@@ -708,7 +712,6 @@ class PhillyVC(object):
             result = url_to_str('https://storage.{}.philly.selfhost.corp.microsoft.com/input/sys/jobs/{}/stdout/1/stdout.txt'.format(
                 self.cluster, job_id))
 
-        logging.info(result)
         return result
 
     def philly_job_status(self, job_id):
