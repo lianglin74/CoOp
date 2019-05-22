@@ -101,6 +101,10 @@ def except_to_update_for_version(param):
 def except_to_update_for_remove_bg_image(param):
     return param.get('MaskTSVDataset', {}).get('remove_images_without_annotations', True)
 
+def except_to_update_for_data_augmentation(param):
+    return type(param.get('yolo_train_session_param',
+        {}).get('data_augmentation')) is not str
+
 def update_parameters(param):
     default_param = {
             'max_iter': 10000,
@@ -117,7 +121,14 @@ def update_parameters(param):
             ('max_epoch', 'MaxEpoch'),
             ('last_fixed_param', 'LastFixed'),
             ('num_extra_convs', 'ExtraConv'),
-            ('yolo_train_session_param$data_augmentation', 'Aug'),
+            ('yolo_train_session_param$data_augmentation', 'Aug',
+                except_to_update_for_data_augmentation),
+            ('yolo_train_session_param$data_augmentation$box_data_param$max_trials',
+                'AugTrials'),
+            ('yolo_train_session_param$data_augmentation$box_data_param$random_scale_min',
+                'ScaleMin'),
+            ('yolo_train_session_param$data_augmentation$box_data_param$random_scale_max',
+                'ScaleMax'),
             ('momentum', 'Momentum'),
             ('base_lr', 'LR'),
             ('stageiter', 'StageIter', except_to_update_for_stageiter),
@@ -130,6 +141,7 @@ def update_parameters(param):
             'dist_url_tcp_port', 'workers', 'force_train',
             'pipeline_type', 'test_batch_size',
             'yolo_train_session_param$debug_train',
+            'yolo_predict_session_param',
             'evaluate_method', 'debug_train',
             'full_expid',
             'display']

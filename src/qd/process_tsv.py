@@ -27,7 +27,7 @@ import unicodedata
 import yaml
 from collections import defaultdict
 from deprecated import deprecated
-
+from pathos.multiprocessing import ProcessingPool as Pool
 from datetime import datetime
 from pprint import pformat
 try:
@@ -1532,8 +1532,7 @@ def ensure_create_inverted_tsvs(dataset, splits):
             params = [param for param in params if
                     not has_inverted(param)]
             if len(params) > 0:
-                import multiprocessing as mp
-                p = mp.Pool()
+                p = Pool()
                 p.map(ensure_create_inverted_tsv_for_each, params)
 
     # generate the inverted tsv for background images without any labels
@@ -1550,8 +1549,7 @@ def ensure_create_inverted_tsvs(dataset, splits):
             params = [param for param in params if
                     not has_inverted_background(param)]
             if len(params) > 0:
-                import multiprocessing as mp
-                p = mp.Pool()
+                p = Pool()
                 p.map(ensure_create_inverted_tsv_background_for_each, params)
 
 def has_inverted(param):
@@ -1648,7 +1646,7 @@ def extract_from_data_source(data, split, t):
     dataset.write_data(gen_rows(), split, t)
 
 def populate_dataset_details(data, check_image_details=False,
-        splits=None, check_box=False):
+        splits=None, check_box=False, data_root=None):
     logging.info(data)
     dataset = TSVDataset(data)
 
@@ -1673,7 +1671,6 @@ def populate_dataset_details(data, check_image_details=False,
                     if dataset.has(split + 'X'):
                         extract_from_data_source(data, split, 'hw')
                         continue
-                    from pathos.multiprocessing import ProcessingPool as Pool
                     num_worker = 128
                     num_tasks = num_worker * 3
                     num_images = dataset.num_rows(split)
@@ -3173,7 +3170,6 @@ def parallel_convert_label(func, all_task, num_worker=128):
         if end_idx > len(all_task):
             end_idx = len(all_task)
         all_sub_tasks.append(all_task[start_idx:end_idx])
-    from pathos.multiprocessing import ProcessingPool as Pool
     m = Pool(num_worker)
     all_sub_results = m.map(func, all_sub_tasks)
     result = all_sub_results[0]
@@ -3201,7 +3197,6 @@ def parallel_map_to_array(func, all_task, num_worker=128):
         if end_idx > len(all_task):
             end_idx = len(all_task)
         all_sub_tasks.append(all_task[start_idx:end_idx])
-    from pathos.multiprocessing import ProcessingPool as Pool
     m = Pool(num_worker)
     all_sub_results = m.map(func, all_sub_tasks)
     result = []

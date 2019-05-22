@@ -415,7 +415,9 @@ class MaskRCNNPipeline(ModelPipeline):
             train_arg.update(self.MaskTSVDataset)
         self.kwargs['DATASETS']['TRAIN'] = ('${}'.format(
             dump_to_yaml_str(train_arg).decode()),)
-        test_arg = {'data': self.test_data, 'split': self.test_split}
+        test_arg = {'data': self.test_data,
+                'split': self.test_split,
+                'remove_images_without_annotations': False}
         self.kwargs['DATASETS']['TEST'] = ('${}'.format(
             dump_to_yaml_str(test_arg).decode()),)
         self.kwargs['OUTPUT_DIR'] = op.join('output', self.full_expid, 'snapshot')

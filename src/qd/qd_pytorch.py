@@ -1148,6 +1148,13 @@ class YoloV2PtPipeline(ModelPipeline):
             'workers': 4})
         self.num_train_images = None
 
+    def append_predict_param(self, cc):
+        super(YoloV2PtPipeline, self).append_predict_param(cc)
+        if self.yolo_predict_session_param:
+            test_input_size = self.yolo_predict_session_param.get('test_input_size', 416)
+            if test_input_size != 416:
+                cc.append('InputSize{}'.format(test_input_size))
+
     def _get_checkpoint_file(self, epoch=None, iteration=None):
         assert epoch is None, 'not supported'
         iteration = self.parse_iter(iteration)
@@ -1228,7 +1235,8 @@ class YoloV2PtPipeline(ModelPipeline):
         write_to_yaml_file(param, param_yaml)
 
         if self.yolo_train_session_param is not None:
-            param.update(self.yolo_train_session_param)
+            from qd.qd_common import dict_update_nested_dict
+            dict_update_nested_dict(param, self.yolo_train_session_param)
 
         from mmod import yolo_train_session
         snapshot_file = yolo_train_session.main(param, log)
