@@ -18,19 +18,64 @@ from qd.qd_common import read_to_buffer
 from qd.tsv_io import tsv_writer
 import logging
 from qd.qd_common import list_to_dict
+from qd.qd_common import json_dump
 
 
 class OpenImageV5CCreator(object):
     def __init__(self):
         self.target_dir = op.expanduser('~/data/raw_data/open_image_v5_challenge/')
         self.out_data = 'OpenImageV5C'
+        self.all_anno_url = ['https://storage.googleapis.com/openimages/challenge_2019/challenge-2019-train-detection-bbox.csv',
+                'https://storage.googleapis.com/openimages/challenge_2019/challenge-2019-validation-detection-bbox.csv',
+                'https://storage.googleapis.com/openimages/challenge_2019/challenge-2019-label500-hierarchy.json',
+                'https://storage.googleapis.com/openimages/challenge_2019/challenge-2019-classes-description-500.csv',
+                'https://storage.googleapis.com/openimages/challenge_2019/challenge-2019-train-detection-human-imagelabels.csv',
+                'https://storage.googleapis.com/openimages/challenge_2019/challenge-2019-validation-detection-human-imagelabels.csv',
+                ]
 
     def run(self):
         self.download_image()
         self.download_annotations()
         self.parse_label_tree()
         self.create_tsv_dataset()
+        self.create_image_level_tsv()
+        self.copy_anno_file()
         populate_dataset_details(self.out_data)
+
+    def create_image_level_tsv(self):
+        template = op.join(self.target_dir,
+                'challenge-2019-{}-detection-human-imagelabels.csv')
+        dataset = TSVDataset(self.out_data)
+        cid_to_name = self.load_cid_to_name()
+        for split in ['train', 'validation']:
+            anno_file = template.format(split)
+            rows = csv_reader(anno_file)
+            headers = next(rows)
+            image_id_key, label_key, conf_key = 'ImageID', 'LabelName', 'Confidence'
+            image_id_idx, label_idx, conf_idx = headers.index(image_id_key), \
+                    headers.index(label_key), headers.index(conf_key)
+            extra_field_idxs = set(range(len(headers))).difference([image_id_idx, label_idx,
+                conf_idx])
+            split_in_data = split if split == 'train' else 'trainval'
+            logging.info('loading {}'.format(anno_file))
+            all_key_class_conf_row = [[row[image_id_idx],
+                cid_to_name[row[label_idx]],
+                int(row[conf_idx]), row] for row in rows]
+            key_to_class_conf_rows = list_to_dict(all_key_class_conf_row, 0)
+            def gen_rows():
+                for k in tqdm(dataset.load_keys(split_in_data)):
+                    if k not in key_to_class_conf_rows:
+                        yield k, json_dump([])
+                        continue
+                    else:
+                        rects = []
+                        for cls, conf, r in key_to_class_conf_rows[k]:
+                            info = {'class': cls, 'conf': conf}
+                            for extra_field_idx in extra_field_idxs:
+                                info[headers[extra_field_idx]] = headers[extra_field_idx]
+                            rects.append(info)
+                        yield k, json_dump(rects)
+            dataset.write_data(gen_rows(), split_in_data, 'imagelabel')
 
     def download_image(self):
         splits = ['train', 'validation', 'test']
@@ -42,13 +87,23 @@ class OpenImageV5CCreator(object):
             cmd_run(cmd)
 
     def download_annotations(self):
-        all_url = ['https://storage.googleapis.com/openimages/challenge_2019/challenge-2019-train-detection-bbox.csv',
-                'https://storage.googleapis.com/openimages/challenge_2019/challenge-2019-validation-detection-bbox.csv',
-                'https://storage.googleapis.com/openimages/challenge_2019/challenge-2019-label500-hierarchy.json',
-                'https://storage.googleapis.com/openimages/challenge_2019/challenge-2019-classes-description-500.csv']
+        all_url = self.all_anno_url
         for u in tqdm(all_url):
+            target_file = op.join(self.target_dir, op.basename(u))
+            if op.isfile(target_file):
+                continue
             s = url_to_str(u)
-            write_to_file(s, op.join(self.target_dir, op.basename(u)))
+            write_to_file(s, target_file)
+
+    def copy_anno_file(self):
+        all_url = self.all_anno_url
+        dataset = TSVDataset(self.out_data)
+        for u in tqdm(all_url):
+            src = op.join(self.target_dir, op.basename(u))
+            dst = op.join(dataset._data_root, 'annotations', op.basename(u))
+            from qd.qd_common import ensure_copy_file
+            ensure_copy_file(src, dst)
+
 
     def load_cid_to_name(self):
         cid_name = list(csv_reader(op.join(self.target_dir,
@@ -118,7 +173,6 @@ class OpenImageV5CCreator(object):
         cid_to_name = self.load_cid_to_name()
 
         splits = ['train', 'validation']
-        splits = ['train']
         dataset = TSVDataset(self.out_data)
         debug = False
         for split in splits:
