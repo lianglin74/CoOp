@@ -214,11 +214,9 @@ def load_pipeline(kwargs):
     from qd.qd_pytorch import load_latest_parameters
     kwargs_f = load_latest_parameters(op.join('output',
         kwargs['full_expid']))
-    for k in kwargs_f:
-        if k not in kwargs:
-            # we can overwrite the parameter in the parameter file
-            kwargs[k] = kwargs_f[k]
-    return create_pipeline(kwargs)
+    from qd.qd_common import dict_update_nested_dict
+    dict_update_nested_dict(kwargs_f, kwargs)
+    return create_pipeline(kwargs_f)
 
 def pipeline_train_eval_multi(all_test_data, param, **kwargs):
     init_logging()
