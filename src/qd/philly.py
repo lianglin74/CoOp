@@ -18,6 +18,8 @@ import base64
 import copy
 import os
 from collections import OrderedDict
+import glob
+from qd.qd_common import get_file_size
 
 from qd.qd_common import dump_to_yaml_str
 from qd.qd_common import init_logging
@@ -117,8 +119,9 @@ def philly_mkdir(dest_dir, vc, cluster):
 def upload_through_blob(src_dir, dest_dir, vc, cluster, **kwargs):
     assert (len(dest_dir) > 0 and \
             dest_dir[0] != '/' and \
-            dest_dir[0] != '\\' and \
-            dest_dir[-1] == '/')
+            dest_dir[0] != '\\')
+    if dest_dir[-1] != '/':
+        dest_dir = dest_dir + '/'
     account = 'vig'
     dest_url = op.join('https://{}.blob.core.windows.net/data',
             account,
@@ -130,7 +133,8 @@ def upload_through_blob(src_dir, dest_dir, vc, cluster, **kwargs):
     if kwargs.get('copy_to_hdfs', True):
         env = {'AZURE_STORAGE_ACCESS_KEY': c.account_key}
 
-        sub_cmd = ['-cp', '-r', dest_url, dest_dir, 3]
+        sub_cmd = ['-cp', '-r', dest_url, op.join(dest_dir,
+            op.basename(src_dir)), 3]
         philly_run(sub_cmd, vc, cluster, extra_env=env)
 
 def philly_upload_dir(src_dir, dest_dir, vc='input', cluster='philly-prod-cy4',
@@ -151,7 +155,8 @@ def philly_upload_dir(src_dir, dest_dir, vc='input', cluster='philly-prod-cy4',
             cmd.append('-cp')
             cmd.append('-r')
             cmd.append(src_dir)
-            cmd.append('{}{}'.format(folder_prefix, dest_dir))
+            cmd.append('{}{}'.format(folder_prefix, op.join(dest_dir,
+                op.basename(src_dir))))
             retry_agent(cmd_run, cmd, env={'PHILLY_VC': vc})
         else:
             upload_through_blob(src_dir, dest_dir, vc, cluster, **kwargs)
@@ -553,6 +558,14 @@ class PhillyVC(object):
             'storageAccount': blob_account,
             'containerName': blob_container,
             'path': self.blob_mount_point,
+            "options": [
+                "-o", "attr_timeout=240",
+                "-o", "entry_timeout=240",
+                "-o", "negative_timeout=120",
+                "--log-level=LOG_WARNING",
+                "-o", "allow_other",
+                "--file-cache-timeout-in-seconds=1000000",
+                ]
             }}
         data['credentials'] = {'storageAccounts': {blob_account: {
             '_comments': 'redentials for accessing the storage account.',
@@ -734,13 +747,41 @@ class PhillyVC(object):
         result = self.philly_rest_api(cmd_str)
         return result
 
-    def upload_file(self, file_from, file_target):
+    def upload_file(self, file_from, file_target, blob=False):
         if self.cluster in ['sc2', 'wu1']:
-            blob = False
             philly_upload_dir(file_from, file_target, self.vc,
                     self.cluster, blob=blob)
         else:
             philly_upload(file_from, file_target, self.vc, self.cluster)
+
+    def increment_upload_dir_to_hdfs(self, src_dir, dest_dir):
+        if not dest_dir.endswith('/'):
+            dest_dir = dest_dir + '/'
+        file_infos = parse_philly_ls_output_rich(philly_ls(
+            dest_dir, return_output=True, vc=self.vc, cluster=self.cluster))
+        if not any(f['type'] == 'dir' and f['name'] == op.basename(src_dir)
+                for f in file_infos):
+            philly_mkdir(op.join(dest_dir, op.basename(src_dir)),
+                    vc=self.vc, cluster=self.cluster)
+        philly_file_infos = parse_philly_ls_output_rich(philly_ls(
+            op.join(dest_dir, op.basename(src_dir)),
+            return_output=True, vc=self.vc, cluster=self.cluster))
+        for src_file in glob.glob(op.join(src_dir, '*')):
+            if op.isfile(src_file):
+                file_size = get_file_size(src_file)
+                no_need = False
+                for f in philly_file_infos:
+                    if f['type'] == 'file' and \
+                            f['name'] == op.basename(src_file) and \
+                            f['file_size_in_byte'] == file_size:
+                        no_need = True
+                        break
+                if not no_need:
+                    self.upload_file(src_file, op.join(dest_dir,
+                        op.basename(src_dir)), blob=True)
+            elif op.isdir(src_file):
+                self.increment_upload_dir_to_hdfs(src_file, op.join(dest_dir,
+                    op.basename(src_dir)))
 
     def philly_rest_api(self, CMD):
         user_name, password = self.user_name, self.password
@@ -749,6 +790,92 @@ class PhillyVC(object):
                 '"{}"'.format(CMD)]
         result_str = cmd_run(cmd, shell=True, return_output=True)
         return result_str
+
+def parse_philly_ls_output_rich(output):
+    lines = output.split('\n')
+    assert len(lines) > 0
+    while True:
+        line = lines[0]
+        import re
+        r = re.match('total ([0-9]*)', line)
+        if r:
+            break
+        else:
+            logging.info('ignore {}'.format(line))
+            lines = lines[1:]
+    num_rows = int(float(r.groups()[0]))
+    result = []
+    for i in range(num_rows):
+        line = lines[i + 1]
+        # -rwxrwxrwx       1  519178854    519178854 4,218,683,392 2018-10-19 17:03:29 .train.tsv.lHKomx
+        p = '(.{1}).* ([0-9,]*) ([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}) *(.*)'
+        r = re.match(p, line)
+        file_type, file_size_in_byte, time_stamp, file_name = r.groups()
+        info = {}
+        if file_type == '-':
+            info['type'] = 'file'
+        else:
+            assert file_type == 'd'
+            info['type'] = 'dir'
+        info['file_size_in_byte'] = int(file_size_in_byte.replace(',', ''))
+        from dateutil.parser import parse
+        info['time'] = parse(time_stamp)
+        info['name'] = file_name
+        result.append(info)
+    return result
+
+def parse_philly_ls_output(output):
+    lines = output.split('\n')
+    assert len(lines) > 0
+    while True:
+        line = lines[0]
+        import re
+        r = re.match('total ([0-9]*)', line)
+        if r:
+            break
+        else:
+            logging.info('ignore {}'.format(line))
+            lines = lines[1:]
+    num_rows = int(float(r.groups()[0]))
+    all_file = []
+    all_dir = []
+    for i in range(num_rows):
+        line = lines[i + 1]
+        # -rwxrwxrwx       1  519178854    519178854 4,218,683,392 2018-10-19 17:03:29 .train.tsv.lHKomx
+        p = '(.{1}).*[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}[ ]*(.*)'
+        r = re.match(p, line)
+        file_type, file_name = r.groups()
+        if file_type == '-':
+            all_file.append(file_name)
+        else:
+            assert file_type == 'd'
+            all_dir.append(file_name)
+    return all_file, all_dir
+
+def upload_qdoutput(src_path, dest_path, ssh_info):
+    # make sure the folder of dest_path in philly exists
+    remote_run('mkdir -p {}'.format(dest_path), ssh_info)
+
+    # upload all the files under src_path
+    all_src_file = glob.glob(op.join(src_path, '*'))
+    for f in all_src_file:
+        if op.isfile(f):
+            scp(f, dest_path, ssh_info)
+
+    # for the model and the tested files, only upload the best
+    all_src_file = glob.glob(op.join(src_path, 'snapshot', 'model_iter_*'))
+    all_iter = [parse_iteration2(f) for f in all_src_file]
+    max_iters = max(all_iter)
+    need_copy_files = [f for f, i in zip(all_src_file, all_iter) if i == max_iters]
+    dest_snapshot = op.join(dest_path, 'snapshot')
+    remote_run('mkdir -p {}'.format(dest_snapshot), ssh_info)
+    for f in need_copy_files:
+        scp(f, dest_snapshot, ssh_info)
+
+
+def philly_ls(dest_dir, vc='input', return_output=False, cluster='philly-prod-cy4'):
+    sub_cmd = ['-ls', dest_dir]
+    return philly_run(sub_cmd, vc, cluster, return_output)
 
 def convert_to_philly_extra_command(param, script='scripts/tools.py'):
     logging.info(pformat(param))

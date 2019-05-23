@@ -1,15 +1,11 @@
 import re
 import os
 import logging
-from .qd_common import init_logging
+from qd.qd_common import init_logging
+from qd.qd_common import get_file_size
 from pprint import pformat
 import os.path as op
 import time
-
-def get_file_size(f):
-    if not op.isfile(f):
-        return 0
-    return os.stat(f).st_size
 
 def del_intermediate_models(folder='./output', threshold_in_days=30,
         must_have_in_folder=None, dry_run=False):

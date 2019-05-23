@@ -1635,6 +1635,11 @@ def dict_get_path_value(d, p):
         else:
             return cur_dict
 
+def get_file_size(f):
+    if not op.isfile(f):
+        return 0
+    return os.stat(f).st_size
+
 if __name__ == '__main__':
     init_logging()
     kwargs = parse_general_args()
