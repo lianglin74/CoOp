@@ -1132,6 +1132,8 @@ class TorchTrain(object):
                     expand_label_gt=True,
                     apply_nms_gt=True,
                     )
+            logging.info(pformat(result))
+            logging.info('mAP = {}'.format(result['map']))
             write_to_yaml_file(result, evaluate_file)
         else:
             logging.info('unknown evaluate method = {}'.format(self.evaluate_method))
