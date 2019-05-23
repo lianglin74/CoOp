@@ -15,7 +15,7 @@ from qd.tsv_io import csv_reader
 from collections import OrderedDict
 import simplejson as json
 from qd.qd_common import read_to_buffer
-from qd.tsv_io import tsv_writer
+from qd.tsv_io import tsv_reader, tsv_writer
 import logging
 from qd.qd_common import list_to_dict
 from qd.qd_common import json_dump
@@ -41,6 +41,60 @@ class OpenImageV5CCreator(object):
         self.create_image_level_tsv()
         self.copy_anno_file()
         populate_dataset_details(self.out_data)
+
+        self.replace_cid_in_hier_for_evaluation()
+        self.correct_train_label()
+
+    def correct_train_label(self):
+        split = 'train'
+        dataset = TSVDataset(self.out_data)
+        def gen_rows():
+            for row in dataset.iter_data('train', 'label',
+                    progress=True):
+                rects = json.loads(row[1])
+                for r in rects:
+                    assert r['Confidence'] == '1'
+                    # use float to make it consistent with the prediction tsv
+                    r['conf'] = float(r['Confidence'])
+                    del r['Confidence']
+                    for k in r:
+                        if k.startswith('Is'):
+                            assert r[k] in ['0', '1', '-1']
+                            r[k] = int(r[k])
+                yield row[0], json_dump(rects)
+        dataset.write_data(gen_rows(), split, 'label', version=0)
+
+    def replace_cid_in_hier_for_evaluation(self):
+        dataset = TSVDataset(self.out_data)
+        src = op.join(dataset._data_root, 'annotations', 'challenge-2019-label500-hierarchy.json')
+        dst = op.join(dataset._data_root, 'hierarchy.json')
+        from qd.qd_common import read_to_buffer
+        origin = json.loads(read_to_buffer(src))
+        cid_to_name = dict(tsv_reader(op.join(dataset._data_root, 'cid_to_name.tsv')))
+        def replace_value(origin, cid_to_name):
+            if type(origin) is dict:
+                keys = list(origin.keys())
+                valid_keys = ['LabelName', 'Subcategory']
+                for k in valid_keys:
+                    if k in keys:
+                        keys.remove(k)
+                assert len(keys) == 0
+                if 'LabelName' in origin:
+                    if origin['LabelName'] not in cid_to_name:
+                        assert origin['LabelName'] == '/m/0bl9f'
+                        origin['LabelName'] = 'root'
+                    else:
+                        origin['LabelName'] = cid_to_name[origin['LabelName']]
+                if 'Subcategory' in origin:
+                    replace_value(origin['Subcategory'], cid_to_name)
+
+            elif type(origin) is list:
+                for x in origin:
+                    replace_value(x, cid_to_name)
+            else:
+                raise Exception()
+        replace_value(origin, cid_to_name)
+        write_to_file(json_dump(origin), dst)
 
     def create_image_level_tsv(self):
         template = op.join(self.target_dir,
