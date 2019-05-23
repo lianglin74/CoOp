@@ -1119,6 +1119,20 @@ class TorchTrain(object):
             top1 = evaluate_topk(predict_file, label_tsv_file)
             logging.info('top1 = {}'.format(top1))
             write_to_yaml_file({'top1': top1}, evaluate_file)
+        elif self.evaluate_method == 'neg_aware_gmap':
+            from qd.evaluate.evaluate_openimages_google import evaluate
+            truths = dataset.get_data(self.test_split, 'label')
+            imagelabel_truths = dataset.get_data(self.test_split, 'imagelabel')
+            assert op.isfile(truths)
+            assert op.isfile(imagelabel_truths)
+            result = evaluate(truths, imagelabel_truths, predict_file,
+                    json_hierarchy_file=op.join(dataset._data_root, 'hierarchy.json'),
+                    apply_nms_det=True,
+                    expand_label_det=True,
+                    expand_label_gt=True,
+                    apply_nms_gt=True,
+                    )
+            write_to_yaml_file(result, evaluate_file)
         else:
             logging.info('unknown evaluate method = {}'.format(self.evaluate_method))
 
