@@ -3,11 +3,12 @@ import os
 import logging
 import time
 
+from qd.qd_common import ensure_directory
+
 class Logger(object):
     def __init__(self, root_output_path, logger_name):
         # set up logger
-        if not os.path.exists(root_output_path):
-            os.makedirs(root_output_path)
+        ensure_directory(root_output_path)
         for handler in logging.root.handlers:
             logging.root.removeHandler(handler)
 
@@ -25,9 +26,8 @@ class Logger(object):
 
 class DistributedLogger(Logger):
     def __init__(self, root_output_path, logger_name, rank):
+        ensure_directory(root_output_path)
         try:
-            if not os.path.exists(root_output_path):
-                os.makedirs(root_output_path)
             for handler in logging.root.handlers:
                 logging.root.removeHandler(handler)
         except:

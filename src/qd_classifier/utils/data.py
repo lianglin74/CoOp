@@ -133,10 +133,9 @@ def get_pt_transform(phase, args):
         if args.data_aug == 0:
             train_transform = transforms.Compose([
                     transforms.ToPILImage(),
+                    # transforms.RandomAffine(degrees=10),
                     transforms.RandomResizedCrop(crop_size, scale=(0.25,1), ratio=(2./3., 3./2.)),
-                    # transforms.ColorJitter(brightness=(0.66667, 1.5), contrast=0, saturation=(0.66667, 1.5), hue=(-0.1, 0.1)),
                     transforms.ColorJitter(brightness=0.5, contrast=0, saturation=0.5, hue=0.1),
-                    # transforms.RandomHorizontalFlip(0.5),
                     transforms.ToTensor(),
                     rgb_normalize,
                 ])

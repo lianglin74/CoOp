@@ -412,6 +412,7 @@ def upload_image_to_blob(data, split):
         dataset.write_data(gen_rows(), split, 'key.url')
     else:
         from .qd_common import split_to_chunk
+        from .tsv_io import rm_tsv
         num_rows = dataset.num_rows(split)
         num_chunk = num_rows // 1000
         num_chunk = max(1, num_chunk)
@@ -426,6 +427,9 @@ def upload_image_to_blob(data, split):
                         'key.url.{}.{}'.format(idx_task, len(tasks))):
                     yield key, url
         dataset.write_data(gen_rows(), split, 'key.url')
+        # remove intermediate files
+        for idx_task in range(len(tasks)):
+            rm_tsv(dataset.get_data(split, 'key.url.{}.{}'.format(idx_task, len(tasks))))
 
 def upload_image_to_blob_by_idx(args):
     data, split, idxes, idx_task, num_task = args
