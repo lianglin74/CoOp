@@ -1,6 +1,6 @@
 [submodule "src/CCSCaffe"]
 	path = src/CCSCaffe
-	url = https://github.com/msrccs/caffe
+	url = https://github.com/leizhangcn/caffe
 	branch = WinCaffe
 [submodule "src/objectdetection"]
 	path = src/objectdetection
