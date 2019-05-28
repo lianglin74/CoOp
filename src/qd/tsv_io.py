@@ -116,8 +116,9 @@ class TSVFile(object):
             if not op.isfile(self.lineidx) and not op.islink(self.lineidx) \
                     or worth_create(self.tsv_file, self.lineidx, buf_second=60):
                 generate_lineidx(self.tsv_file, self.lineidx)
+            logging.info('loading lineidx: {}'.format(self.lineidx))
             with open(self.lineidx, 'r') as fp:
-                self._lineidx = [int(i.strip()) for i in fp.readlines()]
+                self._lineidx = [int(i.strip()) for i in tqdm(fp.readlines())]
 
     def _cache(self):
         if self.cache_policy == 'memory':

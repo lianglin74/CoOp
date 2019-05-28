@@ -1,24 +1,27 @@
+import copy
 import base64
-from qd.process_image import draw_bb, show_image
 import cv2
-from qd.tsv_io import TSVDataset
-from qd.qd_common import write_to_yaml_file
-from qd.taxonomy import Taxonomy
 from future.utils import viewitems
 import os.path as op
-from qd.process_tsv import populate_dataset_details
-from qd.qd_common import cmd_run
 from tqdm import tqdm
+from qd.qd_common import cmd_run
 from qd.qd_common import url_to_str
 from qd.qd_common import write_to_file
-from qd.tsv_io import csv_reader
-from collections import OrderedDict
-import simplejson as json
-from qd.qd_common import read_to_buffer
-from qd.tsv_io import tsv_reader, tsv_writer
-import logging
 from qd.qd_common import list_to_dict
 from qd.qd_common import json_dump
+from qd.qd_common import hash_sha1
+from qd.qd_common import write_to_yaml_file
+from qd.qd_common import read_to_buffer
+from qd.qd_common import load_from_yaml_file
+from qd.tsv_io import csv_reader
+from qd.tsv_io import TSVDataset
+from qd.tsv_io import tsv_reader, tsv_writer
+from qd.taxonomy import Taxonomy
+from qd.process_tsv import populate_dataset_details
+from qd.process_image import draw_bb, show_image
+from collections import OrderedDict
+import simplejson as json
+import logging
 
 
 class OpenImageV5CCreator(object):
@@ -284,7 +287,38 @@ class OpenImageV5CCreator(object):
             dataset.write_data(gen_rows(), 'trainval' if split == 'validation'
                     else split)
 
+def create_v1_by_extend_parents():
+    # each box will be extended to multiple boxes, but with the same location_id.
+    # Another option is to use a list as the value of class, but this will make
+    # the visualization not work.
+    data = 'OpenImageV5C'
+    dataset = TSVDataset(data)
+    tax = Taxonomy(load_from_yaml_file(op.join(dataset._data_root, 'taxonomy',
+        'a.yaml')))
+    name_to_ancestor_names = tax.get_name_to_ancestor_names()
+
+    split = 'train'
+    key_id = 'location_id'
+    assert not dataset.has(split, 'label', version=1)
+    def gen_rows():
+        for key, str_rects in tqdm(dataset.iter_data(split, 'label',
+            version=0)):
+            rects = json.loads(str_rects)
+            out_rects = []
+            for r in rects:
+                location_id = hash_sha1(r['rect'])
+                r[key_id] = location_id
+                out_rects.append(r)
+                for a in name_to_ancestor_names[r['class']]:
+                    r2 = copy.deepcopy(r)
+                    r2['class'] = a
+                    out_rects.append(r2)
+            yield key, json_dump(out_rects)
+    dataset.write_data(gen_rows(), split, 'label', version=1)
+
 def test_open_image_challenge_v5():
     c = OpenImageV5CCreator()
     c.run()
+
+    create_v1_by_extend_parents()
 

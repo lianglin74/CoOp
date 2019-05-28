@@ -576,6 +576,16 @@ class Taxonomy(object):
             name_to_nodes[node.name].append(node)
         return name_to_nodes
 
+    def get_name_to_ancestor_names(self):
+        name_to_nodes = self.get_name_to_nodes()
+        name_to_ancestor_names = {}
+        for name, nodes in name_to_nodes.items():
+            ancestor_names = []
+            for n in nodes:
+                ancestor_names.extend([a.name for a in n.get_ancestors()[:-1]])
+            name_to_ancestor_names[name] = list(set(ancestor_names))
+        return name_to_ancestor_names
+
     def update(self):
         self.name_to_ancestors = {}
         self.name_to_ancestors_list = {}

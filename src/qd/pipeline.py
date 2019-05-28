@@ -1,3 +1,7 @@
+# import torch first because it can help resolve some symbolic issues: 
+# Once your extension is built, you can simply import it in Python, using the name you specified in your setup.py script. Just be sure to import torch first, as this will resolve some symbols that the dynamic linker must see
+# https://pytorch.org/tutorials/advanced/cpp_extension.html
+import torch
 import os.path as op
 import logging
 from pprint import pformat
@@ -105,6 +109,16 @@ def except_to_update_for_data_augmentation(param):
     return type(param.get('yolo_train_session_param',
         {}).get('data_augmentation')) is not str
 
+def except_to_update_for_dtype(param):
+    return param.get('DTYPE', 'float32') == 'float32'
+
+def except_to_update_classification_loss(param):
+    if not dict_has_path(param, 'MODEL$ROI_BOX_HEAD$CLASSIFICATION_LOSS'):
+        return True
+    else:
+        return dict_get_path_value(param,
+                'MODEL$ROI_BOX_HEAD$CLASSIFICATION_LOSS') == 'CE'
+
 def update_parameters(param):
     default_param = {
             'max_iter': 10000,
@@ -116,6 +130,10 @@ def update_parameters(param):
             ('MaskTSVDataset$version', 'V', except_to_update_for_version),
             ('MaskTSVDataset$remove_images_without_annotations', 'RemoveEmpty',
                 except_to_update_for_remove_bg_image),
+            ('MODEL$ROI_BOX_HEAD$CLASSIFICATION_LOSS', '',
+                except_to_update_classification_loss),
+            ('MODEL$WEIGHT', 'init'),
+            ('', ''),
             ('effective_batch_size', 'BS'),
             ('max_iter', 'MaxIter'),
             ('max_epoch', 'MaxEpoch'),
@@ -134,6 +152,7 @@ def update_parameters(param):
             ('stageiter', 'StageIter', except_to_update_for_stageiter),
             ('INPUT$MIN_SIZE_TRAIN', 'Min'),
             ('INPUT$MAX_SIZE_TRAIN', 'Max'),
+            ('DTYPE', 'T', except_to_update_for_dtype),
             ]
 
     non_expid_impact_keys = ['data', 'net', 'expid_prefix',
@@ -143,7 +162,8 @@ def update_parameters(param):
             'yolo_train_session_param$debug_train',
             'yolo_predict_session_param',
             'evaluate_method', 'debug_train',
-            'full_expid',
+            'full_expid', 'log_step', 'MODEL$DEVICE',
+            'MODEL$ROI_BOX_HEAD$CLASSIFICATION_ACTIVATE',
             'display']
 
     if param['pipeline_type'] == 'MaskRCNNPipeline':
@@ -173,12 +193,15 @@ def update_parameters(param):
                 pk = '.'.join(map(str, pk))
             infos.append('{}{}'.format(v, pk))
 
-    true_false_keys = OrderedDict([('use_treestructure', ('Tree', None))])
+    true_false_keys = OrderedDict([('use_treestructure', ('Tree', None)),
+        ('MODEL$USE_TREESTRUCTURE', ('Tree', None)),
+        ('MaskTSVDataset$multi_hot_label', ('MultiHot', None)),
+        ])
     for k in true_false_keys:
-        if k in param:
-            if param[k] and true_false_keys[k][0]:
+        if dict_has_path(param, k):
+            if dict_get_path_value(param, k) and true_false_keys[k][0]:
                 infos.append(true_false_keys[k][0])
-            elif not param[k] and true_false_keys[k][1]:
+            elif not dict_get_path_value(param, k) and true_false_keys[k][1]:
                 infos.append(true_false_keys[k][1])
 
     known_keys = []
@@ -210,7 +233,7 @@ def create_pipeline(kwargs):
         from qd.qd_mmdetection import MMDetPipeline
         return MMDetPipeline(**kwargs)
 
-def load_pipeline(kwargs):
+def load_pipeline(**kwargs):
     from qd.qd_pytorch import load_latest_parameters
     kwargs_f = load_latest_parameters(op.join('output',
         kwargs['full_expid']))
@@ -229,7 +252,7 @@ def pipeline_train_eval_multi(all_test_data, param, **kwargs):
     for test_data_info in all_test_data:
         curr_param = copy.deepcopy(param)
         curr_param.update(test_data_info)
-        pip = load_pipeline(curr_param)
+        pip = load_pipeline(**curr_param)
         pip.ensure_predict()
         pip.ensure_evaluate()
 
@@ -237,7 +260,7 @@ def pipeline_eval_multi(param, all_test_data, **kwargs):
     for test_data_info in all_test_data:
         curr_param = copy.deepcopy(param)
         curr_param.update(test_data_info)
-        pip = load_pipeline(curr_param)
+        pip = load_pipeline(**curr_param)
         pip.ensure_predict()
         pip.ensure_evaluate()
 

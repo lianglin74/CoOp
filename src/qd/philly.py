@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 import os.path as op
 from qd.qd_common import retry_agent, cmd_run
 from qd.qd_common import ensure_directory
@@ -24,6 +24,7 @@ from qd.qd_common import get_file_size
 from qd.qd_common import dump_to_yaml_str
 from qd.qd_common import init_logging
 from qd.qd_common import list_to_nested_dict
+from qd.gpu_util import parse_gpu_usage_dict
 
 
 def get_philly_fs():
@@ -215,12 +216,18 @@ def attach_log_parsing_result(job_info):
             del job_info['latest_log']
             return
 
-        # 2019-05-10T04:29:11.340Z: [1,0]<stdout>:2019-05-10 04:29:11,341.341 trainer.py:111   do_train(): eta: 3 days, 17:56:14  iter: 440  loss: 2.3267 (2.3407)  loss_retina_cls: 1.2245 (1.2373)  loss_retina_reg: 1.0626 (1.1034)  time: 0.6675 (0.9005)  data: 0.0033 (0.2286)  lr: 0.002300  max mem: 4049
-        pattern = '.*: eta: (.*) iter.*'
+        pattern = '(.*): .*: eta: (.*) iter: [0-9]*  speed: ([0-9\.]*).*'
+        # 2019-05-26T22:36:42.365Z: [1,0]<stdout>:2019-05-26 22:36:42,364.364 trainer.py:116   do_train(): eta: 5 days, 2:12:43  iter: 277800  speed: 63.3 images/sec  loss: 0.4990 (0.5110)  loss_box_reg: 0.1158 (0.1131)  loss_classifier: 0.2901 (0.3015)  loss_objectness: 0.0528 (0.0543)  loss_rpn_box_reg: 0.0336 (0.0420)  time: 0.2521 (0.2739)  data: 0.0035 (0.0119)  lr: 0.020000  max mem: 2107
         result = re.match(pattern, log)
         if result and result.groups():
-            job_info['speed'] = None
-            job_info['left'] = result.groups()[0]
+            log_time, left, speed = result.groups()
+            job_info['speed'] = speed
+            from dateutil.parser import parse
+            from datetime import datetime, timezone
+            now = datetime.now(timezone.utc)
+            log_time = parse(log_time)
+            delay = (now - log_time).total_seconds()
+            job_info['left'] = '{}({}s)'.format(left, delay)
             del job_info['latest_log']
             return
     del job_info['latest_log']
@@ -317,8 +324,14 @@ class PhillyVC(object):
             philly_upload(random_abs_qd, '{}/code'.format(self.user_name), vc=self.vc,
                     cluster=self.cluster)
 
+    def search_candidates(self, partial_id):
+        all_job_info = self.query_all_job(my_own=False)
+        all_job_info = [j for j in all_job_info if
+                j['appID'].endswith(partial_id)]
+        return [j['appID'] for j in all_job_info]
+
     def search_job_id(self, partial_id):
-        all_job_info = self.query_all_job(my_own=True)
+        all_job_info = self.query_all_job(my_own=False)
         all_job_info = [j for j in all_job_info if
                 j['appID'].endswith(partial_id)]
         assert len(all_job_info) == 1, ([j['appID'] for j in all_job_info], partial_id)
@@ -379,7 +392,6 @@ class PhillyVC(object):
             try:
                 gpu_result = cmd_run('{} nvidia-smi'.format(
                     job_info['ssh']).split(' '), shell=True, return_output=True)
-                from gpu_util import parse_gpu_usage_dict
                 gpu_info = parse_gpu_usage_dict(gpu_result)
                 import numpy as np
                 gpu_info = {t: np.mean([g[t] for g in gpu_info]) for t in ['mem_used',
@@ -389,15 +401,14 @@ class PhillyVC(object):
             except Exception as e:
                 logging.info(str(e))
 
-    def query(self):
-        all_job_info = self.query_all_job()
+    def query(self, valid_job_checker=None, my_own=True):
+        all_job_info = self.query_all_job(my_own)
+        if valid_job_checker is not None:
+            all_job_info = [j for j in all_job_info if valid_job_checker(j)]
         all_job_info = [j for j in all_job_info if j['status'] != 'Pass' and j['status'] !=
             'Failed' and j['status'] != 'Killed']
-        all_key = ['status', 'appID-s', 'elapsedTime', 'retries', 'preempts']
         if self.query_with_gpu:
             self.attach_gpu_utility(all_job_info)
-            all_key.append('mem_used')
-            all_key.append('gpu_util')
         self.attach_meta(all_job_info)
         for job_info in all_job_info:
             job_info['cluster'] = self.cluster
@@ -407,29 +418,8 @@ class PhillyVC(object):
             for job_info in all_job_info:
                 self.attach_log(job_info)
                 attach_log_parsing_result(job_info)
-            all_key.extend(['speed', 'left'])
         for j in all_job_info:
             j['appID-s'] = j['appID'][-4:]
-        keys = ['data', 'net', 'max_iters', 'max_iter']
-        for job_info in all_job_info:
-            for k in keys:
-                job_info[k] = job_info['meta'].get('param',
-                        {}).get(k)
-        all_key.extend(keys)
-
-        # find the keys whose values are the same
-        def all_equal(x):
-            assert len(x) > 0
-            return all(y == x[0] for y in x[1:])
-
-        if len(all_job_info) > 1:
-            equal_keys = [k for k in all_key if all_equal([j.get(k) for j in all_job_info])]
-            if len(equal_keys) > 0:
-                logging.info('equal key values for all jobs')
-                print_table(all_job_info[0:1], all_key=equal_keys)
-            all_key = [k for k in all_key if not all_equal([j.get(k) for j in all_job_info])]
-
-        print_table(all_job_info, all_key=all_key)
         return all_job_info
 
     def attach_meta(self, all_job_info):
@@ -504,11 +494,19 @@ class PhillyVC(object):
             config_file = "/hdfs/{}/{}/{}".format(self.vc,
                 self.dest_config_folder, op.basename(self.src_config_path))
         logging.info('cmd:\n{} d d d {}'.format(config_file, extraParam))
-        custom_mpi_args = 'env CUDA_CACHE_DISABLE=1 NCCL_IB_DISABLE=1 NCCL_SOCKET_IFNAME=eth0 NCCL_DEBUG=INFO OMP_NUM_THREADS=2'
+        custom_mpi_args = 'env CUDA_CACHE_DISABLE=1 NCCL_DEBUG=INFO OMP_NUM_THREADS=2'
+        disable_ib = False
+        if disable_ib:
+            custom_mpi_args += ' NCCL_IB_DISABLE=1 NCCL_SOCKET_IFNAME=eth0'
         if num_gpu > 4:
             # without this flag, distributed training will crash in multi-node
             # more information: https://github.com/horovod/horovod/issues/893
             custom_mpi_args += ' NCCL_TREE_THRESHOLD=0'
+            # without the following flag, the multi-node distributed training
+            # will hangs in pytorch1.1, which uses NCCL 2.4.2. The problem got
+            # fixed in NCCL 2.4.6.
+            # https://github.com/pytorch/pytorch/issues/20630
+            custom_mpi_args += ' NCCL_LL_THRESHOLD=0'
         data = {
             "ClusterId": cluster,
             "VcId": vc,
@@ -583,7 +581,19 @@ class PhillyVC(object):
             '-X', 'POST', submit_url, '-k', '--ntlm',
             '-n', '-d', "{}".format(en_data)]
 
-        if not self.dry_run:
+        if self.dry_run:
+            if self.password is None:
+                user_info = '"redmond\\{}"'.format(self.user_name)
+            else:
+                user_info = '"redmond\\{}:{}"'.format(self.user_name, self.password)
+            cmd = ['curl', '-H', '"Content-Type: application/json"',
+                '-H', '"WWW-Authenticate: Negotiate"',
+                '-H', '"WWW-Authenticate: NTLM"',
+                '--user', user_info,
+                '-X', 'POST', submit_url, '-k', '--ntlm',
+                '-n', '-d', "'{}'".format(en_data)]
+            logging.info('\n' + ' '.join(cmd))
+        else:
             result_str = cmd_run(cmd, return_output=True)
             return result_str
 
@@ -791,6 +801,51 @@ class PhillyVC(object):
         result_str = cmd_run(cmd, shell=True, return_output=True)
         return result_str
 
+class MultiPhillyVC(object):
+    def __init__(self, **kwargs):
+        self.all_cluster = ['sc2', 'wu1']
+        if 'cluster' in kwargs:
+            self.all_cluster = [kwargs['cluster']]
+            del kwargs['cluster']
+        self.kwargs = kwargs
+
+    def search_job_id_and_abort(self, partial_id):
+        clients = [create_philly_client(cluster=c, **self.kwargs) for c in
+                self.all_cluster]
+        all_cans = [c.search_candidates(partial_id) for c in clients]
+        all_cluster_cans = [(c, cans) for c, cans in zip(clients, all_cans) if len(cans) > 0]
+        assert (len(all_cluster_cans) == 1 and
+                len(all_cluster_cans[0][1]) == 1), \
+            'ambigous job found: {}'.format('{}: {}'.format(c,
+                ','.join(cans))for c, cans in all_cluster_cans)
+        client = all_cluster_cans[0][0]
+        job_id = all_cluster_cans[0][1][0]
+        client.abort(job_id)
+        logging.info('aborted {} in the cluster of {}'.format(job_id,
+            client.cluster))
+
+    def query(self, **kwargs):
+        if 'cluster' in kwargs:
+            self.all_cluster = [kwargs['cluster']]
+            del kwargs['cluster']
+        clients = [create_philly_client(cluster=c, **kwargs) for c in
+                self.all_cluster]
+        all_job_info = []
+        for c in clients:
+            all_job_info.extend(c.query())
+
+        if op.isfile('./aux_data/configs/extra_tracking_philly_jobs.yaml'):
+            extra_jobs = load_from_yaml_file('./aux_data/configs/extra_tracking_philly_jobs.yaml')
+            cluster_id = [(j['cluster'], j['appID']) for j in extra_jobs]
+            from qd.qd_common import list_to_dict
+            cluster_to_ids = list_to_dict(cluster_id, 0)
+            cluster_to_client = dict(zip(self.all_cluster, clients))
+            for cluster, ids in cluster_to_ids.items():
+                all_job_info.extend(cluster_to_client[cluster].query(valid_job_checker=lambda
+                        j: j['appID'] in ids, my_own=False))
+
+        print_job_infos(all_job_info)
+
 def parse_philly_ls_output_rich(output):
     lines = output.split('\n')
     assert len(lines) > 0
@@ -936,9 +991,9 @@ def blame(**kwargs):
 
     status_to_username_to_gpus = list_to_nested_dict([x[:-1] for x in all_username_status_gpus_queue], [1, 0])
     status_to_username_num_jobs_num_gpus = {}
-    for status, username_to_gpus in status_to_username_to_gpus.iteritems():
+    for status, username_to_gpus in status_to_username_to_gpus.items():
         username_num_jobs_num_gpus = []
-        for username, all_gpus in username_to_gpus.iteritems():
+        for username, all_gpus in username_to_gpus.items():
             username_num_jobs_num_gpus.append((username,
                 len(all_gpus), sum(all_gpus)))
         status_to_username_num_jobs_num_gpus[status] = \
@@ -948,16 +1003,18 @@ def blame(**kwargs):
     status_to_queue_to_username_to_gpus = \
         list_to_nested_dict(all_username_status_gpus_queue, [1, 3, 0])
     status_to_queue_to_username_num_jobs_num_gpus = {}
-    for status, queue_to_username_to_gpus in status_to_queue_to_username_to_gpus.iteritems():
-        for queue, username_to_gpus in queue_to_username_to_gpus.iteritems():
+    for status, queue_to_username_to_gpus in status_to_queue_to_username_to_gpus.items():
+        queue_info = []
+        for queue, username_to_gpus in queue_to_username_to_gpus.items():
             username_num_jobs_num_gpus = []
-            for username, gpus in username_to_gpus.iteritems():
+            for username, gpus in username_to_gpus.items():
                 username_num_jobs_num_gpus.append(
                         (username, len(gpus), sum(gpus)))
             x = sorted(username_num_jobs_num_gpus, key=lambda x: -x[-1])
-            if status not in status_to_queue_to_username_num_jobs_num_gpus:
-                status_to_queue_to_username_num_jobs_num_gpus[status] = {}
-            status_to_queue_to_username_num_jobs_num_gpus[status][queue] = x
+            s = sum([y[-1] for y in x])
+            queue_info.append((queue, s, x))
+        queue_info = sorted(queue_info, key=lambda one_queue: -one_queue[1])
+        status_to_queue_to_username_num_jobs_num_gpus[status] = queue_info
     logging.info('\n{}'.format(pformat(status_to_queue_to_username_num_jobs_num_gpus)))
 
 def parse_args():
@@ -997,23 +1054,49 @@ def ensure_init_config_files():
     config_template = './aux_data/configs/philly_vc.template.yaml'
     infinite_check(config_file, config_template)
 
+def print_job_infos(all_job_info):
+    all_key = [
+            'cluster',
+            'status', 'appID-s', 'elapsedTime',
+            'retries', 'preempts', 'mem_used', 'gpu_util',
+            'speed', 'left']
+    keys = ['data', 'net', 'max_iters', 'max_iter', 'effective_batch_size']
+    for job_info in all_job_info:
+        for k in keys:
+            job_info[k] = job_info['meta'].get('param',
+                    {}).get(k)
+    all_key.extend(keys)
+
+    # find the keys whose values are the same
+    def all_equal(x):
+        assert len(x) > 0
+        return all(y == x[0] for y in x[1:])
+
+    if len(all_job_info) > 1:
+        equal_keys = [k for k in all_key if all_equal([j.get(k) for j in all_job_info])]
+        if len(equal_keys) > 0:
+            logging.info('equal key values for all jobs')
+            print_table(all_job_info[0:1], all_key=equal_keys)
+        all_key = [k for k in all_key if not all_equal([j.get(k) for j in all_job_info])]
+
+    print_table(all_job_info, all_key=all_key)
+
 def execute(task_type, **kwargs):
     if task_type == 'query':
         if len(kwargs.get('remainders', [])) > 0:
             assert len(kwargs['remainders']) == 1
             tracking(kwargs['remainders'][0], **kwargs)
         else:
-            p = create_philly_client(**kwargs)
+            p = MultiPhillyVC(**kwargs)
             p.query()
     elif task_type == 'submit':
         assert len(kwargs['remainders']) == 1
         submit_without_sync(cmd=kwargs['remainders'][0], **kwargs)
     elif task_type == 'abort':
-        p = create_philly_client(**kwargs)
+        p = MultiPhillyVC(**kwargs)
         for v in kwargs['remainders']:
             v = v.strip()
-            _, job_id = p.search_job_id(v)
-            p.abort(job_id)
+            p.search_job_id_and_abort(v)
     elif task_type == 'blame':
         blame(**kwargs)
     elif task_type == 'ssh':

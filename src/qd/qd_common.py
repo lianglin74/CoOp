@@ -277,7 +277,9 @@ def ensure_copy_file(src, dest):
 def cmd_run(list_cmd, return_output=False, env=None,
         working_dir=None,
         stdin=sp.PIPE,
-        shell=False):
+        shell=False,
+        dry_run=False,
+        ):
     logging.info('start to cmd run: {}'.format(' '.join(map(str, list_cmd))))
     # if we dont' set stdin as sp.PIPE, it will complain the stdin is not a tty
     # device. Maybe, the reson is it is inside another process.
@@ -290,6 +292,9 @@ def cmd_run(list_cmd, return_output=False, env=None,
     if env:
         for k in env:
             e[k] = env[k]
+    if dry_run:
+        # we need the log result. Thus, we do not return at teh very beginning
+        return
     if not return_output:
         #if env is None:
             #p = sp.Popen(list_cmd, stdin=sp.PIPE, cwd=working_dir)

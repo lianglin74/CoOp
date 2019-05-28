@@ -2,22 +2,23 @@ import sys
 from tqdm import tqdm
 from datetime import datetime
 import simplejson as json
-from .qd_common import ensure_directory
-from .qd_common import init_logging
-from .qd_common import write_to_yaml_file
-from .qd_common import img_from_base64, load_from_yaml_file
-from .qd_common import worth_create
-from .qd_common import read_to_buffer
-from .qd_common import write_to_file
-from .qd_common import load_list_file
-from .qd_common import get_mpi_rank, get_mpi_size
-from .qd_common import get_mpi_local_rank, get_mpi_local_size
-from .qd_common import parse_general_args
-from .process_tsv import load_key_rects
-from .process_tsv import hash_sha1
-from .tsv_io import tsv_writer, tsv_reader
-from .tsv_io import TSVFile
-from .tsv_io import TSVDataset
+from qd.qd_common import ensure_directory
+from qd.qd_common import init_logging
+from qd.qd_common import write_to_yaml_file
+from qd.qd_common import img_from_base64, load_from_yaml_file
+from qd.qd_common import worth_create
+from qd.qd_common import read_to_buffer
+from qd.qd_common import write_to_file
+from qd.qd_common import load_list_file
+from qd.qd_common import get_mpi_rank, get_mpi_size
+from qd.qd_common import get_mpi_local_rank, get_mpi_local_size
+from qd.qd_common import parse_general_args
+from maskrcnn_benchmark.utils.comm import synchronize, get_rank
+from qd.process_tsv import load_key_rects
+from qd.process_tsv import hash_sha1
+from qd.tsv_io import tsv_writer, tsv_reader
+from qd.tsv_io import TSVFile
+from qd.tsv_io import TSVDataset
 from shutil import copyfile
 import os
 import os.path as op
@@ -95,32 +96,6 @@ def compare_caffeconverted_vs_pt(pt2, pt1):
     logging.info('key matched value equal: \n {}'.format(pformat(key_matched_value_equal)))
     logging.info('key matched value not equal: \n{}'.format(
         pformat(key_matched_value_inequal)))
-
-def synchronize():
-    """
-    from mask rcnn
-    Helper function to synchronize between multiple processes when
-    using distributed training
-    """
-    if not torch.distributed.is_initialized():
-        return
-    world_size = torch.distributed.get_world_size()
-    rank = torch.distributed.get_rank()
-    if world_size == 1:
-        return
-
-    def _send_and_wait(r):
-        if rank == r:
-            tensor = torch.tensor(0, device="cuda")
-        else:
-            tensor = torch.tensor(1, device="cuda")
-        torch.distributed.broadcast(tensor, r)
-        while tensor.item() == 1:
-            time.sleep(1)
-
-    _send_and_wait(0)
-    # now sync on the main process
-    _send_and_wait(1)
 
 class ListCollator(object):
     def __init__(self):
@@ -411,11 +386,16 @@ class BCEWithLogitsNegLoss(nn.Module):
         return bce_with_logits_neg_loss(feature, target)
 
 def bce_with_logits_neg_loss(feature, target):
+    target = target.float()
     weight = torch.ones_like(target)
     weight[target == -1] = 0
-    criterion = nn.BCEWithLogitsLoss(weight, reduce=False).cuda()
-    loss = criterion(feature, target)
-    return torch.sum(loss) / (torch.sum(weight) + 1)
+    weight_sum = torch.sum(weight)
+    if weight_sum == 0:
+        return 0
+    else:
+        criterion = nn.BCEWithLogitsLoss(weight, reduction='sum')
+        loss = criterion(feature, target)
+        return torch.sum(loss) / weight_sum
 
 def multi_hot_cross_entropy(pred, soft_targets):
     logsoftmax = nn.LogSoftmax(dim=1)
@@ -978,7 +958,6 @@ class TorchTrain(object):
             logging.info('ignore to run predict since {} does not exist'.format(
                 model_file))
             return predict_result_file
-
         if not worth_create(model_file, predict_result_file) and not self.force_predict:
             logging.info('ignore to do prediction {}'.format(predict_result_file))
             return predict_result_file
@@ -1315,6 +1294,27 @@ def evaluate_topk(predict_file, label_tsv_file):
         if any(g['class'] == curr_pred_best for g in curr_gt_rects):
             correct = correct + 1
     return 1. * correct / total
+
+def load_model_state_ignore_mismatch(model, init_dict):
+    real_init_dict = {}
+    name_to_param = dict(model.named_parameters())
+    name_to_param.update(dict(model.named_buffers()))
+
+    def same_shape(a, b):
+        return len(a.shape) == len(b.shape) and \
+                all(x == y for x, y in zip(a.shape, b.shape))
+
+    num_ignored = 0
+    for k in init_dict:
+        if k in name_to_param and same_shape(init_dict[k], name_to_param[k]):
+            real_init_dict[k] = init_dict[k]
+        else:
+            logging.info('ignore {} in init model'.format(k))
+            num_ignored = num_ignored + 1
+
+    logging.info('number of param ignored = {}'.format(num_ignored))
+
+    model.load_state_dict(real_init_dict, strict=False)
 
 if __name__ == '__main__':
     init_logging()

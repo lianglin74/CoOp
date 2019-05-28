@@ -22,7 +22,6 @@ from maskrcnn_benchmark.modeling.detector import build_detection_model
 from maskrcnn_benchmark.utils.checkpoint import DetectronCheckpointer
 from maskrcnn_benchmark.utils.comm import synchronize, get_rank
 from maskrcnn_benchmark.utils.comm import is_main_process
-from maskrcnn_benchmark.utils.comm import synchronize, get_rank
 from maskrcnn_benchmark.utils.checkpoint import DetectronCheckpointer
 from maskrcnn_benchmark.utils.comm import get_world_size
 from maskrcnn_benchmark.solver import make_lr_scheduler
@@ -39,6 +38,7 @@ from qd.qd_common import calculate_iou
 from qd.qd_common import get_mpi_rank, get_mpi_size
 from qd.qd_common import pass_key_value_if_has
 from qd.qd_common import dump_to_yaml_str
+from qd.qd_common import dict_has_path
 from qd.tsv_io import TSVDataset
 from qd.tsv_io import tsv_reader, tsv_writer
 from qd.process_tsv import TSVFile, convert_one_label
@@ -69,7 +69,7 @@ def merge_dict_to_cfg(dict_param, cfg):
     trim_dict(trimed_param, cfg)
     cfg.merge_from_other_cfg(CfgNode(trimed_param))
 
-def train(cfg, local_rank, distributed):
+def train(cfg, local_rank, distributed, log_step=20):
     logging.info('start to train')
     model = build_detection_model(cfg)
     device = torch.device(cfg.MODEL.DEVICE)
@@ -78,12 +78,15 @@ def train(cfg, local_rank, distributed):
     optimizer = make_optimizer(cfg, model)
     scheduler = make_lr_scheduler(cfg, optimizer)
 
-    # Initialize mixed-precision training
-    use_mixed_precision = cfg.DTYPE == "float16"
-    amp_opt_level = 'O1' if use_mixed_precision else 'O0'
-    logging.info('start to amp init')
-    model, optimizer = amp.initialize(model, optimizer, opt_level=amp_opt_level)
-    logging.info('end amp init')
+    if cfg.MODEL.DEVICE == 'cuda':
+        # Initialize mixed-precision training
+        use_mixed_precision = cfg.DTYPE == "float16"
+        amp_opt_level = 'O1' if use_mixed_precision else 'O0'
+        logging.info('start to amp init')
+        model, optimizer = amp.initialize(model, optimizer, opt_level=amp_opt_level)
+        logging.info('end amp init')
+    else:
+        assert cfg.MODEL.DEVICE == 'cpu'
 
     if distributed:
         model = torch.nn.parallel.DistributedDataParallel(
@@ -102,7 +105,8 @@ def train(cfg, local_rank, distributed):
         cfg, model, optimizer, scheduler, output_dir, save_to_disk
     )
 
-    extra_checkpoint_data = checkpointer.load(cfg.MODEL.WEIGHT)
+    extra_checkpoint_data = checkpointer.load(cfg.MODEL.WEIGHT,
+            model_only=True)
 
     arguments.update(extra_checkpoint_data)
 
@@ -124,6 +128,7 @@ def train(cfg, local_rank, distributed):
         device,
         checkpoint_period,
         arguments,
+        log_step=log_step
     )
 
     return model
@@ -389,7 +394,8 @@ class MaskRCNNPipeline(ModelPipeline):
     def __init__(self, **kwargs):
         super(MaskRCNNPipeline, self).__init__(**kwargs)
 
-        self._default.update({'workers': 4})
+        self._default.update({'workers': 4,
+            'log_step': 20})
 
         maskrcnn_root = op.join('src', 'maskrcnn-benchmark')
         if self.net.startswith('retinanet'):
@@ -398,7 +404,9 @@ class MaskRCNNPipeline(ModelPipeline):
         else:
             cfg_file = op.join(maskrcnn_root, 'configs', self.net + '.yaml')
         param = load_from_yaml_file(cfg_file)
-        self.kwargs.update(param)
+        from qd.qd_common import dict_update_nested_dict
+        dict_update_nested_dict(self.kwargs,
+                param)
 
         set_if_not_exist(self.kwargs, 'SOLVER', {})
         set_if_not_exist(self.kwargs, 'DATASETS', {})
@@ -425,7 +433,18 @@ class MaskRCNNPipeline(ModelPipeline):
         # API, which should be the batch size for all rank
         self.kwargs['TEST']['IMS_PER_BATCH'] = self.test_batch_size * self.mpi_size
         self.kwargs['DATALOADER']['NUM_WORKERS'] = self.workers
-        self.kwargs['MODEL']['ROI_BOX_HEAD']['NUM_CLASSES'] = len(TSVDataset(self.data).load_labelmap()) + 1
+
+        cls_loss = 'CE'
+        if dict_has_path(self.kwargs, 'MODEL$ROI_BOX_HEAD$CLASSIFICATION_LOSS'):
+            cls_loss = self.kwargs['MODEL']['ROI_BOX_HEAD']['CLASSIFICATION_LOSS']
+
+        if cls_loss == 'BCE':
+            self.kwargs['MODEL']['ROI_BOX_HEAD']['NUM_CLASSES'] = len(TSVDataset(self.data).load_labelmap())
+            assert train_arg.get('multi_hot_label', True)
+        elif cls_loss == 'CE':
+            self.kwargs['MODEL']['ROI_BOX_HEAD']['NUM_CLASSES'] = len(TSVDataset(self.data).load_labelmap()) + 1
+        else:
+            raise Exception('unknown conf type = {}'.format(cls_loss))
 
         if self.stageiter:
             self.kwargs['SOLVER']['STEPS'] = tuple([self.parse_iter(i) for i in self.stageiter])
@@ -434,6 +453,8 @@ class MaskRCNNPipeline(ModelPipeline):
                     8*self.kwargs['SOLVER']['MAX_ITER']//9)
         pass_key_value_if_has(self.kwargs, 'base_lr',
                 self.kwargs['SOLVER'], 'BASE_LR')
+        pass_key_value_if_has(self.kwargs, 'basemodel',
+                self.kwargs['MODEL'], 'WEIGHT')
 
         # use self.kwargs instead  of kwargs because we might load parameters
         # from local disk not from the input argument
@@ -470,12 +491,14 @@ class MaskRCNNPipeline(ModelPipeline):
         model_dir = os.getenv("TORCH_MODEL_ZOO", os.path.join(torch_home, "models"))
         ensure_directory(model_dir)
 
-        train(cfg, self.mpi_local_rank, self.distributed)
+        train(cfg, self.mpi_local_rank, self.distributed, self.log_step)
 
     def append_predict_param(self, cc):
         super(MaskRCNNPipeline, self).append_predict_param(cc)
         if cfg.MODEL.RPN.POST_NMS_TOP_N_TEST != 1000:
             cc.append('RPN.PostNMSTop{}'.format(cfg.MODEL.RPN.POST_NMS_TOP_N_TEST))
+        if cfg.MODEL.ROI_BOX_HEAD.CLASSIFICATION_ACTIVATE != 'softmax':
+            cc.append('{}'.format(cfg.MODEL.ROI_BOX_HEAD.CLASSIFICATION_ACTIVATE))
 
     def predict(self, model_file, predict_result_file):
         model = build_detection_model(cfg)
@@ -486,8 +509,15 @@ class MaskRCNNPipeline(ModelPipeline):
 
         dataset = TSVDataset(self.data)
         labelmap = dataset.load_labelmap()
-        # 0 is background
-        label_id_to_label = {i + 1: l for i, l in enumerate(labelmap)}
+        if cfg.MODEL.ROI_BOX_HEAD.CLASSIFICATION_LOSS == 'BCE':
+            extra = 0
+        elif cfg.MODEL.ROI_BOX_HEAD.CLASSIFICATION_LOSS == 'CE':
+            # 0 is background
+            extra = 1
+        else:
+            raise NotImplementedError()
+
+        label_id_to_label = {i + extra: l for i, l in enumerate(labelmap)}
         test(cfg, model, self.distributed, [predict_result_file],
                 label_id_to_label, **self.kwargs)
 
