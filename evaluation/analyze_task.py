@@ -207,6 +207,9 @@ def load_task_results(result_files, result_file_type):
 def parse_bbox(bbox):
     """ Parses bbox format from uhrs
     """
+    if ('left' not in bbox):
+        return {"SKIP": "", "class": "unknown"}
+      
     left = bbox["left"]
     left = np.clip(left, 0, bbox["image_width"])
     right = bbox["left"] + bbox["width"]
