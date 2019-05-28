@@ -1,15 +1,11 @@
 import re
 import os
 import logging
-from .qd_common import init_logging
+from qd.qd_common import init_logging
+from qd.qd_common import get_file_size
 from pprint import pformat
 import os.path as op
 import time
-
-def get_file_size(f):
-    if not op.isfile(f):
-        return 0
-    return os.stat(f).st_size
 
 def del_intermediate_models(folder='./output', threshold_in_days=30,
         must_have_in_folder=None, dry_run=False):
@@ -37,7 +33,6 @@ def old_enough(fname, threshold_in_days):
     return days > threshold_in_days
 
 def iter_to_be_deleted(folder, threshold_in_days=30, must_have_in_folder=None):
-    iter_extract_pattern = '.*model_iter_([0-9]*)e?\..*'
     if must_have_in_folder is None:
         must_have_in_folder = ['']
     total_size = 0
@@ -50,8 +45,9 @@ def iter_to_be_deleted(folder, threshold_in_days=30, must_have_in_folder=None):
                 break
         if not matched:
             continue
-        ms = [(f, re.match(iter_extract_pattern, f)) for f in file_names]
-        ms = [(f, int(m.groups()[0])) for f, m in ms if m]
+        from qd.qd_common import parse_iteration
+        ms = [(f, parse_iteration(f)) for f in file_names]
+        ms = [(f, m) for f, m in ms if m > 0]
         ms = [(f, iteration) for f, iteration in ms if old_enough(op.join(root,
             f), threshold_in_days)]
         if len(ms) == 0:

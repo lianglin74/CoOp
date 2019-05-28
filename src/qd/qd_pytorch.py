@@ -26,6 +26,7 @@ from pprint import pformat
 import logging
 import torch
 from torch.utils.data import Dataset
+import random
 import torch.nn as nn
 import torch.nn.parallel
 import torch.backends.cudnn as cudnn
@@ -167,7 +168,35 @@ class CompositeTSVFile():
         self.tsvs = [TSVFile(f, self.cache_policy) for f in load_list_file(self.list_file)]
         self.initialized = True
 
+class TSVSplitProperty(Dataset):
+    '''
+    one instance of this class mean one tsv file or one composite tsv, it could
+    be label tsv, or hw tsv, or image tsv
+    '''
+    def __init__(self, data, split, t, version=0, cache_policy=None):
+        dataset = TSVDataset(data)
+        if op.isfile(dataset.get_data(split, t, version)):
+            self.tsv = TSVFile(dataset.get_data(split, t, version),
+                    cache_policy)
+        else:
+            splitX = split + 'X'
+            list_file = dataset.get_data(splitX, t)
+            seq_file = dataset.get_shuffle_file(split)
+            self.tsv = CompositeTSVFile(list_file, seq_file, cache_policy)
+            assert version == 0
+
+    def __getitem__(self, index):
+        row = self.tsv[index]
+        return row
+
+    def __len__(self):
+        return len(self.tsv)
+
 class TSVSplit(Dataset):
+    '''
+    prefer to use TSVSplitProperty, which is more general. One example is to
+    read the hw property
+    '''
     def __init__(self, data, split, version=0, cache_policy=None):
         dataset = TSVDataset(data)
         if op.isfile(dataset.get_data(split)):
@@ -424,7 +453,8 @@ def save_parameters(param, folder):
     write_to_yaml_file(param, op.join(folder,
         'parameters_{}.yaml'.format(time_str)))
     # save the env parameters
-    write_to_yaml_file(os.environ, op.join(folder,
+    # convert it to dict for py3
+    write_to_yaml_file(dict(os.environ), op.join(folder,
         'env_{}.yaml'.format(time_str)))
 
 def torch_save(t, f):
@@ -500,6 +530,12 @@ def ensure_create_evaluate_meta_file(evaluate_file):
         if op.isfile(from_file) and worth_create(from_file, simple_file):
             copyfile(from_file, simple_file)
 
+def init_random_seed(random_seed):
+    random.seed(random_seed)
+    np.random.seed(random_seed)
+    torch.manual_seed(random_seed)
+    torch.cuda.manual_seed_all(random_seed)
+
 class TorchTrain(object):
     def __init__(self, **kwargs):
         if 'load_parameter' in kwargs and kwargs['load_parameter']:
@@ -529,7 +565,9 @@ class TorchTrain(object):
                 'weight_decay': 0.0005,
                 'effective_batch_size': 256,
                 'pretrained': False,
-                'dist_url_tcp_port': 23456}
+                'dist_url_tcp_port': 23456,
+                'random_seed': 6,
+                'cudnn_benchmark': False}
 
         assert 'batch_size' not in kwargs, 'use effective_batch_size'
 
@@ -565,7 +603,7 @@ class TorchTrain(object):
         self.is_master = self.mpi_rank == 0
 
         assert (self.effective_batch_size % self.mpi_size) == 0, (self.effective_batch_size, self.mpi_size)
-        self.batch_size = self.effective_batch_size / self.mpi_size
+        self.batch_size = self.effective_batch_size // self.mpi_size
 
         assert (self.test_batch_size % self.mpi_size) == 0, self.test_batch_size
         self.test_batch_size = self.test_batch_size // self.mpi_size
@@ -599,6 +637,10 @@ class TorchTrain(object):
         if self._initialized:
             return
 
+        init_random_seed(self.random_seed)
+        if self.cudnn_benchmark:
+            torch.backends.cudnn.benchmark = True
+
         self._setup_logging()
         # in torch 0.4, torch.randperm only supports cpu. if we set it as
         # cuda.Float by default, it will crash there
@@ -610,8 +652,6 @@ class TorchTrain(object):
                     'init_method': dist_url,
                     'rank': self.mpi_rank,
                     'world_size': self.mpi_size}
-            if self.init_method_type != 'env':
-                init_param['group_name'] = hash_sha1(self.kwargs)
             # always set the device at the very beginning
             torch.cuda.set_device(self.mpi_local_rank)
             logging.info('init param: \n{}'.format(pformat(init_param)))
@@ -622,9 +662,6 @@ class TorchTrain(object):
             # whole program first, but worker B still needs to talk with A. In
             # that case, worker B will never return and will hang there
             synchronize()
-            if self.mpi_rank != 0:
-                # only print the fatal one
-                logging.getLogger().setLevel(50)
         self._initialized = True
 
     def _get_dataset(self, data, split, stage, labelmap):
@@ -728,23 +765,26 @@ class TorchTrain(object):
         save_parameters(self.kwargs, self.output_folder)
 
     def _setup_logging(self):
-        if self.mpi_rank == 0:
-            log_file = op.join(self.output_folder,
-                'log_{}.txt'.format(datetime.now().strftime('%Y_%m_%d_%H_%M_%S')))
-            ensure_directory(op.dirname(log_file))
-            file_handle = logging.FileHandler(log_file)
-            logger_fmt = logging.Formatter('%(asctime)s.%(msecs)03d %(filename)s:%(lineno)s %(funcName)10s(): %(message)s')
-            file_handle.setFormatter(fmt=logger_fmt)
+        # all ranker outputs the log to a file
+        # only rank 0 print the log to console
+        log_file = op.join(self.output_folder,
+            'log_{}_rank{}.txt'.format(
+                datetime.now().strftime('%Y_%m_%d_%H_%M_%S'),
+                self.mpi_rank))
+        ensure_directory(op.dirname(log_file))
+        file_handle = logging.FileHandler(log_file)
+        logger_fmt = logging.Formatter('%(asctime)s.%(msecs)03d %(filename)s:%(lineno)s %(funcName)10s(): %(message)s')
+        file_handle.setFormatter(fmt=logger_fmt)
 
+        root = logging.getLogger()
+        root.handlers = []
+        root.setLevel(logging.INFO)
+        root.addHandler(file_handle)
+
+        if self.mpi_rank == 0:
             ch = logging.StreamHandler(stream=sys.stdout)
             ch.setLevel(logging.INFO)
-            formatter = logger_fmt
-            ch.setFormatter(formatter)
-
-            root = logging.getLogger()
-            root.handlers = []
-            root.setLevel(logging.INFO)
-            root.addHandler(file_handle)
+            ch.setFormatter(logger_fmt)
             root.addHandler(ch)
 
     def get_latest_checkpoint(self):
@@ -759,13 +799,13 @@ class TorchTrain(object):
     def ensure_train(self):
         self._ensure_initialized()
 
-        # we need this folder, normally. just create a folder here
-        ensure_directory(op.join(self.output_folder, 'snapshot'))
-
-        last_model_file = self._get_checkpoint_file(self.max_epoch, self.max_iter)
+        last_model_file = self._get_checkpoint_file()
+        logging.info('last model file = {}'.format(last_model_file))
         if op.isfile(last_model_file) and not self.force_train:
             logging.info('skip to train')
             return
+
+        ensure_directory(op.join(self.output_folder, 'snapshot'))
 
         if self.mpi_rank == 0:
             self._save_parameters()
@@ -776,8 +816,7 @@ class TorchTrain(object):
         logging.info('torch version = {}'.format(torch.__version__))
 
         train_result = self.train()
-        if self.distributed:
-            synchronize()
+        synchronize()
 
         # save the source code after training
         if self.mpi_rank == 0 and not self.debug_train:
@@ -1080,6 +1119,22 @@ class TorchTrain(object):
             top1 = evaluate_topk(predict_file, label_tsv_file)
             logging.info('top1 = {}'.format(top1))
             write_to_yaml_file({'top1': top1}, evaluate_file)
+        elif self.evaluate_method == 'neg_aware_gmap':
+            from qd.evaluate.evaluate_openimages_google import evaluate
+            truths = dataset.get_data(self.test_split, 'label')
+            imagelabel_truths = dataset.get_data(self.test_split, 'imagelabel')
+            assert op.isfile(truths)
+            assert op.isfile(imagelabel_truths)
+            result = evaluate(truths, imagelabel_truths, predict_file,
+                    json_hierarchy_file=op.join(dataset._data_root, 'hierarchy.json'),
+                    apply_nms_det=True,
+                    expand_label_det=True,
+                    expand_label_gt=True,
+                    apply_nms_gt=True,
+                    )
+            logging.info(pformat(result))
+            logging.info('mAP = {}'.format(result['map']))
+            write_to_yaml_file(result, evaluate_file)
         else:
             logging.info('unknown evaluate method = {}'.format(self.evaluate_method))
 
@@ -1108,6 +1163,13 @@ class YoloV2PtPipeline(ModelPipeline):
             'momentum': 0.9,
             'workers': 4})
         self.num_train_images = None
+
+    def append_predict_param(self, cc):
+        super(YoloV2PtPipeline, self).append_predict_param(cc)
+        if self.yolo_predict_session_param:
+            test_input_size = self.yolo_predict_session_param.get('test_input_size', 416)
+            if test_input_size != 416:
+                cc.append('InputSize{}'.format(test_input_size))
 
     def _get_checkpoint_file(self, epoch=None, iteration=None):
         assert epoch is None, 'not supported'
@@ -1189,7 +1251,8 @@ class YoloV2PtPipeline(ModelPipeline):
         write_to_yaml_file(param, param_yaml)
 
         if self.yolo_train_session_param is not None:
-            param.update(self.yolo_train_session_param)
+            from qd.qd_common import dict_update_nested_dict
+            dict_update_nested_dict(param, self.yolo_train_session_param)
 
         from mmod import yolo_train_session
         snapshot_file = yolo_train_session.main(param, log)

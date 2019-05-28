@@ -31,6 +31,7 @@ import shutil
 import argparse
 import subprocess as sp
 from datetime import datetime
+from future.utils import viewitems
 try:
     # py3
     from urllib.request import urlopen
@@ -181,7 +182,9 @@ def zip_qd(out_zip):
             '-x',
             '\*src/CCSCaffe/matlab/\*',
             '-x',
-            '\*.git\*']
+            '\*.git\*',
+            '-x',
+            '\*src/qd_classifier/.cache/\*']
     cmd_run(cmd, working_dir=os.getcwd(), shell=True)
 
 def retry_agent(func, *args, **kwargs):
@@ -214,7 +217,7 @@ def iter_swap_param(swap_params):
     while True:
         result = {}
         for p, i in zip(swap_params, idx):
-            result[p[0]] = p[1][i]
+            dict_update_path_value(result, p[0], p[1][i])
         yield result
 
         for i in range(num - 1, -1, -1):
@@ -439,7 +442,7 @@ def calculate_correlation_between_terms(iter1, iter2):
 def json_dump(obj):
     # order the keys so that each operation is deterministic though it might be
     # slower
-    return json.dumps(obj, sort_keys=True)
+    return json.dumps(obj, sort_keys=True, separators=(',', ':'))
 
 def set_if_not_exist(d, key, value):
     if key not in d:
@@ -665,7 +668,53 @@ def get_all_tree_data():
     return [name for name in names
         if op.isfile(op.join('data', name, 'root_enriched.yaml'))]
 
+def test_parse_test_data_with_version():
+    pred_data_split_versions = [
+            ('model_iter_368408.caffemodel.Tax1300V14.1_OpenImageV4_448Test_with_bb.train.maintainRatio.OutTreePath.TreeThreshold0.1.ClsIndependentNMS.predict',
+                'Tax1300V14.1_OpenImageV4_448Test_with_bb', 'train', 0),
+            ('model_iter_0090000.pt.coco2017Full.test.predict.coco_box.report',
+                'coco2017Full', 'test', 0),
+            ('model_iter_10000.caffemodel.voc20.maintainRatio.report',
+                'voc20', 'test', 0),
+            ('model_iter_2.caffemodel.voc20.test.report',
+                'voc20', 'test', 0),
+            ('model_iter_271598.caffemodel.Top100Instagram_with_bb.test.maintainRatio.OutTreePath.TreeThreshold0.1.ClsIndependentNMS.v5.report',
+                'Top100Instagram_with_bb', 'test', 5),
+            ]
+    for f, d, s, v in pred_data_split_versions:
+        od, os, ov = parse_test_data_with_version(f)
+        assert od == d
+        assert s == os
+        assert ov == v
+
+def parse_test_data_with_version(predict_file):
+    # run test_parse_test_data_with_version() if any change is made to this
+    # function
+    pattern = \
+        'model(?:_iter)?_-?[0-9]*[e]?\.(?:caffemodel|pth\.tar|pth|pt)\.(.*)\.(train|trainval|test).*?(\.v[0-9])?\.(?:predict|report)'
+    match_result = re.match(pattern, predict_file)
+    if match_result is None:
+        pattern = \
+            'model(?:_iter)?_-?[0-9]*[e]?\.(?:caffemodel|pth\.tar|pth|pt)\.([^\.]*).*?(\.v[0-9])?\.(?:predict|report)'
+        match_result = re.match(pattern, predict_file)
+        assert match_result
+        result = match_result.groups()
+        if result[1] is None:
+            v = 0
+        else:
+            v = int(result[1][2])
+        return result[0], 'test', v
+    else:
+        assert match_result
+        result = match_result.groups()
+        if result[2] is None:
+            v = 0
+        else:
+            v = int(result[2][2])
+        return result[0], result[1], v
+
 def parse_test_data(predict_file):
+    logging.info('use parse_test_data_with_version')
     # e.g. 'model_iter_368408.caffemodel.Tax1300V14.1_OpenImageV4_448Test_with_bb.train.maintainRatio.OutTreePath.TreeThreshold0.1.ClsIndependentNMS.predict'
     pattern = 'model(?:_iter)?_[0-9]*[e]?\.(?:caffemodel|pth\.tar|pth)\.(.*)\.(train|trainval|test)\..*\.predict'
     match_result = re.match(pattern, predict_file)
@@ -695,12 +744,15 @@ def parse_data(full_expid):
     return [c for c in candidates if len(c) == max_length][0]
 
 def parse_iteration(file_name):
-    r = re.match('.*model_iter_([0-9]*)\..*', file_name)
-    if r is None:
-        r = re.match('.*model_iter_([0-9]*)e\..*', file_name)
-        if r is None:
-            return -1
-    return int(float(r.groups()[0]))
+    patterns = ['.*model(?:_iter)?_([0-9]*)\..*',
+                '.*model(?:_iter)?_([0-9]*)e\..*',
+                ]
+    for p in patterns:
+        r = re.match(p, file_name)
+        if r is not None:
+            return int(float(r.groups()[0]))
+    logging.info('unable to parse the iterations for {}'.format(file_name))
+    return -2
 
 def parse_snapshot_rank(predict_file):
     '''
@@ -999,7 +1051,7 @@ def ensure_directory(path):
         if not os.path.exists(path) and not op.islink(path):
             try:
                 os.makedirs(path)
-            except OSError:
+            except:
                 if os.path.isdir(path):
                     # another process has done makedir
                     pass
@@ -1082,7 +1134,7 @@ def read_lines(file_name):
             yield line
 
 def read_to_buffer(file_name):
-    with open(file_name, 'r') as fp:
+    with open(file_name, 'rb') as fp:
         all_line = fp.read()
     return all_line
 
@@ -1527,6 +1579,66 @@ def is_valid_rect(rect):
 def pass_key_value_if_has(d_from, from_key, d_to, to_key):
     if from_key in d_from:
         d_to[to_key] = d_from[from_key]
+
+def dict_update_nested_dict(a, b):
+    for k, v in viewitems(b):
+        if k not in a:
+            a[k] = v
+        else:
+            if isinstance(a[k], dict) and isinstance(v, dict):
+                dict_update_nested_dict(a[k], v)
+            else:
+                a[k] = v
+
+def dict_get_all_path(d):
+    all_path = []
+    for k, v in viewitems(d):
+        if not isinstance(v, dict):
+            all_path.append(k)
+        else:
+            all_sub_path = dict_get_all_path(v)
+            all_path.extend([k + '$' + p for p in all_sub_path])
+    return all_path
+
+def dict_has_path(d, p):
+    ps = p.split('$')
+    cur_dict = d
+    while True:
+        if len(ps) > 0:
+            if ps[0] in cur_dict:
+                cur_dict = cur_dict[ps[0]]
+                ps = ps[1:]
+            else:
+                return False
+        else:
+            return True
+
+def dict_update_path_value(d, p, v):
+    ps = p.split('$')
+    while True:
+        if len(ps) == 1:
+            d[ps[0]] = v
+            break
+        else:
+            if ps[0] not in d:
+                d[ps[0]] = {}
+            d = d[ps[0]]
+            ps = ps[1:]
+
+def dict_get_path_value(d, p):
+    ps = p.split('$')
+    cur_dict = d
+    while True:
+        if len(ps) > 0:
+            cur_dict = cur_dict[ps[0]]
+            ps = ps[1:]
+        else:
+            return cur_dict
+
+def get_file_size(f):
+    if not op.isfile(f):
+        return 0
+    return os.stat(f).st_size
 
 if __name__ == '__main__':
     init_logging()

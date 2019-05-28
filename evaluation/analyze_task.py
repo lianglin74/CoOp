@@ -10,10 +10,11 @@ from evaluation.uhrs import UhrsTaskManager
 from evaluation.utils import load_escaped_json, write_to_file
 
 
-def analyze_draw_box_task(result_files, result_file_type, outfile_res):
+def analyze_draw_box_task(result_files, outfile_res, result_file_type="uhrs"):
     # load results
     df_records = load_task_results(result_files, result_file_type)
     url2ans_map = collections.defaultdict(list)
+    labelset = set()
     for _, row in df_records.iterrows():
         try:
             input_task = load_escaped_json(row['Input.input_content'])
@@ -30,22 +31,15 @@ def analyze_draw_box_task(result_files, result_file_type, outfile_res):
         for b in answer:
             b["class"] = input_task["objects_to_find"]
         img_url = input_task["image_url"]
+        labelset.add(input_task["objects_to_find"])
         url2ans_map[img_url].extend(answer)
 
-    res = []  # url, list of bboxes
-    num_empty = 0
-    num_bboxes = 0
-    num_imgs = len(url2ans_map)
-    for url in url2ans_map:
-        # TODO: merge answers from several workers to get confidence scores
-        bbox_list = url2ans_map[url]
-        num_bboxes += len(bbox_list)
-        if len(bbox_list) == 0:
-            num_empty += 1
-        res.append([url, json.dumps(bbox_list)])
-    logging.info("#images: {}, #empty images: {} ({}%), #bboxes per img: {}"
-                 .format(num_imgs, num_empty, float(num_empty)/num_imgs*100, float(num_bboxes)/(num_imgs-num_empty)))
-    write_to_file(res, outfile_res)
+    def gen_rows():
+        for url in url2ans_map:
+            # TODO: merge answers from several workers
+            bbox_list = url2ans_map[url]
+            yield url, json.dumps(bbox_list, separators=(',', ':'))
+    write_to_file(gen_rows(), outfile_res)
     return url2ans_map
 
 
@@ -220,7 +214,11 @@ def parse_bbox(bbox):
     bottom = np.clip(bottom, top, bbox["image_height"])
     if right - left <= 0 or bottom - top <= 0:
         return None
-    return {"rect": [left, top, right, bottom], "class": bbox["label"]}
+    res = {"rect": [int(n) for n in [left, top, right, bottom]], "class": bbox["label"]}
+    for k in bbox:
+        if k not in ["left", "top", "width", "height", "image_width", "image_height", "label"]:
+            res[k] = bbox[k]
+    return res
 
 
 def analyze_worker_quality(df_records, worker_quality_file=None, min_num_hp=5,

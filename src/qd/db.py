@@ -43,6 +43,9 @@ def ensure_to_objectid(r):
     else:
         return r
 
+def create_annotation_db():
+    return AnnotationDB()
+
 class AnnotationDB(object):
     '''
     gradually move all the Annotation db related function call to this wrapper.
@@ -52,12 +55,42 @@ class AnnotationDB(object):
         self._qd = create_mongodb_client()
         self._gt = self._qd['qd']['ground_truth']
         self._label = self._qd['qd']['label']
+        self._acc = self._qd['qd']['acc']
 
+    # acc related
+    def insert_acc(self, **kwargs):
+        if 'create_time' not in kwargs:
+            kwargs['create_time'] = datetime.now()
+        self._acc.insert_one(kwargs)
+
+    def iter_acc(self, **query):
+        return self._acc.find(query)
+
+    def iter_unique_test_info_in_acc(self):
+        pipeline = [
+                {'$group': {'_id': {'test_data': '$test_data',
+                                    'test_split': '$test_split',
+                                    'test_version': '$test_version'}}}
+                ]
+        for result in self._acc.aggregate(pipeline):
+            yield result['_id']
+
+    def exist_acc(self, **query):
+        try:
+            next(self.iter_acc(**query))
+            return True
+        except:
+            return False
+
+    # label related
     def update_label(self, query, update):
         self._label.update_one(query, update)
 
     def iter_label(self):
         return self._label.find()
+
+    def iter_query_label(self, query):
+        return self._label.find(query)
 
     def insert_label(self, **kwargs):
         if 'uuid' not in kwargs:
@@ -66,9 +99,6 @@ class AnnotationDB(object):
             kwargs['create_time'] = datetime.now()
 
         self._label.insert_one(kwargs)
-
-    def iter_query_label(self, query):
-        return self._label.find(query)
 
     def build_label_index(self):
         self._label.create_index([('uuid', 1)], unique=True)

@@ -27,7 +27,7 @@ def ensure_dir_empty(dirpath, remove_ok=False):
 
 
 def read_from_file(filepath, sep='\t', check_num_cols=None):
-    with open(filepath, 'r', encoding='utf8') as fin:
+    with open(filepath, 'r') as fin:
         for line in fin:
             cols = line.strip().split(sep)
             if check_num_cols and len(cols) != check_num_cols:
@@ -37,7 +37,7 @@ def read_from_file(filepath, sep='\t', check_num_cols=None):
 
 
 def write_to_file(data, filepath, sep='\t'):
-    with open(filepath+".tmp", 'w', encoding='utf8') as fout:
+    with open(filepath+".tmp", 'w') as fout:
         for cols in data:
             fout.write(sep.join([str(c) for c in cols]))
             fout.write('\n')

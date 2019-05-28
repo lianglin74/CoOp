@@ -8,3 +8,9 @@
 [submodule "src/maskrcnn-benchmark"]
 	path = src/maskrcnn-benchmark
 	url = https://github.com/amsword/maskrcnn-benchmark.git
+[submodule "src/mmcv"]
+	path = src/mmcv
+	url = git@github.com:amsword/mmcv.git
+[submodule "src/mmdetection"]
+	path = src/mmdetection
+	url = git@github.com:amsword/mmdetection.git

@@ -5,6 +5,7 @@ from qd.qd_common import ensure_directory
 from qd.qd_common import load_from_yaml_file
 from qd.qd_common import load_from_yaml_str
 from qd.qd_common import url_to_str
+from qd.qd_common import dict_update_nested_dict
 from qd.cloud_storage import create_cloud_storage
 import logging
 import simplejson as json
@@ -17,6 +18,8 @@ import base64
 import copy
 import os
 from collections import OrderedDict
+import glob
+from qd.qd_common import get_file_size
 
 from qd.qd_common import dump_to_yaml_str
 from qd.qd_common import init_logging
@@ -44,7 +47,6 @@ def infer_type(vc, cluster):
     elif any(v == vc and c == cluster for v, c in all_azure):
         return 'azure'
     assert False
-
 
 def philly_input_run(cmd, return_output=False):
     # the username here is not improved since we do not use this function any
@@ -115,7 +117,11 @@ def philly_mkdir(dest_dir, vc, cluster):
     philly_run(sub_cmd, vc, cluster)
 
 def upload_through_blob(src_dir, dest_dir, vc, cluster, **kwargs):
-    assert len(dest_dir) > 0 and dest_dir[0] != '/' and dest_dir[0] != '\\'
+    assert (len(dest_dir) > 0 and \
+            dest_dir[0] != '/' and \
+            dest_dir[0] != '\\')
+    if dest_dir[-1] != '/':
+        dest_dir = dest_dir + '/'
     account = 'vig'
     dest_url = op.join('https://{}.blob.core.windows.net/data',
             account,
@@ -123,11 +129,12 @@ def upload_through_blob(src_dir, dest_dir, vc, cluster, **kwargs):
             op.basename(src_dir))
 
     c = create_cloud_storage(account)
-    dest_url, _ = c.az_upload2(src_dir, op.join(dest_dir, op.basename(src_dir)))
+    dest_url, _ = c.az_sync(src_dir, op.join(dest_dir, op.basename(src_dir)))
     if kwargs.get('copy_to_hdfs', True):
         env = {'AZURE_STORAGE_ACCESS_KEY': c.account_key}
 
-        sub_cmd = ['-cp', '-r', dest_url, dest_dir, 3]
+        sub_cmd = ['-cp', '-r', dest_url, op.join(dest_dir,
+            op.basename(src_dir)), 3]
         philly_run(sub_cmd, vc, cluster, extra_env=env)
 
 def philly_upload_dir(src_dir, dest_dir, vc='input', cluster='philly-prod-cy4',
@@ -148,7 +155,8 @@ def philly_upload_dir(src_dir, dest_dir, vc='input', cluster='philly-prod-cy4',
             cmd.append('-cp')
             cmd.append('-r')
             cmd.append(src_dir)
-            cmd.append('{}{}'.format(folder_prefix, dest_dir))
+            cmd.append('{}{}'.format(folder_prefix, op.join(dest_dir,
+                op.basename(src_dir))))
             retry_agent(cmd_run, cmd, env={'PHILLY_VC': vc})
         else:
             upload_through_blob(src_dir, dest_dir, vc, cluster, **kwargs)
@@ -177,20 +185,10 @@ def philly_upload(src_file, dest_dir, vc='input', cluster='philly-prod-cy4'):
 
 def create_philly_client(**kwargs):
     param = load_from_yaml_file('./aux_data/configs/philly_vc.yaml')
-    param.update(kwargs)
+    dict_update_nested_dict(param, kwargs)
+    if not param.get('password'):
+        param['password'] = os.environ['PHILLY_PASSWORD']
     return PhillyVC(**param)
-
-def get_philly_credential():
-    config = load_from_yaml_file('./aux_data/configs/philly_vc.yaml')
-    return config['user_name'], config['password']
-
-def philly_rest_api(CMD):
-    user_name, password = get_philly_credential()
-    cmd = ['curl', '-k', '--ntlm', '--user',
-            '"redmond\\{}:{}"'.format(user_name, password),
-            '"{}"'.format(CMD)]
-    result_str = cmd_run(cmd, shell=True, return_output=True)
-    return result_str
 
 def decode_extra_param(extraParam):
     re_result = re.match('.*python scripts/.*\.py -bp (.*)', extraParam)
@@ -206,48 +204,6 @@ def get_http_prefix(vc_type):
     else:
         return 'https://philly'
 
-def attach_log(job_info):
-    cluster = job_info['cluster']
-    vc = job_info['vc']
-    vc_type = job_info['vc_type']
-    job_id = job_info['appID']
-    http_prefix = get_http_prefix(vc_type)
-
-    job_info['latest_log'] = philly_job_log(cluster, vc, http_prefix, job_id)
-
-def philly_job_log(cluster, vc, http_prefix, job_id, logRev='latest'):
-    cmd_str = \
-        '{}/api/log?clusterId={}&vcId={}&jobId={}&jobType=cust&logType=stdout&logRev={}&content=partial'.format(
-            http_prefix,
-            cluster,
-            vc,
-            job_id, logRev)
-    result = philly_rest_api(cmd_str)
-
-    if 'WARNING' in result and 'too big for preview' in result:
-        # wget https://storage.sc2.philly.selfhost.corp.microsoft.com/input/sys/jobs/application_1544809666047_4657/stdout/1/stdout.txt
-        from qd_common import url_to_str
-        result = url_to_str('https://storage.{}.philly.selfhost.corp.microsoft.com/input/sys/jobs/{}/stdout/1/stdout.txt'.format(
-            cluster, job_id))
-    return result
-
-def attach_gpu_utility(all_job_info):
-    for job_info in all_job_info:
-        if not job_info['ssh']:
-            continue
-        try:
-            gpu_result = cmd_run('{} nvidia-smi'.format(
-                job_info['ssh']).split(' '), shell=True, return_output=True)
-            from gpu_util import parse_gpu_usage_dict
-            gpu_info = parse_gpu_usage_dict(gpu_result)
-            import numpy as np
-            gpu_info = {t: np.mean([g[t] for g in gpu_info]) for t in ['mem_used',
-                    'mem_total', 'gpu_util']}
-            for k in gpu_info:
-                job_info[k] = gpu_info[k]
-        except Exception as e:
-            logging.info(str(e))
-
 def attach_log_parsing_result(job_info):
     logs = job_info['latest_log']
     all_log = logs.split('\n')
@@ -256,7 +212,18 @@ def attach_log_parsing_result(job_info):
         result = re.match(pattern, log)
         if result and result.groups():
             job_info['speed'], job_info['left'] = result.groups()
+            del job_info['latest_log']
             return
+
+        # 2019-05-10T04:29:11.340Z: [1,0]<stdout>:2019-05-10 04:29:11,341.341 trainer.py:111   do_train(): eta: 3 days, 17:56:14  iter: 440  loss: 2.3267 (2.3407)  loss_retina_cls: 1.2245 (1.2373)  loss_retina_reg: 1.0626 (1.1034)  time: 0.6675 (0.9005)  data: 0.0033 (0.2286)  lr: 0.002300  max mem: 4049
+        pattern = '.*: eta: (.*) iter.*'
+        result = re.match(pattern, log)
+        if result and result.groups():
+            job_info['speed'] = None
+            job_info['left'] = result.groups()[0]
+            del job_info['latest_log']
+            return
+    del job_info['latest_log']
 
 def print_table(a_to_bs, all_key=None):
     if len(a_to_bs) == 0:
@@ -277,7 +244,7 @@ def print_table(a_to_bs, all_key=None):
     for a_to_b in a_to_bs:
         line = row_format.format(*[str(a_to_b.get(k, '')) for k in all_key])
         all_line.append(line)
-    logging.info('info\n{}'.format('\n'.join(all_line)))
+    logging.info('\n{}'.format('\n'.join(all_line)))
 
 class PhillyVC(object):
     def __init__(self, vc, cluster, user_name=None,
@@ -314,6 +281,10 @@ class PhillyVC(object):
         self.multi_process = kwargs.get('multi_process')
         self.docker_tag = kwargs.get('docker_tag')
 
+        # used in query()
+        self.query_with_gpu = kwargs.get('with_gpu')
+        self.query_with_log = kwargs.get('with_log')
+
     def get_data_folder_in_blob(self):
         assert self.config_param['data_folder'].startswith(self.blob_mount_point)
         result = self.config_param['data_folder'][len(self.blob_mount_point): ]
@@ -322,15 +293,11 @@ class PhillyVC(object):
         return result
 
     def sync_code(self, random_id):
-        random_run = 'run{}.py'.format(random_id)
         self.random_id = random_id
 
         random_qd = 'quickdetection{}'.format(random_id)
         random_abs_qd = op.join('/tmp', '{}.zip'.format(random_qd))
         logging.info('{}'.format(random_qd))
-        cmd = ['cp', './scripts/run.py', './tmp_run/{}'.format(random_run)]
-        code_qd = os.getcwd()
-        cmd_run(cmd, working_dir=code_qd)
         from qd.qd_common import zip_qd
         zip_qd(random_abs_qd)
         copy_to_hdfs = not self.use_blob_as_input
@@ -360,7 +327,7 @@ class PhillyVC(object):
     def abort(self, application_id):
         cmd = 'https://philly/api/abort?clusterId={}&jobId={}'.format(
                 self.cluster, application_id)
-        philly_rest_api(cmd)
+        self.philly_rest_api(cmd)
 
     def query_all_job(self, my_own=True):
         cmd="{}/api/list?".format(self.get_http_prefix())
@@ -371,7 +338,7 @@ class PhillyVC(object):
             param.append('userName={}'.format(self.user_name))
         cmd += '&'.join(param)
         while True:
-            result = philly_rest_api(cmd)
+            result = self.philly_rest_api(cmd)
             result = json.loads(result)
             if 'ExceptionType' in result:
                 logging.info(pformat(result))
@@ -401,32 +368,67 @@ class PhillyVC(object):
                     op.join(self.dest_config_folder,
                         op.basename(self.src_config_path)))
 
-    def query(self, **kwargs):
+    def attach_log(self, job_info):
+        job_id = job_info['appID']
+        job_info['latest_log'] = self.philly_job_log(job_id)
+
+    def attach_gpu_utility(self, all_job_info):
+        for job_info in all_job_info:
+            if not job_info['ssh']:
+                continue
+            try:
+                gpu_result = cmd_run('{} nvidia-smi'.format(
+                    job_info['ssh']).split(' '), shell=True, return_output=True)
+                from gpu_util import parse_gpu_usage_dict
+                gpu_info = parse_gpu_usage_dict(gpu_result)
+                import numpy as np
+                gpu_info = {t: np.mean([g[t] for g in gpu_info]) for t in ['mem_used',
+                        'mem_total', 'gpu_util']}
+                for k in gpu_info:
+                    job_info[k] = gpu_info[k]
+            except Exception as e:
+                logging.info(str(e))
+
+    def query(self):
         all_job_info = self.query_all_job()
         all_job_info = [j for j in all_job_info if j['status'] != 'Pass' and j['status'] !=
             'Failed' and j['status'] != 'Killed']
-        all_key = ['appID-s', 'data', 'elapsedTime', 'mem_used', 'gpu_util']
-        if kwargs.get('with_gpu'):
-            attach_gpu_utility(all_job_info)
+        all_key = ['status', 'appID-s', 'elapsedTime', 'retries', 'preempts']
+        if self.query_with_gpu:
+            self.attach_gpu_utility(all_job_info)
+            all_key.append('mem_used')
+            all_key.append('gpu_util')
         self.attach_meta(all_job_info)
         for job_info in all_job_info:
             job_info['cluster'] = self.cluster
             job_info['vc'] = self.vc
             job_info['vc_type'] = self.vc_type
-        if kwargs.get('with_log'):
+        if self.query_with_log:
             for job_info in all_job_info:
-                attach_log(job_info)
+                self.attach_log(job_info)
                 attach_log_parsing_result(job_info)
             all_key.extend(['speed', 'left'])
         for j in all_job_info:
             j['appID-s'] = j['appID'][-4:]
-        keys = ['data', 'max_iters']
+        keys = ['data', 'net', 'max_iters', 'max_iter']
         for job_info in all_job_info:
             for k in keys:
-                job_info[k] = job_info['meta'].get('tools_param',
+                job_info[k] = job_info['meta'].get('param',
                         {}).get(k)
         all_key.extend(keys)
-        #all_key.append('ssh')
+
+        # find the keys whose values are the same
+        def all_equal(x):
+            assert len(x) > 0
+            return all(y == x[0] for y in x[1:])
+
+        if len(all_job_info) > 1:
+            equal_keys = [k for k in all_key if all_equal([j.get(k) for j in all_job_info])]
+            if len(equal_keys) > 0:
+                logging.info('equal key values for all jobs')
+                print_table(all_job_info[0:1], all_key=equal_keys)
+            all_key = [k for k in all_key if not all_equal([j.get(k) for j in all_job_info])]
+
         print_table(all_job_info, all_key=all_key)
         return all_job_info
 
@@ -446,12 +448,13 @@ class PhillyVC(object):
     def parse_meta_data(self, all_meta):
         for meta in all_meta:
             extraParam = meta['cmd']
-            re_result = re.match('.*python scripts/.*\.py -bp (.*)', extraParam)
+            re_result = re.match('.* -- (.*)', extraParam)
             if re_result and len(re_result.groups()) == 1:
                 ps = load_from_yaml_str(base64.b64decode(re_result.groups()[0]))
-                meta['tools_param'] = {}
-                for p in ps:
-                    meta['tools_param'][p] = ps[p]
+                command_parse = re.match('python .* -bp (.*)', ps['command'])
+                if command_parse:
+                    param = load_from_yaml_str(base64.b64decode(command_parse.groups()[0]))
+                    meta['param'] = param.get('param', {})
 
     def submit2(self, param):
         '''
@@ -501,6 +504,11 @@ class PhillyVC(object):
             config_file = "/hdfs/{}/{}/{}".format(self.vc,
                 self.dest_config_folder, op.basename(self.src_config_path))
         logging.info('cmd:\n{} d d d {}'.format(config_file, extraParam))
+        custom_mpi_args = 'env CUDA_CACHE_DISABLE=1 NCCL_IB_DISABLE=1 NCCL_SOCKET_IFNAME=eth0 NCCL_DEBUG=INFO OMP_NUM_THREADS=2'
+        if num_gpu > 4:
+            # without this flag, distributed training will crash in multi-node
+            # more information: https://github.com/horovod/horovod/issues/893
+            custom_mpi_args += ' NCCL_TREE_THRESHOLD=0'
         data = {
             "ClusterId": cluster,
             "VcId": vc,
@@ -526,7 +534,7 @@ class PhillyVC(object):
             "Registry": registry,
             "Repository": self.docker['image'],
             "Tag": tag,
-            "CustomMPIArgs": 'env CUDA_CACHE_DISABLE=1 NCCL_IB_DISABLE=1 NCCL_SOCKET_IFNAME=eth0 NCCL_DEBUG=INFO OMP_NUM_THREADS=2',
+            "CustomMPIArgs": custom_mpi_args,
             "Timeout":None,
             }
         gpus_per_node = 4
@@ -550,6 +558,14 @@ class PhillyVC(object):
             'storageAccount': blob_account,
             'containerName': blob_container,
             'path': self.blob_mount_point,
+            "options": [
+                "-o", "attr_timeout=240",
+                "-o", "entry_timeout=240",
+                "-o", "negative_timeout=120",
+                "--log-level=LOG_WARNING",
+                "-o", "allow_other",
+                "--file-cache-timeout-in-seconds=1000000",
+                ]
             }}
         data['credentials'] = {'storageAccounts': {blob_account: {
             '_comments': 'redentials for accessing the storage account.',
@@ -702,14 +718,13 @@ class PhillyVC(object):
                 self.cluster,
                 self.vc,
                 job_id, logRev)
-        result = philly_rest_api(cmd_str)
+        result = self.philly_rest_api(cmd_str)
 
         if 'WARNING' in result and 'too big for preview' in result:
             # wget https://storage.sc2.philly.selfhost.corp.microsoft.com/input/sys/jobs/application_1544809666047_4657/stdout/1/stdout.txt
             result = url_to_str('https://storage.{}.philly.selfhost.corp.microsoft.com/input/sys/jobs/{}/stdout/1/stdout.txt'.format(
                 self.cluster, job_id))
 
-        logging.info(result)
         return result
 
     def philly_job_status(self, job_id):
@@ -719,7 +734,7 @@ class PhillyVC(object):
                     self.cluster,
                     self.vc,
                     job_id)
-        result = philly_rest_api(cmd_str)
+        result = self.philly_rest_api(cmd_str)
         return result
 
     def philly_job_meta(self, job_id):
@@ -729,16 +744,138 @@ class PhillyVC(object):
                     self.cluster,
                     self.vc,
                     job_id)
-        result = philly_rest_api(cmd_str)
+        result = self.philly_rest_api(cmd_str)
         return result
 
-    def upload_file(self, file_from, file_target):
+    def upload_file(self, file_from, file_target, blob=False):
         if self.cluster in ['sc2', 'wu1']:
-            blob = False
             philly_upload_dir(file_from, file_target, self.vc,
                     self.cluster, blob=blob)
         else:
             philly_upload(file_from, file_target, self.vc, self.cluster)
+
+    def increment_upload_dir_to_hdfs(self, src_dir, dest_dir):
+        if not dest_dir.endswith('/'):
+            dest_dir = dest_dir + '/'
+        file_infos = parse_philly_ls_output_rich(philly_ls(
+            dest_dir, return_output=True, vc=self.vc, cluster=self.cluster))
+        if not any(f['type'] == 'dir' and f['name'] == op.basename(src_dir)
+                for f in file_infos):
+            philly_mkdir(op.join(dest_dir, op.basename(src_dir)),
+                    vc=self.vc, cluster=self.cluster)
+        philly_file_infos = parse_philly_ls_output_rich(philly_ls(
+            op.join(dest_dir, op.basename(src_dir)),
+            return_output=True, vc=self.vc, cluster=self.cluster))
+        for src_file in glob.glob(op.join(src_dir, '*')):
+            if op.isfile(src_file):
+                file_size = get_file_size(src_file)
+                no_need = False
+                for f in philly_file_infos:
+                    if f['type'] == 'file' and \
+                            f['name'] == op.basename(src_file) and \
+                            f['file_size_in_byte'] == file_size:
+                        no_need = True
+                        break
+                if not no_need:
+                    self.upload_file(src_file, op.join(dest_dir,
+                        op.basename(src_dir)), blob=True)
+            elif op.isdir(src_file):
+                self.increment_upload_dir_to_hdfs(src_file, op.join(dest_dir,
+                    op.basename(src_dir)))
+
+    def philly_rest_api(self, CMD):
+        user_name, password = self.user_name, self.password
+        cmd = ['curl', '-k', '--ntlm', '--user',
+                '"redmond\\{}:{}"'.format(user_name, password),
+                '"{}"'.format(CMD)]
+        result_str = cmd_run(cmd, shell=True, return_output=True)
+        return result_str
+
+def parse_philly_ls_output_rich(output):
+    lines = output.split('\n')
+    assert len(lines) > 0
+    while True:
+        line = lines[0]
+        import re
+        r = re.match('total ([0-9]*)', line)
+        if r:
+            break
+        else:
+            logging.info('ignore {}'.format(line))
+            lines = lines[1:]
+    num_rows = int(float(r.groups()[0]))
+    result = []
+    for i in range(num_rows):
+        line = lines[i + 1]
+        # -rwxrwxrwx       1  519178854    519178854 4,218,683,392 2018-10-19 17:03:29 .train.tsv.lHKomx
+        p = '(.{1}).* ([0-9,]*) ([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}) *(.*)'
+        r = re.match(p, line)
+        file_type, file_size_in_byte, time_stamp, file_name = r.groups()
+        info = {}
+        if file_type == '-':
+            info['type'] = 'file'
+        else:
+            assert file_type == 'd'
+            info['type'] = 'dir'
+        info['file_size_in_byte'] = int(file_size_in_byte.replace(',', ''))
+        from dateutil.parser import parse
+        info['time'] = parse(time_stamp)
+        info['name'] = file_name
+        result.append(info)
+    return result
+
+def parse_philly_ls_output(output):
+    lines = output.split('\n')
+    assert len(lines) > 0
+    while True:
+        line = lines[0]
+        import re
+        r = re.match('total ([0-9]*)', line)
+        if r:
+            break
+        else:
+            logging.info('ignore {}'.format(line))
+            lines = lines[1:]
+    num_rows = int(float(r.groups()[0]))
+    all_file = []
+    all_dir = []
+    for i in range(num_rows):
+        line = lines[i + 1]
+        # -rwxrwxrwx       1  519178854    519178854 4,218,683,392 2018-10-19 17:03:29 .train.tsv.lHKomx
+        p = '(.{1}).*[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}[ ]*(.*)'
+        r = re.match(p, line)
+        file_type, file_name = r.groups()
+        if file_type == '-':
+            all_file.append(file_name)
+        else:
+            assert file_type == 'd'
+            all_dir.append(file_name)
+    return all_file, all_dir
+
+def upload_qdoutput(src_path, dest_path, ssh_info):
+    # make sure the folder of dest_path in philly exists
+    remote_run('mkdir -p {}'.format(dest_path), ssh_info)
+
+    # upload all the files under src_path
+    all_src_file = glob.glob(op.join(src_path, '*'))
+    for f in all_src_file:
+        if op.isfile(f):
+            scp(f, dest_path, ssh_info)
+
+    # for the model and the tested files, only upload the best
+    all_src_file = glob.glob(op.join(src_path, 'snapshot', 'model_iter_*'))
+    all_iter = [parse_iteration2(f) for f in all_src_file]
+    max_iters = max(all_iter)
+    need_copy_files = [f for f, i in zip(all_src_file, all_iter) if i == max_iters]
+    dest_snapshot = op.join(dest_path, 'snapshot')
+    remote_run('mkdir -p {}'.format(dest_snapshot), ssh_info)
+    for f in need_copy_files:
+        scp(f, dest_snapshot, ssh_info)
+
+
+def philly_ls(dest_dir, vc='input', return_output=False, cluster='philly-prod-cy4'):
+    sub_cmd = ['-ls', dest_dir]
+    return philly_run(sub_cmd, vc, cluster, return_output)
 
 def convert_to_philly_extra_command(param, script='scripts/tools.py'):
     logging.info(pformat(param))
@@ -763,27 +900,17 @@ def submit_without_sync(cmd, **kwargs):
         all_extra_param.append(extra_param)
     else:
         all_extra_param.append(cmd)
+    kwargs.update({'isDebug': isDebug})
     logging.info(all_extra_param)
-    p = create_philly_client(isDebug=isDebug)
+    p = create_philly_client(**kwargs)
     if kwargs.get('real_submit', True):
         list(map(lambda extra_param: p.submit_without_sync(extra_param),
                 all_extra_param))
-
-def ssh_into(app_id):
-    p = create_philly_client()
-    app_info, app_id = p.search_job_id(app_id)
-    cmd_run(app_info['ssh'].split(' '),
-            stdin=None,
-            shell=True)
 
 def tracking(app_id, **kwargs):
     p = create_philly_client(**kwargs)
     _, app_id = p.search_job_id(app_id)
     p.track_job_once(app_id)
-
-def sync_code():
-    p = create_philly_client(use_blob_as_input=True)
-    p.sync_code('')
 
 def list_to_dict_full(l, idx):
     result = OrderedDict()
@@ -843,6 +970,7 @@ def parse_args():
     parser.add_argument('-p', '--param', help='parameter string, yaml format',
             type=str)
     parser.add_argument('-c', '--cluster', default=argparse.SUPPRESS, type=str)
+    parser.add_argument('-n', '--num_gpu', default=argparse.SUPPRESS, type=int)
     #parser.add_argument('-wg', '--with_gpu', default=True, action='store_true')
     parser.add_argument('-no-wg', '--with_gpu', default=True, action='store_false')
     #parser.add_argument('-m', '--with_meta', default=True, action='store_true')
@@ -869,10 +997,6 @@ def ensure_init_config_files():
     config_template = './aux_data/configs/philly_vc.template.yaml'
     infinite_check(config_file, config_template)
 
-def init_philly_requirements():
-    ensure_init_config_files()
-    sync_code()
-
 def execute(task_type, **kwargs):
     if task_type == 'query':
         if len(kwargs.get('remainders', [])) > 0:
@@ -880,7 +1004,7 @@ def execute(task_type, **kwargs):
             tracking(kwargs['remainders'][0], **kwargs)
         else:
             p = create_philly_client(**kwargs)
-            p.query(**kwargs)
+            p.query()
     elif task_type == 'submit':
         assert len(kwargs['remainders']) == 1
         submit_without_sync(cmd=kwargs['remainders'][0], **kwargs)
@@ -894,14 +1018,23 @@ def execute(task_type, **kwargs):
         blame(**kwargs)
     elif task_type == 'ssh':
         assert len(kwargs['remainders']) == 1
-        ssh_into(kwargs['remainders'][0])
+        app_id = kwargs['remainders'][0]
+        p = create_philly_client(**kwargs)
+        app_info, app_id = p.search_job_id(app_id)
+        cmd_run(app_info['ssh'].split(' '),
+                stdin=None,
+                shell=True)
     elif task_type == 'sync':
-        sync_code()
+        p = create_philly_client(**kwargs)
+        p.sync_code('')
     elif task_type == 'update_config':
-        p = create_philly_client()
+        p = create_philly_client(**kwargs)
         p.update_config()
     elif task_type == 'init':
-        init_philly_requirements()
+        ensure_init_config_files()
+        p = create_philly_client(**kwargs)
+        p.update_config()
+        p.sync_code('')
     else:
         assert 'Unknown {}'.format(task_type)
 

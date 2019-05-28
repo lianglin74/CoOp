@@ -174,6 +174,7 @@ def train(args, train_loader, model, criterion, optimizer, epoch, logger, accura
 
     end = time.time()
     tic = time.time()
+    train_loader_len = len(train_loader)
     for i, (input, target) in enumerate(train_loader):
         # measure data loading time
         data_time.update(time.time() - end)
@@ -210,14 +211,14 @@ def train(args, train_loader, model, criterion, optimizer, epoch, logger, accura
         batch_time.update(time.time() - end)
         end = time.time()
 
-        if i % args.print_freq == 0:
+        if i % args.print_freq == 0 or i == train_loader_len-1:
             speed = args.print_freq * args.batch_size / float(args.world_size) / (time.time() - tic)
             info_str = 'Epoch: [{0}][{1}/{2}]\t' \
                         'Speed: {speed:.2f} samples/sec\t' \
                         'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t' \
                         'Data {data_time.val:.3f} ({data_time.avg:.3f})\t' \
                         'Loss {loss.val:.4f} ({loss.avg:.4f})\t'.format(
-                        epoch, i, len(train_loader), speed=speed, batch_time=batch_time,
+                        epoch, i, train_loader_len, speed=speed, batch_time=batch_time,
                         data_time=data_time, loss=losses)
             if ccs_loss_param > 0:
                 loss_str = 'Original Loss {orig_loss.val:.4f} ({orig_loss.avg:.4f})\t' \

@@ -1,0 +1,24 @@
+all_test_data:
+- test_data: TaxCBA3V1_TEST_with_bb
+  test_split: test
+param:
+  basemodel: ./output/Tax1300V14.4_0.0_0.0_darknet19_448_C_Init.best_model6933_maxIter.10eEffectBatchSize128LR7580_bb_only_yolov2pt/snapshot/model_iter_139900.pt
+  data: TaxCBA3V1_1_with_bb
+  dist_url_tcp_port: 26687
+  effective_batch_size: 128
+  expid: YoloV2Pt2_basemodel1876a_BS128_MaxIter50e_ExtraConv2_AugTrials50_ScaleMin1_ScaleMax3_Tree
+  expid_prefix: YoloV2Pt2
+  max_iter: 50e
+  net: darknet19_448
+  num_extra_convs: 2
+  pipeline_type: YoloV2PtPipeline
+  use_treestructure: true
+  yolo_predict_session_param:
+    test_input_size: 416
+  yolo_train_session_param:
+    data_augmentation:
+      box_data_param:
+        max_trials: 50
+        random_scale_max: 3
+        random_scale_min: 1
+type: pipeline_train_eval_multi

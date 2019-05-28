@@ -37,25 +37,34 @@ def main(args):
         parser = get_arg_parser(model_names)
         args = parser.parse_args(args)
 
-    best_prec1 = 0
+    num_gpus = int(os.environ["WORLD_SIZE"]) if "WORLD_SIZE" in os.environ else 1
+    print("WORLD_SIZE = {}".format(os.environ["WORLD_SIZE"] if "WORLD_SIZE" in os.environ else -1))
+    args.distributed = num_gpus > 1
 
-    args.distributed = args.world_size > 1
+    if args.distributed:
+        print("Init distributed training on local_rank {}".format(args.local_rank))
+        torch.cuda.set_device(args.local_rank)
+        dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url)
+        if not dist.is_available():
+            return
+        if not dist.is_initialized():
+            return
+        world_size = dist.get_world_size()
+        if world_size == 1:
+            return
+        dist.barrier()
 
     if not args.distributed:
         logger = Logger(args.output_dir, args.prefix)
     else:
         try:
-            logger = DistributedLogger(args.output_dir, args.prefix, args.rank)
+            logger = DistributedLogger(args.output_dir, args.prefix, args.local_rank)
         except:
-            logger.info('Cannot create logger, rank:', args.rank)
+            logger.info('Cannot create logger, rank:', args.local_rank)
 
     logger.info('distributed? {}'.format(args.distributed))
 
-    if args.distributed:
-        dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
-                                world_size=args.world_size)
-
-    if args.rank == 0:
+    if args.local_rank == 0:
         logger.info('called with arguments: {}'.format(args))
 
     # Data loading code
@@ -91,7 +100,7 @@ def main(args):
             model = torch.nn.DataParallel(model).cuda()
     else:
         model.cuda()
-        model = torch.nn.parallel.DistributedDataParallel(model)
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.local_rank], output_device=args.local_rank)
 
     # get loss function (criterion), optimizer, and scheduler (for learning rate)
     class_weights = None
@@ -112,15 +121,21 @@ def main(args):
     scheduler = get_scheduler(optimizer, args)
     accuracy = get_accuracy_calculator(multi_label=train_dataset.is_multi_label())
 
+    if args.evaluate:
+        validate(val_loader, model, criterion, logger)
+        return
+
+    best_prec1 = 0
+    best_epoch = 0
     # optionally resume from a checkpoint
     if args.resume:
         if os.path.isfile(args.resume):
             logger.info("=> loading checkpoint '{}'".format(args.resume))
             checkpoint = torch.load(args.resume)
             args.start_epoch = checkpoint['epoch']
-            best_prec1 = checkpoint['best_prec1']
             model.load_state_dict(checkpoint['state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer'])
+            best_prec1 = checkpoint['best_prec1']
             logger.info("=> loaded checkpoint '{}' (epoch {})"
                   .format(args.resume, checkpoint['epoch']))
         else:
@@ -128,14 +143,7 @@ def main(args):
 
     cudnn.benchmark = True
 
-
-    if args.evaluate:
-        validate(val_loader, model, criterion, logger)
-        return
-
-    best_epoch = args.start_epoch
     for epoch in range(args.start_epoch, args.epochs):
-        epoch_tic = time.time()
         if args.distributed:
             train_sampler.set_epoch(epoch)
 
@@ -145,7 +153,7 @@ def main(args):
         # train for one epoch
         train(args, train_loader, model, criterion, optimizer, epoch, logger, accuracy)
 
-        if args.rank == 0:
+        if args.local_rank == 0:
             # evaluate on validation set
             prec1 = validate(val_loader, model, criterion, logger)
 
@@ -155,20 +163,18 @@ def main(args):
                 best_epoch = epoch
             best_prec1 = max(prec1, best_prec1)
             save_checkpoint({
-                'epoch': epoch + 1,
+                'epoch': epoch,
                 'arch': args.arch,
                 'state_dict': model.state_dict(),
-                'best_prec1': best_prec1,
                 'optimizer' : optimizer.state_dict(),
                 'num_classes': train_dataset.label_dim(),
                 'multi_label': train_dataset.is_multi_label(),
                 'labelmap': train_dataset.get_labelmap(),
-            }, is_best, args.prefix, epoch+1, args.output_dir)
+                'best_prec1': best_prec1,
+            }, is_best, args.prefix, epoch, args.output_dir)
             info_str = 'Epoch: [{0}]\t' \
-                        'Time {time:.3f}\t' \
-                        'Best Epoch {best_epoch:d}\t' \
-                        'Best Prec1 {best_prec1:.3f}'.format(epoch, time=time.time()-epoch_tic,
-                        best_epoch=best_epoch, best_prec1=best_prec1)
+-                       'Best Epoch {1:d}\t' \
+-                       'Best Prec1 {2:.3f}'.format(epoch, best_epoch, best_prec1)
             logger.info(info_str)
 
 

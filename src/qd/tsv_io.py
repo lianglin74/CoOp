@@ -69,6 +69,7 @@ def read_to_character(fp, c):
     return ''.join(result)
 
 class TSVFile(object):
+    # TODO: close the pointer of _fp
     def __init__(self, tsv_file, cache_policy=None):
         self.tsv_file = tsv_file
         self.lineidx = op.splitext(tsv_file)[0] + '.lineidx'
@@ -89,7 +90,11 @@ class TSVFile(object):
     def seek(self, idx):
         self._ensure_tsv_opened()
         self._ensure_lineidx_loaded()
-        pos = self._lineidx[idx]
+        try:
+            pos = self._lineidx[idx]
+        except:
+            logging.info('{}-{}'.format(self.tsv_file, idx))
+            raise
         self._fp.seek(pos)
         return [s.strip() for s in self._fp.readline().split('\t')]
 
@@ -150,7 +155,7 @@ class TSVFile(object):
             tmp_lineidx = op.join('/tmp', self.lineidx)
             ensure_directory(op.dirname(tmp_tsvfile))
 
-            from qd_common import ensure_copy_file
+            from qd.qd_common import ensure_copy_file
             ensure_copy_file(self.tsv_file, tmp_tsvfile)
             ensure_copy_file(self.lineidx, tmp_lineidx)
 
@@ -571,7 +576,19 @@ class TSVDataset(object):
             self.write_data(rows, split, t, version=v + 1)
             return v + 1
 
+    def load_composite_source_data_split(self, split):
+        splitX = split + 'X'
+        pattern = 'data/(.*)/(train|trainval|test)\.v(.*)\.tsv'
+        tsv_sources = [l for l, in tsv_reader(self.get_data(splitX))]
+        matched_result = [re.match(pattern, l).groups()
+                for l in tsv_sources]
+
+        return [(d, s, int(v)) for d, s, v in matched_result]
+
     def load_composite_source_data_split_versions(self, split):
+        # this function is only valid if we generated the composite dataset
+        # from tsv, not from db. if it is from db, there is no file of
+        # origin.label. use load_composite_source_data_split, instead.
         splitX = split + 'X'
         pattern = 'data/(.*)/(train|trainval|test)\.label\.v(.*)\.tsv'
         tsv_sources = [l for l, in tsv_reader(self.get_data(splitX,
@@ -617,7 +634,7 @@ def tsv_reader(tsv_file_name, sep='\t'):
             yield [x.strip() for x in line.split(sep)]
 
 def csv_reader(tsv_file_name):
-    tsv_reader(tsv_file_name, ',')
+    return tsv_reader(tsv_file_name, ',')
 
 def get_meta_file(tsv_file):
     return op.splitext(tsv_file)[0] + '.meta.yaml'

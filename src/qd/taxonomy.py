@@ -1,3 +1,5 @@
+from collections import defaultdict
+from tqdm import tqdm
 from pprint import pformat
 import random
 import json
@@ -565,6 +567,14 @@ class Taxonomy(object):
         # cache information
         self.name_to_ancestors = None
         self.update()
+
+    def get_name_to_nodes(self):
+        name_to_nodes = defaultdict(list)
+        for node in tqdm(self.root.iter_search_nodes()):
+            if node == self.root:
+                continue
+            name_to_nodes[node.name].append(node)
+        return name_to_nodes
 
     def update(self):
         self.name_to_ancestors = {}

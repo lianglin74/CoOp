@@ -88,7 +88,7 @@ def parse_gpu_usage(result):
     return used
 
 def check_gpu_process():
-    result = sp.check_output(['nvidia-smi'])
+    result = sp.check_output(['nvidia-smi']).decode()
     ps = parse_nvidia_smi(result)
     psinfo = collect_process_info()
     for key in ps:

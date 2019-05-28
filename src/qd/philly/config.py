@@ -59,8 +59,18 @@ def ensure_directory(path):
     if path == '' or path == '.':
         return
     if path != None and len(path) > 0:
+        assert not op.isfile(path), '{} is a file'.format(path)
         if not os.path.exists(path) and not op.islink(path):
-            os.makedirs(path)
+            try:
+                os.makedirs(path)
+            except:
+                if os.path.isdir(path):
+                    # another process has done makedir
+                    pass
+                else:
+                    raise
+        # we should always check if it succeeds.
+        assert op.isdir(path), 'failed'
 
 def compile_qd(folder):
     path = os.environ['PATH']
@@ -188,10 +198,10 @@ def run_in_philly():
     # the permission should be changed because the output is there, but the
     # permission is for the docker job only and teh philly-fs cannot delete or
     # change it
-    if get_mpi_rank() == 0:
-        cmd_run(['sudo', 'chmod', '777',
-            dict_param['output_folder'],
-            '-R'], succeed=False)
+    #if get_mpi_rank() == 0:
+        #cmd_run(['sudo', 'chmod', '777',
+            #dict_param['output_folder'],
+            #'-R'], succeed=False)
 
 if __name__ == '__main__':
     init_logging()

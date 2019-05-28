@@ -27,7 +27,7 @@ import unicodedata
 import yaml
 from collections import defaultdict
 from deprecated import deprecated
-
+from pathos.multiprocessing import ProcessingPool as Pool
 from datetime import datetime
 from pprint import pformat
 try:
@@ -38,6 +38,7 @@ from future.utils import viewitems
 from qd.cloud_storage import CloudStorage
 from qd.process_image import draw_bb, show_image, save_image
 from qd.process_image import show_images
+from qd.process_image import draw_rects
 from qd.qd_common import calculate_image_ap
 from qd.qd_common import calculate_iou
 from qd.qd_common import dict_to_list
@@ -140,14 +141,17 @@ def find_best_matched_rect_idx(target, rects, check_class=True):
         return None, -1
     return max(idx_ious, key=lambda r: r[-1])
 
-def find_best_matched_rect(target, rects, check_class=True):
+def find_best_matched_rect(target, rects, check_class=True, check_iou=True):
     target_class_lower = target['class'].lower()
     if check_class:
         same_class_rects = [r for r in rects if r['class'].lower() == target_class_lower]
     else:
         same_class_rects = rects
-    rect_ious = [(r, calculate_iou(r['rect'], target['rect']))
-        for r in same_class_rects]
+    if check_iou:
+        rect_ious = [(r, calculate_iou(r['rect'], target['rect']))
+            for r in same_class_rects]
+    else:
+        rect_ious = [(r, 1) for r in same_class_rects]
     if len(rect_ious) == 0:
         return None, -1
     return max(rect_ious, key=lambda r: r[-1])
@@ -397,13 +401,18 @@ def upload_image_to_blob(data, split):
         s = CloudStorage()
         def gen_rows():
             for key, _, str_im in tqdm(dataset.iter_data(split)):
-                url_key = map_image_key_to_url_key((data, split, key))
-                url = s.upload_stream(StringIO(base64.b64decode(str_im)),
-                        'images/' + url_key)
+                url_key = map_image_key_to_url_key(data, split, key)
+                if sys.version_info.major == 3:
+                    url = s.upload_stream(base64.b64decode(str_im),
+                            'images/' + url_key + '.jpg')
+                else:
+                    url = s.upload_stream(StringIO(base64.b64decode(str_im)),
+                            'images/' + url_key)
                 yield key, url
         dataset.write_data(gen_rows(), split, 'key.url')
     else:
         from .qd_common import split_to_chunk
+        from .tsv_io import rm_tsv
         num_rows = dataset.num_rows(split)
         num_chunk = num_rows // 1000
         num_chunk = max(1, num_chunk)
@@ -418,6 +427,9 @@ def upload_image_to_blob(data, split):
                         'key.url.{}.{}'.format(idx_task, len(tasks))):
                     yield key, url
         dataset.write_data(gen_rows(), split, 'key.url')
+        # remove intermediate files
+        for idx_task in range(len(tasks)):
+            rm_tsv(dataset.get_data(split, 'key.url.{}.{}'.format(idx_task, len(tasks))))
 
 def upload_image_to_blob_by_idx(args):
     data, split, idxes, idx_task, num_task = args
@@ -430,8 +442,12 @@ def upload_image_to_blob_by_idx(args):
     def gen_rows():
         for key, _, str_im in tqdm(dataset.iter_data(split, filter_idx=idxes)):
             url_key = map_image_key_to_url_key(data, split, key)
-            url = s.upload_stream(StringIO(base64.b64decode(str_im)),
-                    'images/' + url_key + '.jpg')
+            if sys.version_info.major == 3:
+                url = s.upload_stream(base64.b64decode(str_im),
+                        'images/' + url_key + '.jpg')
+            else:
+                url = s.upload_stream(StringIO(base64.b64decode(str_im)),
+                        'images/' + url_key)
             yield key, url
     dataset.write_data(gen_rows(), split, t)
 
@@ -1520,8 +1536,7 @@ def ensure_create_inverted_tsvs(dataset, splits):
             params = [param for param in params if
                     not has_inverted(param)]
             if len(params) > 0:
-                import multiprocessing as mp
-                p = mp.Pool()
+                p = Pool()
                 p.map(ensure_create_inverted_tsv_for_each, params)
 
     # generate the inverted tsv for background images without any labels
@@ -1538,8 +1553,7 @@ def ensure_create_inverted_tsvs(dataset, splits):
             params = [param for param in params if
                     not has_inverted_background(param)]
             if len(params) > 0:
-                import multiprocessing as mp
-                p = mp.Pool()
+                p = Pool()
                 p.map(ensure_create_inverted_tsv_background_for_each, params)
 
 def has_inverted(param):
@@ -1616,8 +1630,27 @@ def ensure_create_inverted_tsv_for_each(args):
             dataset.write_data(gen_inverted_rows(inverted_result[k]),
                     split, k, v)
 
+def extract_from_data_source(data, split, t):
+    assert t != 'label'
+    dataset = TSVDataset(data)
+    all_data_split = dataset.load_composite_source_data_split(split)
+    source_data_to_dataset = {}
+    label_iter = dataset.iter_data(split, 'label')
+    shuffle_iter = tsv_reader(dataset.get_shuffle_file(split))
+    def gen_rows():
+        for (idx_source, idx_row), label_row in zip(shuffle_iter, label_iter):
+            idx_source, idx_row = int(idx_source), int(idx_row)
+            source_data, source_split = all_data_split[idx_source]
+            if source_data not in source_data_to_dataset:
+                source_data_to_dataset[source_data] = TSVDataset(source_data)
+            source_dataset = source_data_to_dataset[source_data]
+            source_key, str_t = source_dataset.seek_by_idx(idx_row, source_split, t)
+            assert label_row[0] == '_'.join([source_data, source_split, source_key])
+            yield label_row[0], str_t
+    dataset.write_data(gen_rows(), split, t)
+
 def populate_dataset_details(data, check_image_details=False,
-        splits=None, check_box=False):
+        splits=None, check_box=False, data_root=None):
     logging.info(data)
     dataset = TSVDataset(data)
 
@@ -1639,7 +1672,9 @@ def populate_dataset_details(data, check_image_details=False,
                         img_from_base64(row[-1]).shape[:2]))) for
                         row in rows), split, 'hw')
                 else:
-                    from pathos.multiprocessing import ProcessingPool as Pool
+                    if dataset.has(split + 'X'):
+                        extract_from_data_source(data, split, 'hw')
+                        continue
                     num_worker = 128
                     num_tasks = num_worker * 3
                     num_images = dataset.num_rows(split)
@@ -1945,97 +1980,80 @@ def create_index_composite_dataset(dataset):
 
     # for each data source, how many labels are contributed and how many are
     # not
-    source_tsv_label_files = load_list_file(dataset.get_data(splitx,
-        'origin.label'))
-    source_tsv_labels = [TSVFile(t) for t in source_tsv_label_files]
-    trainX_label_file = dataset.get_data(splitx, 'label')
-    all_dest_label_file = load_list_file(trainX_label_file)
-    dest_labels = [TSVFile(f) for f in all_dest_label_file]
-    all_idxSource_sourceLabel_destLabel = []
-    logging.info('each datasource and each idx row')
-    idxSource_to_numRect = {}
-    all_idxSource_numSourceRects_numDestRects = []
-    for idx_source, idx_row in tqdm(all_idxSource_idxRow):
-        source_rects = json.loads(source_tsv_labels[idx_source].seek(idx_row)[-1])
-        dest_rects = json.loads(dest_labels[idx_source].seek(idx_row)[-1])
-        if idx_source not in idxSource_to_numRect:
-            idxSource_to_numRect[idx_source] = 0
-        idxSource_to_numRect[idx_source] = idxSource_to_numRect[idx_source] + \
-            len(dest_rects)
-        all_idxSource_numSourceRects_numDestRects.append((
-            idx_source, len(source_rects), len(dest_rects)))
-        for r in dest_rects:
-            all_idxSource_sourceLabel_destLabel.append((idx_source,
-                r.get('class_from', r['class']), r['class']))
-    idxSource_to_numSourceRects_numDestRects = list_to_dict(
-            all_idxSource_numSourceRects_numDestRects, 0)
-    idxSource_to_numSourceRects_numDestRect = {idxSource: [sum(x1 for x1, x2 in idxSource_to_numSourceRects_numDestRects[idxSource]),
-             sum(x2 for x1, x2 in idxSource_to_numSourceRects_numDestRects[idxSource])]
-        for idxSource in idxSource_to_numSourceRects_numDestRects}
+    if op.isfile(dataset.get_data(splitx, 'origin.label')):
+        source_tsv_label_files = load_list_file(dataset.get_data(splitx,
+            'origin.label'))
+        source_tsv_labels = [TSVFile(t) for t in source_tsv_label_files]
+        trainX_label_file = dataset.get_data(splitx, 'label')
+        all_dest_label_file = load_list_file(trainX_label_file)
+        dest_labels = [TSVFile(f) for f in all_dest_label_file]
+        all_idxSource_sourceLabel_destLabel = []
+        logging.info('each datasource and each idx row')
+        idxSource_to_numRect = {}
+        all_idxSource_numSourceRects_numDestRects = []
+        for idx_source, idx_row in tqdm(all_idxSource_idxRow):
+            source_rects = json.loads(source_tsv_labels[idx_source].seek(idx_row)[-1])
+            dest_rects = json.loads(dest_labels[idx_source].seek(idx_row)[-1])
+            if idx_source not in idxSource_to_numRect:
+                idxSource_to_numRect[idx_source] = 0
+            idxSource_to_numRect[idx_source] = idxSource_to_numRect[idx_source] + \
+                len(dest_rects)
+            all_idxSource_numSourceRects_numDestRects.append((
+                idx_source, len(source_rects), len(dest_rects)))
+            for r in dest_rects:
+                all_idxSource_sourceLabel_destLabel.append((idx_source,
+                    r.get('class_from', r['class']), r['class']))
+        idxSource_to_numSourceRects_numDestRects = list_to_dict(
+                all_idxSource_numSourceRects_numDestRects, 0)
+        idxSource_to_numSourceRects_numDestRect = {idxSource: [sum(x1 for x1, x2 in idxSource_to_numSourceRects_numDestRects[idxSource]),
+                 sum(x2 for x1, x2 in idxSource_to_numSourceRects_numDestRects[idxSource])]
+            for idxSource in idxSource_to_numSourceRects_numDestRects}
 
-    dataset.write_data([(source_tsvs[idxSource],
-        idxSource_to_numSourceRects_numDestRect[idxSource][1],
-        idxSource_to_numSourceRects_numDestRect[idxSource][0])
-        for idxSource in range(len(source_tsvs))],
-        splitx, 'tsvsource.numdestbbs.numsrcbbs')
+        dataset.write_data([(source_tsvs[idxSource],
+            idxSource_to_numSourceRects_numDestRect[idxSource][1],
+            idxSource_to_numSourceRects_numDestRect[idxSource][0])
+            for idxSource in range(len(source_tsvs))],
+            splitx, 'tsvsource.numdestbbs.numsrcbbs')
 
-    sourcetsv_to_num_rect = {source_tsvs[idx_source]: idxSource_to_numRect[idx_source]
-            for idx_source in idxSource_to_numRect}
-    dataset.write_data([(s, sourcetsv_to_num_rect[s]) for s in source_tsvs],
-        splitx, 'numRectsPerSource')
-    idxSource_to_sourceLabel_destLabels = list_to_dict(
-            all_idxSource_sourceLabel_destLabel, 0)
-    source_numSourceLabels = [(s, 0) for s in source_tsvs]
-    source_includedSourceLabels = [(s, []) for s in source_tsvs]
-    for idxSource in idxSource_to_sourceLabel_destLabels:
-        sourceLabel_destLabels = idxSource_to_sourceLabel_destLabels[idxSource]
-        sourceLabel_to_destLabels = list_to_dict(sourceLabel_destLabels, 0)
-        source_numSourceLabels[idxSource] = (source_tsvs[idxSource],
-                len(sourceLabel_to_destLabels))
-        source_includedSourceLabels[idxSource][1].extend(
-                sourceLabel_to_destLabels.keys())
+        sourcetsv_to_num_rect = {source_tsvs[idx_source]: idxSource_to_numRect[idx_source]
+                for idx_source in idxSource_to_numRect}
+        dataset.write_data([(s, sourcetsv_to_num_rect[s]) for s in source_tsvs],
+            splitx, 'numRectsPerSource')
 
-    dataset.write_data([(n, str(i)) for (n, i) in source_numSourceLabels],
-            splitx, 'numCategoriesPerSource')
+        idxSource_to_sourceLabel_destLabels = list_to_dict(
+                all_idxSource_sourceLabel_destLabel, 0)
+        source_numSourceLabels = [(s, 0) for s in source_tsvs]
+        source_includedSourceLabels = [(s, []) for s in source_tsvs]
+        for idxSource in idxSource_to_sourceLabel_destLabels:
+            sourceLabel_destLabels = idxSource_to_sourceLabel_destLabels[idxSource]
+            sourceLabel_to_destLabels = list_to_dict(sourceLabel_destLabels, 0)
+            source_numSourceLabels[idxSource] = (source_tsvs[idxSource],
+                    len(sourceLabel_to_destLabels))
+            source_includedSourceLabels[idxSource][1].extend(
+                    sourceLabel_to_destLabels.keys())
 
-    # save teh list of included labels
-    sourceDataset_to_includedSourceLabels = {}
-    for source, sourceLabels in source_includedSourceLabels:
-        source_dataset_name = op.basename(op.dirname(source))
-        if source_dataset_name not in sourceDataset_to_includedSourceLabels:
-            sourceDataset_to_includedSourceLabels[source_dataset_name] = []
-        sourceDataset_to_includedSourceLabels[source_dataset_name].extend(sourceLabels)
-    for source_dataset_name in sourceDataset_to_includedSourceLabels:
-        sourceDataset_to_includedSourceLabels[source_dataset_name] = \
-                set(sourceDataset_to_includedSourceLabels[source_dataset_name])
+        dataset.write_data([(n, str(i)) for (n, i) in source_numSourceLabels],
+                splitx, 'numCategoriesPerSource')
 
-    tsv_writer([(n, ','.join(sourceDataset_to_includedSourceLabels[n])) for n in
-        sourceDataset_to_includedSourceLabels], op.join(dataset._data_root,
-            'trainX.includeCategoriesPerSourceDataset.tsv'))
+        # save teh list of included labels
+        sourceDataset_to_includedSourceLabels = {}
+        for source, sourceLabels in source_includedSourceLabels:
+            source_dataset_name = op.basename(op.dirname(source))
+            if source_dataset_name not in sourceDataset_to_includedSourceLabels:
+                sourceDataset_to_includedSourceLabels[source_dataset_name] = []
+            sourceDataset_to_includedSourceLabels[source_dataset_name].extend(sourceLabels)
+        for source_dataset_name in sourceDataset_to_includedSourceLabels:
+            sourceDataset_to_includedSourceLabels[source_dataset_name] = \
+                    set(sourceDataset_to_includedSourceLabels[source_dataset_name])
 
-    tsv_writer([(n, get_nick_name(noffset_to_synset(s)) if is_noffset(s) else
-        s) for n in sourceDataset_to_includedSourceLabels
-          for s in sourceDataset_to_includedSourceLabels[n]],
-          op.join(dataset._data_root, 'trainX.includeCategoriesPerSourceDatasetReadable.tsv'))
+        tsv_writer([(n, ','.join(sourceDataset_to_includedSourceLabels[n])) for n in
+            sourceDataset_to_includedSourceLabels], op.join(dataset._data_root,
+                'trainX.includeCategoriesPerSourceDataset.tsv'))
 
-    #sourceDataset_to_excludeSourceLabels = {}
-    ## find out the excluded label list
-    #for source_dataset_name in sourceDataset_to_includedSourceLabels:
-        #source_dataset = TSVDataset(source_dataset_name)
-        #full_label_names = set(source_dataset.load_labelmap())
-        #included_labels = sourceDataset_to_includedSourceLabels[source_dataset_name]
-        #for l in included_labels:
-            ## if l is not in the full_label_names, it will throw exceptions
-            #full_label_names.remove(l)
-        #sourceDataset_to_excludeSourceLabels[source_dataset_name] = full_label_names
-
-    #tsv_writer([(n, ','.join(v)) for (n, v) in
-        #sourceDataset_to_excludeSourceLabels.iteritems()], op.join(dataset._data_root,
-            #'trainX.excludeCategoriesPerSourceDataset.tsv'))
-
-    #tsv_writer([(n, get_nick_name(noffset_to_synset(s)) if is_noffset(s) else
-        #s) for (n, v) in sourceDataset_to_excludeSourceLabels.iteritems() for s in v],
-        #op.join(dataset._data_root, 'trainX.excludeCategoriesPerSourceDatasetReadable.tsv'))
+        tsv_writer([(n, get_nick_name(noffset_to_synset(s)) if is_noffset(s) else
+            s) for n in sourceDataset_to_includedSourceLabels
+              for s in sourceDataset_to_includedSourceLabels[n]],
+              op.join(dataset._data_root, 'trainX.includeCategoriesPerSourceDatasetReadable.tsv'))
 
 class TSVTransformer(object):
     def __init__(self):
@@ -3156,7 +3174,6 @@ def parallel_convert_label(func, all_task, num_worker=128):
         if end_idx > len(all_task):
             end_idx = len(all_task)
         all_sub_tasks.append(all_task[start_idx:end_idx])
-    from pathos.multiprocessing import ProcessingPool as Pool
     m = Pool(num_worker)
     all_sub_results = m.map(func, all_sub_tasks)
     result = all_sub_results[0]
@@ -3184,7 +3201,6 @@ def parallel_map_to_array(func, all_task, num_worker=128):
         if end_idx > len(all_task):
             end_idx = len(all_task)
         all_sub_tasks.append(all_task[start_idx:end_idx])
-    from pathos.multiprocessing import ProcessingPool as Pool
     m = Pool(num_worker)
     all_sub_results = m.map(func, all_sub_tasks)
     result = []
@@ -3196,7 +3212,7 @@ def convert_label_db(dataset, split, idx, with_bb):
     result = None
     label_mapper = dataset._sourcelabel_to_targetlabels
     queried = []
-    for row_with_idx in tqdm(dataset.iter_gt_image(split, idx=idx)):
+    for row_with_idx in tqdm(dataset.iter_gt(split, idx=idx)):
         i = row_with_idx[0]
         queried.append(i)
         row = list(row_with_idx[1:])
@@ -3727,7 +3743,14 @@ def test():
     rects = json.loads(str_rects)
     draw_rects(im, rects)
     save_image(im, '/mnt/jianfw_desk/a.png')
-    import ipdb;ipdb.set_trace(context=15)
+
+def trim_rects_from_db(rects):
+    keys = ['_id', 'create_time', 'idx_in_split',
+            'key', 'split', 'data']
+    for rect in rects:
+        for k in keys:
+            if k in rect:
+                del rect[k]
 
 class TSVDatasetDB(object):
     def __init__(self, name):
@@ -3736,12 +3759,36 @@ class TSVDatasetDB(object):
         self._gt = self._db['qd']['ground_truth']
         self._image = self._db['qd']['image']
 
+    def iter_gt(self, split, version=None, version_by_time=None,
+            idx=None, bb_type='with_bb'):
+        # query the image db first and then attach the gt information
+        match = {'data': self.name,
+                 'split': split}
+        if idx:
+            match['idx_in_split'] = {'$in': list(idx)}
+        lookup_pipeline = self._get_gt_rect_pipeline(
+                split, version, version_by_time, bb_type,
+                extra_filter={'$eq': ['$key', '$$key']},
+                in_lookup=True)
+        pipeline = [{'$match': match},
+                    {'$lookup': {'from': 'ground_truth',
+                                 'let': {'key': '$key'},
+                                 'pipeline': lookup_pipeline,
+                                 'as': 'rects'
+                                 }}]
+        for row in self._image.aggregate(pipeline, allowDiskUse=True):
+            trim_rects_from_db(row['rects'])
+            yield row['idx_in_split'], row['key'], row['rects']
+
+    @deprecated('use iter_gt since this function will not return the image with no bb')
     def iter_gt_image(self, split, version=None, version_by_time=None,
             idx=None, bb_type='with_bb'):
+        # deprecated. use iter_gt since this function will not return anything
+        # if the image in idx has no box
         # if idx is not none, here we do not guarrentee the order is kept.
         # Thus, we also return the index of the image
         if idx:
-            extra_filter = {'idx_in_split': {'$in': idx}}
+            extra_filter = {'idx_in_split': {'$in': list(idx)}}
         else:
             extra_filter = None
         pipeline = self._get_gt_rect_pipeline(split,
@@ -3751,7 +3798,7 @@ class TSVDatasetDB(object):
                                     'key': {'$first': '$key'},
                                     'rects': {'$push': '$$ROOT'}}})
         logging.info(pformat(pipeline))
-        for result in self._gt.aggregate(pipeline):
+        for result in self._gt.aggregate(pipeline, allowDiskUse=True):
             for rect in result['rects']:
                 if '_id' in rect:
                     del rect['_id']
@@ -3760,20 +3807,36 @@ class TSVDatasetDB(object):
             yield result['_id'], result['key'], result['rects']
 
     def _get_gt_rect_pipeline(self, split, version, version_by_time,
-            bb_type, extra_filter):
-        match = {'data': self.name,
-                 'split': split}
+            bb_type, extra_filter, in_lookup=False):
+        if not in_lookup:
+            match = {'data': self.name,
+                     'split': split}
+        else:
+            match_condition = []
+            match_condition.append({'$eq': ['$data', self.name]})
+            match_condition.append({'$eq': ['$split', split]})
         if extra_filter:
-            match.update(extra_filter)
+            if not in_lookup:
+                match.update(extra_filter)
+            else:
+                match_condition.append(extra_filter)
         if version_by_time:
-            match['create_time'] = {'$lte': version_by_time}
+            if not in_lookup:
+                match['create_time'] = {'$lte': version_by_time}
+            else:
+                match_condition.append({'$lte': ['$create_time', version_by_time]})
             sort_by = 'create_time'
         else:
             if version is None:
                 version = 0
             if version != -1:
-                match['version'] = {'$lte': version}
+                if not in_lookup:
+                    match['version'] = {'$lte': version}
+                else:
+                    match_condition.append({'$lte': ['$version', version]})
             sort_by = 'version'
+        if in_lookup:
+            match = {'$expr': {'$and': match_condition}}
         sort_value = OrderedDict() # use ordered since dict is non-ordered
         sort_value[sort_by] = -1
         sort_value['contribution'] = -1
@@ -3804,7 +3867,7 @@ class TSVDatasetDB(object):
             # we do not add any filter here. Thus it is no_bb + with_bb
         pipeline = self._get_gt_rect_pipeline(split, version, version_by_time,
                 bb_type, extra_filter)
-        return self._gt.aggregate(pipeline)
+        return self._gt.aggregate(pipeline, allowDiskUse=True)
 
     def num_rows(self, split):
         pipeline = [{'$match': {'data': self.name, 'split': split}},
@@ -4759,6 +4822,28 @@ def convert_uhrs_result_back_to_sources(in_tsv, debug=True, tree_file=None):
                 logging.info('equal - {} - {}'.format(data, split))
         populate_dataset_details(data)
 
+def merge_multi_by_key(tsv_file1, all_tsv_file2, out_tsv,
+        from_flag1, all_from_flag2):
+    files = [tsv_file1]
+    files.extend(all_tsv_file2)
+    all_key_rects = [load_key_rects(tsv_reader(f)) for f in files]
+    all_key_to_rects = [{key: rects for key, rects in key_rects}
+        for key_rects in all_key_rects]
+    keys = [key for key, _ in all_key_rects[0]]
+    flags = [from_flag1]
+    flags.extend(all_from_flag2)
+    def gen_rows():
+        for key in keys:
+            all_rects = [key_to_rects[key] for key_to_rects in all_key_to_rects]
+            for rects, f in zip(all_rects, flags):
+                for r in rects:
+                    r['from'] = f
+            rects = all_rects[0]
+            for r in all_rects[1:]:
+                rects.extend(r)
+            yield key, json_dump(rects)
+    tsv_writer(gen_rows(), out_tsv)
+
 def merge_by_key(tsv_file1, tsv_file2, out_tsv,
         from_flag1='', from_flag2=''):
     files = [tsv_file1, tsv_file2]
@@ -4869,14 +4954,14 @@ def uhrs_verify_db_merge_to_tsv(collection_name='uhrs_logo_verification',
     merge_uhrs_result_to_dataset(data_split_to_key_rects)
     c.set_status_as_merged(all_id)
 
-def uhrs_merge_one(uhrs_rect, target_rects):
+def uhrs_merge_one(uhrs_rect, target_rects, tag_only=False):
     info = {'num_added': 0,
             'num_removed': 0,
             'verified_confirmed': 0,
             'verified_removed': 0,
             'non_verified_confirmed': 0,
             'non_verified_removed': 0}
-    same_rect, iou = find_best_matched_rect(uhrs_rect, target_rects)
+    same_rect, iou = find_best_matched_rect(uhrs_rect, target_rects, check_iou=(not tag_only))
     if iou < 0.8:
         if is_positive_uhrs_verified(uhrs_rect):
             target_rects.append(uhrs_rect)
@@ -4902,7 +4987,7 @@ def uhrs_merge_one(uhrs_rect, target_rects):
 
     return info
 
-def merge_uhrs_result_to_dataset(data_split_to_key_rects):
+def merge_uhrs_result_to_dataset(data_split_to_key_rects, tag_only=False):
     from qd.qd_common import list_to_dict
     from qd.qd_common import json_dump
     for (data, split), uhrs_key_rects in viewitems(data_split_to_key_rects):
@@ -4921,7 +5006,7 @@ def merge_uhrs_result_to_dataset(data_split_to_key_rects):
                 else:
                     uhrs_rects = []
                 for uhrs_rect in uhrs_rects:
-                    sub_info = uhrs_merge_one(uhrs_rect, rects)
+                    sub_info = uhrs_merge_one(uhrs_rect, rects, tag_only=tag_only)
                     for k, v in viewitems(sub_info):
                         info[k] = v + info.get(k, 0)
                 yield key, json_dump(rects)
@@ -5043,8 +5128,9 @@ def verify_prediction_by_db(pred_file, test_data, test_split, conf_th=0.3,
     logging.info('#task = {}; #exists in db = {}; #matched gt = {}; #num pri change = {}'.format(
         num_task, num_exists, num_matched_gt, num_change_pri))
 
+
 def convertcomposite_to_standard(data,
-        split='train', **kwargs):
+        split='train', ignore_image=False, **kwargs):
     dataset = TSVDataset(data)
     if op.isfile(dataset.get_data(split, t='label')) and \
             op.isfile(dataset.get_data(split)):
@@ -5054,108 +5140,272 @@ def convertcomposite_to_standard(data,
     rows_label = dataset.iter_composite(split, t='label', version=None)
     num_image = dataset.num_rows(split)
     out_tsv = dataset.get_data(split)
-    logging.info('writing image tsv: {}'.format(out_tsv))
-    tsv_writer(((row_label[0], row_label[1], row_image[2]) for row_image, row_label
-            in tqdm(zip(rows_image, rows_label), total=num_image)),
-            out_tsv)
+    if not ignore_image:
+        logging.info('writing image tsv: {}'.format(out_tsv))
+        tsv_writer(((row_label[0], row_label[1], row_image[2]) for row_image, row_label
+                in tqdm(zip(rows_image, rows_label), total=num_image)),
+                out_tsv)
     logging.info('writing image label tsv')
     rows = dataset.iter_composite(split, t='label', version=None)
     tsv_writer(tqdm(rows), dataset.get_data(split, t='label'))
 
-def process_tsv_main(**kwargs):
-    if kwargs['type'] == 'gen_tsv':
-        input_folder = kwargs['input']
-        output_folder = kwargs['ouput']
-        gen_tsv_from_labeling(input_folder, output_folder)
-    elif kwargs['type'] == 'gen_term_list':
-        tax_folder = kwargs['input']
-        term_list = kwargs['output']
-        gen_term_list(tax_folder, term_list)
-    elif kwargs['type'] == 'gen_noffset':
-        tax_input_folder = kwargs['input']
-        tax_output_folder = kwargs['output']
-        gen_noffset(tax_input_folder, tax_output_folder)
-    elif kwargs['type'] == 'ambigous_noffset':
-        tax_input_folder = kwargs['input']
-        ambigous_file_out = kwargs['output']
-        output_ambigous_noffsets_main(tax_input_folder, ambigous_file_out)
-    elif kwargs['type'] == 'standarize_crawled':
-        tsv_input = kwargs['input']
-        tsv_output = kwargs['output']
-        standarize_crawled(tsv_input, tsv_output)
-    elif kwargs['type'] == 'taxonomy_to_tsv':
-        taxonomy_folder = kwargs['input']
-        build_taxonomy_impl(taxonomy_folder, **kwargs)
-    elif kwargs['type'] == 'build_data_index':
-        data = kwargs['input']
-        populate_dataset_details(data)
-    elif kwargs['type'] == 'build_all_data_index':
-        populate_all_dataset_details()
-    elif kwargs['type'] == 'extract_for_uhrs':
-        taxonomy_folder = kwargs['input']
-        data = kwargs['data']
-        build_taxonomy_impl(taxonomy_folder,
-                data=data,
-                datas=get_data_sources(),
-                max_image_per_label=kwargs.get('max_image_per_label', 10000000),
-                min_image_per_label=kwargs.get('min_image_per_label', 0),
-                num_test=0)
-        convert_to_uhrs_with_url(data + '_with_bb')
-    elif kwargs['type'] == 'merge_labels':
-        in_tsv = kwargs['input']
-        convert_uhrs_result_back_to_sources(in_tsv, debug=False)
-    elif kwargs['type'] == 'ensure_inject_dataset':
-        ensure_inject_dataset(kwargs['data'])
-    elif kwargs['type'] == 'ensure_inject_expid':
-        ensure_inject_expid(kwargs['full_expid'])
-    else:
-        logging.info('unknown task {}'.format(kwargs['type']))
+def gen_merged_candidate(prediction_file,
+        gts, srclabel_to_destlabel=None, **kwargs):
+    # we will only consider the bounding box if the prob is larger than 0.7
+    prob_th = kwargs['merge_min_prob']
+    prob_th_max = kwargs['merge_max_prob']
+    # we will add the bounding box only if the iou is lower than 0.7 to avoid
+    # duplicate addition
+    iou_th = kwargs['merge_max_iou']
+    aug_labels = kwargs['aug_labels']
+    key_to_pred = {}
+    prediction = tsv_reader(prediction_file)
+    logging.info('loading prediction: {}'.format(prediction_file))
+    for p in tqdm(prediction):
+        assert len(p) == 2
+        key = p[0]
+        rects = json.loads(p[1])
+        key_to_pred[key] = rects
+    num_image = 0
+    num_added = 0
+    for gt in tqdm(gts):
+        assert len(gt) == 2
+        num_image = num_image + 1
+        key = gt[0]
+        g_rects = json.loads(gt[1])
+        origin_g_rects = copy.deepcopy(g_rects)
+        add_rects = []
+        if key not in key_to_pred:
+            yield key, origin_g_rects, add_rects, g_rects
+            continue
+        p_rects = key_to_pred[key]
+        p_rects = [r for r in p_rects if r['conf'] > prob_th and
+                r['conf'] <= prob_th_max]
+        if aug_labels is not None:
+            p_rects = [r for r in p_rects if r['class'] in aug_labels]
+        if srclabel_to_destlabel:
+            p_rects = [r for r in p_rects if r['class'] in srclabel_to_destlabel]
+            for r in p_rects:
+                r['class'] = srclabel_to_destlabel[r['class']]
+        p_rects = sorted(p_rects, key=lambda x: -x['conf'])
+        for p_rect in p_rects:
+            is_add = True
+            ious = [calculate_iou(p_rect['rect'], g_rect['rect'])
+                    for g_rect in g_rects]
+            if len(ious) > 0 and max(ious) > iou_th:
+                is_add = False
+            if is_add:
+                num_added = num_added + 1
+                p_rect['from'] = prediction_file
+                # add p_rect
+                add_rects.append(p_rect)
+                g_rects.append(p_rect)
+        yield key, origin_g_rects, add_rects, g_rects
+    logging.info('num_image = {}'.format(num_image))
+    logging.info('num_added = {}'.format(num_added))
 
-def parse_args():
-    parser = argparse.ArgumentParser(description='TSV Management')
-    parser.add_argument('-c', '--config_file', help='config file',
-            type=str)
-    parser.add_argument('-t', '--type', help='what type it is: gen_tsv',
-            type=str, required=False)
-    parser.add_argument('-i', '--input', help='input',
-            type=str, required=False)
-    parser.add_argument('-p', '--prototxt', help='proto file',
-            type=str, required=False)
-    parser.add_argument('-m', '--model', help='model file',
-            type=str, required=False)
-    parser.add_argument('-o', '--output', help='output',
-            type=str, required=False)
-    parser.add_argument('-d', '--datas',
-            default=argparse.SUPPRESS,
-            nargs='*',
-            help='which data are used for taxonomy_to_tsv',
-            type=str,
-            required=False)
-    parser.add_argument('-da', '--data',
-            default=argparse.SUPPRESS,
-            help='the dataset name under data/',
-            type=str,
-            required=False)
-    parser.add_argument('-fe', '--full_expid',
-            default=argparse.SUPPRESS,
-            type=str,
-            required=False)
-    parser.add_argument('-maxi', '--max_image_per_label',
-            default=argparse.SUPPRESS,
-            type=int,
-            required=False)
-    parser.add_argument('-mini', '--min_image_per_label',
-            default=argparse.SUPPRESS,
-            type=int,
-            required=False)
-    return parser.parse_args()
+
+def merge_prediction_to_gt(prediction_file, gts, im_rows, dataset, split,
+        **param):
+    dataset.iter_data(split, 'label')
+    gts2 = gen_merged_candidate(prediction_file, gts, **param)
+    if im_rows is not None:
+        if False:
+            # show image
+            for gt2, im_row in zip(gts2, im_rows):
+                assert gt2[0] == im_row[0]
+                im = img_from_base64(im_row[-1])
+                origin_rects = gt2[1]
+                add_rects = gt2[2]
+                merged_rects = gt2[3]
+                if len(add_rects) == 0:
+                    continue
+                im_origin_gt = np.copy(im)
+                draw_bb(im_origin_gt, [r['rect'] for r in origin_rects],
+                        [r['class'] for r in origin_rects])
+                im_add = np.copy(im)
+                draw_bb(im_add, [r['rect'] for r in add_rects],
+                        [r['class'] for r in add_rects],
+                        [r['conf'] for r in add_rects])
+                im_merged = np.copy(im)
+                draw_bb(im_merged, [r['rect'] for r in merged_rects],
+                        [r['class'] for r in merged_rects])
+                logging.info(pformat(add_rects))
+                show_images([im_origin_gt, im_add, im_merged], 1, 3)
+        else:
+            # save image
+            for i, (gt2, im_row) in enumerate(zip(gts2, im_rows)):
+                assert gt2[0] == im_row[0]
+                im = img_from_base64(im_row[-1])
+                origin_rects = gt2[1]
+                add_rects = gt2[2]
+                merged_rects = gt2[3]
+                if len(add_rects) == 0:
+                    continue
+                im_origin_gt = np.copy(im)
+                draw_rects(origin_rects, im_origin_gt)
+                add_class = list(set([r['class'] for r in add_rects]))
+                for c in add_class:
+                    c_rects = [r for r in add_rects if r['class'] == c]
+                    im_add = np.copy(im)
+                    draw_rects(c_rects, im_add, add_label=False)
+                    im_origin = np.copy(im)
+                    draw_rects(origin_rects, im_origin)
+                    im_merged = np.copy(im)
+                    draw_rects(merged_rects, im_merged)
+                    top = np.concatenate((im, im_add), 1)
+                    bottom = np.concatenate((im_origin, im_merged), 1)
+                    x = np.concatenate((top, bottom), 0)
+                    save_image(x, '/mnt/jianfw_desk/add_image/{}/{}.jpg'.format(
+                        c, im_row[0]))
+    else:
+        meta = {'num_image': 0,
+                'num_added_total': 0,
+                'from': prediction_file}
+        all_added = []
+        def gen_rows():
+            for key, origin_rects, add_rects, merged_rects in gts2:
+                all_added.append((key, add_rects))
+                meta['num_added_total'] = meta['num_added_total']+len(add_rects)
+                meta['num_image'] = meta['num_image'] + 1
+                yield key, json_dump(merged_rects)
+        # we will not change the files if they are the same
+        def gen_info():
+            meta['num_added_each'] = 1. * meta['num_added_total'] / meta['num_image']
+            for k, v in viewitems(meta):
+                yield k, v
+            for k, rects in all_added:
+                yield k, json_dump(rects)
+        dataset.update_data(gen_rows(), split, 'label',
+                generate_info=gen_info())
+
+def generate_labels_to_verify(predict_file, data, split, th,
+        pred_to_gt, output_file):
+    dataset = TSVDataset(data)
+    if op.isfile(op.join(dataset._data_root, 'root.yaml')):
+        tax = Taxonomy(load_from_yaml_file(op.join(dataset._data_root, 'root.yaml')))
+    else:
+        tax = None
+    gt_key_rects = [(row[0], json.loads(row[1])) for row in tqdm(dataset.iter_data(split,
+        'label', version=-1))]
+    logging.info('loading pred')
+    pred_key_to_rects = {}
+    for row in tqdm(tsv_reader(predict_file)):
+        key = row[0]
+        rects = json.loads(row[1])
+        pred_key_to_rects[key] = [r for r in rects if r['conf'] > th]
+
+    def gen_rows(pred_to_gt=True):
+        logging.info('start to writting')
+        for key, gt_rects in tqdm(gt_key_rects):
+            if tax is not None:
+                rects2 = lift_one_image(gt_rects, tax)
+                del gt_rects[:]
+                gt_rects.extend(rects2)
+            pred_rects = pred_key_to_rects.get(key)
+            if pred_rects is None:
+                continue
+            need_confirm = []
+            if pred_to_gt:
+                for pr in pred_rects:
+                    if not onebb_in_list_of_bb(pr, gt_rects):
+                        need_confirm.append(pr)
+            else:
+                for g in gt_rects:
+                    if len(g) == 2:
+                        assert 'class' in g and 'rect' in g
+                        continue
+                    if not onebb_in_list_of_bb(g, pred_rects):
+                        need_confirm.append(g)
+            yield key, json.dumps(need_confirm)
+
+    tsv_writer(gen_rows(pred_to_gt=pred_to_gt), output_file)
+
+def onebb_in_list_of_bb(bb, bbs):
+    bbs = [b for b in bbs if b['class'] == bb['class']]
+    return any(calculate_iou(b['rect'], bb['rect']) > 0.5 for b in bbs)
+
+def inject_accuracy():
+    all_full_expid = os.listdir('./output')
+    from qd.db import create_annotation_db
+    c = create_annotation_db()
+    for full_expid in tqdm(all_full_expid):
+        all_predict = glob.glob(op.join('output', full_expid, 'snapshot',
+            '*.predict'))
+        all_predict.extend(glob.glob(op.join('output', full_expid, 'snapshot',
+            '*.predict.tsv')))
+
+        all_report = glob.glob(op.join('output', full_expid, 'snapshot', '*.report'))
+        for report_file in all_report:
+            try:
+                predict_file = find_predict_file(report_file, all_predict)
+            except:
+                logging.info('cannot find pred for {} from \n{}'.format(
+                    report_file, '\n'.join(all_predict)))
+                continue
+            from qd.qd_common import parse_test_data_with_version
+            try:
+                test_data, test_split, test_version = parse_test_data_with_version(op.basename(report_file))
+            except:
+                continue
+            info = {'full_expid': full_expid,
+                    'predict_file': op.basename(predict_file),
+                    'report_file': op.basename(report_file),
+                    'test_data': test_data,
+                    'test_split': test_split,
+                    'test_version': test_version,
+                    }
+            if 'coco_box' in report_file:
+                acc = load_from_yaml_file(report_file)
+            else:
+                map_json_file = report_file + '.map.json'
+                if op.isfile(map_json_file):
+                    x = json.loads(read_to_buffer(map_json_file))
+                    acc = {}
+                    for k1 in x:
+                        for k2 in x[k1]:
+                            for k3 in x[k1][k2]:
+                                k = '{}${}${}'.format(k1, k2, k3)
+                                acc[k] = x[k1][k2][k3]
+                else:
+                    continue
+            for k in list(acc.keys()):
+                curr = copy.deepcopy(info)
+                curr['metric_name'] = k
+                if c.exist_acc(**curr):
+                    continue
+                curr['metric_value'] = acc[k]
+                c.insert_acc(**curr)
+
+def find_predict_file(report_file, all_predict):
+    found = False
+    for p in all_predict:
+        if p + '.report' == report_file:
+            assert not found
+            found = True
+            result = p
+            return p
+        if p.endswith('.predict'):
+            ps = p[: -len('.predict')]
+        elif p.endswith('.predict.tsv'):
+            ps = p[: -len('.predict.tsv')]
+        else:
+            continue
+        if report_file.startswith(ps):
+            rs = report_file[len(ps):]
+            pattern = '(\.predict)?(\.coco_box)?(\.top1)?(\.v[0-9]*)?\.report'
+            if re.match(pattern, rs):
+                assert not found
+                found = True
+                result = p
+    assert found
+    return result
 
 if __name__ == '__main__':
+    from qd.qd_common import parse_general_args
     init_logging()
-    args = parse_args()
-    kwargs = vars(args)
-    if kwargs.get('config_file'):
-        logging.info('loading parameter from {}'.format(kwargs['config_file']))
-        kwargs = load_from_yaml_file(kwargs['config_file'])
-    process_tsv_main(**kwargs)
-
+    kwargs = parse_general_args()
+    logging.info('param:\n{}'.format(pformat(kwargs)))
+    function_name = kwargs['type']
+    del kwargs['type']
+    locals()[function_name](**kwargs)

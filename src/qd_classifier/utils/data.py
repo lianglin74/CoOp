@@ -20,9 +20,10 @@ def get_data_loader(args, logger=None):
         train_dataset = CropClassTSVDatasetYamlList(args.data, session_name='train', transform=train_transform, enlarge_bbox=args.enlarge_bbox)
     else:
         raise NotImplementedError()
+    labelmap = train_dataset.get_labelmap()
 
     if args.balance_sampler:
-        assert not args.balance_class
+        assert not args.balance_class and not args.distributed
         train_sampler = make_class_balanced_sampler(train_dataset)
     else:
         if args.distributed:
@@ -36,9 +37,9 @@ def get_data_loader(args, logger=None):
         num_workers=args.workers, pin_memory=True, sampler=train_sampler)
 
     if args.data.endswith('.yaml'):
-        val_dataset = CropClassTSVDatasetYaml(args.data, session_name='val', transform=test_transform, enlarge_bbox=args.enlarge_bbox)
+        val_dataset = CropClassTSVDatasetYaml(args.data, session_name='val', labelmap=labelmap, transform=test_transform, enlarge_bbox=args.enlarge_bbox)
     elif args.data.endswith('.yamllst'):
-        val_dataset = CropClassTSVDatasetYamlList(args.data, session_name='val', transform=test_transform, enlarge_bbox=args.enlarge_bbox)
+        val_dataset = CropClassTSVDatasetYamlList(args.data, session_name='val', labelmap=labelmap, transform=test_transform, enlarge_bbox=args.enlarge_bbox)
     else:
         raise NotImplementedError()
 
@@ -132,10 +133,9 @@ def get_pt_transform(phase, args):
         if args.data_aug == 0:
             train_transform = transforms.Compose([
                     transforms.ToPILImage(),
+                    # transforms.RandomAffine(degrees=10),
                     transforms.RandomResizedCrop(crop_size, scale=(0.25,1), ratio=(2./3., 3./2.)),
-                    # transforms.ColorJitter(brightness=(0.66667, 1.5), contrast=0, saturation=(0.66667, 1.5), hue=(-0.1, 0.1)),
                     transforms.ColorJitter(brightness=0.5, contrast=0, saturation=0.5, hue=0.1),
-                    # transforms.RandomHorizontalFlip(0.5),
                     transforms.ToTensor(),
                     rgb_normalize,
                 ])
@@ -151,9 +151,9 @@ def get_pt_transform(phase, args):
         elif args.data_aug == 2:
             train_transform = transforms.Compose([
                     transforms.ToPILImage(),
-                    transforms.RandomAffine(0, shear=15),
+                    # transforms.RandomAffine(0, shear=15),
                     transforms.RandomAffine(degrees=10),
-                    transforms.RandomAffine(0, shear=15),
+                    # transforms.RandomAffine(0, shear=15),
                     transforms.RandomResizedCrop(crop_size, scale=(0.25,1), ratio=(2./3., 3./2.)),
                     transforms.ColorJitter(brightness=0.5, contrast=0, saturation=0.5, hue=0.1),
                     transforms.ToTensor(),

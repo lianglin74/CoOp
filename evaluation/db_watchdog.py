@@ -45,6 +45,19 @@ class LogoVerificationConfig():
     num_judgment = 4
     max_tasks_running = 5
 
+class TagVerificationConfig():
+    collection_name = "uhrs_tag_verification"
+    honeypot = "//vigdgx02/raid_data/uhrs/eval_tag/honeypot/voc_tag_hp.txt"
+    hp_type = "hp"
+    db_name='qd'
+    task_type = "VerifyImage"
+    uhrs_type = "crowdsource_verify_tag"
+    num_tasks_per_hit = 10
+    num_hp_per_hit = 2
+    max_hits_per_file = 2000
+    num_judgment = 4
+    max_tasks_running = 5
+
 def get_working_dir(db_name, collection_name):
     dirpath = op.join(tempfile.gettempdir(), "{}_{}".format(db_name, collection_name))
     qd_common.ensure_directory(dirpath)
@@ -146,7 +159,7 @@ def analyze_completed_task(res_file):
 
 def main():
     qd_common.init_logging()
-    db_configs = [VerificationConfig(), LogoVerificationConfig()]
+    db_configs = [TagVerificationConfig(), VerificationConfig(), LogoVerificationConfig()]
 
     while True:
         for config in db_configs:

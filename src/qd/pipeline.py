@@ -18,6 +18,7 @@ from qd.qd_common import make_by_pattern_result
 from qd.qd_common import load_from_yaml_file
 from qd.qd_common import hash_sha1
 from qd.qd_common import init_logging
+from qd.qd_common import dict_has_path, dict_get_path_value, dict_get_all_path
 
 
 def get_all_test_data(exp):
@@ -43,13 +44,15 @@ def get_all_related_data_for_philly_jobs(data):
 
 def ensure_upload_data_for_philly_jobs(data):
     all_data = get_all_related_data_for_philly_jobs(data)
+    for d in all_data:
+        from qd.process_tsv import populate_dataset_details
+        populate_dataset_details(d, check_image_details=True)
 
     c = create_cloud_storage('vig')
     philly_client = create_philly_client()
     data_folder = philly_client.get_data_folder_in_blob()
     for d in all_data:
         dataset = TSVDataset(d)
-        need_upload = False
         for split in ['train', 'test']:
             splitx = split + 'X'
             if op.isfile(dataset.get_data(splitx)) and d.endswith('_with_bb'):
@@ -58,12 +61,8 @@ def ensure_upload_data_for_philly_jobs(data):
                     d,
                     split)):
                     convertcomposite_to_standard(d, split)
-                    need_upload = True
-        if not c.exists('{}/{}/labelmap.txt'.format(data_folder, d)):
-            need_upload = True
-        if need_upload:
-            if op.isdir(dataset._data_root):
-                c.az_upload2(dataset._data_root, data_folder)
+        if op.isdir(dataset._data_root):
+            c.az_sync(dataset._data_root, op.join(data_folder, d))
 
 def philly_func_run(func, param, **submit_param):
     if 'data' in param:
@@ -86,61 +85,64 @@ def philly_func_run(func, param, **submit_param):
     logging.info(client.get_config_extra_param(extra_param))
     client.submit_without_sync(extra_param)
 
-def dict_get_all_path(d):
-    all_path = []
-    for k, v in viewitems(d):
-        if not isinstance(v, dict):
-            all_path.append(k)
-        else:
-            all_sub_path = dict_get_all_path(v)
-            all_path.extend([k + '$' + p for p in all_sub_path])
-    return all_path
-
-def dict_has_path(d, p):
-    ps = p.split('$')
-    cur_dict = d
-    while True:
-        if len(ps) > 0:
-            if ps[0] in cur_dict:
-                cur_dict = cur_dict[ps[0]]
-                ps = ps[1:]
-            else:
-                return False
-        else:
+def except_to_update_for_stageiter(param):
+    if param.get('net', '').startswith('e2e'):
+        stageiter = param.get('stageiter', (0, 0))
+        max_iter = param.get('max_iter', 0)
+        if len(stageiter) == 2 and \
+                stageiter[0] == 6 * max_iter // 9 and \
+                stageiter[1] == 8 * max_iter // 9:
             return True
+    return False
 
-def dict_get_path_value(d, p):
-    ps = p.split('$')
-    cur_dict = d
-    while True:
-        if len(ps) > 0:
-            cur_dict = cur_dict[ps[0]]
-            ps = ps[1:]
-        else:
-            return cur_dict
+def except_to_update_for_version(param):
+    return param.get('MaskTSVDataset', {}).get('version') in [0, None]
+
+def except_to_update_for_remove_bg_image(param):
+    return param.get('MaskTSVDataset', {}).get('remove_images_without_annotations', True)
+
+def except_to_update_for_data_augmentation(param):
+    return type(param.get('yolo_train_session_param',
+        {}).get('data_augmentation')) is not str
 
 def update_parameters(param):
     default_param = {
             'max_iter': 10000,
             'effective_batch_size': 64}
 
-    direct_add_value_keys = OrderedDict([('effective_batch_size', 'BS'),
+    direct_add_value_keys = [
+            # first value is the key, the second is the name in the folder; the
+            # third is the excpdetion condidtion
+            ('MaskTSVDataset$version', 'V', except_to_update_for_version),
+            ('MaskTSVDataset$remove_images_without_annotations', 'RemoveEmpty',
+                except_to_update_for_remove_bg_image),
+            ('effective_batch_size', 'BS'),
             ('max_iter', 'MaxIter'),
             ('max_epoch', 'MaxEpoch'),
             ('last_fixed_param', 'LastFixed'),
             ('num_extra_convs', 'ExtraConv'),
-            ('yolo_train_session_param$data_augmentation', 'Aug'),
+            ('yolo_train_session_param$data_augmentation', 'Aug',
+                except_to_update_for_data_augmentation),
+            ('yolo_train_session_param$data_augmentation$box_data_param$max_trials',
+                'AugTrials'),
+            ('yolo_train_session_param$data_augmentation$box_data_param$random_scale_min',
+                'ScaleMin'),
+            ('yolo_train_session_param$data_augmentation$box_data_param$random_scale_max',
+                'ScaleMax'),
             ('momentum', 'Momentum'),
             ('base_lr', 'LR'),
-            ('stageiter', 'StageIter')
-            ])
+            ('stageiter', 'StageIter', except_to_update_for_stageiter),
+            ('INPUT$MIN_SIZE_TRAIN', 'Min'),
+            ('INPUT$MAX_SIZE_TRAIN', 'Max'),
+            ]
 
     non_expid_impact_keys = ['data', 'net', 'expid_prefix',
             'test_data', 'test_split', 'test_version',
             'dist_url_tcp_port', 'workers', 'force_train',
             'pipeline_type', 'test_batch_size',
             'yolo_train_session_param$debug_train',
-            'evaluate_method',
+            'yolo_predict_session_param',
+            'evaluate_method', 'debug_train',
             'full_expid',
             'display']
 
@@ -159,9 +161,12 @@ def update_parameters(param):
     for k in need_hash_sha_params:
         if k in param:
             infos.append('{}{}'.format(k, hash_sha1(param[k])[:5]))
-    for k, v in viewitems(direct_add_value_keys):
+    for setting in direct_add_value_keys:
+        k, v = setting[:2]
         if dict_has_path(param, k):
             pk = dict_get_path_value(param, k)
+            if len(setting) == 3 and setting[2](param):
+                continue
             if type(pk) is str:
                 pk = pk.replace('/', '.')
             elif type(pk) in [list, tuple]:
@@ -179,7 +184,7 @@ def update_parameters(param):
     known_keys = []
     known_keys.extend((k for k in need_hash_sha_params))
     known_keys.extend((k for k in non_expid_impact_keys))
-    known_keys.extend((k for k in direct_add_value_keys))
+    known_keys.extend((s[0] for s in direct_add_value_keys))
     known_keys.extend((k for k in true_false_keys))
 
     all_path = dict_get_all_path(param)
@@ -201,21 +206,24 @@ def create_pipeline(kwargs):
     elif pipeline_type == 'MaskRCNNPipeline':
         from qd.qd_maskrcnn import MaskRCNNPipeline
         return MaskRCNNPipeline(**kwargs)
+    elif pipeline_type == 'MMDetPipeline':
+        from qd.qd_mmdetection import MMDetPipeline
+        return MMDetPipeline(**kwargs)
 
 def load_pipeline(kwargs):
     from qd.qd_pytorch import load_latest_parameters
     kwargs_f = load_latest_parameters(op.join('output',
         kwargs['full_expid']))
-    for k in kwargs_f:
-        if k not in kwargs:
-            # we can overwrite the parameter in the parameter file
-            kwargs[k] = kwargs_f[k]
-    return create_pipeline(kwargs)
+    from qd.qd_common import dict_update_nested_dict
+    dict_update_nested_dict(kwargs_f, kwargs)
+    return create_pipeline(kwargs_f)
 
-def test_model_pipeline_eval_multi(all_test_data, param, **kwargs):
+def pipeline_train_eval_multi(all_test_data, param, **kwargs):
     init_logging()
-    update_parameters(param)
-    pip = create_pipeline(param)
+    curr_param = copy.deepcopy(param)
+    if len(all_test_data) > 0:
+        curr_param.update(all_test_data[0])
+    pip = create_pipeline(curr_param)
     pip.ensure_train()
     param['full_expid'] = pip.full_expid
     for test_data_info in all_test_data:
@@ -250,7 +258,6 @@ def test_model_pipeline(param):
         pip.ensure_train()
         pip.ensure_predict()
         pip.ensure_evaluate()
-
 
 if __name__ == '__main__':
     from qd.qd_common import parse_general_args

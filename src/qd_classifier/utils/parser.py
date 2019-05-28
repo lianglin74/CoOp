@@ -43,11 +43,13 @@ def get_arg_parser(model_names):
     # distributed training
     parser.add_argument('--world-size', default=1, type=int,
                         help='number of distributed processes')
-    parser.add_argument('--dist-url', default='tcp://224.66.41.62:23456', type=str,
+    # parser.add_argument('--dist-url', default='tcp://224.66.41.62:23456', type=str,
+    #                     help='url used to set up distributed training')
+    parser.add_argument('--dist-url', default='env://', type=str,
                         help='url used to set up distributed training')
     parser.add_argument('--dist-backend', default='gloo', type=str,
                         help='distributed backend')
-    parser.add_argument("--rank", default=0, type=int,
+    parser.add_argument("--local_rank", default=0, type=int,
                         help='manual rank assignment')
 
     # need setup output dir

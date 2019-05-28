@@ -130,14 +130,19 @@ def remote_run(str_cmd, ssh_info, return_output=False):
         cs = []
         # don't use anaconda since caffe is slower under anaconda because of the
         # data preprocessing. not i/o
-        #cs.append('export PATH=$HOME/anaconda3/bin:$PATH')
-        #cs.append('export LD_LIBRARY_PATH=$HOME/anaconda3/lib:$LD_LIBRARY_PATH')
-        cs.append('export PATH=/usr/local/nvidia/bin:$PATH')
-        cs.append('export PYTHONPATH=/tmp/code/quickdetection/src/CCSCaffe/python:$PYTHONPATH')
+        cs.append('source ~/.bashrc')
+        if 'conda' in get_executable():
+            cs.append('export PATH=$HOME/anaconda3/bin:\$PATH')
+            cs.append('export LD_LIBRARY_PATH=$HOME/anaconda3/lib:\$LD_LIBRARY_PATH')
+        cs.append('export PATH=/usr/local/nvidia/bin:\$PATH')
+        cs.append('export PYTHONPATH=/tmp/code/quickdetection/src/CCSCaffe/python:\$PYTHONPATH')
         prefix = ' && '.join(cs) + ' && '
 
     suffix = ' && hostname'
-    cmd.append('{}{}{}'.format(prefix, str_cmd, suffix))
+    ssh_command = '{}{}{}'.format(prefix, str_cmd, suffix)
+    # this will use the environment variable like what you have after ssh
+    ssh_command = 'bash -i -c "{}"'.format(ssh_command)
+    cmd.append(ssh_command)
 
     return cmd_run(cmd, return_output)
 
