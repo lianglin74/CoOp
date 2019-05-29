@@ -1,0 +1,24 @@
+type: build_taxonomy_impl
+taxonomy_folder: ./aux_data/taxonomy10k/TaxCBA3/TaxCBA3V1
+num_test: 0
+data: TaxCBA3V1_TEST
+datas:
+    - cleaness: 10
+      name: CBAVideo0
+      split_infos:
+      - split: test
+        version: 0
+      use_all: true
+    - cleaness: 10
+      name: CBAVideo1
+      split_infos:
+      - split: test
+        version: 0
+      use_all: true
+    - cleaness: 10
+      name: CBAVideo2_1
+      split_infos:
+      - split: test
+        version: 0
+      use_all: true
+max_image_per_label: 0
