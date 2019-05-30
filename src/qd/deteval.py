@@ -284,9 +284,10 @@ def _eval(truths, detresults, ovthresh, confs=None, label_to_keys=None):
                     if key in valid_keys]
         (c_y_scores, c_y_trues, c_npos) = evaluate_(c_detects, c_truths, ovthresh)
         if confs and np.sum(c_y_trues):
+            c_coverage_ratio = float(np.sum(c_y_trues)) / c_npos
             precision, recall, thresholds = metrics.precision_recall_curve(c_y_trues, c_y_scores)
             class_prec_recall_th[label] = [[float(p) for p in precision],
-                    [float(r) for r in recall], [float(t) for t in thresholds]]
+                    [float(r) * c_coverage_ratio for r  in recall], [float(t) for t in thresholds]]
             for conf in confs:
                 # precision is in ascending order
                 indices, = np.where((precision > conf) & (recall > 0.0))
