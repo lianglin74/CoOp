@@ -249,15 +249,51 @@ def testGetDegreeOfTwoPoints():
     p2 = (1, 1)
     print("p1 is: ", p1)
     print("Angle is: ", getAngleOfTwoPoints(p1, p2) / math.pi * 180)
-    
+
+def writeToTSV(labelFile, pred_results):
+  fileName = labelFile.replace(".tsv", "_events.tsv")
+  videoFileName = labelFile.replace(".tsv", ".mp4")
+  id = 0; 
+  className = "shot"
+  padding  = 1
+  dictList = []
+  for v in pred_results:
+    id += 1
+    value = {}
+    value['class'] = className
+    value['id'] = id
+    value['start'] = v - padding
+    value['end'] = v + padding    
+    dictList.append(value)
+  
+  print('json format results:')
+  print(dictList)
+  
+  f = open(fileName, 'w')  
+  f.write(videoFileName + '\t' + json.dumps(dictList) + '\n');
+  f.close()
+  
+def read_file_to_list(file_name):
+  res_lists = []
+  with open(file_name, 'r') as file: # Use file to refer to the file object
+    data = file.read() 
+    res_lists = data.split()    
+  
+  return res_lists;
+  
 def main():
+  dir = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_chop/"
+  labelFiles = "labellist.txt"
+  labelFileList = read_file_to_list(dir + labelFiles)
   #predict_file = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_chop/TSV/head350_prediction_1551538896210_sc99_01_q1.tsv"
-  predict_file = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_chop/prediction_1551538896210_sc99_01_q1.tsv"
-  
-  pred_results =  findShot(predict_file)
-  true_results = [13, 36, 55, 119, 150, 157, 186, 328, 350, 386]
-  
-  calculateF1(pred_results, true_results)
+  #predict_file = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_chop/prediction_1551538896210_sc99_01_q1.tsv"
+  for predict_file in labelFileList:
+    pred_results =  findShot(dir + predict_file)
+    if predict_file == "1551538896210_sc99_01_q1.tsv":
+      true_results = [13, 36, 55, 119, 150, 157, 186, 328, 350, 386]      
+      calculateF1(pred_results, true_results)
+    
+    writeToTSV(predict_file, pred_results)
 
 if __name__ == '__main__':
   main()
