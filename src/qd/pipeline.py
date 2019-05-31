@@ -81,9 +81,9 @@ def philly_func_run(func, param, **submit_param):
     assert func.__module__ != '__main__'
     assert 'type' not in param
     param['type'] = func.__name__
-    client = create_philly_client(use_blob_as_input=True,
-            **submit_param)
-    param['gpus'] = list(range(client.num_gpu))
+    from qd.philly import create_multi_philly_client
+    client = create_multi_philly_client(**submit_param)
+    #param['gpus'] = list(range(client.num_gpu))
     if hasattr(func, 'func_code'):
         # py2
         code_file_name = func.func_code.co_filename

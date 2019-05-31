@@ -196,6 +196,9 @@ def create_philly_client(**kwargs):
         param['password'] = os.environ['PHILLY_PASSWORD']
     return PhillyVC(**param)
 
+def create_multi_philly_client(**kwargs):
+    return MultiPhillyVC(**kwargs)
+
 def decode_extra_param(extraParam):
     re_result = re.match('.*python scripts/.*\.py -bp (.*)', extraParam)
     if re_result and len(re_result.groups()) == 1:
@@ -308,6 +311,20 @@ class PhillyVC(object):
             result = result[1:]
         return result
 
+    def get_summary(self):
+        cmd = 'https://philly/api/summary?clusterId={}'.format(
+                self.cluster)
+        summary = self.philly_rest_api(cmd)
+        summary = json.loads(summary)
+        logging.info(pformat(summary))
+        result = {}
+        result['quota'] = summary['queueStatus']['virtualClusters'][self.vc]['quota']
+        queues = summary['queueStatus']['virtualClusters'][self.vc]['queues']
+        activeGpus = sum((v['activeGpus'] for q, v in queues.items()))
+        result['activeGpus'] = activeGpus
+
+        return result
+
     def sync_code(self, random_id):
         self.random_id = random_id
 
@@ -358,6 +375,10 @@ class PhillyVC(object):
                 ]
         if my_own:
             param.append('userName={}'.format(self.user_name))
+        else:
+            # default is 25. it is for all users if my_own is False, and
+            # maybe very small
+            param.append('numFinishedJobs=500')
         cmd += '&'.join(param)
         while True:
             result = self.philly_rest_api(cmd)
@@ -656,7 +677,8 @@ class PhillyVC(object):
         logging.info(pformat(meta))
 
         logging.info('satus = {}'.format(status['status']))
-        self.get_ssh_command(status)
+        ssh_command = self.get_ssh_command(status)
+        logging.info(ssh_command)
         url = 'https://philly/#/job/{}/{}/{}'.format(self.cluster,
                 self.vc, job_id[len('application_'): ])
         logging.info(url)
@@ -719,7 +741,6 @@ class PhillyVC(object):
             result.append('-i')
             result.append('/var/storage/shared/input/sys/jobs/{}/.ssh/id_rsa'.format(info['appID']))
             cmd = ' '.join(result)
-            logging.info(cmd)
             return cmd
 
     def get_http_prefix(self):
@@ -857,6 +878,39 @@ class MultiPhillyVC(object):
             del kwargs['cluster']
         self.kwargs = kwargs
 
+        self.clients = [create_philly_client(cluster=c, **self.kwargs) for c in
+                self.all_cluster]
+
+    def submit_without_sync(self, extraParam):
+        if self.clients[0].dry_run or len(self.clients) == 1:
+            self.clients[0].submit_without_sync(extraParam)
+        else:
+            all_summary = [c.get_summary() for c in self.clients]
+            avail_gpus = [s['quota'] - s['activeGpus'] for s in all_summary]
+            max_idx = max(list(range(len(avail_gpus))), key=lambda x:
+                    avail_gpus[x])
+            if avail_gpus[max_idx] > self.clients[0].num_gpu * 2:
+                target_client = self.clients[max_idx]
+                logging.info('select {} because of {} free gpus'.format(
+                    target_client.cluster, avail_gpus[max_idx]))
+            else:
+                all_jobs = [c.query_all_job(my_own=True) for c in self.clients]
+                all_jobs = [[j for j in jobs if j['status'] in ['Running']]
+                    for jobs in all_jobs]
+                for jobs in all_jobs:
+                    for j in jobs:
+                        assert j['status'] in ['Running', 'Killed', 'Failed']
+                all_numGpus = [sum([j['gpus'] for j in jobs])
+                    for jobs in all_jobs]
+                min_idx = min(len(all_numGpus), key=lambda x: all_numGpus[x])
+                target_client = self.clients[min_idx]
+                logging.info('select {} because of {} less usage'.format(
+                    target_client.cluster, all_numGpus[min_idx]))
+            target_client.submit_without_sync(extraParam)
+
+    def get_config_extra_param(self, command):
+        return self.clients[0].get_config_extra_param(command)
+
     def search_job_id_and_track(self, partial_id):
         client, app_id = self.search_job_id(partial_id)
         client.track_job_once(app_id)
@@ -869,7 +923,7 @@ class MultiPhillyVC(object):
         assert (len(all_cluster_cans) == 1 and
                 len(all_cluster_cans[0][1]) == 1), \
             'ambigous job found: {}'.format('{}: {}'.format(c,
-                ','.join(cans))for c, cans in all_cluster_cans)
+                ','.join(cans)) for c, cans in all_cluster_cans)
         client = all_cluster_cans[0][0]
         job_id = all_cluster_cans[0][1][0]
         return client, job_id
@@ -1121,7 +1175,7 @@ def print_job_infos(all_job_info):
             'status', 'appID-s', 'elapsedTime',
             'retries', 'preempts', 'mem_used', 'gpu_util',
             'speed', 'left']
-    keys = ['data', 'net', 'max_iters', 'max_iter', 'effective_batch_size']
+    keys = ['data', 'net', 'expid']
     for job_info in all_job_info:
         for k in keys:
             job_info[k] = job_info['meta'].get('param',
