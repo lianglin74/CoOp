@@ -55,6 +55,10 @@ def findShot(predict_file):
     
     iouTime = -1
     
+    largeDistanceCount = 0
+    LargeBallRimDistanceCountThresh = 5
+    timeSinceEventStart = 0
+    
     for row in tqdm(tsv_reader(predict_file)):
         imageCnt += 1
         
@@ -151,34 +155,33 @@ def findShot(predict_file):
             if distanceFromBallToClosetRim < distanceFromBallToRimToTrack * widthRim and isAbove(ballCenter, centerOfRim):
               angleBallToRim = getAngleOfTwoPoints(ballCenter, centerOfRim)
               eventStart = True
+              timeSinceEventStart = 0
               startTime = imageCnt/frameRate
               if debug:
                 print("---key event start")
                 print("angleBallToRim: ", toDegree(angleBallToRim))
           else: #event started
-            if distanceFromBallToClosetRim >= distanceFromBallToRimToTrack * widthRim:
+            timeSinceEventStart += 1.0 / frameRate
+            
+            if timeSinceEventStart >= oneShotTimethresh * 1.25: 
               eventStart = False
-              if debug:
-                print("~~key event end")
-            elif not isAbove(ballCenter, centerOfRim):
-              eventStart = False; 
+              timeSinceEventStart = 0
               
+            if distanceFromBallToClosetRim <= distanceFromBallToRimToTrack * widthRim and not isAbove(ballCenter, centerOfRim):
               angleRimToBall = getAngleOfTwoPoints(centerOfRim, ballCenter)
               
               if debug:
-                print("~~event ends: ")
                 print("realAngle: ", toDegree(angleRimToBall))
                 print("relative angle: ", toDegree(abs(angleRimToBall - angleBallToRim)))
               
               endTime = imageCnt/frameRate
-              if abs(angleRimToBall - angleBallToRim) < angleThresh and iouTime > startTime - padding and iouTime < endTime + padding:     
-                  
+              if abs(angleRimToBall - angleBallToRim) < angleThresh and iouTime > startTime - padding and iouTime < endTime + padding:
                   print("Finding one shot by angle analysis: ", (imageCnt/frameRate))
                   pred_results_angle.append((startTime - padding, endTime + padding))
+                  eventStart = False                  
               else: #not a shot
                 if debug:
-                  print("Warning: possible wrong")
-              
+                  print("Not a shot")
             else:
               if debug:
                 print("Skipping")
@@ -314,7 +317,7 @@ def read_file_to_list(file_name):
   return res_lists;
   
 def main():
-  dir = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_chop/"
+  dir = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_demo_v2/"
   labelFiles = "labellist.txt"
   labelFileList = read_file_to_list(dir + labelFiles)
   #predict_file = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_chop/TSV/head350_prediction_1551538896210_sc99_01_q1.tsv"
