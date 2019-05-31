@@ -36,6 +36,8 @@ def findShot(predict_file):
     pred_key_to_rects = {}
     
     pred_results = []
+    iou_list = []
+    ball_above_rim = []
     
     pred_results_angle = []
     
@@ -46,6 +48,12 @@ def findShot(predict_file):
     eventStart = False
     #eventEnd = False
     angleBallToRim = 270/180.0*math.pi
+    padding = 1.0
+    
+    startTime  = -1
+    endTime = -1
+    
+    iouTime = -1
     
     for row in tqdm(tsv_reader(predict_file)):
         imageCnt += 1
@@ -98,25 +106,10 @@ def findShot(predict_file):
             print("rimRect:", rimRects)
             print("iou:", iou)
             #
-            exit()
-            
-          if iou > rimBallIouLowerThresh:
-            currentTime = imageCnt/frameRate
-            if 1:
-              print("--Processing image: ", imageCnt, "; second: ", currentTime)
-              print("Found both rim and ball with iou: ", iou)
-            if len(pred_results) == 0 or currentTime - pred_results[-1] > oneShotTimethresh: 
-              pred_results.append(int(currentTime)); 
+            exit()          
           
-            if (iou > rimBallIouHigherThresh): 
-              print("!!Found a shot")
-              
           ## use ball rim angle to filter out 
           ballCenter = getCenterOfObject(ballRects)
-          if debug:
-            print("image: ", imageCnt)
-            print("second: ", imageCnt / frameRate)
-            print("ballCenter: ", ballCenter)
             
           listOfBallToRimsDistance = [ getDistanceOfTwoPoints(  ballCenter, getCenterOfObject(b)) for b in rimRects]
           
@@ -126,16 +119,39 @@ def findShot(predict_file):
           widthRim = getWidthOfObject( rectClosestRim )
           centerOfRim = getCenterOfObject(rectClosestRim)
           
+          if iou > rimBallIouLowerThresh:
+            currentTime = imageCnt/frameRate
+            iouTime = currentTime
+            if 1:
+              print("--Processing image: ", imageCnt, "; second: ", currentTime)
+              print("Found both rim and ball with iou: ", iou)
+              print("Ball is above rim: ", isAbove(ballCenter, centerOfRim))
+            if len(pred_results) == 0 or currentTime - pred_results[-1][1] > oneShotTimethresh: 
+              pred_results.append((currentTime, currentTime + oneShotTimethresh));
+              iou_list.append(iou)
+              ball_above_rim.append(isAbove(ballCenter, centerOfRim))
+          
+            if (iou > rimBallIouHigherThresh): 
+              print("!!Found a shot")
+              
+          
+          if debug:
+            print("image: ", imageCnt)
+            print("second: ", imageCnt / frameRate)
+            print("ballCenter: ", ballCenter)
+            
           if debug:
             print("eventStart: ", eventStart)
             print("distanceFromBallToClosetRim: ", distanceFromBallToClosetRim)
             print("distance Thresh:", distanceFromBallToRimToTrack * widthRim)
             print("centerOfRim: ", centerOfRim)
           
+          
           if not eventStart: 
             if distanceFromBallToClosetRim < distanceFromBallToRimToTrack * widthRim and isAbove(ballCenter, centerOfRim):
               angleBallToRim = getAngleOfTwoPoints(ballCenter, centerOfRim)
               eventStart = True
+              startTime = imageCnt/frameRate
               if debug:
                 print("---key event start")
                 print("angleBallToRim: ", toDegree(angleBallToRim))
@@ -154,8 +170,11 @@ def findShot(predict_file):
                 print("realAngle: ", toDegree(angleRimToBall))
                 print("relative angle: ", toDegree(abs(angleRimToBall - angleBallToRim)))
               
-              if abs(angleRimToBall - angleBallToRim) < angleThresh:                 
-                  print("Finding one shot by angle analysis: ", int(imageCnt/frameRate))                
+              endTime = imageCnt/frameRate
+              if abs(angleRimToBall - angleBallToRim) < angleThresh and iouTime > startTime - padding and iouTime < endTime + padding:     
+                  
+                  print("Finding one shot by angle analysis: ", (imageCnt/frameRate))
+                  pred_results_angle.append((startTime - padding, endTime + padding))
               else: #not a shot
                 if debug:
                   print("Warning: possible wrong")
@@ -165,7 +184,13 @@ def findShot(predict_file):
                 print("Skipping")
           ## end 
           
-    return pred_results
+    print(pred_results)
+    print(iou_list)
+    print(ball_above_rim)
+    print(pred_results_angle)
+    
+    return pred_results_angle
+    #pred_results
         
 def toDegree(angle):
   return angle / math.pi * 180.0; 
@@ -175,17 +200,18 @@ def calculateF1(pred_results, true_results):
   
   lastTime = true_results[-1]
   
-  filtered_pred_results = [ v for v in pred_results if v < lastTime + oneShotTimethresh]
+  filtered_pred_results = pred_results
+  #[ v for v in pred_results if v < lastTime + oneShotTimethresh]
   
   print("filtered_pred_results: ", filtered_pred_results, len(filtered_pred_results))
   print("true_results: ", true_results, len(true_results))
   
-  truePositiveList = intersection(filtered_pred_results, true_results)
+  truePositiveList = [value for value in filtered_pred_results if findPairInValueList(value, true_results)]
   print("TruePositve: ", truePositiveList)
   #trueNegative = 
-  falsePositiveList = [value for value in filtered_pred_results if value not in true_results]
+  falsePositiveList = [value for value in filtered_pred_results if not findPairInValueList(value, true_results)]
   print("FlasePositve: ", falsePositiveList)
-  falseNegativeList = [value for value in true_results if value not in filtered_pred_results]
+  falseNegativeList = [value for value in true_results if not findValueInPairList( value ,  filtered_pred_results) ]
   print("falseNegative: ", falseNegativeList)
   precision = len(truePositiveList) / (len(truePositiveList) + len (falsePositiveList) +0.0)
   
@@ -196,6 +222,12 @@ def calculateF1(pred_results, true_results):
 
 def intersection(lst1, lst2): 
     return list(set(lst1) & set(lst2)) 
+
+def findPairInValueList(pair, true_results):
+  return any([v >= pair[0] and v <= pair[1]  for v in true_results])
+
+def findValueInPairList(v, filtered_pred_results):
+  return any([v >= pair[0] and v <= pair[1]  for pair in filtered_pred_results])
 
 def isAbove(p1, p2):  
   return p1[1] < p2[1]
@@ -255,15 +287,15 @@ def writeToTSV(labelFile, pred_results):
   videoFileName = labelFile.replace(".tsv", ".mp4")
   id = 0; 
   className = "shot"
-  padding  = 1
+  padding  = 0
   dictList = []
   for v in pred_results:
     id += 1
     value = {}
     value['class'] = className
     value['id'] = id
-    value['start'] = v - padding
-    value['end'] = v + padding    
+    value['start'] = v[0] - padding
+    value['end'] = v[1] + padding    
     dictList.append(value)
   
   print('json format results:')
@@ -289,8 +321,9 @@ def main():
   #predict_file = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_chop/prediction_1551538896210_sc99_01_q1.tsv"
   for predict_file in labelFileList:
     pred_results =  findShot(dir + predict_file)
-    if predict_file == "1551538896210_sc99_01_q1.tsv":
-      true_results = [13, 36, 55, 119, 150, 157, 186, 328, 350, 386]      
+    #if predict_file == "prediction_1551538896210_sc99_01_q1.tsv": 
+    if predict_file == "1551538896210_sc99_01_q1.tsv": 
+      true_results = [13, 36, 55, 119, 150, 157, 186, 328, 350, 386, 444, 469, 526, 586]
       calculateF1(pred_results, true_results)
     
     writeToTSV(predict_file, pred_results)
