@@ -130,7 +130,12 @@ def upload_through_blob(src_dir, dest_dir, vc, cluster, **kwargs):
             op.basename(src_dir))
 
     c = create_cloud_storage(account)
-    dest_url, _ = c.az_sync(src_dir, op.join(dest_dir, op.basename(src_dir)))
+    if op.isfile(src_dir):
+        # it seems like az_sync does not support file -> file though it claims
+        # it supports
+        dest_url, _ = c.az_upload2(src_dir, op.join(dest_dir, op.basename(src_dir)))
+    else:
+        dest_url, _ = c.az_sync(src_dir, op.join(dest_dir, op.basename(src_dir)))
     if kwargs.get('copy_to_hdfs', True):
         env = {'AZURE_STORAGE_ACCESS_KEY': c.account_key}
 
@@ -255,7 +260,7 @@ def print_table(a_to_bs, all_key=None):
 
 class PhillyVC(object):
     def __init__(self, vc, cluster, user_name=None,
-            use_blob_as_input=True, **kwargs):
+            **kwargs):
         self.vc = vc
         self.cluster = cluster
         vc_type = infer_type(vc, cluster)
@@ -271,7 +276,6 @@ class PhillyVC(object):
             else:
                 self.num_gpu = 1
         self.isDebug = kwargs.get('isDebug', False)
-        self.use_blob_as_input = use_blob_as_input
         self.user_name = user_name
 
         self.password = kwargs.get('password')
@@ -288,9 +292,14 @@ class PhillyVC(object):
         self.multi_process = kwargs.get('multi_process')
         self.docker_tag = kwargs.get('docker_tag')
 
+        self.use_blob_as_input = self.config_param['data_folder'].startswith(
+                self.blob_mount_point)
         # used in query()
         self.query_with_gpu = kwargs.get('with_gpu')
         self.query_with_log = kwargs.get('with_log')
+
+    def get_cloud_storage(self):
+        return create_cloud_storage('vig')
 
     def get_data_folder_in_blob(self):
         assert self.config_param['data_folder'].startswith(self.blob_mount_point)
@@ -487,12 +496,12 @@ class PhillyVC(object):
         assert len(command) > 0
         extraParam = self.get_config_extra_param(command)
         logging.info('extraParam: {}'.format(extraParam))
-        if self.use_blob_as_input:
-            config_file = op.join(self.blob_mount_point,
-                    self.dest_config_file)
-        else:
-            config_file = "/hdfs/{}/{}/{}".format(self.vc,
-                self.dest_config_folder, op.basename(self.src_config_path))
+        # no matter it is blobfuse or hdfs, we always use blobfuse for config
+        # file
+        config_file = op.join(self.blob_mount_point,
+                self.dest_config_file)
+        #config_file = "/hdfs/{}/{}/{}".format(self.vc,
+            #self.dest_config_folder, op.basename(self.src_config_path))
         logging.info('cmd:\n{} d d d {}'.format(config_file, extraParam))
         custom_mpi_args = 'env CUDA_CACHE_DISABLE=1 NCCL_DEBUG=INFO OMP_NUM_THREADS=2'
         disable_ib = False
@@ -765,6 +774,9 @@ class PhillyVC(object):
             philly_upload(file_from, file_target, self.vc, self.cluster)
 
     def increment_upload_dir_to_hdfs(self, src_dir, dest_dir):
+        '''
+        exg. ./data/coco2017Full, jianfw/data/qd_data/
+        '''
         if not dest_dir.endswith('/'):
             dest_dir = dest_dir + '/'
         file_infos = parse_philly_ls_output_rich(philly_ls(
@@ -793,6 +805,42 @@ class PhillyVC(object):
                 self.increment_upload_dir_to_hdfs(src_file, op.join(dest_dir,
                     op.basename(src_dir)))
 
+    def upload_qd_data(self, d):
+        from qd.tsv_io import TSVDataset
+        data_root = TSVDataset(d)._data_root
+        if self.use_blob_as_input:
+            cloud = self.get_cloud_storage()
+            cloud.az_sync(data_root,
+                    op.join(self.get_data_folder_in_blob(), d))
+        else:
+            self.increment_upload_dir_to_hdfs(data_root,
+                    self.get_qd_data_rel_path_in_hdfs(self.config_param['data_folder'])
+                    )
+
+    def get_qd_data_rel_path_in_hdfs(self, hdfs_path):
+        prefix = '/hdfs/{}/'.format(self.vc)
+        assert hdfs_path.startswith(prefix)
+        hdfs_path = hdfs_path.replace(prefix, '')
+        return hdfs_path
+
+    def qd_data_exists(self, fname):
+        # this assume the data folder in config
+        if self.use_blob_as_input:
+            cloud = self.get_cloud_storage()
+            return cloud.exists(op.join(self.get_data_folder_in_blob(),
+                    fname))
+        else:
+            # hdfs
+            hdfs_file = op.join(self.config_param['data_folder'],
+                    fname)
+            hdfs_folder = op.dirname(hdfs_file)
+            hdfs_folder = self.get_qd_data_rel_path_in_hdfs(hdfs_folder)
+            philly_ls_result = philly_ls(hdfs_folder, vc=self.vc, cluster=self.cluster,
+                    return_output=True)
+            folder_info = parse_philly_ls_output_rich(philly_ls_result)
+            return any(f for f in folder_info if f['name'] ==
+                    op.basename(hdfs_file))
+
     def philly_rest_api(self, CMD):
         user_name, password = self.user_name, self.password
         cmd = ['curl', '-k', '--ntlm', '--user',
@@ -809,6 +857,23 @@ class MultiPhillyVC(object):
             del kwargs['cluster']
         self.kwargs = kwargs
 
+    def search_job_id_and_track(self, partial_id):
+        client, app_id = self.search_job_id(partial_id)
+        client.track_job_once(app_id)
+
+    def search_job_id(self, partial_id):
+        clients = [create_philly_client(cluster=c, **self.kwargs) for c in
+                self.all_cluster]
+        all_cans = [c.search_candidates(partial_id) for c in clients]
+        all_cluster_cans = [(c, cans) for c, cans in zip(clients, all_cans) if len(cans) > 0]
+        assert (len(all_cluster_cans) == 1 and
+                len(all_cluster_cans[0][1]) == 1), \
+            'ambigous job found: {}'.format('{}: {}'.format(c,
+                ','.join(cans))for c, cans in all_cluster_cans)
+        client = all_cluster_cans[0][0]
+        job_id = all_cluster_cans[0][1][0]
+        return client, job_id
+
     def search_job_id_and_abort(self, partial_id):
         clients = [create_philly_client(cluster=c, **self.kwargs) for c in
                 self.all_cluster]
@@ -824,11 +889,8 @@ class MultiPhillyVC(object):
         logging.info('aborted {} in the cluster of {}'.format(job_id,
             client.cluster))
 
-    def query(self, **kwargs):
-        if 'cluster' in kwargs:
-            self.all_cluster = [kwargs['cluster']]
-            del kwargs['cluster']
-        clients = [create_philly_client(cluster=c, **kwargs) for c in
+    def query(self):
+        clients = [create_philly_client(cluster=c, **self.kwargs) for c in
                 self.all_cluster]
         all_job_info = []
         for c in clients:
@@ -963,9 +1025,8 @@ def submit_without_sync(cmd, **kwargs):
                 all_extra_param))
 
 def tracking(app_id, **kwargs):
-    p = create_philly_client(**kwargs)
-    _, app_id = p.search_job_id(app_id)
-    p.track_job_once(app_id)
+    p = MultiPhillyVC(**kwargs)
+    p.search_job_id_and_track(app_id)
 
 def list_to_dict_full(l, idx):
     result = OrderedDict()

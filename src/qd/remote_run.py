@@ -12,7 +12,7 @@ from qd.qd_common import write_to_file
 def sync_qd(ssh_info, delete=False):
     target_folder = '/tmp/code/quickdetection/'
     sync(ssh_info=ssh_info, target_folder=target_folder, delete=delete)
-    remote_run('cd {} && ./compile.sh'.format(target_folder), ssh_info)
+    remote_run('cd {} && ./compile.conda.sh'.format(target_folder), ssh_info)
 
     remote_run('{} -m nltk.downloader all'.format(get_executable()), ssh_info)
 

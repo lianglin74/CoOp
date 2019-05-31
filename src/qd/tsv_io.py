@@ -579,12 +579,12 @@ class TSVDataset(object):
 
     def load_composite_source_data_split(self, split):
         splitX = split + 'X'
-        pattern = 'data/(.*)/(train|trainval|test)\.v(.*)\.tsv'
+        pattern = 'data/(.*)/(trainval|train|test)\.tsv'
         tsv_sources = [l for l, in tsv_reader(self.get_data(splitX))]
         matched_result = [re.match(pattern, l).groups()
                 for l in tsv_sources]
 
-        return [(d, s, int(v)) for d, s, v in matched_result]
+        return [(d, s) for d, s in matched_result]
 
     def load_composite_source_data_split_versions(self, split):
         # this function is only valid if we generated the composite dataset

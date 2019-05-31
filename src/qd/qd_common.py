@@ -673,30 +673,11 @@ def get_all_tree_data():
     return [name for name in names
         if op.isfile(op.join('data', name, 'root_enriched.yaml'))]
 
-def test_parse_test_data_with_version():
-    pred_data_split_versions = [
-            ('model_iter_368408.caffemodel.Tax1300V14.1_OpenImageV4_448Test_with_bb.train.maintainRatio.OutTreePath.TreeThreshold0.1.ClsIndependentNMS.predict',
-                'Tax1300V14.1_OpenImageV4_448Test_with_bb', 'train', 0),
-            ('model_iter_0090000.pt.coco2017Full.test.predict.coco_box.report',
-                'coco2017Full', 'test', 0),
-            ('model_iter_10000.caffemodel.voc20.maintainRatio.report',
-                'voc20', 'test', 0),
-            ('model_iter_2.caffemodel.voc20.test.report',
-                'voc20', 'test', 0),
-            ('model_iter_271598.caffemodel.Top100Instagram_with_bb.test.maintainRatio.OutTreePath.TreeThreshold0.1.ClsIndependentNMS.v5.report',
-                'Top100Instagram_with_bb', 'test', 5),
-            ]
-    for f, d, s, v in pred_data_split_versions:
-        od, os, ov = parse_test_data_with_version(f)
-        assert od == d
-        assert s == os
-        assert ov == v
-
 def parse_test_data_with_version(predict_file):
     # run test_parse_test_data_with_version() if any change is made to this
     # function
     pattern = \
-        'model(?:_iter)?_-?[0-9]*[e]?\.(?:caffemodel|pth\.tar|pth|pt)\.(.*)\.(train|trainval|test).*?(\.v[0-9])?\.(?:predict|report)'
+        'model(?:_iter)?_-?[0-9]*[e]?\.(?:caffemodel|pth\.tar|pth|pt)\.(.*)\.(trainval|train|test).*?(\.v[0-9])?\.(?:predict|report)'
     match_result = re.match(pattern, predict_file)
     if match_result is None:
         pattern = \
@@ -721,6 +702,7 @@ def parse_test_data_with_version(predict_file):
 def parse_test_data(predict_file):
     logging.info('use parse_test_data_with_version')
     # e.g. 'model_iter_368408.caffemodel.Tax1300V14.1_OpenImageV4_448Test_with_bb.train.maintainRatio.OutTreePath.TreeThreshold0.1.ClsIndependentNMS.predict'
+
     pattern = 'model(?:_iter)?_[0-9]*[e]?\.(?:caffemodel|pth\.tar|pth)\.(.*)\.(train|trainval|test)\..*\.predict'
     match_result = re.match(pattern, predict_file)
     if match_result and len(match_result.groups()) == 2:
@@ -1063,7 +1045,7 @@ def ensure_directory(path):
                 else:
                     raise
         # we should always check if it succeeds.
-        assert op.isdir(path), 'failed'
+        assert op.isdir(path), path
 
 def parse_pattern(pattern, s):
     result = re.search(pattern, s)
@@ -1644,6 +1626,23 @@ def get_file_size(f):
     if not op.isfile(f):
         return 0
     return os.stat(f).st_size
+
+def convert_to_yaml_friendly(result):
+    if type(result) is dict:
+        for key, value in result.items():
+            if isinstance(value, dict):
+                result[key] = convert_to_yaml_friendly(value)
+            elif isinstance(value, np.floating):
+                result[key] = float(value)
+            elif isinstance(value, np.ndarray):
+                raise NotImplementedError()
+            elif type(value) in [int, str, float, bool]:
+                continue
+            else:
+                raise NotImplementedError()
+    else:
+        raise NotImplementedError()
+    return result
 
 if __name__ == '__main__':
     init_logging()

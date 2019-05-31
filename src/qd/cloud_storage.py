@@ -196,6 +196,7 @@ class CloudStorage(object):
                 progress_callback=upload_callback)
 
     def az_upload(self, src_dir, dest_dir):
+        # this is using the old version of azcopy. prefer to use az_upload2
         dest_url = op.join('https://{}.blob.core.windows.net'.format(self.account_name),
                 self.container_name, dest_dir)
         if self.account_key:

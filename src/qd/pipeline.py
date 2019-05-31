@@ -39,7 +39,7 @@ def get_all_full_expid_by_data(exp):
 def get_all_related_data_for_philly_jobs(data):
     all_data = []
     all_data.append(data)
-    if data.startswith('Tax'):
+    if data.startswith('Tax') and not data.endswith('_with_bb'):
         all_data.append(data + '_with_bb')
         all_data.append(data + '_no_bb')
     all_test_data = get_all_test_data(data)
@@ -49,24 +49,31 @@ def get_all_related_data_for_philly_jobs(data):
 def ensure_upload_data_for_philly_jobs(data):
     all_data = get_all_related_data_for_philly_jobs(data)
     for d in all_data:
-        from qd.process_tsv import populate_dataset_details
-        populate_dataset_details(d, check_image_details=True)
+        # we need the hw for mask-rcnn
+        logging.info('TODO: making sure hw is there')
 
-    c = create_cloud_storage('vig')
+    need_to_upload_data = copy.deepcopy(all_data)
+
     philly_client = create_philly_client()
-    data_folder = philly_client.get_data_folder_in_blob()
+
     for d in all_data:
         dataset = TSVDataset(d)
-        for split in ['train', 'test']:
+        for split in ['train', 'test', 'trainval']:
             splitx = split + 'X'
             if op.isfile(dataset.get_data(splitx)) and d.endswith('_with_bb'):
-                if not c.exists('{}/{}/{}.tsv'.format(
-                    data_folder,
-                    d,
-                    split)):
-                    convertcomposite_to_standard(d, split)
-        if op.isdir(dataset._data_root):
-            c.az_sync(dataset._data_root, op.join(data_folder, d))
+                data_sources = dataset.load_composite_source_data_split(split)
+                if len(data_sources) > 1:
+                    if not philly_client.qd_data_exists('{}/{}.tsv'.format(d, split)):
+                        convertcomposite_to_standard(d, split)
+                elif len(data_sources) == 1:
+                    need_to_upload_data.append(data_sources[0][0])
+
+    for d in need_to_upload_data:
+        # previously, we listed more than required datas to upload. some of
+        # them might not be valid. For example, if data is TaxXV1_1_with_bb, it
+        # might also include TaxXV1_1_with_bb_with_bb
+        if op.isdir(TSVDataset(d)._data_root):
+            philly_client.upload_qd_data(d)
 
 def philly_func_run(func, param, **submit_param):
     if 'data' in param:

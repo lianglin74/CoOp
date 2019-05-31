@@ -1111,6 +1111,8 @@ class TorchTrain(object):
                     expand_label_gt=True,
                     apply_nms_gt=True,
                     )
+            from qd.qd_common import convert_to_yaml_friendly
+            result = convert_to_yaml_friendly(result)
             logging.info(pformat(result))
             logging.info('mAP = {}'.format(result['map']))
             write_to_yaml_file(result, evaluate_file)
