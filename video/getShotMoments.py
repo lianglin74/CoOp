@@ -17,15 +17,15 @@ def findShot(predict_file):
     basketBallThresh = 0.5
     rimThresh = 0.2
     backBoardThresh = 0.1
-    rimBallIouLowerThresh = 0.001
+    rimBallIouLowerThresh = 0.01
     rimBallIouHigherThresh = 0.20
     
     # the time period between two shots
-    oneShotTimethresh = 1
+    oneShotTimethresh = 2
     
     # 2.0 * rim width
-    distanceFromBallToRimToTrack = 2.0
-    angleThresh = 100.0/180*math.pi
+    distanceFromBallToRimToTrack = 1.5
+    angleThresh = 90.0/180*math.pi
 	
     debug = 0
     
@@ -48,7 +48,7 @@ def findShot(predict_file):
     eventStart = False
     #eventEnd = False
     angleBallToRim = 270/180.0*math.pi
-    padding = 1.0
+    padding = 1.25
     
     startTime  = -1
     endTime = -1
@@ -163,7 +163,7 @@ def findShot(predict_file):
           else: #event started
             timeSinceEventStart += 1.0 / frameRate
             
-            if timeSinceEventStart >= oneShotTimethresh * 1.25: 
+            if timeSinceEventStart >= oneShotTimethresh * 1: 
               eventStart = False
               timeSinceEventStart = 0
               
