@@ -223,69 +223,77 @@ def scrape_image_parallel(label_counts, outfile, ext="jpg", query_format="{}"):
     if os.path.isfile(outfile):
         raise ValueError("already exists: {}".format(outfile))
     from pathos.multiprocessing import ProcessPool as Pool
-    num_worker = 128
+    num_worker = 16
     num_tasks = num_worker * 3
     num_rows = len(label_counts)
     num_rows_per_task = (num_rows + num_tasks - 1) // num_tasks
     all_args = []
+    tmp_outs = []
     for i in range(num_tasks):
         cur_idx_start = i*num_rows_per_task
         if cur_idx_start >= num_rows:
             break
         cur_idx_end = min(cur_idx_start+num_rows_per_task, num_rows)
         if cur_idx_end > cur_idx_start:
-            all_args.append((label_counts[cur_idx_start: cur_idx_end], ext, query_format))
+            cur_outfile = outfile + "{}.{}".format(i, num_tasks)
+            tmp_outs.append(cur_outfile)
+            all_args.append((label_counts[cur_idx_start: cur_idx_end], ext, query_format, cur_outfile))
 
     m = Pool(num_worker)
-    all_result = m.map(scrape_image, all_args)
+    m.map(scrape_image, all_args)
     m.close()
-    def gen_res():
-        for res in all_result:
-            for row in res:
-                yield row
-    tsv_io.tsv_writer(gen_res(), outfile)
-
+    tmp_outs = [f for f in tmp_outs if os.path.isfile(f)]
+    qd_common.concat_files(tmp_outs, outfile)
+    for fpath in tmp_outs:
+        tsv_io.rm_tsv(fpath)
 
 def scrape_image(args):
-    label_counts, ext, query_format = args
-    ret = []
-    for cols in label_counts:
-        term, num_imgs = cols[0], int(cols[1])
-        if len(cols) == 3:
-            query_term = cols[2]
-        else:
-            query_term = term
-        query_term = query_format.format(query_term)
-        query_term = clean_query_keywords(query_term)
-        if ext and "png" in ext:
-            trans_bg = True
-        else:
-            trans_bg = False
-        urls = qd_common.scrape_bing(query_term, num_imgs*2, trans_bg=trans_bg)
+    label_counts, ext, query_format, outfile = args
 
-        num_valid_img = 0
-        for idx, url in enumerate(urls):
-            if num_valid_img >= num_imgs:
-                break
-            if not is_url_clean(url):
-                continue
-            im_bytes = image_url_to_bytes(url)
-            if not im_bytes:
-                continue
+    def gen_rows():
+        for cols in label_counts:
+            term, num_imgs = cols[0], int(cols[1])
+            if len(cols) == 3:
+                query_term = cols[2]
+            else:
+                query_term = term
+            query_term = query_format.format(query_term)
+            query_term = clean_query_keywords(query_term)
+            if ext and "png" in ext:
+                trans_bg = True
+            else:
+                trans_bg = False
+
             try:
-                im = qd_common.img_from_base64(base64.b64encode(im_bytes))
-                h, w, c = im.shape
-                assert c == 3 or c == 4
-            except:
-                continue
-            # avoid key collision with existing images
-            # img_key = "{}_{}.{}".format(term, datetime.datetime.now().strftime("%Y%m%d%H%M%S%f"), ext)
-            img_key = "{}_{}.{}".format(query_term, idx, ext)
-            img_key = img_key.replace(' ', '_')
-            label = [{"class": term}]
-            ret.append([img_key, json.dumps(label), url])
-            num_valid_img += 1
-    return ret
+                urls = qd_common.scrape_bing(query_term, num_imgs*2, trans_bg=trans_bg)
+            except UnicodeDecodeError as ex:
+                print("cannot decode {}: {}".format(query_term, str(ex)))
+                return
+
+            num_valid_img = 0
+            for idx, url in enumerate(urls):
+                if num_valid_img >= num_imgs:
+                    break
+                if not is_url_clean(url):
+                    continue
+                im_bytes = image_url_to_bytes(url)
+                if not im_bytes:
+                    continue
+                # sanity check of image format
+                try:
+                    im = qd_common.img_from_base64(base64.b64encode(im_bytes))
+                    h, w, c = im.shape
+                    assert c == 3 or c == 4
+                except:
+                    continue
+                # avoid key collision with existing images
+                # img_key = "{}_{}.{}".format(term, datetime.datetime.now().strftime("%Y%m%d%H%M%S%f"), ext)
+                img_key = "{}_{}.{}".format(query_term, idx, ext)
+                img_key = img_key.replace(' ', '_')
+                label = [{"class": term}]
+                yield [img_key, json.dumps(label), url]
+                num_valid_img += 1
+    tsv_io.tsv_writer(gen_rows(), outfile)
 
 def clean_query_keywords(query_str):
     replace_chars = ";/?:@=&<>#%\{\}|\\^~[]`"

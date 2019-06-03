@@ -16,18 +16,14 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 import _init_paths
+from logo import constants
+
 from qd_classifier.scripts import extract, pred
 from qd_classifier.utils import accuracy
 from qd.qd_common import calculate_iou, write_to_yaml_file, load_from_yaml_file, init_logging, ensure_directory, int_rect, is_valid_rect, worth_create
-from evaluation.eval_utils import DetectionFile
-from logo import constants
-from qd.tsv_io import TSVDataset, TSVFile, tsv_reader, tsv_writer
+from qd.tsv_io import TSVDataset, TSVFile, tsv_reader, tsv_writer, reorder_tsv_keys
 from qd import tsv_io
-try:
-    from scripts.yolotrain import yolo_predict
-    from evaluation import dataproc
-except ImportError:
-    pass
+from qd.yolotrain import yolo_predict
 
 
 class CropTaggingWrapper(object):
@@ -64,7 +60,8 @@ class CropTaggingWrapper(object):
         topk_acc = parse_tagging_predict(tag_file, outfile, conf_from=conf_from,
                 eval_accuracy=(eval_topk_acc is not None))
         # align the order of imgkeys
-        dataproc.align_detection(dataset_name, split, outfile)
+        ordered_keys = TSVDataset(dataset_name).load_keys(split)
+        reorder_tsv_keys(outfile, ordered_keys, outfile)
         return outfile, topk_acc
 
     def predict_on_unknown_class(self, dataset_name, split,
@@ -108,7 +105,8 @@ class CropTaggingWrapper(object):
                     fp.write(acc_str)
                     fp.write('\n')
         # align the order of imgkeys
-        dataproc.align_detection(dataset_name, split, outfile)
+        ordered_keys = TSVDataset(dataset_name).load_keys(split)
+        reorder_tsv_keys(outfile, ordered_keys, outfile)
         return outfile
 
     def compare_pairs(self, dataset_name, split):

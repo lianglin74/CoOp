@@ -8,7 +8,6 @@ from qd.qd_common import load_list_file
 from qd.qd_common import generate_lineidx
 from qd.qd_common import copy_file
 from qd.qd_common import worth_create
-import six
 import os
 import os.path as op
 import shutil
@@ -612,9 +611,7 @@ def tsv_writer(values, tsv_file_name, sep='\t'):
         for value in values:
             assert value
             if is_py2:
-                v = sep.join(map(lambda v: str(v) if not isinstance(v, six.string_types) else v, value)) + '\n'
-                if type(v) is unicode:
-                    v = v.encode('utf-8')
+                v = sep.join(map(lambda v: v.encode('utf-8') if isinstance(v, unicode) else str(v), value)) + '\n'
             else:
                 v = sep.join(map(lambda v: v.decode() if type(v) == bytes else str(v), value)) + '\n'
                 v = v.encode()
