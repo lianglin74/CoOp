@@ -4834,7 +4834,7 @@ def merge_multi_by_key(tsv_file1, all_tsv_file2, out_tsv,
     flags.extend(all_from_flag2)
     def gen_rows():
         for key in keys:
-            all_rects = [key_to_rects[key] for key_to_rects in all_key_to_rects]
+            all_rects = [key_to_rects[key] for key_to_rects in all_key_to_rects if key in key_to_rects]
             for rects, f in zip(all_rects, flags):
                 for r in rects:
                     r['from'] = f
@@ -4854,7 +4854,7 @@ def merge_by_key(tsv_file1, tsv_file2, out_tsv,
     flags = [from_flag1, from_flag2]
     def gen_rows():
         for key in keys:
-            all_rects = [key_to_rects[key] for key_to_rects in all_key_to_rects]
+            all_rects = [key_to_rects[key] for key_to_rects in all_key_to_rects if key in key_to_rects]
             for rects, f in zip(all_rects, flags):
                 for r in rects:
                     r['from'] = f
