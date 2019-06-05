@@ -132,7 +132,7 @@ def main(args):
         logger.info("=> loading pretrained model '{}'".format(args.custom_pretrained))
         checkpoint = torch.load(args.custom_pretrained)
         load_model_state_dict(model, checkpoint['state_dict'], skip_unmatched_layers=args.skip_unmatched_layers)
-    import ipdb; ipdb.set_trace()
+
     if not args.distributed:
         if args.arch.startswith('alexnet') or args.arch.startswith('vgg'):
             model.features = torch.nn.DataParallel(model.features)

@@ -217,7 +217,7 @@ class TSVDatasetWithoutLabel(TSVDatasetPlus):
 class CropClassTSVDataset(Dataset):
     def __init__(self, tsvfile, labelmap, labelfile=None,
                  transform=None, logger=None, for_test=False, enlarge_bbox=1.0,
-                 use_cache=True):
+                 use_cache=False):
         """ TSV dataset with cropped images from bboxes labels
         Params:
             tsvfile: image tsv file, columns are key, bboxes, b64_image_string
