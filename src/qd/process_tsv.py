@@ -1876,8 +1876,8 @@ def populate_bbcount(dataset):
                 if not dataset.has(split, 'label.bbcount', v):
                     class_to_bbcount = defaultdict(int)
                     logging.info('reading {}, {}, {}'.format(split, 'label', v))
-                    for key, str_rects in tqdm(dataset.iter_data(split, 'label',
-                        v)):
+                    for key, str_rects in dataset.iter_data(split, 'label',
+                        v, progress=True):
                         rects = json.loads(str_rects)
                         for r in rects:
                             if 'rect' in r and not all(x == 0 for x in r['rect']):
@@ -4335,7 +4335,6 @@ def build_taxonomy_from_single_source(source_data,
     idx_to_labels = list_to_dict(dict_to_list(label_to_idx, 0), 1)
 
     while len(label_to_idx) > 0:
-        logging.info(len(label_to_idx))
         # remove the labels if the len(idx) >= min_image_per_label
         to_remove = [l for l in label_to_idx if len(label_to_idx[l]) > min_image_per_label]
         for l in to_remove:
@@ -4349,7 +4348,7 @@ def build_taxonomy_from_single_source(source_data,
         assert copies > 0
         # add these extra images
         result.extend(copies * min_idx)
-        for i in tqdm(min_idx):
+        for i in min_idx:
             for l in idx_to_labels[i]:
                 if l in label_to_idx:
                     # otherwise, it means that label is enough

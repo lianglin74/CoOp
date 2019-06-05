@@ -25,6 +25,7 @@ from maskrcnn_benchmark.utils.comm import is_main_process
 from maskrcnn_benchmark.utils.checkpoint import DetectronCheckpointer
 from maskrcnn_benchmark.utils.comm import get_world_size
 from maskrcnn_benchmark.solver import make_lr_scheduler
+from maskrcnn_benchmark.structures.bounding_box import BoxList
 from qd.qd_pytorch import ModelPipeline
 from qd.qd_pytorch import torch_load, torch_save
 from qd.qd_common import ensure_directory
@@ -255,7 +256,69 @@ def compute_on_dataset_iter(model, data_loader, device):
         for img_id, result in zip(image_ids, output):
             yield img_id, result
 
+def list_dict_to_boxlist(rects, hw, label_to_id):
+    extra_fields = set()
+    for r in rects:
+        extra_fields.update(r.keys())
+    if 'rect' in extra_fields:
+        # if len(rects) == 0, there is no such field here
+        extra_fields.remove('rect')
+
+    boxes = [r['rect'] for r in rects]
+    extra_values = [[r.get(e) for r in rects] for e in extra_fields]
+    boxes = Tensor(boxes)
+    if len(boxes) == 0:
+        boxes = torch.full((0, 4), 0)
+    result = BoxList(boxes, image_size=(hw[1], hw[0]), mode='xyxy')
+    for i, k in enumerate(extra_fields):
+        v = extra_values[i]
+        if k == 'class':
+            v = list(map(lambda x: label_to_id[x], v))
+            k = 'labels'
+        elif k == 'conf':
+            k = 'scores'
+        result.add_field(k, Tensor(v))
+
+    return result
+
+def boxlist_to_rects(box_list, func_label_id_to_label):
+    box_list = box_list.convert("xyxy")
+    if len(box_list) == 0:
+        return []
+    box_key_to_dict_key = dict(((k, k) for k in box_list.extra_fields))
+    if 'scores' in box_key_to_dict_key:
+        box_key_to_dict_key['scores'] = 'conf'
+    if 'labels' in box_key_to_dict_key:
+        del box_key_to_dict_key['labels']
+    boxes = box_list.bbox
+    rects = []
+    for i, box in enumerate(boxes):
+        top_left, bottom_right = box[:2].tolist(), box[2:].tolist()
+
+        r = [top_left[0], top_left[1], bottom_right[0], bottom_right[1]]
+        rect = {'rect': r}
+        if box_list.has_field('labels'):
+            label_idx = box_list.get_field('labels')[i]
+            rect['class'] = func_label_id_to_label(label_idx)
+        for box_key, dict_key in box_key_to_dict_key.items():
+            box_value = box_list.get_field(box_key)[i]
+            if isinstance(box_value, Tensor):
+                box_value = box_value.squeeze()
+                if len(box_value.shape) == 1:
+                    # just to make it a list of float
+                    rect[dict_key] = list(map(float, box_value))
+                elif len(box_value.shape) == 0:
+                    rect[dict_key] = float(box_value)
+                else:
+                    raise ValueError('unknown Tensor {}'.format(
+                        ','.join(map(str, box_value.shape))))
+            else:
+                raise ValueError('unknown {}'.format(type(box_value)))
+        rects.append(rect)
+    return rects
+
 def boxlist_to_list_dict(box_list, label_id_to_label):
+    # use to_rects, which handles the case where 'labels' not in the field
     box_list = box_list.convert("xyxy")
     if len(box_list) == 0:
         return []
@@ -433,18 +496,11 @@ class MaskRCNNPipeline(ModelPipeline):
         # API, which should be the batch size for all rank
         self.kwargs['TEST']['IMS_PER_BATCH'] = self.test_batch_size * self.mpi_size
         self.kwargs['DATALOADER']['NUM_WORKERS'] = self.workers
-
-        cls_loss = 'CE'
-        if dict_has_path(self.kwargs, 'MODEL$ROI_BOX_HEAD$CLASSIFICATION_LOSS'):
-            cls_loss = self.kwargs['MODEL']['ROI_BOX_HEAD']['CLASSIFICATION_LOSS']
-
-        if cls_loss == 'BCE':
+        if not self.has_background_output():
             self.kwargs['MODEL']['ROI_BOX_HEAD']['NUM_CLASSES'] = len(TSVDataset(self.data).load_labelmap())
             assert train_arg.get('multi_hot_label', True)
-        elif cls_loss == 'CE':
-            self.kwargs['MODEL']['ROI_BOX_HEAD']['NUM_CLASSES'] = len(TSVDataset(self.data).load_labelmap()) + 1
         else:
-            raise Exception('unknown conf type = {}'.format(cls_loss))
+            self.kwargs['MODEL']['ROI_BOX_HEAD']['NUM_CLASSES'] = len(TSVDataset(self.data).load_labelmap()) + 1
 
         if self.stageiter:
             self.kwargs['SOLVER']['STEPS'] = tuple([self.parse_iter(i) for i in self.stageiter])
@@ -500,6 +556,23 @@ class MaskRCNNPipeline(ModelPipeline):
         if cfg.MODEL.ROI_BOX_HEAD.CLASSIFICATION_ACTIVATE != 'softmax':
             cc.append('{}'.format(cfg.MODEL.ROI_BOX_HEAD.CLASSIFICATION_ACTIVATE))
 
+    def has_background_output(self):
+        # we should always use self.kwargs rather than cfg. cfg is only used by
+        # mask-rcnn lib, we only set it instead of read
+        if dict_has_path(self.kwargs,
+                'MODEL$ROI_BOX_HEAD$CLASSIFICATION_LOSS'):
+            p = self.kwargs['MODEL']['ROI_BOX_HEAD']['CLASSIFICATION_LOSS']
+        else:
+            p = 'CE'
+        if p in ['BCE'] or \
+                any(p.startswith(x) for x in ['IBCE']):
+            return False
+        elif p in ['CE', 'MCEB']:
+            # 0 is background
+            return True
+        else:
+            raise NotImplementedError()
+
     def predict(self, model_file, predict_result_file):
         model = build_detection_model(cfg)
         model.to(cfg.MODEL.DEVICE)
@@ -509,14 +582,7 @@ class MaskRCNNPipeline(ModelPipeline):
 
         dataset = TSVDataset(self.data)
         labelmap = dataset.load_labelmap()
-        if cfg.MODEL.ROI_BOX_HEAD.CLASSIFICATION_LOSS == 'BCE':
-            extra = 0
-        elif cfg.MODEL.ROI_BOX_HEAD.CLASSIFICATION_LOSS == 'CE':
-            # 0 is background
-            extra = 1
-        else:
-            raise NotImplementedError()
-
+        extra = 1 if self.has_background_output() else 0
         label_id_to_label = {i + extra: l for i, l in enumerate(labelmap)}
         test(cfg, model, self.distributed, [predict_result_file],
                 label_id_to_label, **self.kwargs)

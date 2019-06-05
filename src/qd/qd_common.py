@@ -1644,6 +1644,19 @@ def convert_to_yaml_friendly(result):
         raise NotImplementedError()
     return result
 
+def natural_key(text):
+    import re
+    result = []
+    for c in re.split(r'([0-9]+(?:[.][0-9]*)?)', text):
+        try:
+            result.append(float(c))
+        except:
+            continue
+    return result
+
+def natural_sort(strs):
+    strs.sort(key=natural_key)
+
 if __name__ == '__main__':
     init_logging()
     kwargs = parse_general_args()

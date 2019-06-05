@@ -13,6 +13,7 @@ from qd.qd_common import load_list_file
 from qd.qd_common import get_mpi_rank, get_mpi_size
 from qd.qd_common import get_mpi_local_rank, get_mpi_local_size
 from qd.qd_common import parse_general_args
+from collections import OrderedDict
 from maskrcnn_benchmark.utils.comm import synchronize, get_rank
 from qd.process_tsv import load_key_rects
 from qd.process_tsv import hash_sha1
@@ -48,6 +49,7 @@ except:
 import time
 import re
 import glob
+import torch.nn.functional as F
 
 
 def compare_caffeconverted_vs_pt(pt2, pt1):
@@ -375,8 +377,93 @@ class MultiHotCrossEntropyLoss(nn.Module):
     def __init__(self):
         super(MultiHotCrossEntropyLoss, self).__init__()
 
-    def forward(self, input, target):
-        return multi_hot_cross_entropy(input, target)
+    def forward(self, feature, target):
+        return multi_hot_cross_entropy(feature, target)
+
+class MCEBLoss(nn.Module):
+    # multi-hot cross entropy loss with background
+    def __init__(self):
+        super(MCEBLoss, self).__init__()
+
+    def forward(self, feature_with_bkg, target):
+        is_bkg = target.sum(dim=1) == 0
+        target_with_bkg = torch.cat([is_bkg[:, None].float(), target.float()], dim=1)
+        return multi_hot_cross_entropy(feature_with_bkg,
+                target_with_bkg)
+
+class IBCEWithLogitsNegLoss(nn.Module):
+    def __init__(self, neg, pos, neg_pos_ratio=None):
+        super(IBCEWithLogitsNegLoss, self).__init__()
+        self.neg = neg
+        self.pos = pos
+        self.neg_pos_ratio = neg_pos_ratio
+        self.num_called = 0
+        self.display = 100
+
+    def forward(self, feature, target):
+        pos_position = target == 1
+        neg_position = target == 0
+        ignore_position = target == -1
+
+        target = target.float()
+
+        weight = torch.ones_like(target)
+
+        weight[ignore_position] = 0
+        sig_feature = F.sigmoid(feature)
+        weight[(neg_position) & (sig_feature <= self.neg)] = 0
+        weight[(pos_position) & (sig_feature >= self.pos)] = 0
+
+
+        if self.neg_pos_ratio is not None:
+            pos_position_in_loss = pos_position & (sig_feature < self.pos)
+            neg_position_in_loss = neg_position & (sig_feature > self.neg)
+            num_pos_in_loss = pos_position_in_loss.sum()
+            num_neg_in_loss = neg_position_in_loss.sum()
+            if num_pos_in_loss != 0 and num_neg_in_loss != 0:
+                num_pos_in_loss = num_pos_in_loss.float()
+                num_neg_in_loss = num_neg_in_loss.float()
+                pos_weight = (num_pos_in_loss + num_neg_in_loss) / (
+                        num_pos_in_loss * (self.neg_pos_ratio + 1))
+                neg_weight = (num_pos_in_loss + num_neg_in_loss) * self.neg_pos_ratio / (
+                        num_neg_in_loss * (self.neg_pos_ratio + 1))
+                weight[pos_position_in_loss] = pos_weight
+                weight[neg_position_in_loss] = neg_weight
+        else:
+            pos_position_in_loss, neg_position_in_loss = None, None
+
+        weight_sum = torch.sum(weight)
+        if (self.num_called % self.display) == 0:
+            if pos_position_in_loss is None:
+                pos_position_in_loss = pos_position & (sig_feature < self.pos)
+                neg_position_in_loss = neg_position & (sig_feature > self.neg)
+                num_pos_in_loss = pos_position_in_loss.sum()
+                num_neg_in_loss = neg_position_in_loss.sum()
+            if num_pos_in_loss == 0:
+                avg_pos = 0
+            else:
+                avg_pos = sig_feature[pos_position_in_loss].sum() / num_pos_in_loss
+            if num_neg_in_loss == 0:
+                avg_neg = 0
+            else:
+                avg_neg = sig_feature[neg_position_in_loss].sum() / num_neg_in_loss
+            logging.info('In loss cal: #pos = {}, avg pos = {}, '
+                    '#neg = {}, avg neg = {}'.format(
+                        num_pos_in_loss, avg_pos,
+                        num_neg_in_loss, avg_neg))
+
+        self.num_called += 1
+
+        if weight_sum == 0:
+            return 0
+        else:
+            criterion = nn.BCEWithLogitsLoss(weight, reduction='sum')
+            loss = criterion(feature, target)
+            return torch.sum(loss) / weight_sum
+
+def mean_remove(x):
+    assert x.dim() == 2
+    return x - x.mean(dim=0)
 
 class BCEWithLogitsNegLoss(nn.Module):
     def __init__(self):
@@ -399,17 +486,17 @@ def bce_with_logits_neg_loss(feature, target):
 
 def multi_hot_cross_entropy(pred, soft_targets):
     logsoftmax = nn.LogSoftmax(dim=1)
-
-    loss = torch.sum(-soft_targets * logsoftmax(pred)) / (torch.sum(soft_targets)+0.000001)
-
-    return loss
+    target_sum = torch.sum(soft_targets)
+    if target_sum == 0:
+        return 0
+    else:
+        return torch.sum(-soft_targets * logsoftmax(pred)) / target_sum
 
 def load_latest_parameters(folder):
     yaml_pattern = op.join(folder,
             'parameters_*.yaml')
     yaml_files = glob.glob(yaml_pattern)
-    if len(yaml_files) == 0:
-        return {}
+    assert len(yaml_files) > 0
     def parse_time(f):
         m = re.search('.*parameters_(.*)\.yaml', f)
         t = datetime.strptime(m.group(1), '%Y_%m_%d_%H_%M_%S')
@@ -1142,6 +1229,7 @@ class YoloV2PtPipeline(ModelPipeline):
             'display': 100,
             'lr_policy': 'multifixed',
             'momentum': 0.9,
+            'is_caffemodel_for_predict': False,
             'workers': 4})
         self.num_train_images = None
 
@@ -1259,7 +1347,7 @@ class YoloV2PtPipeline(ModelPipeline):
                 'logdir': self.output_folder,
                 'batch_size': 64,
                 'workers': self.workers,
-                'is_caffemodel': False,
+                'is_caffemodel': self.is_caffemodel_for_predict,
                 'single_class_nms': False,
                 'obj_thresh': 0.01,
                 'thresh': 0.01,
