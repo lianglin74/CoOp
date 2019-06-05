@@ -217,7 +217,7 @@ class TSVDatasetWithoutLabel(TSVDatasetPlus):
 class CropClassTSVDataset(Dataset):
     def __init__(self, tsvfile, labelmap, labelfile=None,
                  transform=None, logger=None, for_test=False, enlarge_bbox=1.0,
-                 use_cache=False):
+                 use_cache=True):
         """ TSV dataset with cropped images from bboxes labels
         Params:
             tsvfile: image tsv file, columns are key, bboxes, b64_image_string
@@ -325,51 +325,32 @@ class CropClassTSVDataset(Dataset):
                 self._label_counts[int(parts[5])] += 1
         return self._label_counts
 
-
-class CropClassTSVDatasetYaml(CropClassTSVDataset):
-    """ CropClassTSVDataset taking a Yaml file for easy function call
-    """
-    def __init__(self, yaml_cfg, session_name=None, labelmap=None, transform=None, logger=None, enlarge_bbox=1.0):
+class CropClassTSVDatasetYaml():
+    def __init__(self, yaml_cfg, session_name, transform=None, logger=None, enlarge_bbox=1.0):
         if isinstance(yaml_cfg, six.string_types):
             cfg = load_from_yaml_file(yaml_cfg)
         else:
             cfg = yaml_cfg
 
-        if session_name:
-            # NOTE: training and validation data must use the same labelmap
-            if "train" in cfg and "val" in cfg:
-                assert cfg["train"]["labelmap"] == cfg["val"]["labelmap"]
-            cfg = cfg[session_name]
+        labelmap = cfg['labelmap']
+        img_files = cfg[session_name]['tsv']
+        label_files = cfg[session_name]['label']
+        if isinstance(img_files, six.string_types):
+            img_files = [img_files]
+        if isinstance(label_files, six.string_types):
+            label_files = [label_files]
+        assert(len(img_files) == len(label_files))
 
-        tsv_file = cfg['tsv']
-        label_file = cfg.get('label', None)
-        if not labelmap:
-            labelmap = cfg.get('labelmap', None)
-
-        for_test = True if session_name=="test" else False
-
-        super(CropClassTSVDatasetYaml, self).__init__(
-            tsv_file, labelmap, label_file,
-            for_test=for_test, transform=transform, logger=logger, enlarge_bbox=enlarge_bbox)
-
-class CropClassTSVDatasetYamlList():
-    """ Takes Yamllst file to concatenate several datasets.
-    Each line is the path to yaml file and weights (optional, default is 1)
-    """
-    def __init__(self, yaml_lst_file, session_name, labelmap=None,
-                transform=None, logger=None, enlarge_bbox=1.0):
-        self.yaml_cfgs, genarated_labelmap = self.load_yaml_list(yaml_lst_file, session_name)
-        if not labelmap:
-            # if labelmap is not provided, combine labelmap from multiple datasets
-            self.labels = genarated_labelmap
-        else:
-            # if labelmap is provided (must be list), use it. This is designed for validation set
+        if isinstance(labelmap, six.string_types):
+            self.labels = [l[0] for l in tsv_reader(labelmap)]
+        elif isinstance(labelmap, list):
             self.labels = labelmap
-        self.label_to_idx = {l: idx for idx, l in enumerate(self.labels)}
+        else:
+            raise ValueError("invalid labelmap type: {}".format(type(labelmap)))
 
-        self.datasets = [CropClassTSVDatasetYaml(yaml_cfg, labelmap=self.labels,
-                transform=transform, logger=logger, enlarge_bbox=enlarge_bbox)
-                for yaml_cfg in self.yaml_cfgs]
+        self.datasets = [CropClassTSVDataset(img_file, self.labels, label_file,
+            for_test=(session_name == "test"), transform=transform, logger=logger, enlarge_bbox=enlarge_bbox)
+                for img_file, label_file in zip(img_files, label_files)]
         self.dataset_lengths = [len(d) for d in self.datasets]
         self.length = sum(self.dataset_lengths)
         self._label_counts = None
@@ -386,7 +367,7 @@ class CropClassTSVDatasetYamlList():
         return self.datasets[dataset_idx].get_target(sample_idx)
 
     def label_dim(self):
-        return len(self.label_to_idx)
+        return len(self.labels)
 
     def is_multi_label(self):
         return False
@@ -394,30 +375,14 @@ class CropClassTSVDatasetYamlList():
     def get_labelmap(self):
         return self.labels
 
-    def load_yaml_list(self, yaml_lst_file, session_name):
-        yaml_cfgs = []
-        labelset = set()
-        for parts in tsv_reader(yaml_lst_file):
-            f = parts[0]
-            assert(os.path.isfile(f))
-            cfg = load_from_yaml_file(f)
-            if session_name in cfg:
-                cfg = cfg[session_name]
-                for p in tsv_reader(cfg["labelmap"]):
-                    labelset.add(p[0])
-                yaml_cfgs.append(cfg)
-        return yaml_cfgs, [l for l in labelset]
-
     @property
     def label_counts(self):
         if self._label_counts is None:
-            self._label_counts = np.zeros(len(self.label_to_idx))
+            self._label_counts = np.zeros(len(self.labels))
             for d in self.datasets:
                 cur_counts = d.label_counts
-                cur_labels = d.get_labelmap()
-                assert len(cur_counts) == len(cur_labels)
-                for l, count in zip(cur_labels, cur_counts):
-                    self._label_counts[self.label_to_idx[l]] += count
+                assert len(cur_counts) == len(self._label_counts)
+                self._label_counts = self._label_counts + cur_counts
         return self._label_counts
 
     def __get_internal_index(self, index):

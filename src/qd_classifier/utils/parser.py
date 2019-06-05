@@ -39,6 +39,10 @@ def get_arg_parser(model_names):
                         help='evaluate model on validation set')
     parser.add_argument('--pretrained', dest='pretrained', action='store_true',
                         help='use pre-trained model')
+    parser.add_argument('--custom_pretrained', default='', type=str, metavar='PATH',
+                        help='path to a pretrained model to initialize')
+    parser.add_argument('--skip_unmatched_layers', action='store_true',
+                        help='used in pair with custom_pretrained, skip unmatched layers if True, otherwise raise error')
 
     # distributed training
     parser.add_argument('--world-size', default=1, type=int,

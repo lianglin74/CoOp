@@ -25,7 +25,7 @@ from qd_classifier.utils.parser import get_arg_parser
 from qd_classifier.utils.data import get_data_loader
 from qd_classifier.utils.train_utils import get_criterion, get_optimizer, get_scheduler, get_accuracy_calculator, train
 from qd_classifier.utils.test import validate
-from qd_classifier.utils.save_model import save_checkpoint
+from qd_classifier.utils.save_model import save_checkpoint, load_model_state_dict
 from qd_classifier.utils.logger import Logger, DistributedLogger
 
 model_names = sorted(name for name in models.__dict__
@@ -92,16 +92,6 @@ def main(args):
     if args.ccs_loss_param > 0:
         model = layers.ResNetFeatureExtract(model)
 
-    if not args.distributed:
-        if args.arch.startswith('alexnet') or args.arch.startswith('vgg'):
-            model.features = torch.nn.DataParallel(model.features)
-            model.cuda()
-        else:
-            model = torch.nn.DataParallel(model).cuda()
-    else:
-        model.cuda()
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.local_rank], output_device=args.local_rank)
-
     # get loss function (criterion), optimizer, and scheduler (for learning rate)
     class_weights = None
     if args.balance_class:
@@ -121,10 +111,6 @@ def main(args):
     scheduler = get_scheduler(optimizer, args)
     accuracy = get_accuracy_calculator(multi_label=train_dataset.is_multi_label())
 
-    if args.evaluate:
-        validate(val_loader, model, criterion, logger)
-        return
-
     best_prec1 = 0
     best_epoch = 0
     # optionally resume from a checkpoint
@@ -133,7 +119,7 @@ def main(args):
             logger.info("=> loading checkpoint '{}'".format(args.resume))
             checkpoint = torch.load(args.resume)
             args.start_epoch = checkpoint['epoch']
-            model.load_state_dict(checkpoint['state_dict'])
+            load_model_state_dict(model, checkpoint['state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer'])
             best_prec1 = checkpoint['best_prec1']
             logger.info("=> loaded checkpoint '{}' (epoch {})"
@@ -141,7 +127,27 @@ def main(args):
         else:
             logger.info("=> no checkpoint found at '{}'".format(args.resume))
 
+    if args.custom_pretrained:
+        assert(not args.resume and os.path.isfile(args.custom_pretrained))
+        logger.info("=> loading pretrained model '{}'".format(args.custom_pretrained))
+        checkpoint = torch.load(args.custom_pretrained)
+        load_model_state_dict(model, checkpoint['state_dict'], skip_unmatched_layers=args.skip_unmatched_layers)
+    import ipdb; ipdb.set_trace()
+    if not args.distributed:
+        if args.arch.startswith('alexnet') or args.arch.startswith('vgg'):
+            model.features = torch.nn.DataParallel(model.features)
+            model.cuda()
+        else:
+            model = torch.nn.DataParallel(model).cuda()
+    else:
+        model.cuda()
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.local_rank], output_device=args.local_rank)
+
     cudnn.benchmark = True
+    if args.evaluate:
+        prec1 = validate(val_loader, model, criterion, logger)
+        print("top1 accuracy: {}".format(prec1))
+        return
 
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
@@ -173,8 +179,8 @@ def main(args):
                 'best_prec1': best_prec1,
             }, is_best, args.prefix, epoch, args.output_dir)
             info_str = 'Epoch: [{0}]\t' \
--                       'Best Epoch {1:d}\t' \
--                       'Best Prec1 {2:.3f}'.format(epoch, best_epoch, best_prec1)
+                       'Best Epoch {1:d}\t' \
+                       'Best Prec1 {2:.3f}'.format(epoch, best_epoch, best_prec1)
             logger.info(info_str)
 
 

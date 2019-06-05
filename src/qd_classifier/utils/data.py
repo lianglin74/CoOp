@@ -16,11 +16,8 @@ def get_data_loader(args, logger=None):
 
     if args.data.endswith('.yaml'):
         train_dataset = CropClassTSVDatasetYaml(args.data, session_name='train', transform=train_transform, enlarge_bbox=args.enlarge_bbox)
-    elif args.data.endswith('.yamllst'):
-        train_dataset = CropClassTSVDatasetYamlList(args.data, session_name='train', transform=train_transform, enlarge_bbox=args.enlarge_bbox)
     else:
         raise NotImplementedError()
-    labelmap = train_dataset.get_labelmap()
 
     if args.balance_sampler:
         assert not args.balance_class and not args.distributed
@@ -37,12 +34,9 @@ def get_data_loader(args, logger=None):
         num_workers=args.workers, pin_memory=True, sampler=train_sampler)
 
     if args.data.endswith('.yaml'):
-        val_dataset = CropClassTSVDatasetYaml(args.data, session_name='val', labelmap=labelmap, transform=test_transform, enlarge_bbox=args.enlarge_bbox)
-    elif args.data.endswith('.yamllst'):
-        val_dataset = CropClassTSVDatasetYamlList(args.data, session_name='val', labelmap=labelmap, transform=test_transform, enlarge_bbox=args.enlarge_bbox)
+        val_dataset = CropClassTSVDatasetYaml(args.data, session_name='val', transform=test_transform, enlarge_bbox=args.enlarge_bbox)
     else:
         raise NotImplementedError()
-
     val_loader = torch.utils.data.DataLoader(
         val_dataset, batch_size=args.batch_size, shuffle=False,
         num_workers=args.workers, pin_memory=True)
