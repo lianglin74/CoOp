@@ -126,6 +126,22 @@ def except_to_update_classification_loss(param):
         return dict_get_path_value(param,
                 'MODEL$ROI_BOX_HEAD$CLASSIFICATION_LOSS') == 'CE'
 
+def except_to_update_random_scale_min(param):
+    if dict_has_path(param, 'INPUT$FIXED_SIZE_AUG$RANDOM_SCALE_MIN'):
+        value = dict_get_path_value(param, 'INPUT$FIXED_SIZE_AUG$RANDOM_SCALE_MIN')
+        return value == 1
+    else:
+        return True
+
+def except_to_update_random_scale_max(param):
+    if dict_has_path(param,
+            'INPUT$FIXED_SIZE_AUG$RANDOM_SCALE_MAX'):
+        value = dict_get_path_value(param,
+            'INPUT$FIXED_SIZE_AUG$RANDOM_SCALE_MAX')
+        return value == 1
+    else:
+        return True
+
 def update_parameters(param):
     default_param = {
             'max_iter': 10000,
@@ -137,8 +153,6 @@ def update_parameters(param):
             ('MaskTSVDataset$version', 'V', except_to_update_for_version),
             ('MaskTSVDataset$remove_images_without_annotations', 'RemoveEmpty',
                 except_to_update_for_remove_bg_image),
-            ('MODEL$ROI_BOX_HEAD$CLASSIFICATION_LOSS', '',
-                except_to_update_classification_loss),
             ('MODEL$WEIGHT', 'init'),
             ('', ''),
             ('effective_batch_size', 'BS'),
@@ -160,6 +174,12 @@ def update_parameters(param):
             ('INPUT$MIN_SIZE_TRAIN', 'Min'),
             ('INPUT$MAX_SIZE_TRAIN', 'Max'),
             ('DTYPE', 'T', except_to_update_for_dtype),
+            ('INPUT$FIXED_SIZE_AUG$RANDOM_SCALE_MIN', 'ScaleMin',
+                except_to_update_random_scale_min),
+            ('INPUT$FIXED_SIZE_AUG$RANDOM_SCALE_MAX', 'ScaleMax',
+                except_to_update_random_scale_max),
+            ('MODEL$ROI_BOX_HEAD$CLASSIFICATION_LOSS', '',
+                except_to_update_classification_loss),
             ]
 
     non_expid_impact_keys = ['data', 'net', 'expid_prefix',
@@ -172,6 +192,12 @@ def update_parameters(param):
             'full_expid', 'log_step', 'MODEL$DEVICE',
             'MODEL$ROI_BOX_HEAD$CLASSIFICATION_ACTIVATE',
             'display']
+    true_false_keys = OrderedDict([('use_treestructure', ('Tree', None)),
+        ('MODEL$USE_TREESTRUCTURE', ('Tree', None)),
+        ('MaskTSVDataset$multi_hot_label', ('MultiHot', None)),
+        ('DATALOADER$ASPECT_RATIO_GROUPING', [None, 'NoARG']),
+        ('INPUT$USE_FIXED_SIZE_AUGMENTATION', ['FSize', None]),
+        ])
 
     if param['pipeline_type'] == 'MaskRCNNPipeline':
         non_expid_impact_keys.extend(['DATASETS', ''])
@@ -199,11 +225,6 @@ def update_parameters(param):
             elif type(pk) in [list, tuple]:
                 pk = '.'.join(map(str, pk))
             infos.append('{}{}'.format(v, pk))
-
-    true_false_keys = OrderedDict([('use_treestructure', ('Tree', None)),
-        ('MODEL$USE_TREESTRUCTURE', ('Tree', None)),
-        ('MaskTSVDataset$multi_hot_label', ('MultiHot', None)),
-        ])
     for k in true_false_keys:
         if dict_has_path(param, k):
             if dict_get_path_value(param, k) and true_false_keys[k][0]:
