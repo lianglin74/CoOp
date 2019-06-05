@@ -13,6 +13,7 @@ import numpy as np
 import math
 
 def findShot(predict_file):
+    className = "shot"
     
     basketBallThresh = 0.5
     rimThresh = 0.2
@@ -180,11 +181,13 @@ def findShot(predict_file):
                 print("relative angle: ", toDegree(abs(angleRimToBall - angleBallToRim)))
               
               endTime = imageCnt/frameRate
-              if ( abs(angleRimToBall - angleBallToRim) < angleThresh ) and iouTime > startTime - padding and iouTime < endTime + padding \
-                and personTime > startTime - padding and personTime < endTime + padding:
+              if ( abs(angleRimToBall - angleBallToRim) < angleThresh ) and iouTime > startTime - padding and iouTime < endTime + padding:
+                className = "shot" 
+                if personTime > startTime - padding and personTime < endTime + padding:
                   print("Finding one DUNK shot by angle analysis: ", (imageCnt/frameRate))
-                  pred_results_angle.append((startTime - padding, endTime + padding))
-                  eventStart = False                  
+                  className = "dunk"
+                pred_results_angle.append((startTime - padding, endTime + padding, className))
+                eventStart = False                  
               else: #not a shot
                 if debug:
                   print("Not a shot")
@@ -342,16 +345,17 @@ def writeToTSV(labelFile, pred_results):
   fileName = labelFile.replace(".tsv", "_events.tsv")
   videoFileName = labelFile.replace(".tsv", ".mp4")
   id = 0; 
-  className = "shot"
+  #className = "shot"
   padding  = 0
   dictList = []
   for v in pred_results:
     id += 1
     value = {}
-    value['class'] = className
+    
     value['id'] = id
     value['start'] = v[0] - padding
-    value['end'] = v[1] + padding    
+    value['end'] = v[1] + padding   
+    value['class'] = v[2]
     dictList.append(value)
   
   print('json format results:')
