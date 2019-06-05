@@ -1,0 +1,6 @@
+all_test_data:
+- test_data: TaxPersonvoc0712Test_with_bb
+  test_split: test
+param:
+  full_expid: Tax1300V13PersonPlus_0.0_0.4_darknet19_448_C_Init.best_model9748_maxIter.50eEffectBatchSize128_FixParam.dark6a.leaky_bb_only_pt
+type: pipeline_eval_multi
