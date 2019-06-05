@@ -26,6 +26,7 @@ def findShot(predict_file):
     # 2.0 * rim width
     distanceFromBallToRimToTrack = 1.5
     angleThresh = 90.0/180*math.pi
+    angleThreshBelowRim = 30.0/180*math.pi
 	
     debug = 0
     
@@ -53,7 +54,8 @@ def findShot(predict_file):
     startTime  = -1
     endTime = -1
     
-    iouTime = -1
+    iouTime = -10
+    personTime = -10
     
     largeDistanceCount = 0
     LargeBallRimDistanceCountThresh = 5
@@ -62,7 +64,8 @@ def findShot(predict_file):
     for row in tqdm(tsv_reader(predict_file)):
         imageCnt += 1
         
-        if (imageCnt > 875 and imageCnt < 950):
+        #if (imageCnt > 9645 and imageCnt < 9650):
+        if (imageCnt > 9495 and imageCnt < 9650):
           debug = 0
         
         key = row[0]
@@ -90,7 +93,7 @@ def findShot(predict_file):
             if r['conf'] >= backBoardThresh:
               #filteredRects.append(r)
               if debug and not rimExists:
-                print("[Warning] image ",  imageCnt, ": backboard found, but no rim")              
+                print("[Warning] image ",  imageCnt, ": backboard found, but no rim") 
           i += 1
         if maxBasketRectIndex != -1:
           ballRects = rects[maxBasketRectIndex]          
@@ -104,13 +107,6 @@ def findShot(predict_file):
           assert ballRects['class'] == "basketball"          
             
           iou = maxIouOnebb_in_list_of_bb(ballRects, rimRects)
-          
-          if debug and imageCnt == 400:
-            print("ballRects:", ballRects)
-            print("rimRect:", rimRects)
-            print("iou:", iou)
-            #
-            exit()          
           
           ## use ball rim angle to filter out 
           ballCenter = getCenterOfObject(ballRects)
@@ -138,19 +134,28 @@ def findShot(predict_file):
             if (iou > rimBallIouHigherThresh): 
               print("!!Found a shot")
               
-          
           if debug:
             print("image: ", imageCnt)
             print("second: ", imageCnt / frameRate)
             print("ballCenter: ", ballCenter)
-            
+
+          if debug:
+            print("ballRects:", ballRects)
+            print("rimRect:", rimRects)
+            print("iou:", iou)
+
           if debug:
             print("eventStart: ", eventStart)
             print("distanceFromBallToClosetRim: ", distanceFromBallToClosetRim)
             print("distance Thresh:", distanceFromBallToRimToTrack * widthRim)
             print("centerOfRim: ", centerOfRim)
           
+          # start to check people
+          if (getPersonHoldingBall(rectClosestRim['rect'], ballRects['rect'], rects, debug)): 
+            print("Found a person holding ball: ", imageCnt)
+            personTime = imageCnt/frameRate
           
+          # start to check angle
           if not eventStart: 
             if distanceFromBallToClosetRim < distanceFromBallToRimToTrack * widthRim and isAbove(ballCenter, centerOfRim):
               angleBallToRim = getAngleOfTwoPoints(ballCenter, centerOfRim)
@@ -175,8 +180,9 @@ def findShot(predict_file):
                 print("relative angle: ", toDegree(abs(angleRimToBall - angleBallToRim)))
               
               endTime = imageCnt/frameRate
-              if abs(angleRimToBall - angleBallToRim) < angleThresh and iouTime > startTime - padding and iouTime < endTime + padding:
-                  print("Finding one shot by angle analysis: ", (imageCnt/frameRate))
+              if ( abs(angleRimToBall - angleBallToRim) < angleThresh ) and iouTime > startTime - padding and iouTime < endTime + padding \
+                and personTime > startTime - padding and personTime < endTime + padding:
+                  print("Finding one DUNK shot by angle analysis: ", (imageCnt/frameRate))
                   pred_results_angle.append((startTime - padding, endTime + padding))
                   eventStart = False                  
               else: #not a shot
@@ -194,6 +200,40 @@ def findShot(predict_file):
     
     return pred_results_angle
     #pred_results
+
+def getPersonHoldingBall_loose(rimRect, ballRect, rects, debug):  
+  ballPersonIouThresh = 0
+  rimPersonIouThresh = 0
+  
+  if debug: 
+    print("Rects:", rects)    
+  
+  for r in rects:
+    if r['class'] == 'person':
+      personRect = r['rect']
+      if debug:
+        print("preson rect:", personRect)
+        print("iouWithBall: ", calculate_iou(personRect, ballRect))
+        print("iouWithPerson", calculate_iou(personRect, rimRect))
+        
+      if calculate_iou(personRect, ballRect) > ballPersonIouThresh and calculate_iou(personRect, rimRect) > rimPersonIouThresh:        
+        return True;
+        
+  return False;
+
+def getPersonHoldingBall(rimRect, ballRect, rects, debug):
+  ballPersonIouThresh = 0
+  rimPersonIouThresh = 0
+  
+  for r in rects:
+    if r['class'] == 'person':
+      personRect = r['rect']
+      
+      if calculate_iou(personRect, ballRect) > ballPersonIouThresh and calculate_iou(personRect, rimRect) > rimPersonIouThresh \
+        and isAbove( (personRect[0], personRect[1]), (rimRect[2], rimRect[3]) ) \
+        and getHeightOfRect(personRect) > 2.0 *getHeightOfRect(rimRect) :
+        return True;
+  return False;
         
 def toDegree(angle):
   return angle / math.pi * 180.0; 
@@ -216,9 +256,10 @@ def calculateF1(pred_results, true_results):
   print("FlasePositve: ", falsePositiveList)
   falseNegativeList = [value for value in true_results if not findValueInPairList( value ,  filtered_pred_results) ]
   print("falseNegative: ", falseNegativeList)
-  precision = len(truePositiveList) / (len(truePositiveList) + len (falsePositiveList) +0.0)
   
-  recall = len(truePositiveList) / (len(truePositiveList) + len (falseNegativeList) +0.0)
+  precision = len(truePositiveList) / (len(truePositiveList) + len (falsePositiveList) +0.0) if len(truePositiveList) else 0
+  
+  recall = len(truePositiveList) / (len(truePositiveList) + len (falseNegativeList) +0.0) if len(truePositiveList) else 0
   
   print("precision: ", precision)
   print("recall: ", recall)
@@ -237,11 +278,23 @@ def isAbove(p1, p2):
         
         
 def getWidthOfObject(bb):
-  y1 = bb['rect'][1]
+  x1 = bb['rect'][0]  
+  x2 = bb['rect'][2]
   
+  return x2 - x1
+  
+        
+def getHeightOfObject(bb):
+  y1 = bb['rect'][1]  
   y2 = bb['rect'][3]
   
-  return y2 - y1
+  return y2 - y1 
+  
+def getHeightOfRect(rect):
+  y1 = rect[1]  
+  y2 = rect[3]
+  
+  return y2 - y1 
         
 def getCenterOfObject(bb):
   x1 = bb['rect'][0]
