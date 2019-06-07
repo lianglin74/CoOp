@@ -21,6 +21,7 @@ import uuid
 import _init_paths
 import logo.constants
 from qd import qd_common, tsv_io, process_tsv
+from qd.process_image import bgra_to_bgr_img_arr
 import evaluation.utils
 from evaluation import eval_utils, generate_task, analyze_task
 
@@ -351,12 +352,12 @@ def urls_to_img_file_parallel(in_rows, url_col_idx, out_cols_idx, outpath, keep_
     def reader_process(in_rows, in_queue, num_workers, url_col_idx, out_cols_idx, key_file):
         max_col_idx = max(url_col_idx, max(out_cols_idx))
         with open(key_file, 'wb') as key_fp:
-            for cols in tqdm(in_rows):
-                if max_col_idx >= len(cols):
-                    logging.info("invalid input row: {}".format(cols))
+            for parts in tqdm(in_rows):
+                if max_col_idx >= len(parts):
+                    logging.info("invalid input row: {}".format(parts))
                     continue
-                key_fp.write(cols[url_col_idx] + '\n')
-                in_queue.put(cols)
+                key_fp.write(parts[url_col_idx] + '\n')
+                in_queue.put(parts)
         for _ in range(num_workers):
             in_queue.put(None)  # ending signal for workers
 
@@ -368,17 +369,24 @@ def urls_to_img_file_parallel(in_rows, url_col_idx, out_cols_idx, outpath, keep_
                 break
             out_cols = [cols[i] for i in out_cols_idx]
             url = cols[url_col_idx]
-            img_bytes = image_url_to_bytes(url)
+            # img_bytes = image_url_to_bytes(url)
+            img_bytes = qd_common.url_to_str(url)
             if img_bytes is not None:
                 b64_str = base64.b64encode(img_bytes)
-                im = qd_common.img_from_base64(b64_str)
-                h, w, c = im.shape
+                im_arr = qd_common.img_from_base64(b64_str)
+                if im_arr is None:
+                    print("invalid image url: {}".format(url))
+                    continue
+                h, w, c = im_arr.shape
                 # NOTE: opencv has a bug, even set the flag cv2.IMREAD_COLOR, some
                 # images still return 4 channels
-                if c!=3:
-                    logging.info("invalid image format: {}".format(url))
+                if c==4:
+                    im_arr = bgra_to_bgr_img_arr(im_arr)
+                h, w, c = im_arr.shape
+                if c != 3:
+                    print("invalid image of {} channels, url: {}".format(c, url))
                     continue
-                out_cols.append(b64_str)
+                out_cols.append(qd_common.encoded_from_img(im_arr))
                 out_queue.put(out_cols)
 
     def writer_process(out_queue, num_workers, outpath):

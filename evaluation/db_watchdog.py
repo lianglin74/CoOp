@@ -30,7 +30,7 @@ class VerificationConfig():
     num_hp_per_hit = 2
     max_hits_per_file = 2000
     num_judgment = 4
-    max_tasks_running = 5
+    max_tasks_running = 2
 
 class LogoVerificationConfig():
     collection_name = "uhrs_logo_verification"

@@ -3,7 +3,7 @@ import os
 
 import _init_paths
 
-from qd.qd_common import ensure_directory
+from qd.qd_common import ensure_directory, json_dump
 from qd.tsv_io import tsv_reader, tsv_writer
 
 def scrape_keywords_to_search_images():
@@ -14,12 +14,12 @@ def scrape_keywords_to_search_images():
     from analyze_task import analyze_draw_box_task
     from uhrs import UhrsTaskManager
 
-    # dname = "logo200"
-    dname = "2k_new"
+    dname = "logo200"
+    # dname = "2k_new"
     ext = "png"
     num_imgs_per_query = 80
-    # rootdir = "//ivm-server2/IRIS/OD/xiaowh/vendor/"
-    rootdir = "/mnt/ivm_server2_od/xiaowh/vendor/"
+    rootdir = "//ivm-server2/IRIS/OD/xiaowh/vendor/"
+    # rootdir = "/mnt/ivm_server2_od/xiaowh/vendor/"
     # keywords_file = r"C:\Users\xiaowh\OneDrive - Microsoft\share\filtered_labels_to_add.tsv"
     keywords_file = op.join(rootdir, dname, "2k_labels_to_add.txt")
     outfile = op.join(rootdir, dname, "scraped_urls_canonical_{}.tsv".format(ext))
@@ -27,12 +27,15 @@ def scrape_keywords_to_search_images():
     filtered_fname2 = "canonical_{}_dedup_scraped_urls2.tsv".format(ext)
     outdir = op.join(rootdir, dname)
     log_file = "task_ids.tsv"
-    phase = "scrape"
 
-    ranked_list_file = op.join(rootdir, dname, "2k_ranked_logo_list.txt")
-    blacklist_file = op.join(rootdir, dname, "no_found_logos.txt")
-    blacklist_labels_set = set(p[0] for p in tsv_reader(blacklist_file))
-    ranked_labels = [p[0] for p in tsv_reader(ranked_list_file) if p[0] not in blacklist_labels_set]
+    out_real_label_file = "url_bboxes_real.tsv"
+    out_proto_label_file = "url_bboxes_proto.tsv"
+    phase = "download"
+
+    # ranked_list_file = op.join(rootdir, dname, "2k_ranked_logo_list.txt")
+    # blacklist_file = op.join(rootdir, dname, "no_found_logos.txt")
+    # blacklist_labels_set = set(p[0] for p in tsv_reader(blacklist_file))
+    # ranked_labels = [p[0] for p in tsv_reader(ranked_list_file) if p[0] not in blacklist_labels_set]
 
     if phase == "scrape":
         label2keywords = collections.defaultdict(list)
@@ -109,14 +112,16 @@ def scrape_keywords_to_search_images():
     if phase == "download":
         download_dir = op.join(outdir, "download")
         ensure_directory(download_dir)
-        for parts in tsv_reader(op.join(outdir, log_file)):
-            task_group_id = int(parts[0])
-            task_id = int(parts[1])
-            fname = op.basename(parts[2])
-            if UhrsTaskManager.is_task_completed(task_group_id, task_id):
-                fpath = op.join(download_dir, fname)
-                print(fpath)
-                UhrsTaskManager.download_task(task_group_id, task_id, fpath)
+        res_files = []
+        # for parts in tsv_reader(op.join(outdir, log_file)):
+        #     task_group_id = int(parts[0])
+        #     task_id = int(parts[1])
+        #     fname = op.basename(parts[2])
+        #     if UhrsTaskManager.is_task_completed(task_group_id, task_id):
+        #         fpath = op.join(download_dir, fname)
+        #         print(fpath)
+        #         UhrsTaskManager.download_task(task_group_id, task_id, fpath)
+        #         res_files.append(fpath)
 
         res_files = [op.join(download_dir, fname) for fname in os.listdir(download_dir)]
         url_ans_tsv = op.join(outdir, "url_bboxes.tsv")
@@ -132,6 +137,10 @@ def scrape_keywords_to_search_images():
                 if "IsPrototype" in b:
                     is_proto = True
             if is_proto:
+                c = bboxes[0]['class']
+                # keurig & green mountain coffee appear at the same time
+                if not all([b['class'] == c for b in bboxes]):
+                    continue
                 proto_labels.append([url, bboxes])
             else:
                 real_labels.append([url, bboxes])
@@ -143,5 +152,24 @@ def scrape_keywords_to_search_images():
                     label2count[b["class"]] += 1
             return label2count
 
-        proto_counts = count_labels(proto_labels)
-        real_counts = count_labels(real_labels)
+        proto_label2counts = count_labels(proto_labels)
+        real_label2counts = count_labels(real_labels)
+
+        keep_labels = set()
+        for label in real_label2counts:
+            if label in proto_label2counts:
+                keep_labels.add(label)
+        print("Get {} categories".format(len(keep_labels)))
+
+        def filter_labels(url_bboxes_list, keep_labels):
+            for url, bboxes in url_bboxes_list:
+                filtered_bboxes = [b for b in bboxes if b["class"] in keep_labels]
+                if len(filtered_bboxes) == 0:
+                    continue
+                yield url, json_dump(filtered_bboxes)
+        tsv_writer(filter_labels(real_labels, keep_labels), op.join(outdir, out_real_label_file))
+        tsv_writer(filter_labels(proto_labels, keep_labels), op.join(outdir, out_proto_label_file))
+
+
+if __name__ == "__main__":
+    scrape_keywords_to_search_images()

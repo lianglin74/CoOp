@@ -7,7 +7,8 @@ import pandas as pd
 
 from evaluation.generate_task import pack_task_with_honey_pot, write_task_file
 from evaluation.uhrs import UhrsTaskManager
-from evaluation.utils import load_escaped_json, write_to_file
+from evaluation.utils import load_escaped_json
+from qd.tsv_io import tsv_writer
 
 
 def analyze_draw_box_task(result_files, outfile_res, result_file_type="uhrs"):
@@ -39,7 +40,7 @@ def analyze_draw_box_task(result_files, outfile_res, result_file_type="uhrs"):
             # TODO: merge answers from several workers
             bbox_list = url2ans_map[url]
             yield url, json.dumps(bbox_list, separators=(',', ':'))
-    write_to_file(gen_rows(), outfile_res)
+    tsv_writer(gen_rows(), outfile_res)
     return url2ans_map
 
 
@@ -115,7 +116,7 @@ def analyze_verify_box_task(result_files, result_file_type, outfile_res,
             else:
                 bboxes = task["bboxes"]
                 for b in bboxes:
-                    b["uhrs"] =  collections.Counter(answers)
+                    b["uhrs"] =  ans_array_to_dict(answers)
                 consensus_tasks[consensus_ans].append(task)
 
     num_rejudge = len(rejudge_tasks)
@@ -127,8 +128,7 @@ def analyze_verify_box_task(result_files, result_file_type, outfile_res,
                          float(num_rejudge)/num_total*100))
     logging.info('option\tcount\tpercentage')
     for k, v in consensus_tasks.items():
-        v = len(v)
-        logging.info('{}\t{}\t{}'.format(k, v, float(v)/num_consensus*100))
+        logging.info('{}\t{}\t{}'.format(k, len(v), float(len(v))/num_consensus*100))
 
     ambiguous_categories = [b["objects_to_find"] for b in consensus_tasks[3]]
     logging.info("Categories labelled as [can't judge]: {}"
@@ -137,13 +137,13 @@ def analyze_verify_box_task(result_files, result_file_type, outfile_res,
     # write consensus results
     result_data = [[str(k), json.dumps(v, separators=(',', ':'))] for k, v in consensus_tasks.items()]
     if outfile_res:
-        write_to_file(result_data, outfile_res)
+        tsv_writer(result_data, outfile_res)
         logging.info("Writing consensus results to: {}".format(outfile_res))
 
     # write uhrs answer summary
     summary = []
     for uuid in uuid2answers_map:
-        ans = collections.Counter(uuid2answers_map[uuid])
+        ans = ans_array_to_dict(uuid2answers_map[uuid])
         task = uuid2task_map[uuid]
         summary.append([task["image_info"], task["image_url"],
                 json.dumps(task["bboxes"], separators=(',', ':')),
@@ -156,6 +156,14 @@ def analyze_verify_box_task(result_files, result_file_type, outfile_res,
         if outfile_rejudge:
             write_task_file(rejudge_data, outfile_rejudge)
     return num_rejudge, summary
+
+
+def ans_array_to_dict(arr):
+    counts = collections.Counter(arr)
+    res = {}
+    for k in counts:
+        res[str(k)] = counts[k]
+    return res
 
 
 def get_consensus_answer(answers, consensus_threshold=0.5):
