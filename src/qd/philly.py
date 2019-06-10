@@ -19,11 +19,13 @@ import copy
 import os
 from collections import OrderedDict
 import glob
+from dateutil.parser import parse
 from qd.qd_common import get_file_size
 
 from qd.qd_common import dump_to_yaml_str
 from qd.qd_common import init_logging
 from qd.qd_common import list_to_nested_dict
+from qd.qd_common import list_to_dict
 from qd.gpu_util import parse_gpu_usage_dict
 
 
@@ -197,7 +199,9 @@ def create_philly_client(**kwargs):
     return PhillyVC(**param)
 
 def create_multi_philly_client(**kwargs):
-    return MultiPhillyVC(**kwargs)
+    param = load_from_yaml_file('./aux_data/configs/multi_philly_vc.yaml')
+    dict_update_nested_dict(param, kwargs)
+    return MultiPhillyVC(**param)
 
 def decode_extra_param(extraParam):
     re_result = re.match('.*python scripts/.*\.py -bp (.*)', extraParam)
@@ -230,12 +234,11 @@ def attach_log_parsing_result(job_info):
         if result and result.groups():
             log_time, left, speed = result.groups()
             job_info['speed'] = speed
-            from dateutil.parser import parse
             from datetime import datetime, timezone
             now = datetime.now(timezone.utc)
             log_time = parse(log_time)
             delay = (now - log_time).total_seconds()
-            job_info['left'] = '{}({}s)'.format(left, delay)
+            job_info['left'] = '{}({:.1f}s)'.format(left, delay)
             del job_info['latest_log']
             return
     del job_info['latest_log']
@@ -266,6 +269,7 @@ def decode_config_extra_param(extra_param):
 
 class PhillyVC(object):
     status_running = 'Running'
+    status_queued = 'Queued'
     def __init__(self, vc, cluster, user_name=None,
             **kwargs):
         self.vc = vc
@@ -400,6 +404,15 @@ class PhillyVC(object):
                     job_info[k] = job_status[k]
                 job_info['ssh'] = self.get_ssh_command(philly_job_status)
                 all_job_info.append(job_info)
+        for job_info in all_job_info:
+            hour, minute, second = list(map(float,
+                    job_info['elapsedTime'].split(':')))
+            job_info['elapsedTime'] = round(hour + minute / 60. + second /
+                    3600., 2)
+        for job_info in all_job_info:
+            job_info['cluster'] = self.cluster
+            job_info['vc'] = self.vc
+            job_info['vc_type'] = self.vc_type
 
         return all_job_info
 
@@ -413,8 +426,7 @@ class PhillyVC(object):
                         op.basename(self.src_config_path)))
 
     def attach_log(self, job_info):
-        job_id = job_info['appID']
-        job_info['latest_log'] = self.philly_job_log(job_id)
+        job_info['latest_log'] = self.philly_job_log(job_info)
 
     def attach_gpu_utility(self, all_job_info):
         for job_info in all_job_info:
@@ -437,19 +449,17 @@ class PhillyVC(object):
         if valid_job_checker is not None:
             all_job_info = [j for j in all_job_info if valid_job_checker(j)]
         all_job_info = [j for j in all_job_info if
-                j['status'] != 'Pass' and
+                #j['status'] != 'Pass' and
                 #j['status'] != 'Failed' and
                 j['status'] != 'Killed']
         if self.query_with_gpu:
             self.attach_gpu_utility([j for j in all_job_info if j['status'] ==
                     'Running'])
         self.attach_meta(all_job_info)
-        for job_info in all_job_info:
-            job_info['cluster'] = self.cluster
-            job_info['vc'] = self.vc
-            job_info['vc_type'] = self.vc_type
         if self.query_with_log:
             for job_info in all_job_info:
+                if job_info['status'] != self.status_running:
+                    continue
                 self.attach_log(job_info)
                 attach_log_parsing_result(job_info)
         for j in all_job_info:
@@ -461,6 +471,18 @@ class PhillyVC(object):
         self.parse_meta_data(all_meta)
         for job_info, meta in zip(all_job_info, all_meta):
             job_info['meta'] = meta
+
+        # we want to access these 3 fields if it has
+        keys = ['data', 'net', 'expid']
+        for job_info in all_job_info:
+            for k in keys:
+                job_info[k] = job_info['meta'].get('param',
+                        {}).get(k)
+
+        meta_keys = ['num_gpu']
+        for job_info in all_job_info:
+            for k in meta_keys:
+                job_info[k] = job_info['meta'][k]
 
     def query_meta_data(self, job_ids):
         result = []
@@ -482,22 +504,6 @@ class PhillyVC(object):
                     meta['param'] = param.get('param', {})
         for meta in all_meta:
             meta['num_gpu'] = meta['gpusPerContainer'] * meta['minContainers']
-
-    def submit2(self, param):
-        '''
-        param should be a list of string or integer or something
-        '''
-        if self.random_id is None:
-            random_id = int(random.random() * 10000)
-            self.sync_code(random_id)
-            self.random_id = random_id
-
-        random_qd = self.get_random_qd()
-
-        extraParam = '{} python scripts/run.py {}'.format(
-                random_qd, ' '.join(map(str, param)))
-
-        return self.submit_without_sync(extraParam)
 
     def get_config_extra_param(self, command):
         dict_param = {
@@ -635,14 +641,13 @@ class PhillyVC(object):
             result_str = cmd_run(cmd, return_output=True)
             return result_str
 
-    def submit(self, extraParam, **submit_param):
-        self.submit_without_sync(extraParam, **submit_param)
-
-    def submit_without_sync(self, extraParam):
+    def submit_without_sync(self, extraParam, num_gpu=None):
         '''
         use submit() because of bad naming here.
         '''
-        result = self.philly_submit_v2(str(self.random_id), self.num_gpu,
+        if num_gpu is None:
+            num_gpu = self.num_gpu
+        result = self.philly_submit_v2(str(self.random_id), num_gpu,
                 extraParam)
         if result:
             result = json.loads(result)
@@ -659,24 +664,9 @@ class PhillyVC(object):
     def get_random_qd(self):
         return 'quickdetection_{}'.format(self.random_id)
 
-    def track(self, job_id, random_qd=''):
-        i = 0
-        while True:
-            status = self.track_job_once(job_id)
-            logging.info('track {}-th times ({}, {})'.format(i,
-                job_id,
-                random_qd))
-            key = 'status'
-            if key in status:
-                logging.info('status = {}'.format(status[key]))
-                #logging.info('{}'.format(pformat(status)))
-            else:
-                logging.info('no satus: {}'.format(pformat(status)))
-            i = i + 1
-            time.sleep(60)
-
-    def track_job_once(self, job_id):
-        result = self.philly_job_log(job_id)
+    def track_job_once(self, app_info):
+        job_id = app_info['appID']
+        result = self.philly_job_log(app_info)
         logging.info(result)
 
         status = json.loads(self.philly_job_status(job_id))
@@ -759,7 +749,8 @@ class PhillyVC(object):
         else:
             return 'https://philly'
 
-    def philly_job_log(self, job_id, logRev='latest'):
+    def philly_job_log(self, job_info, logRev='latest'):
+        job_id = job_info['appID']
         cmd_str = \
             '{}/api/log?clusterId={}&vcId={}&jobId={}&jobType=cust&logType=stdout&logRev={}&content=partial'.format(
                 self.get_http_prefix(),
@@ -770,8 +761,10 @@ class PhillyVC(object):
 
         if 'WARNING' in result and 'too big for preview' in result:
             # wget https://storage.sc2.philly.selfhost.corp.microsoft.com/input/sys/jobs/application_1544809666047_4657/stdout/1/stdout.txt
-            result = url_to_str('https://storage.{}.philly.selfhost.corp.microsoft.com/input/sys/jobs/{}/stdout/1/stdout.txt'.format(
-                self.cluster, job_id))
+            retries = job_info.get('retries') + 1
+            result = url_to_str(
+                    'https://storage.{}.philly.selfhost.corp.microsoft.com/input/sys/jobs/{}/stdout/{}/stdout.txt'.format(
+                self.cluster, job_id, retries))
 
         return result
 
@@ -882,12 +875,18 @@ class MultiPhillyVC(object):
     def __init__(self, **kwargs):
         self.all_cluster = ['sc2', 'wu1']
         if 'cluster' in kwargs:
+            # this is usually the case when we call philly.py from command line
+            # by providing the cluster name
             self.all_cluster = [kwargs['cluster']]
             del kwargs['cluster']
-        self.kwargs = kwargs
+        elif 'clusters' in kwargs:
+            # this is the case when we load the parameters from the files
+            self.all_cluster = kwargs['clusters']
 
+        self.kwargs = kwargs
         self.clients = [create_philly_client(cluster=c, **self.kwargs) for c in
                 self.all_cluster]
+        self.cluster_to_client = dict(zip(self.all_cluster, self.clients))
 
     def select_client_for_submit(self):
         all_summary = [c.get_summary() for c in self.clients]
@@ -914,19 +913,14 @@ class MultiPhillyVC(object):
         return target_client
 
     def submit_without_sync(self, extraParam):
-        if self.clients[0].dry_run or len(self.clients) == 1:
-            self.clients[0].submit_without_sync(extraParam)
-        else:
-            target_client = self.select_client_for_submit()
-            target_client.submit_without_sync(extraParam)
-
-    def get_config_extra_param(self, command):
-        return self.clients[0].get_config_extra_param(command)
+        # deprecated. just call the following two commands
+        raise Exception('please call the following two commands')
+        target_client = self.select_client_for_submit()
+        target_client.submit_without_sync(extraParam)
 
     def search_job_id_and_track(self, partial_id):
         client, app_info = self.search_job_id(partial_id)
-        app_id = app_info['appID']
-        return client.track_job_once(app_id)
+        return client.track_job_once(app_info)
 
     def search_job_id(self, partial_id):
         clients = [create_philly_client(cluster=c, **self.kwargs) for c in
@@ -959,24 +953,82 @@ class MultiPhillyVC(object):
             client.cluster))
 
     def query(self):
-        clients = [create_philly_client(cluster=c, **self.kwargs) for c in
-                self.all_cluster]
-        all_status = ['Running', 'Queued', 'Failed']
+        all_status = ['Running', 'Queued', 'Failed', 'Pass']
         all_job_info = []
-        for c in clients:
+        for c in self.clients:
             all_job_info.extend(c.query())
 
         if op.isfile('./aux_data/configs/extra_tracking_philly_jobs.yaml'):
             extra_jobs = load_from_yaml_file('./aux_data/configs/extra_tracking_philly_jobs.yaml')
             cluster_id = [(j['cluster'], j['appID']) for j in extra_jobs]
-            from qd.qd_common import list_to_dict
             cluster_to_ids = list_to_dict(cluster_id, 0)
-            cluster_to_client = dict(zip(self.all_cluster, clients))
+            cluster_to_client = dict(zip(self.all_cluster, self.clients))
             for cluster, ids in cluster_to_ids.items():
                 all_job_info.extend(cluster_to_client[cluster].query(valid_job_checker=lambda
                         j: j['appID'] in ids, my_own=False))
         for status in all_status:
             print_job_infos([j for j in all_job_info if j['status'] == status])
+        return all_job_info
+
+    def inject(self):
+        all_job_info = self.query()
+
+        from qd.db import create_annotation_db
+        c = create_annotation_db()
+        existing_job_infos = list(c.iter_phillyjob())
+        existing_job_appID = set([j['appID'] for j in existing_job_infos])
+        # we assume the appID is unique across multiple VCs
+        assert len(existing_job_appID) == len(existing_job_infos)
+
+        for job_info in all_job_info:
+            if job_info['appID'] in existing_job_appID:
+                c.update_phillyjob(query={'appID': job_info['appID']},
+                        update=job_info)
+                existing_job_appID.remove(job_info['appID'])
+            else:
+                c.insert_phillyjob(**job_info)
+        for j in existing_job_appID:
+            c.remove_phillyjob(appID=j)
+
+    def print_summary(self):
+        all_summary = [c.get_summary() for c in self.clients]
+        table = []
+
+        for s, c in zip(all_summary, self.clients):
+            row = {}
+            row['usage'] = 100. * s['activeGpus'] / s['quota']
+            row['cluster'] = c.cluster
+            table.append(row)
+        print_table(table, ['cluster', 'usage'])
+
+    def auto_resubmit(self):
+        all_job_info = [j for c in self.clients
+                for j in c.query_all_job(my_own=True)]
+
+        queued_jobs = [j for j in all_job_info if j['status'] == PhillyVC.status_queued]
+        cluster_queued_jobs = [[j['cluster'], j] for j in queued_jobs]
+        cluster_to_queued_jobs = list_to_dict(cluster_queued_jobs, 0)
+        queued_job_clusters = set([j['cluster'] for j in queued_jobs])
+        no_queued_job_clusters = set(self.all_cluster).difference(queued_job_clusters)
+        if len(no_queued_job_clusters) == 0:
+            logging.info('no cluster can be used to resubmit')
+            return
+        # select one job which is in the cluster containing more than 1 queued
+        # jobs
+        resubmit_job = None
+        candidate_resubmit_jobs = [j for c, queued_jobs in cluster_to_queued_jobs.items() if
+            len(queued_jobs) > 1 for j in queued_jobs if j['elapsedTime'] > 1.]
+        if len(candidate_resubmit_jobs) == 0:
+            logging.info('no job can be resubmitted')
+            return
+        resubmit_job = max(candidate_resubmit_jobs, key=lambda x: x['elapsedTime'])
+        origin_client = self.cluster_to_client[resubmit_job['cluster']]
+        origin_client.attach_meta([resubmit_job])
+        cmd = parse_job_command(resubmit_job)
+        new_client = self.cluster_to_client[list(no_queued_job_clusters)[0]]
+        new_client.submit_without_sync(cmd, num_gpu=resubmit_job['num_gpu'])
+        origin_client.abort(resubmit_job['appID'])
+        logging.info('done')
 
 def parse_philly_ls_output_rich(output):
     lines = output.split('\n')
@@ -1153,7 +1205,8 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Philly Interface')
     parser.add_argument('task_type',
             choices=['ssh', 'query', 'abort', 'submit', 'sync',
-                'update_config', 'gc', 'blame', 'init', 'resubmit'])
+                'update_config', 'gc', 'blame', 'init', 'resubmit',
+                'summary', 'inject'])
     parser.add_argument('-wl', '--with_log', default=False, action='store_true')
     parser.add_argument('-p', '--param', help='parameter string, yaml format',
             type=str)
@@ -1192,14 +1245,7 @@ def print_job_infos(all_job_info):
             'retries', 'preempts', 'mem_used', 'gpu_util',
             'speed', 'left']
     keys = ['data', 'net', 'expid']
-    for job_info in all_job_info:
-        for k in keys:
-            job_info[k] = job_info['meta'].get('param',
-                    {}).get(k)
     meta_keys = ['num_gpu']
-    for job_info in all_job_info:
-        for k in meta_keys:
-            job_info[k] = job_info['meta'][k]
     all_key.extend(keys)
     all_key.extend(meta_keys)
 
@@ -1217,6 +1263,11 @@ def print_job_infos(all_job_info):
 
     print_table(all_job_info, all_key=all_key)
 
+def parse_job_command(job_info):
+    config_extra_param = job_info['meta']['extra_param']
+    extra_param = decode_config_extra_param(config_extra_param)
+    return extra_param['command']
+
 def abort_submit(partial_id, **kwargs):
     multi_param = copy.deepcopy(kwargs)
     if 'cluster' in multi_param:
@@ -1226,10 +1277,12 @@ def abort_submit(partial_id, **kwargs):
     client.attach_meta([job_info])
 
     submit_client = MultiPhillyVC(**kwargs)
-    config_extra_param = job_info['meta']['extra_param']
-    extra_param = decode_config_extra_param(config_extra_param)
-    submit_client.submit_without_sync(extra_param['command'])
-    client.abort(job_info['appID'])
+    cmd = parse_job_command(job_info)
+    submit_client.submit_without_sync(cmd)
+    if job_info['status'] in ['Queued', 'Running']:
+        client.abort(job_info['appID'])
+    else:
+        assert job_info['status'] in ['Failed', 'Pass']
     logging.info('Done')
 
 def execute(task_type, **kwargs):
@@ -1239,6 +1292,7 @@ def execute(task_type, **kwargs):
             tracking(kwargs['remainders'][0], **kwargs)
         else:
             p = MultiPhillyVC(**kwargs)
+            p.print_summary()
             p.query()
     elif task_type == 'submit':
         assert len(kwargs['remainders']) == 1
@@ -1272,8 +1326,20 @@ def execute(task_type, **kwargs):
     elif task_type == 'resubmit':
         partial_ids = kwargs['remainders']
         del kwargs['remainders']
-        for partial_id in partial_ids:
-            abort_submit(partial_id, **kwargs)
+        if len(partial_ids) == 0:
+            multi_client = create_multi_philly_client(**kwargs)
+            multi_client.auto_resubmit()
+        else:
+            for partial_id in partial_ids:
+                abort_submit(partial_id, **kwargs)
+    elif task_type == 'summary':
+        m = create_multi_philly_client()
+        m.print_summary()
+    elif task_type == 'inject':
+        if not kwargs.get('with_log'):
+            kwargs['with_log'] = True
+        m = create_multi_philly_client(**kwargs)
+        m.inject()
     else:
         assert 'Unknown {}'.format(task_type)
 

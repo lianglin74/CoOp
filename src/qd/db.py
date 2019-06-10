@@ -56,6 +56,23 @@ class AnnotationDB(object):
         self._gt = self._qd['qd']['ground_truth']
         self._label = self._qd['qd']['label']
         self._acc = self._qd['qd']['acc']
+        self._phillyjob = self._qd['qd']['phillyjob']
+
+    def insert_phillyjob(self, **kwargs):
+        if 'create_time' not in kwargs:
+            kwargs['create_time'] = datetime.now()
+        self._phillyjob.insert_one(kwargs)
+
+    def remove_phillyjob(self, **kwargs):
+        self._phillyjob.delete_many(kwargs)
+
+    def update_phillyjob(self, query, update):
+        if 'create_time' not in update:
+            update['create_time'] = datetime.now()
+        return self._phillyjob.update(query, update)
+
+    def iter_phillyjob(self, **kwargs):
+        return self._phillyjob.find(**kwargs)
 
     # acc related
     def insert_acc(self, **kwargs):
