@@ -163,7 +163,7 @@ def expand_labels(tsv_file, imagelevel_label, json_hierarchy_file,
             if not has_conf:
                 for x in expanded_boxes:
                     del x['conf']
-        expanded_boxes = json.dumps(expanded_boxes)
+      expanded_boxes = json.dumps(expanded_boxes)
       imagelevel_row = imagelevel_tsv[i]
       assert row[0] == imagelevel_row[0]
       expanded_labels = expansion_generator.expand_labels_from_tsv(imagelevel_row[1])
@@ -173,7 +173,7 @@ def expand_labels(tsv_file, imagelevel_label, json_hierarchy_file,
       expanded_boxes = expansion_generator.expand_boxes_from_tsv(row[-1])
       if apply_nms:
         expanded_boxes = apply_per_class_nms(expanded_boxes)
-        expanded_boxes = json.dumps(expanded_boxes)
+      expanded_boxes = json.dumps(expanded_boxes)
       row_new = [row[0], expanded_boxes]
     rows_new.append(row_new)
 

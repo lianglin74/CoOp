@@ -4336,7 +4336,7 @@ def build_taxonomy_from_single_source(source_data,
 
     while len(label_to_idx) > 0:
         # remove the labels if the len(idx) >= min_image_per_label
-        to_remove = [l for l in label_to_idx if len(label_to_idx[l]) > min_image_per_label]
+        to_remove = [l for l in label_to_idx if len(label_to_idx[l]) >= min_image_per_label]
         for l in to_remove:
             del label_to_idx[l]
         if len(label_to_idx) == 0:
@@ -5445,7 +5445,11 @@ def inject_accuracy():
                 acc = load_from_yaml_file(report_file)
             elif '.neg_aware_gmap.' in report_file:
                 acc = load_from_yaml_file(report_file)
-                acc = {'gmAP': acc['map']}
+                if '.neg_aware_gmap.noNMSGt' in report_file:
+                    key = 'ngmAP'
+                else:
+                    key = 'gmAP'
+                acc = {key: acc['map']}
             else:
                 map_json_file = report_file + '.map.json'
                 if op.isfile(map_json_file):

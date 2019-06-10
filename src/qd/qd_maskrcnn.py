@@ -464,6 +464,9 @@ class MaskRCNNPipeline(ModelPipeline):
         if self.net.startswith('retinanet'):
             cfg_file = op.join(maskrcnn_root, 'configs', 'retinanet',
                     self.net + '.yaml')
+        elif 'dconv_' in self.net:
+            cfg_file = op.join(maskrcnn_root, 'configs', 'dcn',
+                    self.net + '.yaml')
         else:
             cfg_file = op.join(maskrcnn_root, 'configs', self.net + '.yaml')
         param = load_from_yaml_file(cfg_file)
@@ -511,6 +514,14 @@ class MaskRCNNPipeline(ModelPipeline):
                 self.kwargs['SOLVER'], 'BASE_LR')
         pass_key_value_if_has(self.kwargs, 'basemodel',
                 self.kwargs['MODEL'], 'WEIGHT')
+
+        if self.min_size_range32:
+            set_if_not_exist(self.kwargs, 'INPUT', {})
+            self.kwargs['INPUT']['MIN_SIZE_TRAIN'] = tuple(range(*self.min_size_range32, 32))
+
+        if self.with_dcn:
+            self.kwargs['MODEL']['RESNETS']['STAGE_WITH_DCN'] = (False, True,
+                    True, True)
 
         # use self.kwargs instead  of kwargs because we might load parameters
         # from local disk not from the input argument

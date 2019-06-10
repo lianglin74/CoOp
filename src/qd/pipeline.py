@@ -46,15 +46,12 @@ def get_all_related_data_for_philly_jobs(data):
     all_data.extend([info['test_data'] for info in all_test_data])
     return all_data
 
-def ensure_upload_data_for_philly_jobs(data):
+def ensure_upload_data_for_philly_jobs(data, philly_client):
     all_data = get_all_related_data_for_philly_jobs(data)
     for d in all_data:
         # we need the hw for mask-rcnn
         logging.info('TODO: making sure hw is there')
-
     need_to_upload_data = copy.deepcopy(all_data)
-
-    philly_client = create_philly_client()
 
     for d in all_data:
         dataset = TSVDataset(d)
@@ -75,14 +72,28 @@ def ensure_upload_data_for_philly_jobs(data):
         if op.isdir(TSVDataset(d)._data_root):
             philly_client.upload_qd_data(d)
 
+def ensure_upload_init_model(param):
+    if 'basemodel' not in param:
+        return
+    basemodel = param['basemodel']
+    target_path = op.join('jianfw', 'work',
+            basemodel.replace('output/', 'qd_output/'))
+    c = create_cloud_storage('vig')
+    if not c.exists(target_path):
+        c.az_upload2(basemodel, target_path)
+
 def philly_func_run(func, param, **submit_param):
-    if 'data' in param:
-        ensure_upload_data_for_philly_jobs(param['data'])
+    from qd.philly import create_multi_philly_client
+    client = create_multi_philly_client(**submit_param)
+    philly_client = client.select_client_for_submit()
+    if 'data' in param.get('param', {}):
+        ensure_upload_data_for_philly_jobs(param['param']['data'], philly_client)
+        # TODO: the following only uploads data to blob. implement to upload to
+        # hdfs also if philly still supports that
+        ensure_upload_init_model(param)
     assert func.__module__ != '__main__'
     assert 'type' not in param
     param['type'] = func.__name__
-    from qd.philly import create_multi_philly_client
-    client = create_multi_philly_client(**submit_param)
     #param['gpus'] = list(range(client.num_gpu))
     if hasattr(func, 'func_code'):
         # py2
@@ -93,8 +104,8 @@ def philly_func_run(func, param, **submit_param):
     extra_param = convert_to_philly_extra_command(param,
             script=op.relpath(code_file_name))
     logging.info(extra_param)
-    logging.info(client.get_config_extra_param(extra_param))
-    client.submit_without_sync(extra_param)
+    logging.info(philly_client.get_config_extra_param(extra_param))
+    philly_client.submit_without_sync(extra_param)
 
 def except_to_update_for_stageiter(param):
     if param.get('net', '').startswith('e2e'):
@@ -180,6 +191,8 @@ def update_parameters(param):
                 except_to_update_random_scale_max),
             ('MODEL$ROI_BOX_HEAD$CLASSIFICATION_LOSS', '',
                 except_to_update_classification_loss),
+            ('min_size_range32', 'Min'),
+            ('with_dcn', ('DCN', None)),
             ]
 
     non_expid_impact_keys = ['data', 'net', 'expid_prefix',
@@ -191,7 +204,9 @@ def update_parameters(param):
             'evaluate_method', 'debug_train',
             'full_expid', 'log_step', 'MODEL$DEVICE',
             'MODEL$ROI_BOX_HEAD$CLASSIFICATION_ACTIVATE',
-            'display']
+            'display',
+            'apply_nms_gt',
+            ]
     true_false_keys = OrderedDict([('use_treestructure', ('Tree', None)),
         ('MODEL$USE_TREESTRUCTURE', ('Tree', None)),
         ('MaskTSVDataset$multi_hot_label', ('MultiHot', None)),
@@ -224,7 +239,16 @@ def update_parameters(param):
                 pk = pk.replace('/', '.')
             elif type(pk) in [list, tuple]:
                 pk = '.'.join(map(str, pk))
-            infos.append('{}{}'.format(v, pk))
+            if type(v) is tuple:
+                assert pk in [True, False]
+                assert len(v) == 2
+                if pk and v[0]:
+                    infos.append('{}'.format(v[0]))
+                elif not pk and v[1]:
+                    infos.append('{}'.format(v[1]))
+                continue
+            else:
+                infos.append('{}{}'.format(v, pk))
     for k in true_false_keys:
         if dict_has_path(param, k):
             if dict_get_path_value(param, k) and true_false_keys[k][0]:

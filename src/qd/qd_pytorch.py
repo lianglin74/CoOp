@@ -414,21 +414,24 @@ class IBCEWithLogitsNegLoss(nn.Module):
         weight[(neg_position) & (sig_feature <= self.neg)] = 0
         weight[(pos_position) & (sig_feature >= self.pos)] = 0
 
-
         if self.neg_pos_ratio is not None:
             pos_position_in_loss = pos_position & (sig_feature < self.pos)
             neg_position_in_loss = neg_position & (sig_feature > self.neg)
-            num_pos_in_loss = pos_position_in_loss.sum()
-            num_neg_in_loss = neg_position_in_loss.sum()
-            if num_pos_in_loss != 0 and num_neg_in_loss != 0:
-                num_pos_in_loss = num_pos_in_loss.float()
-                num_neg_in_loss = num_neg_in_loss.float()
-                pos_weight = (num_pos_in_loss + num_neg_in_loss) / (
-                        num_pos_in_loss * (self.neg_pos_ratio + 1))
-                neg_weight = (num_pos_in_loss + num_neg_in_loss) * self.neg_pos_ratio / (
-                        num_neg_in_loss * (self.neg_pos_ratio + 1))
-                weight[pos_position_in_loss] = pos_weight
-                weight[neg_position_in_loss] = neg_weight
+            if self.neg_pos_ratio > 0:
+                num_pos_in_loss = pos_position_in_loss.sum()
+                num_neg_in_loss = neg_position_in_loss.sum()
+                if num_pos_in_loss != 0 and num_neg_in_loss != 0:
+                    num_pos_in_loss = num_pos_in_loss.float()
+                    num_neg_in_loss = num_neg_in_loss.float()
+                    pos_weight = (num_pos_in_loss + num_neg_in_loss) / (
+                            num_pos_in_loss * (self.neg_pos_ratio + 1))
+                    neg_weight = (num_pos_in_loss + num_neg_in_loss) * self.neg_pos_ratio / (
+                            num_neg_in_loss * (self.neg_pos_ratio + 1))
+                    weight[pos_position_in_loss] = pos_weight
+                    weight[neg_position_in_loss] = neg_weight
+            elif self.neg_pos_ratio == -1:
+                weight[pos_position_in_loss] = (target - sig_feature)[pos_position_in_loss]
+                pass
         else:
             pos_position_in_loss, neg_position_in_loss = None, None
 
@@ -440,17 +443,32 @@ class IBCEWithLogitsNegLoss(nn.Module):
                 num_pos_in_loss = pos_position_in_loss.sum()
                 num_neg_in_loss = neg_position_in_loss.sum()
             if num_pos_in_loss == 0:
+                avg_pos_in_loss = 0
+            else:
+                avg_pos_in_loss = sig_feature[pos_position_in_loss].sum() / num_pos_in_loss
+            if num_neg_in_loss == 0:
+                avg_neg_in_loss = 0
+            else:
+                avg_neg_in_loss = sig_feature[neg_position_in_loss].sum() / num_neg_in_loss
+            num_pos = pos_position.sum()
+            num_neg = neg_position.sum()
+            if num_pos == 0:
                 avg_pos = 0
             else:
-                avg_pos = sig_feature[pos_position_in_loss].sum() / num_pos_in_loss
-            if num_neg_in_loss == 0:
+                avg_pos = sig_feature[pos_position].sum() / num_pos
+            if num_neg == 0:
                 avg_neg = 0
             else:
-                avg_neg = sig_feature[neg_position_in_loss].sum() / num_neg_in_loss
-            logging.info('In loss cal: #pos = {}, avg pos = {}, '
-                    '#neg = {}, avg neg = {}'.format(
-                        num_pos_in_loss, avg_pos,
-                        num_neg_in_loss, avg_neg))
+                avg_neg = sig_feature[neg_position].sum() / num_neg
+            logging.info('#pos_in_loss = {}, avg_pos_in_loss = {}, '
+                        '#neg_in_loss = {}, avg_neg_in_loss = {} '
+                        '#pos = {}, avg pos = {}, '
+                        '#neg = {}, avg neg = {}'.format(
+                        num_pos_in_loss, avg_pos_in_loss,
+                        num_neg_in_loss, avg_neg_in_loss,
+                        num_pos, avg_pos,
+                        num_neg, avg_neg
+                        ))
 
         self.num_called += 1
 
@@ -485,6 +503,7 @@ def bce_with_logits_neg_loss(feature, target):
         return torch.sum(loss) / weight_sum
 
 def multi_hot_cross_entropy(pred, soft_targets):
+    assert ((soft_targets != 0) & (soft_targets != 1)).sum() == 0
     logsoftmax = nn.LogSoftmax(dim=1)
     target_sum = torch.sum(soft_targets)
     if target_sum == 0:
@@ -634,6 +653,7 @@ class TorchTrain(object):
                 'pretrained': False,
                 'dist_url_tcp_port': 23456,
                 'random_seed': 6,
+                'apply_nms_gt': True,
                 'cudnn_benchmark': False}
 
         assert 'batch_size' not in kwargs, 'use effective_batch_size'
@@ -1110,6 +1130,9 @@ class TorchTrain(object):
             if self.evaluate_method is None:
                 return
             cc.append(self.evaluate_method)
+        if self.evaluate_method == 'neg_aware_gmap':
+            if not self.apply_nms_gt:
+                cc.append('noNMSGt')
         if self.test_version:
             if self.test_version == -1:
                 latest_version = TSVDataset(self.test_data).get_latest_version(
@@ -1196,7 +1219,7 @@ class TorchTrain(object):
                     apply_nms_det=True,
                     expand_label_det=True,
                     expand_label_gt=True,
-                    apply_nms_gt=True,
+                    apply_nms_gt=self.apply_nms_gt,
                     )
             from qd.qd_common import convert_to_yaml_friendly
             result = convert_to_yaml_friendly(result)
