@@ -1,8 +1,10 @@
 azure
 Cython
+deprecated
 django==1.11
 easydict
 ete3
+future
 matplotlib
 nltk
 numpy

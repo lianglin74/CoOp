@@ -1,5 +1,7 @@
+import collections
 import json
 import os
+import os.path as op
 
 import _init_paths
 
@@ -7,8 +9,6 @@ from qd.qd_common import ensure_directory, json_dump
 from qd.tsv_io import tsv_reader, tsv_writer
 
 def scrape_keywords_to_search_images():
-    import collections
-    import os.path as op
     from dataproc import scrape_image_parallel, scrape_image
     from generate_task import generate_task_files
     from analyze_task import analyze_draw_box_task
@@ -170,6 +170,27 @@ def scrape_keywords_to_search_images():
         tsv_writer(filter_labels(real_labels, keep_labels), op.join(outdir, out_real_label_file))
         tsv_writer(filter_labels(proto_labels, keep_labels), op.join(outdir, out_proto_label_file))
 
+def url_bboxes_to_tsvdataset():
+    from dataproc import urls_to_img_file_parallel
+    from qd.qd_common import hash_sha1
+
+    indir = "/mnt/ivm_server2_od/xiaowh/vendor/logo200"
+    tsvdataset_dir = "/mnt/gpu01_raid/data/logo200"
+    split2fpath = {"train": op.join(indir, "url_bboxes_real.tsv"), "test": op.join(indir, "url_bboxes_proto.tsv")}
+
+    def gen_in_rows(fpath):
+        for parts in tsv_reader(fpath):
+            # parts: url, bboxes
+            url = parts[0]
+            bboxes = parts[1]
+            yield hash_sha1(url), bboxes, url
+
+    for split in split2fpath:
+        outpath = op.join(tsvdataset_dir, split + ".tsv")
+        urls_to_img_file_parallel(gen_in_rows(split2fpath[split]), 2, [0, 1], outpath)
+
+
 
 if __name__ == "__main__":
-    scrape_keywords_to_search_images()
+    # scrape_keywords_to_search_images()
+    url_bboxes_to_tsvdataset()

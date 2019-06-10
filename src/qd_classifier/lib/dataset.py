@@ -460,6 +460,7 @@ def gen_index(imgfile, labelfile, label_to_idx, for_test,
 
     m = pathos.multiprocessing.ProcessingPool(num_worker)
     all_res = m.map(_gen_index_helper, all_args)
+    m.join()
     x = []
     for r in all_res:
         if r is None:

@@ -8,7 +8,7 @@ import torch.utils.data
 import torch.utils.data.distributed
 from torch.utils.data.dataloader import default_collate
 
-from ..lib.dataset import TSVDataset, TSVDatasetPlusYaml, TSVDatasetWithoutLabel, CropClassTSVDataset, CropClassTSVDatasetYaml, CropClassTSVDatasetYamlList
+from ..lib.dataset import TSVDataset, TSVDatasetPlusYaml, TSVDatasetWithoutLabel, CropClassTSVDataset, CropClassTSVDatasetYaml
 
 def get_data_loader(args, logger=None):
     train_transform = get_pt_transform("train", args)
@@ -206,7 +206,12 @@ def cv_transform(imageMat):
     return imageMat4
 
 def make_class_balanced_sampler(train_dataset):
-    weight_per_class = [max(len(train_dataset)/float(count), 9e-4) for count in train_dataset.label_counts]
+    weight_per_class = []
+    for count in train_dataset.label_counts:
+        if count == 0:
+            weight_per_class.append(0.0)
+        else:
+            weight_per_class.append(max(len(train_dataset)/float(count), 9e-4))
     assert len(weight_per_class) == train_dataset.label_dim()
     weights = torch.tensor([0.] * len(train_dataset))
     for i in range(len(train_dataset)):

@@ -10,18 +10,13 @@ from PIL import Image
 import re
 import shutil
 from tqdm import tqdm
-try:
-    # For Python 3.0 and later
-    from urllib.request import urlopen, Request
-except ImportError:
-    # Python 2
-    from urllib2 import urlopen, Request
 import uuid
 
 import _init_paths
 import logo.constants
 from qd import qd_common, tsv_io, process_tsv
-from qd.process_image import bgra_to_bgr_img_arr
+from qd.qd_common import image_url_to_bytes, encoded_from_img
+from qd.process_image import bytes_to_img_array
 import evaluation.utils
 from evaluation import eval_utils, generate_task, analyze_task
 
@@ -313,21 +308,6 @@ def save_img_to_file(img_bytes, fpath):
             os.remove(fpath)
     return False
 
-
-def image_url_to_bytes(url):
-    req = Request(url, headers={
-            "User-Agent": "Mozilla/5.0 (X11; Linux i686) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.27 Safari/537.17"})
-    try:
-        response = urlopen(req, None, 10)
-        if response.code != 200:
-            return None
-        data = response.read()
-        response.close()
-        return data
-    except Exception as e:
-        logging.info("error downloading: {}".format(e))
-    return None
-
 def is_url_clean(url):
     s = evaluation.utils.escape_json_obj({"url": url})
     try:
@@ -338,26 +318,39 @@ def is_url_clean(url):
     return True
 
 
-def urls_to_img_file_parallel(in_rows, url_col_idx, out_cols_idx, outpath, keep_order=False):
+def urls_to_img_file_parallel(in_rows, url_col_idx, out_cols_idx, outpath, keep_order=False, is_debug=False):
     """ Given iterable of rows, writes TSV file: out_cols_idx, followed by b64_image of the given url
     """
+    if is_debug:
+        for cols in tqdm(in_rows):
+            out_cols = [cols[i] for i in out_cols_idx]
+            url = cols[url_col_idx]
+            img_bytes = image_url_to_bytes(url)
+            if img_bytes is not None:
+                imarr = bytes_to_img_array(img_bytes, check_channel=True)
+                if imarr is None:
+                    print("invalid image url: {}".format(url))
+                    continue
+
     num_workers = mp.cpu_count() + 10
     in_queue = mp.Queue(10 * num_workers)
     out_queue = mp.Queue(10 * num_workers)
 
     # save the key, used for re-ranking to keep the order
     import tempfile
-    key_file = os.path.join(tempfile.gettempdir(), qd_common.gen_uuid() + '.tsv')
+    key_file = os.path.join(tempfile.gettempdir(), 'url.tsv')
+    invalid_urls = []
 
     def reader_process(in_rows, in_queue, num_workers, url_col_idx, out_cols_idx, key_file):
         max_col_idx = max(url_col_idx, max(out_cols_idx))
-        with open(key_file, 'wb') as key_fp:
+        def gen_rows():
             for parts in tqdm(in_rows):
                 if max_col_idx >= len(parts):
                     logging.info("invalid input row: {}".format(parts))
                     continue
-                key_fp.write(parts[url_col_idx] + '\n')
                 in_queue.put(parts)
+                yield parts[url_col_idx]
+        tsv_io.tsv_writer(gen_rows(), key_file)
         for _ in range(num_workers):
             in_queue.put(None)  # ending signal for workers
 
@@ -369,24 +362,13 @@ def urls_to_img_file_parallel(in_rows, url_col_idx, out_cols_idx, outpath, keep_
                 break
             out_cols = [cols[i] for i in out_cols_idx]
             url = cols[url_col_idx]
-            # img_bytes = image_url_to_bytes(url)
-            img_bytes = qd_common.url_to_str(url)
+            img_bytes = image_url_to_bytes(url)
             if img_bytes is not None:
-                b64_str = base64.b64encode(img_bytes)
-                im_arr = qd_common.img_from_base64(b64_str)
-                if im_arr is None:
+                imarr = bytes_to_img_array(img_bytes, check_channel=True)
+                if imarr is None:
                     print("invalid image url: {}".format(url))
                     continue
-                h, w, c = im_arr.shape
-                # NOTE: opencv has a bug, even set the flag cv2.IMREAD_COLOR, some
-                # images still return 4 channels
-                if c==4:
-                    im_arr = bgra_to_bgr_img_arr(im_arr)
-                h, w, c = im_arr.shape
-                if c != 3:
-                    print("invalid image of {} channels, url: {}".format(c, url))
-                    continue
-                out_cols.append(qd_common.encoded_from_img(im_arr))
+                out_cols.append(encoded_from_img(imarr))
                 out_queue.put(out_cols)
 
     def writer_process(out_queue, num_workers, outpath):
@@ -435,4 +417,4 @@ def urls_to_img_file_parallel(in_rows, url_col_idx, out_cols_idx, outpath, keep_
     if keep_order:
         ordered_keys = qd_common.load_list_file(key_file)
         tsv_io.reorder_tsv_keys(outpath, ordered_keys, outpath)
-    os.remove(key_file)
+    tsv_io.rm_tsv(key_file)

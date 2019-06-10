@@ -4,6 +4,7 @@ import cv2
 import os
 from qd.qd_common import ensure_directory
 from qd.qd_common import network_input_to_image
+from qd.qd_common import encoded_from_img
 import matplotlib.pyplot as plt
 from random import random
 import logging
@@ -239,25 +240,33 @@ def show_images(all_image, num_rows, num_cols):
     plt.show()
     plt.close()
 
-def file_to_base64_img(fpath, check_channel=True):
-    """ Read image file, ensure the image is valid with 3 channels
+def bytes_to_img_array(img_bytes, check_channel=True):
+    """ Convert bytes to image array of shape h*w*c in BGR order
+    Ensure the image is valid with 3 channels if check_channel == True
+    NOTE: use > py3.5 to load webp image with OpenCV
     """
-    from qd.process_tsv import ImageTypeParser
+    import imghdr
     import imageio
+    import sys
 
-    with open(fpath, 'rb') as fp:
-        img_bytes = fp.read()
-    parser = ImageTypeParser()
-    t = parser.parse_type(img_bytes)
-    imarr = None
-    if t in ["jpg", "jpeg", "png", "webp"]:
-        imarr = cv2.imread(fpath, cv2.IMREAD_UNCHANGED)
-    elif t == "gif":
-        gif = imageio.mimread(fpath)
-        imarr = gif[0]
+    is_py2 = sys.version_info.major == 2
+    if is_py2:
+        from StringIO import StringIO as BytesIO
     else:
-        return None
-    if imarr is None or len(imarr.shape) != 3:
+        from io import BytesIO
+
+    t = imghdr.what('', h = img_bytes)
+    imarr = None
+    if t == "gif":
+        gif = imageio.mimread(BytesIO(img_bytes))
+        imarr = gif[0]
+    else: # ["jpg", "jpeg", "png", "webp"]
+        try:
+            imarr = imageio.imread(BytesIO(img_bytes))
+        except ValueError:
+            return None
+
+    if imarr is None:
         return None
     # ensure dtype is uint8
     if imarr.dtype is not np.dtype('uint8'):
@@ -268,15 +277,36 @@ def file_to_base64_img(fpath, check_channel=True):
         # imarr = imarr.astype(np.uint8)
         return None
 
+    # conver grayscale
+    if len(imarr.shape) == 2:
+        imarr = cv2.cvtColor(imarr, cv2.COLOR_GRAY2RGB)
+    if len(imarr.shape) != 3:
+        return None
+
     h, w, c = imarr.shape
-    assert(c == 3 or c == 4)
+    # convert form RGBA to BGRA
+    if c == 3:
+        imarr = imarr[:, :, (2, 1, 0)]
+    elif c == 4:
+        imarr = imarr[:, :, (2, 1, 0, 3)]
+    else:
+        return None
+
     if check_channel and c == 4:
         imarr = bgra_to_bgr_img_arr(imarr)
-        img_bytes = cv2.imencode('.jpg', imarr)[1].tostring()
 
     if imarr.max() - imarr.min() < 5:
         return None
-    return base64.b64encode(img_bytes)
+
+    return imarr
+
+def file_to_base64_img(fpath, check_channel=True):
+    """ Read image file, converts to base64 encoded string
+    """
+    with open(fpath, 'rb') as fp:
+        img_bytes = fp.read()
+    imarr = bytes_to_img_array(img_bytes, check_channel=check_channel)
+    return encoded_from_img(imarr)
 
 def bgra_to_bgr_img_arr(img_arr):
     """ Convert BGRA to BGR, and transparent part to white

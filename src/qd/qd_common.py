@@ -34,11 +34,11 @@ from datetime import datetime
 from future.utils import viewitems
 try:
     # py3
-    from urllib.request import urlopen
+    from urllib.request import urlopen, Request
     from urllib.request import HTTPError
 except ImportError:
     # py2
-    from urllib2 import urlopen
+    from urllib2 import urlopen, Request
     from urllib2 import HTTPError
 
 
@@ -364,6 +364,21 @@ def url_to_str(url):
         logging.error("url: {}; unknown {}".format(
             url, traceback.format_exc()))
         return None
+
+def image_url_to_bytes(url):
+    req = Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (X11; Linux i686) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.27 Safari/537.17"})
+    try:
+        response = urlopen(req, None, 10)
+        if response.code != 200:
+            logging.info("url: {}, error code: {}".format(url, response.code))
+            return None
+        data = response.read()
+        response.close()
+        return data
+    except Exception as e:
+        logging.info("error downloading: {}".format(e))
+    return None
 
 def str_to_image(buf):
     image = np.asarray(bytearray(buf), dtype='uint8')
