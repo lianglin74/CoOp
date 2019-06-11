@@ -26,8 +26,8 @@ def findShot(predict_file):
     
     # 2.0 * rim width
     distanceFromBallToRimToTrack = 1.5
-    angleThresh = 90.0/180*math.pi
-    angleThreshBelowRim = 30.0/180*math.pi
+    angleThresh = 120.0/180*math.pi
+    #angleThreshBelowRim = 30.0/180*math.pi
 	
     debug = 0
     
@@ -62,18 +62,25 @@ def findShot(predict_file):
     LargeBallRimDistanceCountThresh = 5
     timeSinceEventStart = 0
     
+    prevRimObj = None
+    
     for row in tqdm(tsv_reader(predict_file)):
         imageCnt += 1
         
         #if (imageCnt > 9645 and imageCnt < 9650):
-        if (imageCnt > 9495 and imageCnt < 9650):
+        if (imageCnt > 14652 and imageCnt < 14702):
           debug = 0
+        
+        if debug:
+            print("image: ", imageCnt)
+            print("second: ", imageCnt / frameRate)
         
         key = row[0]
         rects = json.loads(row[1])
         
         rimExists = False
         ballExists = False
+        backboardExists = False
         maxBasketBallConf = basketBallThresh
         maxBasketRectIndex = -1
         ballRects = None
@@ -91,11 +98,18 @@ def findShot(predict_file):
               rimRects.append(r)
               rimExists = True
           elif r['class'] == 'backboard':
-            if r['conf'] >= backBoardThresh:
+            if r['conf'] >= backBoardThresh:                
               #filteredRects.append(r)
+              backboardExists = True
               if debug and not rimExists:
                 print("[Warning] image ",  imageCnt, ": backboard found, but no rim") 
           i += 1
+        
+        if not rimExists and backboardExists and prevRimObj is not None:
+          rimRects.append(prevRimObj)
+          rimExists = True
+          print("Adding a rim rect: ", rimRects)
+        
         if maxBasketRectIndex != -1:
           ballRects = rects[maxBasketRectIndex]          
         
@@ -117,6 +131,7 @@ def findShot(predict_file):
           distanceFromBallToClosetRim = min ( listOfBallToRimsDistance )
           indexOfClosestRim = listOfBallToRimsDistance.index( distanceFromBallToClosetRim )
           rectClosestRim = rimRects[indexOfClosestRim]
+          prevRimObj = rectClosestRim
           widthRim = getWidthOfObject( rectClosestRim )
           centerOfRim = getCenterOfObject(rectClosestRim)
           
@@ -136,8 +151,6 @@ def findShot(predict_file):
               print("!!Found a shot")
               
           if debug:
-            print("image: ", imageCnt)
-            print("second: ", imageCnt / frameRate)
             print("ballCenter: ", ballCenter)
 
           if debug:
@@ -182,6 +195,7 @@ def findShot(predict_file):
               
               endTime = imageCnt/frameRate
               if ( abs(angleRimToBall - angleBallToRim) < angleThresh ) and iouTime > startTime - padding and iouTime < endTime + padding:
+                print("Finding one shot by angle analysis: ", (imageCnt/frameRate))
                 className = "shot" 
                 if personTime > startTime - padding and personTime < endTime + padding:
                   print("Finding one DUNK shot by angle analysis: ", (imageCnt/frameRate))
@@ -382,7 +396,7 @@ def main():
   for predict_file in labelFileList:
     pred_results =  findShot(dir + predict_file)
     #if predict_file == "prediction_1551538896210_sc99_01_q1.tsv": 
-    if predict_file == "1551538896210_sc99_01_q1.tsv": 
+    if predict_file == "1551538896210_sc99_01_q1_pd.tsv": 
       true_results = [13, 36, 55, 119, 150, 157, 186, 328, 350, 386, 444, 469, 526, 586]
       calculateF1(pred_results, true_results)
     
