@@ -11,8 +11,15 @@ from qd.qd_common import calculate_iou
 from tqdm import tqdm
 import numpy as np
 import math
+import copy 
+  
 
-def findShot(predict_file):
+def findShot(predict_file):    
+    #parameters:
+    addMissingRim = True
+    addMissingBall = True
+    
+  
     className = "shot"
     
     basketBallThresh = 0.5
@@ -25,7 +32,7 @@ def findShot(predict_file):
     oneShotTimethresh = 2
     
     # 2.0 * rim width
-    distanceFromBallToRimToTrack = 1.5
+    distanceFromBallToRimToTrack = 3.0
     angleThresh = 120.0/180*math.pi
     #angleThreshBelowRim = 30.0/180*math.pi
 	
@@ -63,12 +70,13 @@ def findShot(predict_file):
     timeSinceEventStart = 0
     
     prevRimObj = None
+    prevBallObjs = []
     
     for row in tqdm(tsv_reader(predict_file)):
         imageCnt += 1
         
         #if (imageCnt > 9645 and imageCnt < 9650):
-        if (imageCnt > 14652 and imageCnt < 14702):
+        if (imageCnt > 11738 and imageCnt < 11788):
           debug = 0
         
         if debug:
@@ -105,7 +113,7 @@ def findShot(predict_file):
                 print("[Warning] image ",  imageCnt, ": backboard found, but no rim") 
           i += 1
         
-        if not rimExists and backboardExists and prevRimObj is not None:
+        if addMissingRim and not rimExists and backboardExists and prevRimObj is not None:
           rimRects.append(prevRimObj)
           rimExists = True
           print("Adding a rim rect: ", rimRects)
@@ -117,6 +125,11 @@ def findShot(predict_file):
           print("Rects: " , rects)
           print("rimExists: " , rimExists)
           print("ballExists: " , ballExists)
+        
+        if not ballExists and addMissingBall and eventStart and iouTime < startTime and len( prevBallObjs ) >= 2:
+          ballRects = predictBallRects(prevBallObjs, debug)
+          ballExists = True
+          print("predict ball rects as: ", ballRects)
         
         if rimExists and ballExists:          
           assert ballRects['class'] == "basketball"          
@@ -169,6 +182,11 @@ def findShot(predict_file):
             print("Found a person holding ball: ", imageCnt)
             personTime = imageCnt/frameRate
           
+          if addMissingBall and distanceFromBallToClosetRim < distanceFromBallToRimToTrack * widthRim and isAbove(ballCenter, centerOfRim):
+            prevBallObjs.append(ballRects)
+          else:
+            prevBallObjs = []
+          
           # start to check angle
           if not eventStart: 
             if distanceFromBallToClosetRim < distanceFromBallToRimToTrack * widthRim and isAbove(ballCenter, centerOfRim):
@@ -217,6 +235,34 @@ def findShot(predict_file):
     
     return pred_results_angle
     #pred_results
+
+def predictBallRects(prevBallObjs, debug = 0):
+  l = len( prevBallObjs )
+  if l < 2:
+    return None
+    
+  widthOfBall = getWidthOfObject(prevBallObjs[l-1])
+  heightOfBall = getHeightOfObject(prevBallObjs[l-1])  
+  if debug:
+    print('widthOfBall: ', widthOfBall)
+    print('heightOfBall: ', heightOfBall)
+  
+  x1, y1 = getCenterOfObject(prevBallObjs[l-2])
+  x2, y2 = getCenterOfObject(prevBallObjs[l-1])
+  
+  x = 2 * x2 - x1
+  y = 2 * y2 - y1
+  
+  dummyBallObj = copy.deepcopy( prevBallObjs[l-1] )
+  dummyBallObj['rect'][0] = x - (widthOfBall + 1.0) / 2
+  dummyBallObj['rect'][1] = y - (heightOfBall + 1.0) / 2
+  dummyBallObj['rect'][2] = x + (widthOfBall + 1.0) / 2
+  dummyBallObj['rect'][3] = y + (heightOfBall + 1.0) / 2
+  
+  if debug:    
+    print('dummyBallObj: ', dummyBallObj)
+    
+  return dummyBallObj
 
 def getPersonHoldingBall_loose(rimRect, ballRect, rects, debug):  
   ballPersonIouThresh = 0
