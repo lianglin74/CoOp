@@ -185,8 +185,8 @@ def findShot(predict_file):
                 className = "shot" 
                 if personTime > startTime - padding and personTime < endTime + padding:
                   print("Finding one DUNK shot by angle analysis: ", (imageCnt/frameRate))
-                  className = "dunk"
-                pred_results_angle.append((startTime - padding, endTime + padding, className))
+                  className = "layup/dunk"
+                pred_results_angle.append((max(startTime - padding, 0.0), endTime + padding, className))
                 eventStart = False                  
               else: #not a shot
                 if debug:
