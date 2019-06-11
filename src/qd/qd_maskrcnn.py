@@ -70,9 +70,40 @@ def merge_dict_to_cfg(dict_param, cfg):
     trim_dict(trimed_param, cfg)
     cfg.merge_from_other_cfg(CfgNode(trimed_param))
 
-def train(cfg, local_rank, distributed, log_step=20):
+def convert_to_sync_bn(module):
+    module_output = module
+    if isinstance(module,
+            maskrcnn_benchmark.layers.batch_norm.FrozenBatchNorm2d):
+        module_output = torch.nn.SyncBatchNorm(
+                module.bias.size())
+        module_output.weight.data = module.weight.data.clone().detach()
+        module_output.bias.data = module.bias.data.clone().detach()
+
+        module_output.running_mean = module.running_mean
+        module_output.running_var = module.running_var
+    for name, child in module.named_children():
+        module_output.add_module(name, convert_to_sync_bn(child))
+    del module
+    return module_output
+
+def lock_except_classifier(model):
+    ignore = 0
+    for name, param in model.named_parameters():
+        if name not in ['roi_heads.box.predictor.cls_score.weight',
+                'roi_heads.box.predictor.cls_score.bias']:
+            param.requires_grad = False
+        else:
+            ignore += 1
+    assert ignore == 2
+
+def train(cfg, local_rank, distributed, log_step=20, sync_bn=False,
+        opt_cls_only=False):
     logging.info('start to train')
     model = build_detection_model(cfg)
+    if sync_bn:
+        model = convert_to_sync_bn(model)
+    if opt_cls_only or True:
+        lock_except_classifier(model)
     device = torch.device(cfg.MODEL.DEVICE)
     model.to(device)
 
@@ -557,8 +588,8 @@ class MaskRCNNPipeline(ModelPipeline):
         torch_home = os.path.expanduser(os.getenv("TORCH_HOME", "~/.torch"))
         model_dir = os.getenv("TORCH_MODEL_ZOO", os.path.join(torch_home, "models"))
         ensure_directory(model_dir)
-
-        train(cfg, self.mpi_local_rank, self.distributed, self.log_step)
+        train(cfg, self.mpi_local_rank, self.distributed, self.log_step,
+                self.sync_bn, self.opt_cls_only)
 
     def append_predict_param(self, cc):
         super(MaskRCNNPipeline, self).append_predict_param(cc)
