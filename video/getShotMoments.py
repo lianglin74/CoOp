@@ -28,6 +28,8 @@ def findShot(predict_file):
     rimBallIouLowerThresh = 0.01
     rimBallIouHigherThresh = 0.20
     
+    angleRimToBallThresh = 30.0/180*math.pi
+    
     # the time period between two shots
     oneShotTimethresh = 2
     
@@ -240,7 +242,7 @@ def findShot(predict_file):
     #pred_results
 
 def removeFalsePositive():
-  
+  pass
 
 def predictBallRects(prevBallObjs, debug = 0):
   l = len( prevBallObjs )
@@ -329,8 +331,11 @@ def calculateF1(pred_results, true_results):
   
   recall = len(truePositiveList) / (len(truePositiveList) + len (falseNegativeList) +0.0) if len(truePositiveList) else 0
   
+  F1 = 2.0 / (1.0/precision + 1.0/recall)
+  
   print("precision: ", precision)
   print("recall: ", recall)
+  print("F1: ", F1)
 
 def intersection(lst1, lst2): 
     return list(set(lst1) & set(lst2)) 
@@ -439,13 +444,14 @@ def read_file_to_list(file_name):
   return res_lists;
   
 def main():
-  dir = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_demo_v2/"
+  dir = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_demo_v3/"
   labelFiles = "labellist.txt"
   labelFileList = read_file_to_list(dir + labelFiles)
   #predict_file = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_chop/TSV/head350_prediction_1551538896210_sc99_01_q1.tsv"
   #predict_file = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_chop/prediction_1551538896210_sc99_01_q1.tsv"
   
   for predict_file in labelFileList:
+    
     pred_results =  findShot(dir + predict_file)
     true_results = None
     #if predict_file == "prediction_1551538896210_sc99_01_q1.tsv": 
@@ -454,8 +460,22 @@ def main():
     
     if predict_file == "1552493137730_sc99_01_q1_pd.tsv": 
       true_results = [81, 95, 110, 135,148,152, 282, 298]
-      
+
+    if predict_file == "NBA1.tsv": 
+      true_results = [ float(v) for v in read_file_to_list(dir + "NBA1.gt.txt") ]
+
+    if predict_file == "CBA1.tsv": 
+      true_results = [ float(v) for v in read_file_to_list(dir + "CBA1.gt.txt") ]
+    
+    if predict_file == "CBA2.tsv": 
+      true_results = [ float(v) for v in read_file_to_list(dir + "CBA2.gt.txt") ]
+    
+    if predict_file == "NBA2.tsv": 
+      true_results = [ float(v) for v in read_file_to_list(dir + "NBA2.gt.txt") ]
+    
     if true_results is not None:
+      print("----Processing file: ", predict_file)
+      print("True_results:", true_results)
       calculateF1(pred_results, true_results)
     
     writeToTSV(predict_file, pred_results)
