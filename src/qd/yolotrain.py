@@ -62,7 +62,6 @@ from qd.yolodet import im_detect
 from qd.qd_common import img_from_base64
 from qd.qd_common import load_from_yaml_file
 from qd.yolodet import im_classify
-from itertools import izip
 
 from qd.process_tsv import build_taxonomy_impl
 from qd.process_tsv import populate_dataset_details

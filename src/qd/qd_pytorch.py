@@ -13,6 +13,7 @@ from qd.qd_common import load_list_file
 from qd.qd_common import get_mpi_rank, get_mpi_size
 from qd.qd_common import get_mpi_local_rank, get_mpi_local_size
 from qd.qd_common import parse_general_args
+from qd.qd_common import plot_to_file
 from collections import OrderedDict
 from maskrcnn_benchmark.utils.comm import synchronize, get_rank
 from qd.process_tsv import load_key_rects
@@ -622,6 +623,12 @@ def init_random_seed(random_seed):
     torch.manual_seed(random_seed)
     torch.cuda.manual_seed_all(random_seed)
 
+def get_acc_for_plot(eval_file):
+    if 'coco_box' in eval_file:
+        return load_from_yaml_file(eval_file)
+    else:
+        raise NotImplementedError()
+
 class TorchTrain(object):
     def __init__(self, **kwargs):
         if 'load_parameter' in kwargs and kwargs['load_parameter']:
@@ -1051,15 +1058,88 @@ class TorchTrain(object):
             cc.append('Extract{}'.format(self.predict_extract))
 
     def monitor_train(self):
-        for e in range(self.max_epoch):
-            predict_result_file = self.ensure_predict(e + 1)
-            self.ensure_evaluate(predict_result_file)
+        assert self.max_epoch == None, 'use iteration'
+        #for e in range(self.max_epoch):
+            #predict_result_file = self.ensure_predict(e + 1)
+            #self.ensure_evaluate(predict_result_file)
+        self.standarize_intermediate_models()
+        while True:
+            iter_to_eval = self.pred_eval_intermediate_models()
+            if self.is_train_finished():
+                break
+            self.update_acc_iter(iter_to_eval)
+            time.sleep(5)
 
-    def ensure_predict(self, epoch=None, iteration=None):
+    def is_train_finished(self):
+        return op.isfile(self._get_checkpoint_file())
+
+    def update_acc_iter(self, iter_to_eval):
+        xys = list(iter_to_eval.items())
+        xys = sorted(xys, key=lambda x: x[0])
+        xs = [x for x, _ in xys]
+        ys = [y['all-all'] for _, y in xys]
+
+        if len(xs) > 0:
+            out_file = os.path.join(
+                self.output_folder,
+                'map_{}_{}.png'.format(self.test_data,
+                    self.test_split))
+            logging.info('create {}'.format(out_file))
+            if op.isfile(out_file):
+                os.remove(out_file)
+            plot_to_file(xs, ys, out_file)
+        else:
+            logging.info('nothing plotted')
+
+    def pred_eval_intermediate_models(self):
+        steps = self.get_snapshot_steps()
+        curr = 0
+        result = {}
+        while True:
+            curr += steps
+            if curr >= self.max_iter:
+                break
+            model_file = self._get_checkpoint_file(iteration=curr)
+            if not op.isfile(model_file):
+                continue
+            pred = self.ensure_predict(model_file=model_file)
+            eval_file = self.ensure_evaluate(pred)
+            eval_result = get_acc_for_plot(eval_file)
+            result[curr] = eval_result
+        return result
+
+    def standarize_intermediate_models(self):
+        # hack the original file format
+        steps = self.get_snapshot_steps()
+        curr = 0
+        while True:
+            curr += steps
+            if curr >= self.max_iter:
+                break
+            original_model = self._get_old_check_point_file(curr)
+            new_model = self._get_checkpoint_file(iteration=curr)
+            # use copy since the continous training requires the original
+            # format in maskrcnn
+            from qd.qd_common import ensure_copy_file
+            if original_model != new_model and op.isfile(original_model):
+                ensure_copy_file(original_model, new_model)
+
+    def get_snapshot_steps(self):
+        pass
+
+    def ensure_predict(self, epoch=None, iteration=None, model_file=None):
+        # deprecate epoch and iteration. use model_file, gradually
         self._ensure_initialized()
-        if epoch is None:
-            epoch = self.max_epoch
-        model_file = self._get_checkpoint_file(epoch=epoch, iteration=iteration)
+        if epoch is not None or iteration is not None:
+            assert model_file is None
+            logging.warn('use model_file rather than epoch or iteration, pls')
+            if epoch is None:
+                epoch = self.max_epoch
+            model_file = self._get_checkpoint_file(epoch=epoch, iteration=iteration)
+        else:
+            if model_file is None:
+                model_file = self._get_checkpoint_file()
+            assert model_file is not None
         predict_result_file = self._get_predict_file(model_file)
         if not op.isfile(model_file):
             logging.info('ignore to run predict since {} does not exist'.format(
@@ -1133,6 +1213,10 @@ class TorchTrain(object):
         if self.evaluate_method == 'neg_aware_gmap':
             if not self.apply_nms_gt:
                 cc.append('noNMSGt')
+            if not self.apply_nms_det:
+                cc.append('noNMSDet')
+            if not self.expand_label_det:
+                cc.append('noExpandDet')
         if self.test_version:
             if self.test_version == -1:
                 latest_version = TSVDataset(self.test_data).get_latest_version(
@@ -1149,6 +1233,10 @@ class TorchTrain(object):
             logging.info('skip because the rank {} != 0'.format(self.mpi_rank))
             return
 
+        if self.ignore_evaluate:
+            logging.info('ignore evaluate as instructed')
+            return
+
         self._ensure_initialized()
         if not predict_file:
             model_file = self._get_checkpoint_file(self.max_epoch,
@@ -1157,7 +1245,6 @@ class TorchTrain(object):
         evaluate_file = self._get_evaluate_file(predict_file)
         if evaluate_file is None:
             return
-
         if not worth_create(predict_file, evaluate_file) and not self.force_evaluate:
             logging.info('ignore {}'.format(evaluate_file))
         else:
@@ -1212,7 +1299,7 @@ class TorchTrain(object):
             from qd.evaluate.evaluate_openimages_google import evaluate
             truths = dataset.get_data(self.test_split, 'label')
             imagelabel_truths = dataset.get_data(self.test_split, 'imagelabel')
-            assert op.isfile(truths)
+            assert op.isfile(truths), truths
             assert op.isfile(imagelabel_truths)
             result = evaluate(truths, imagelabel_truths, predict_file,
                     json_hierarchy_file=op.join(dataset._data_root, 'hierarchy.json'),

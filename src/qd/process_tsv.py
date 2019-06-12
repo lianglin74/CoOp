@@ -105,15 +105,13 @@ def concat_tsv_files(tsvs, out_tsv):
                 all_idx.append(str(int(idx) + sizes[i - 1]))
     write_to_file('\n'.join(all_idx), op.splitext(out_tsv)[0] + '.lineidx')
 
-def train_test_split(data_from, data_to, num_test=5000):
+def train_test_split(data_from, data_to, split_from='train', num_test=5000):
     populate_dataset_details(data_from)
     dataset_from = TSVDataset(data_from)
     dataset_to = TSVDataset(data_to)
 
-    split_from = 'train'
-
     num_total_image = dataset_from.num_rows(split_from)
-    total_idx = range(num_total_image)
+    total_idx = list(range(num_total_image))
     random.seed(666)
     random.shuffle(total_idx)
     split_names = ['test', 'train']
@@ -5413,62 +5411,65 @@ def onebb_in_list_of_bb(bb, bbs):
 
 def inject_accuracy():
     all_full_expid = os.listdir('./output')
+    for full_expid in tqdm(all_full_expid):
+        inject_accuracy_one(full_expid)
+
+def inject_accuracy_one(full_expid):
     from qd.db import create_annotation_db
     c = create_annotation_db()
-    for full_expid in tqdm(all_full_expid):
-        all_predict = glob.glob(op.join('output', full_expid, 'snapshot',
-            '*.predict'))
-        all_predict.extend(glob.glob(op.join('output', full_expid, 'snapshot',
-            '*.predict.tsv')))
+    all_predict = glob.glob(op.join('output', full_expid, 'snapshot',
+        '*.predict'))
+    all_predict.extend(glob.glob(op.join('output', full_expid, 'snapshot',
+        '*.predict.tsv')))
 
-        all_report = glob.glob(op.join('output', full_expid, 'snapshot', '*.report'))
-        for report_file in all_report:
-            try:
-                predict_file = find_predict_file(report_file, all_predict)
-            except:
-                logging.info('cannot find pred for {} from \n{}'.format(
-                    report_file, '\n'.join(all_predict)))
-                continue
-            from qd.qd_common import parse_test_data_with_version
-            try:
-                test_data, test_split, test_version = parse_test_data_with_version(op.basename(report_file))
-            except:
-                continue
-            info = {'full_expid': full_expid,
-                    'predict_file': op.basename(predict_file),
-                    'report_file': op.basename(report_file),
-                    'test_data': test_data,
-                    'test_split': test_split,
-                    'test_version': test_version,
-                    }
-            if 'coco_box' in report_file:
-                acc = load_from_yaml_file(report_file)
-            elif '.neg_aware_gmap.' in report_file:
-                acc = load_from_yaml_file(report_file)
-                if '.neg_aware_gmap.noNMSGt' in report_file:
-                    key = 'ngmAP'
-                else:
-                    key = 'gmAP'
-                acc = {key: acc['map']}
+    all_report = glob.glob(op.join('output', full_expid, 'snapshot', '*.report'))
+    for report_file in all_report:
+        try:
+            predict_file = find_predict_file(report_file, all_predict)
+        except:
+            logging.info('cannot find pred for {} from \n{}'.format(
+                report_file, '\n'.join(all_predict)))
+            continue
+        from qd.qd_common import parse_test_data_with_version
+        try:
+            test_data, test_split, test_version = parse_test_data_with_version(op.basename(report_file))
+        except:
+            continue
+        info = {'full_expid': full_expid,
+                'predict_file': op.basename(predict_file),
+                'report_file': op.basename(report_file),
+                'test_data': test_data,
+                'test_split': test_split,
+                'test_version': test_version,
+                }
+        if 'coco_box' in report_file:
+            acc = load_from_yaml_file(report_file)
+        elif '.neg_aware_gmap.' in report_file:
+            acc = load_from_yaml_file(report_file)
+            if '.neg_aware_gmap.noNMSGt' in report_file:
+                key = 'ngmAP'
             else:
-                map_json_file = report_file + '.map.json'
-                if op.isfile(map_json_file):
-                    x = json.loads(read_to_buffer(map_json_file))
-                    acc = {}
-                    for k1 in x:
-                        for k2 in x[k1]:
-                            for k3 in x[k1][k2]:
-                                k = '{}${}${}'.format(k1, k2, k3)
-                                acc[k] = x[k1][k2][k3]
-                else:
-                    continue
-            for k in list(acc.keys()):
-                curr = copy.deepcopy(info)
-                curr['metric_name'] = k
-                if c.exist_acc(**curr):
-                    continue
-                curr['metric_value'] = acc[k]
-                c.insert_acc(**curr)
+                key = 'gmAP'
+            acc = {key: acc['map']}
+        else:
+            map_json_file = report_file + '.map.json'
+            if op.isfile(map_json_file):
+                x = json.loads(read_to_buffer(map_json_file))
+                acc = {}
+                for k1 in x:
+                    for k2 in x[k1]:
+                        for k3 in x[k1][k2]:
+                            k = '{}${}${}'.format(k1, k2, k3)
+                            acc[k] = x[k1][k2][k3]
+            else:
+                continue
+        for k in list(acc.keys()):
+            curr = copy.deepcopy(info)
+            curr['metric_name'] = k
+            if c.exist_acc(**curr):
+                continue
+            curr['metric_value'] = acc[k]
+            c.insert_acc(**curr)
 
 def find_predict_file(report_file, all_predict):
     found = False
@@ -5485,7 +5486,10 @@ def find_predict_file(report_file, all_predict):
             continue
         if report_file.startswith(ps):
             rs = report_file[len(ps):]
-            pattern = '(\.predict)?(\.coco_box)?(\.neg_aware_gmap)?(\.top1)?(\.v[0-9]*)?\.report'
+            eval_keys = ['predict', 'coco_box', 'neg_aware_gmap', 'top1',
+                    'noNMSGt']
+            p0 = ''.join(['(\.{})?'.format(k) for k in eval_keys])
+            pattern = '{}(\.v[0-9]*)?\.report'.format(p0)
             if re.match(pattern, rs):
                 assert not found
                 found = True

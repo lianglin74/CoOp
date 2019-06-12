@@ -77,6 +77,24 @@ def test_prep_coco_full():
     for json_name, image_folder, out_tsv_file in input_output:
         prep_coco(coco_root, json_name, image_folder, out_tsv_file)
 
+def load_coco_annotation(annfile):
+    with open(annfile,'r') as jsin:
+        print("Loading annotations...")
+        truths = json.load(jsin)
+        #map id to filename
+        imgdict = {x['id']:x['file_name'] for x in truths['images']};
+        catdict = {x['id']:x['name'] for x in truths['categories']};
+        anndict = { y:[] for x, y in imgdict.items() };
+        for ann in truths['annotations']:
+            imgid = imgdict[ann['image_id']];
+            bbox = ann['bbox'];
+            bbox[2] += bbox[0]-1;
+            bbox[3] += bbox[1]-1;
+            cid = ann['category_id'];
+            crect = {'class':catdict[cid], 'rect':bbox}
+            anndict[imgid] += [crect];
+    return anndict
+
 def test_prep_coco():
     '''
     deprecated. problem: it does not save the iscrowded field, used by coco

@@ -1342,7 +1342,7 @@ def update_kernel_active(net, kernel_active, kernel_active_skip):
 
 def plot_to_file(xs, ys, file_name, **kwargs):
     fig = plt.figure()
-    if all(isinstance(x, str) or isinstance(x, unicode) for x in xs):
+    if all(isinstance(x, str) for x in xs):
         xs2 = range(len(xs))
         #plt.xticks(xs2, xs, rotation=15, ha='right')
         plt.xticks(xs2, xs, rotation='vertical')
@@ -1671,6 +1671,21 @@ def natural_key(text):
 
 def natural_sort(strs):
     strs.sort(key=natural_key)
+
+def get_pca(x, com):
+    x -= np.mean(x, axis = 0)
+    cov = np.cov(x, rowvar=False)
+    from scipy import linalg as LA
+    evals , evecs = LA.eigh(cov)
+    idx = np.argsort(evals)[::-1]
+    evecs = evecs[:,idx]
+    evals = evals[idx]
+    component_val = np.sum(evals[idx])
+    total_val = np.sum(evals)
+    logging.info('kept: {}/{}={}'.format(component_val,
+            total_val, component_val / total_val))
+    a = np.dot(x, evecs[:, :com])
+    return a
 
 if __name__ == '__main__':
     init_logging()

@@ -22,7 +22,6 @@ from maskrcnn_benchmark.modeling.detector import build_detection_model
 from maskrcnn_benchmark.utils.checkpoint import DetectronCheckpointer
 from maskrcnn_benchmark.utils.comm import synchronize, get_rank
 from maskrcnn_benchmark.utils.comm import is_main_process
-from maskrcnn_benchmark.utils.checkpoint import DetectronCheckpointer
 from maskrcnn_benchmark.utils.comm import get_world_size
 from maskrcnn_benchmark.solver import make_lr_scheduler
 from maskrcnn_benchmark.structures.bounding_box import BoxList
@@ -102,7 +101,7 @@ def train(cfg, local_rank, distributed, log_step=20, sync_bn=False,
     model = build_detection_model(cfg)
     if sync_bn:
         model = convert_to_sync_bn(model)
-    if opt_cls_only or True:
+    if opt_cls_only:
         lock_except_classifier(model)
     device = torch.device(cfg.MODEL.DEVICE)
     model.to(device)
@@ -489,7 +488,11 @@ class MaskRCNNPipeline(ModelPipeline):
         super(MaskRCNNPipeline, self).__init__(**kwargs)
 
         self._default.update({'workers': 4,
-            'log_step': 20})
+            'log_step': 20,
+            'apply_nms_gt': True,
+            'apply_nms_det': True,
+            'expand_label_det': True,
+            })
 
         maskrcnn_root = op.join('src', 'maskrcnn-benchmark')
         if self.net.startswith('retinanet'):
@@ -535,6 +538,8 @@ class MaskRCNNPipeline(ModelPipeline):
             assert train_arg.get('multi_hot_label', True)
         else:
             self.kwargs['MODEL']['ROI_BOX_HEAD']['NUM_CLASSES'] = len(TSVDataset(self.data).load_labelmap()) + 1
+
+        self.kwargs['MODEL']['RETINANET']['NUM_CLASSES'] = self.kwargs['MODEL']['ROI_BOX_HEAD']['NUM_CLASSES']
 
         if self.stageiter:
             self.kwargs['SOLVER']['STEPS'] = tuple([self.parse_iter(i) for i in self.stageiter])
@@ -597,6 +602,17 @@ class MaskRCNNPipeline(ModelPipeline):
             cc.append('RPN.PostNMSTop{}'.format(cfg.MODEL.RPN.POST_NMS_TOP_N_TEST))
         if cfg.MODEL.ROI_BOX_HEAD.CLASSIFICATION_ACTIVATE != 'softmax':
             cc.append('{}'.format(cfg.MODEL.ROI_BOX_HEAD.CLASSIFICATION_ACTIVATE))
+
+    def get_old_check_point_file(self, curr):
+        return op.join(self.output_folder, 'snapshot',
+                    'model_{7d}.pth'.format(curr))
+
+    def get_snapshot_steps(self):
+        return self.log_step
+
+    def _get_old_check_point_file(self, i):
+        return op.join(self.output_folder, 'snapshot',
+                'model_{:07d}.pth'.format(i))
 
     def has_background_output(self):
         # we should always use self.kwargs rather than cfg. cfg is only used by

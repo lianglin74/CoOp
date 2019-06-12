@@ -49,8 +49,11 @@ def get_all_related_data_for_philly_jobs(data):
 def ensure_upload_data_for_philly_jobs(data, philly_client):
     all_data = get_all_related_data_for_philly_jobs(data)
     for d in all_data:
-        # we need the hw for mask-rcnn
-        logging.info('TODO: making sure hw is there')
+        dataset = TSVDataset(d)
+        if any(dataset.has('train') and not dataset.has('train', 'hw')
+                for split in ['train', 'trainval', 'test']):
+            from qd.process_tsv import populate_dataset_details
+            populate_dataset_details(d, check_image_details=True)
     need_to_upload_data = copy.deepcopy(all_data)
 
     for d in all_data:
@@ -90,7 +93,8 @@ def philly_func_run(func, param, **submit_param):
         ensure_upload_data_for_philly_jobs(param['param']['data'], philly_client)
         # TODO: the following only uploads data to blob. implement to upload to
         # hdfs also if philly still supports that
-        ensure_upload_init_model(param)
+    if 'basemodel' in param.get('param', {}):
+        ensure_upload_init_model(param['param'])
     assert func.__module__ != '__main__'
     assert 'type' not in param
     param['type'] = func.__name__
@@ -193,6 +197,8 @@ def update_parameters(param):
                 except_to_update_classification_loss),
             ('min_size_range32', 'Min'),
             ('with_dcn', ('DCN', None)),
+            ('sync_bn', ('SyncBN', None)),
+            ('opt_cls_only', ('ClsOnly', None)),
             ]
 
     non_expid_impact_keys = ['data', 'net', 'expid_prefix',
@@ -206,6 +212,10 @@ def update_parameters(param):
             'MODEL$ROI_BOX_HEAD$CLASSIFICATION_ACTIVATE',
             'display',
             'apply_nms_gt',
+            'apply_nms_det',
+            'expand_label_det',
+            'SOLVER$CHECKPOINT_PERIOD',
+            'yolo_train_session_param$display',
             ]
     true_false_keys = OrderedDict([('use_treestructure', ('Tree', None)),
         ('MODEL$USE_TREESTRUCTURE', ('Tree', None)),
@@ -307,6 +317,13 @@ def pipeline_train_eval_multi(all_test_data, param, **kwargs):
         pip = load_pipeline(**curr_param)
         pip.ensure_predict()
         pip.ensure_evaluate()
+
+def pipeline_monitor_train(param, all_test_data, **kwargs):
+    for test_data_info in all_test_data:
+        curr_param = copy.deepcopy(param)
+        curr_param.update(test_data_info)
+        pip = load_pipeline(**curr_param)
+        pip.monitor_train()
 
 def pipeline_eval_multi(param, all_test_data, **kwargs):
     for test_data_info in all_test_data:

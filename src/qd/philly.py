@@ -238,10 +238,23 @@ def attach_log_parsing_result(job_info):
             now = datetime.now(timezone.utc)
             log_time = parse(log_time)
             delay = (now - log_time).total_seconds()
-            job_info['left'] = '{}({:.1f}s)'.format(left, delay)
+            d, h = parse_eta_in_hours(left)
+            job_info['left'] = '{}-{:.1f}h({:.1f}s)'.format(d, h, delay)
             del job_info['latest_log']
             return
     del job_info['latest_log']
+
+def parse_eta_in_hours(left):
+    pattern = '(?:([0-9]*) day[s]?, )?([0-9]*):([0-9]*):([0-9]*)'
+    result = re.match(pattern, left)
+    if result:
+        gs = result.groups()
+        gs = [float(g) if g else 0 for g in gs]
+        assert int(gs[0]) == gs[0]
+        days = int(gs[0])
+        hours = gs[1] + gs[2] / 60. + gs[3] / 3600
+        return days, hours
+    return -1, -1
 
 def print_table(a_to_bs, all_key=None):
     if len(a_to_bs) == 0:
@@ -448,10 +461,6 @@ class PhillyVC(object):
         all_job_info = self.query_all_job(my_own)
         if valid_job_checker is not None:
             all_job_info = [j for j in all_job_info if valid_job_checker(j)]
-        all_job_info = [j for j in all_job_info if
-                #j['status'] != 'Pass' and
-                #j['status'] != 'Failed' and
-                j['status'] != 'Killed']
         if self.query_with_gpu:
             self.attach_gpu_utility([j for j in all_job_info if j['status'] ==
                     'Running'])
@@ -912,12 +921,6 @@ class MultiPhillyVC(object):
             target_client.cluster))
         return target_client
 
-    def submit_without_sync(self, extraParam):
-        # deprecated. just call the following two commands
-        raise Exception('please call the following two commands')
-        target_client = self.select_client_for_submit()
-        target_client.submit_without_sync(extraParam)
-
     def search_job_id_and_track(self, partial_id):
         client, app_info = self.search_job_id(partial_id)
         return client.track_job_once(app_info)
@@ -953,7 +956,6 @@ class MultiPhillyVC(object):
             client.cluster))
 
     def query(self):
-        all_status = ['Running', 'Queued', 'Failed', 'Pass']
         all_job_info = []
         for c in self.clients:
             all_job_info.extend(c.query())
@@ -966,6 +968,8 @@ class MultiPhillyVC(object):
             for cluster, ids in cluster_to_ids.items():
                 all_job_info.extend(cluster_to_client[cluster].query(valid_job_checker=lambda
                         j: j['appID'] in ids, my_own=False))
+        all_status = list(set([j['status'] for j in all_job_info]))
+        all_status = sorted(all_status, reverse=True)
         for status in all_status:
             print_job_infos([j for j in all_job_info if j['status'] == status])
         return all_job_info
@@ -1278,7 +1282,8 @@ def abort_submit(partial_id, **kwargs):
 
     submit_client = MultiPhillyVC(**kwargs)
     cmd = parse_job_command(job_info)
-    submit_client.submit_without_sync(cmd)
+    submit_client.select_client_for_submit().submit_without_sync(
+            cmd, job_info['num_gpu'])
     if job_info['status'] in ['Queued', 'Running']:
         client.abort(job_info['appID'])
     else:

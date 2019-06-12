@@ -9,6 +9,11 @@ import matplotlib.pyplot as plt
 from random import random
 import logging
 
+def gen_colors(num_real_classes):
+    colors = []
+    for c in range(num_real_classes):
+        colors.append(np.random.rand(3))
+    return colors
 
 def draw_rects(rects, im=None, add_label=True):
     if im is None:
