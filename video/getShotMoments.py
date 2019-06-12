@@ -32,7 +32,7 @@ def findShot(predict_file):
     oneShotTimethresh = 2
     
     # 2.0 * rim width
-    distanceFromBallToRimToTrack = 3.0
+    distanceFromBallToRimToTrack = 3
     angleThresh = 120.0/180*math.pi
     #angleThreshBelowRim = 30.0/180*math.pi
 	
@@ -211,6 +211,9 @@ def findShot(predict_file):
                 print("realAngle: ", toDegree(angleRimToBall))
                 print("relative angle: ", toDegree(abs(angleRimToBall - angleBallToRim)))
               
+              if angleRimToBall > angleRimToBallThresh:
+                falsePositive = True
+              
               endTime = imageCnt/frameRate
               if ( abs(angleRimToBall - angleBallToRim) < angleThresh ) and iouTime > startTime - padding and iouTime < endTime + padding:
                 print("Finding one shot by angle analysis: ", (imageCnt/frameRate))
@@ -235,6 +238,9 @@ def findShot(predict_file):
     
     return pred_results_angle
     #pred_results
+
+def removeFalsePositive():
+  
 
 def predictBallRects(prevBallObjs, debug = 0):
   l = len( prevBallObjs )
@@ -306,18 +312,17 @@ def calculateF1(pred_results, true_results):
   
   lastTime = true_results[-1]
   
-  filtered_pred_results = pred_results
   #[ v for v in pred_results if v < lastTime + oneShotTimethresh]
   
-  print("filtered_pred_results: ", filtered_pred_results, len(filtered_pred_results))
+  print("pred_results: ", pred_results, len(pred_results))
   print("true_results: ", true_results, len(true_results))
   
-  truePositiveList = [value for value in filtered_pred_results if findPairInValueList(value, true_results)]
+  truePositiveList = [value for value in pred_results if findPairInValueList(value, true_results)]
   print("TruePositve: ", truePositiveList)
   #trueNegative = 
-  falsePositiveList = [value for value in filtered_pred_results if not findPairInValueList(value, true_results)]
+  falsePositiveList = [value for value in pred_results if not findPairInValueList(value, true_results)]
   print("FlasePositve: ", falsePositiveList)
-  falseNegativeList = [value for value in true_results if not findValueInPairList( value ,  filtered_pred_results) ]
+  falseNegativeList = [value for value in true_results if not findValueInPairList( value ,  pred_results) ]
   print("falseNegative: ", falseNegativeList)
   
   precision = len(truePositiveList) / (len(truePositiveList) + len (falsePositiveList) +0.0) if len(truePositiveList) else 0
@@ -333,8 +338,8 @@ def intersection(lst1, lst2):
 def findPairInValueList(pair, true_results):
   return any([v >= pair[0] and v <= pair[1]  for v in true_results])
 
-def findValueInPairList(v, filtered_pred_results):
-  return any([v >= pair[0] and v <= pair[1]  for pair in filtered_pred_results])
+def findValueInPairList(v, pred_results):
+  return any([v >= pair[0] and v <= pair[1]  for pair in pred_results])
 
 def isAbove(p1, p2):  
   return p1[1] < p2[1]
@@ -439,11 +444,18 @@ def main():
   labelFileList = read_file_to_list(dir + labelFiles)
   #predict_file = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_chop/TSV/head350_prediction_1551538896210_sc99_01_q1.tsv"
   #predict_file = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_chop/prediction_1551538896210_sc99_01_q1.tsv"
+  
   for predict_file in labelFileList:
     pred_results =  findShot(dir + predict_file)
+    true_results = None
     #if predict_file == "prediction_1551538896210_sc99_01_q1.tsv": 
     if predict_file == "1551538896210_sc99_01_q1_pd.tsv": 
       true_results = [13, 36, 55, 119, 150, 157, 186, 328, 350, 386, 444, 469, 526, 586]
+    
+    if predict_file == "1552493137730_sc99_01_q1_pd.tsv": 
+      true_results = [81, 95, 110, 135,148,152, 282, 298]
+      
+    if true_results is not None:
       calculateF1(pred_results, true_results)
     
     writeToTSV(predict_file, pred_results)
