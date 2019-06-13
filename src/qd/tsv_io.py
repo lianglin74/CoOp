@@ -609,7 +609,7 @@ def tsv_writer(values, tsv_file_name, sep='\t'):
     with open(tsv_file_name_tmp, 'wb') as fp, open(tsv_lineidx_file_tmp, 'w') as fpidx:
         assert values is not None
         for value in values:
-            assert value
+            assert value is not None
             if is_py2:
                 v = sep.join(map(lambda v: v.encode('utf-8') if isinstance(v, unicode) else str(v), value)) + '\n'
             else:

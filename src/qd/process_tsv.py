@@ -5446,7 +5446,9 @@ def inject_accuracy_one(full_expid):
             acc = load_from_yaml_file(report_file)
         elif '.neg_aware_gmap.' in report_file:
             acc = load_from_yaml_file(report_file)
-            if '.neg_aware_gmap.noNMSGt' in report_file:
+            if 'neg_aware_gmap.noNMSGt.noNMSDet.noExpandDet.report' in report_file:
+                key = 'nngmAP'
+            elif '.neg_aware_gmap.noNMSGt.report' in report_file:
                 key = 'ngmAP'
             else:
                 key = 'gmAP'
@@ -5487,7 +5489,7 @@ def find_predict_file(report_file, all_predict):
         if report_file.startswith(ps):
             rs = report_file[len(ps):]
             eval_keys = ['predict', 'coco_box', 'neg_aware_gmap', 'top1',
-                    'noNMSGt']
+                    'noNMSGt', 'noNMSDet', 'noExpandDet']
             p0 = ''.join(['(\.{})?'.format(k) for k in eval_keys])
             pattern = '{}(\.v[0-9]*)?\.report'.format(p0)
             if re.match(pattern, rs):

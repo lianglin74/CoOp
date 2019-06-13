@@ -157,6 +157,20 @@ def except_to_update_random_scale_max(param):
     else:
         return True
 
+def except_to_update_fixed_input_size(param):
+    if dict_has_path(param, 'INPUT$FIXED_SIZE_AUG$INPUT_SIZE'):
+        value = dict_get_path_value(param, 'INPUT$FIXED_SIZE_AUG$INPUT_SIZE')
+        return value == 800
+    else:
+        return True
+
+def except_to_update_fixed_jitter(param):
+    if dict_has_path(param, 'INPUT$FIXED_SIZE_AUG$JITTER'):
+        value = dict_get_path_value(param, 'INPUT$FIXED_SIZE_AUG$JITTER')
+        return value == 0.2
+    else:
+        return True
+
 def update_parameters(param):
     default_param = {
             'max_iter': 10000,
@@ -193,6 +207,10 @@ def update_parameters(param):
                 except_to_update_random_scale_min),
             ('INPUT$FIXED_SIZE_AUG$RANDOM_SCALE_MAX', 'ScaleMax',
                 except_to_update_random_scale_max),
+            ('INPUT$FIXED_SIZE_AUG$INPUT_SIZE', 'In',
+                except_to_update_fixed_input_size),
+            ('INPUT$FIXED_SIZE_AUG$JITTER', 'J',
+                except_to_update_fixed_jitter),
             ('MODEL$ROI_BOX_HEAD$CLASSIFICATION_LOSS', '',
                 except_to_update_classification_loss),
             ('min_size_range32', 'Min'),

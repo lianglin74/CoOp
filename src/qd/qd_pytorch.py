@@ -1303,8 +1303,8 @@ class TorchTrain(object):
             assert op.isfile(imagelabel_truths)
             result = evaluate(truths, imagelabel_truths, predict_file,
                     json_hierarchy_file=op.join(dataset._data_root, 'hierarchy.json'),
-                    apply_nms_det=True,
-                    expand_label_det=True,
+                    apply_nms_det=self.apply_nms_det,
+                    expand_label_det=self.expand_label_det,
                     expand_label_gt=True,
                     apply_nms_gt=self.apply_nms_gt,
                     )

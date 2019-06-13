@@ -390,6 +390,7 @@ def only_inference_to_tsv(
         **kwargs
 ):
     device = torch.device(device)
+    predict_threshold = kwargs.get('predict_threshold')
 
     if op.isfile(cache_file) and not kwargs.get('force_predict'):
         logging.info('ignore to run predict')
@@ -408,6 +409,8 @@ def only_inference_to_tsv(
                 box_list = box_list.resize((wh_info['width'],
                     wh_info['height']))
                 rects = boxlist_to_list_dict(box_list, label_id_to_label)
+                if predict_threshold is not None:
+                    rects = [r for r in rects if r['conf'] >= predict_threshold]
                 str_rects = json.dumps(rects)
                 yield key, str_rects
         tsv_writer(gen_rows(), cache_file)
@@ -533,13 +536,15 @@ class MaskRCNNPipeline(ModelPipeline):
         # API, which should be the batch size for all rank
         self.kwargs['TEST']['IMS_PER_BATCH'] = self.test_batch_size * self.mpi_size
         self.kwargs['DATALOADER']['NUM_WORKERS'] = self.workers
+        self.labelmap = TSVDataset(self.data).load_labelmap()
         if not self.has_background_output():
-            self.kwargs['MODEL']['ROI_BOX_HEAD']['NUM_CLASSES'] = len(TSVDataset(self.data).load_labelmap())
+            self.kwargs['MODEL']['ROI_BOX_HEAD']['NUM_CLASSES'] = len(self.labelmap)
             assert train_arg.get('multi_hot_label', True)
         else:
-            self.kwargs['MODEL']['ROI_BOX_HEAD']['NUM_CLASSES'] = len(TSVDataset(self.data).load_labelmap()) + 1
+            self.kwargs['MODEL']['ROI_BOX_HEAD']['NUM_CLASSES'] = len(self.labelmap) + 1
 
-        self.kwargs['MODEL']['RETINANET']['NUM_CLASSES'] = self.kwargs['MODEL']['ROI_BOX_HEAD']['NUM_CLASSES']
+        set_if_not_exist(self.kwargs['MODEL'], 'RETINANET', {})
+        self.kwargs['MODEL']['RETINANET']['NUM_CLASSES'] = len(self.labelmap)
 
         if self.stageiter:
             self.kwargs['SOLVER']['STEPS'] = tuple([self.parse_iter(i) for i in self.stageiter])
@@ -602,6 +607,8 @@ class MaskRCNNPipeline(ModelPipeline):
             cc.append('RPN.PostNMSTop{}'.format(cfg.MODEL.RPN.POST_NMS_TOP_N_TEST))
         if cfg.MODEL.ROI_BOX_HEAD.CLASSIFICATION_ACTIVATE != 'softmax':
             cc.append('{}'.format(cfg.MODEL.ROI_BOX_HEAD.CLASSIFICATION_ACTIVATE))
+        if self.predict_threshold is not None:
+            cc.append('th{}'.format(self.predict_threshold))
 
     def get_old_check_point_file(self, curr):
         return op.join(self.output_folder, 'snapshot',

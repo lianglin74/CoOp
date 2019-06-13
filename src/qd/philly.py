@@ -316,11 +316,14 @@ class PhillyVC(object):
         self.multi_process = kwargs.get('multi_process')
         self.docker_tag = kwargs.get('docker_tag')
 
-        self.use_blob_as_input = self.config_param['data_folder'].startswith(
-                self.blob_mount_point)
         # used in query()
         self.query_with_gpu = kwargs.get('with_gpu')
         self.query_with_log = kwargs.get('with_log')
+
+    @property
+    def use_blob_as_input(self):
+        return self.config_param['data_folder'].startswith(
+                self.blob_mount_point)
 
     def get_cloud_storage(self):
         return create_cloud_storage('vig')
@@ -1028,7 +1031,7 @@ class MultiPhillyVC(object):
         resubmit_job = max(candidate_resubmit_jobs, key=lambda x: x['elapsedTime'])
         origin_client = self.cluster_to_client[resubmit_job['cluster']]
         origin_client.attach_meta([resubmit_job])
-        cmd = parse_job_command(resubmit_job)
+        cmd = parse_job_command(resubmit_job)['command']
         new_client = self.cluster_to_client[list(no_queued_job_clusters)[0]]
         new_client.submit_without_sync(cmd, num_gpu=resubmit_job['num_gpu'])
         origin_client.abort(resubmit_job['appID'])
@@ -1270,7 +1273,7 @@ def print_job_infos(all_job_info):
 def parse_job_command(job_info):
     config_extra_param = job_info['meta']['extra_param']
     extra_param = decode_config_extra_param(config_extra_param)
-    return extra_param['command']
+    return extra_param
 
 def abort_submit(partial_id, **kwargs):
     multi_param = copy.deepcopy(kwargs)
@@ -1282,8 +1285,11 @@ def abort_submit(partial_id, **kwargs):
 
     submit_client = MultiPhillyVC(**kwargs)
     cmd = parse_job_command(job_info)
-    submit_client.select_client_for_submit().submit_without_sync(
-            cmd, job_info['num_gpu'])
+    submit_client = submit_client.select_client_for_submit()
+    submit_client.config_param['data_folder'] = cmd['data_folder']
+    num_gpu = kwargs['num_gpu'] if 'num_gpu' in kwargs else job_info['num_gpu']
+    submit_client.submit_without_sync(
+            cmd['command'], num_gpu)
     if job_info['status'] in ['Queued', 'Running']:
         client.abort(job_info['appID'])
     else:
