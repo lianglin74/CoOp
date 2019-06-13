@@ -66,10 +66,13 @@ def findShot(predict_file):
     
     iouTime = -10
     personTime = -10
+    prevShotTime = -10
     
     largeDistanceCount = 0
     LargeBallRimDistanceCountThresh = 5
     timeSinceEventStart = 0
+    
+    ballAboveRimThresh = 0
     
     prevRimObj = None
     prevBallObjs = []
@@ -78,7 +81,7 @@ def findShot(predict_file):
         imageCnt += 1
         
         #if (imageCnt > 9645 and imageCnt < 9650):
-        if (imageCnt > 11738 and imageCnt < 11788):
+        if (imageCnt > 279 and imageCnt < 329):
           debug = 0
         
         if debug:
@@ -150,17 +153,19 @@ def findShot(predict_file):
           widthRim = getWidthOfObject( rectClosestRim )
           centerOfRim = getCenterOfObject(rectClosestRim)
           
+          #ballAboveRimThresh = widthRim
+          
           if iou > rimBallIouLowerThresh:
             currentTime = imageCnt/frameRate
             iouTime = currentTime
             if 1:
               print("--Processing image: ", imageCnt, "; second: ", currentTime)
               print("Found both rim and ball with iou: ", iou)
-              print("Ball is above rim: ", isAbove(ballCenter, centerOfRim))
+              print("Ball is above rim: ", isAbove(ballCenter, centerOfRim, ballAboveRimThresh))
             if len(pred_results) == 0 or currentTime - pred_results[-1][1] > oneShotTimethresh: 
-              pred_results.append((currentTime, currentTime + oneShotTimethresh));
+              pred_results.append((currentTime - oneShotTimethresh/2.0, currentTime + oneShotTimethresh/2.0, 'shot'));
               iou_list.append(iou)
-              ball_above_rim.append(isAbove(ballCenter, centerOfRim))
+              ball_above_rim.append(isAbove(ballCenter, centerOfRim, ballAboveRimThresh))
           
             if (iou > rimBallIouHigherThresh): 
               print("!!Found a shot")
@@ -184,14 +189,14 @@ def findShot(predict_file):
             print("Found a person holding ball: ", imageCnt)
             personTime = imageCnt/frameRate
           
-          if addMissingBall and distanceFromBallToClosetRim < distanceFromBallToRimToTrack * widthRim and isAbove(ballCenter, centerOfRim):
+          if addMissingBall and distanceFromBallToClosetRim < distanceFromBallToRimToTrack * widthRim and isAbove(ballCenter, centerOfRim, ballAboveRimThresh):
             prevBallObjs.append(ballRects)
           else:
             prevBallObjs = []
           
           # start to check angle
-          if not eventStart: 
-            if distanceFromBallToClosetRim < distanceFromBallToRimToTrack * widthRim and isAbove(ballCenter, centerOfRim):
+          if not eventStart and imageCnt/frameRate > prevShotTime + padding: 
+            if distanceFromBallToClosetRim < distanceFromBallToRimToTrack * widthRim and isAbove(ballCenter, centerOfRim, ballAboveRimThresh):
               angleBallToRim = getAngleOfTwoPoints(ballCenter, centerOfRim)
               eventStart = True
               timeSinceEventStart = 0
@@ -199,14 +204,14 @@ def findShot(predict_file):
               if debug:
                 print("---key event start")
                 print("angleBallToRim: ", toDegree(angleBallToRim))
-          else: #event started
+          elif eventStart: #event started
             timeSinceEventStart += 1.0 / frameRate
             
             if timeSinceEventStart >= oneShotTimethresh * 1: 
               eventStart = False
               timeSinceEventStart = 0
               
-            if distanceFromBallToClosetRim <= distanceFromBallToRimToTrack * widthRim and not isAbove(ballCenter, centerOfRim):
+            if distanceFromBallToClosetRim <= distanceFromBallToRimToTrack * widthRim and not isAbove(ballCenter, centerOfRim, ballAboveRimThresh):
               angleRimToBall = getAngleOfTwoPoints(centerOfRim, ballCenter)
               
               if debug:
@@ -218,13 +223,17 @@ def findShot(predict_file):
               
               endTime = imageCnt/frameRate
               if ( abs(angleRimToBall - angleBallToRim) < angleThresh ) and iouTime > startTime - padding and iouTime < endTime + padding:
+                print("Start time: ", startTime, "; endtime: ", endTime)
                 print("Finding one shot by angle analysis: ", (imageCnt/frameRate))
                 className = "shot" 
+                prevShotTime = endTime
                 if personTime > startTime - padding and personTime < endTime + padding:
                   print("Finding one DUNK shot by angle analysis: ", (imageCnt/frameRate))
                   className = "layup/dunk"
+                print("Adding result: ", (max(startTime - padding, 0.0), endTime + padding, className))
                 pred_results_angle.append((max(startTime - padding, 0.0), endTime + padding, className))
-                eventStart = False                  
+                eventStart = False
+                timeSinceEventStart = 0               
               else: #not a shot
                 if debug:
                   print("Not a shot")
@@ -239,7 +248,7 @@ def findShot(predict_file):
     print(pred_results_angle)
     
     return pred_results_angle
-    #pred_results
+    #return pred_results
 
 def removeFalsePositive():
   pass
@@ -308,14 +317,39 @@ def getPersonHoldingBall(rimRect, ballRect, rects, debug):
         
 def toDegree(angle):
   return angle / math.pi * 180.0; 
+
+def checkResultsOverlap(pred_results):
+  l = len(pred_results)
+  padding = 2
+  i = 1
   
-def calculateF1(pred_results, true_results):
-  oneShotTimethresh = 5
+  newResults = []
+  while i < l:
+    v1 = pred_results[i-1]
+    v2 = pred_results[i]
+    
+    if ( v1[1] > v2[0] + padding):
+      print("Found overlap pairs: ", v1, v2)
+    else:
+      newResults.append(v1)
+      
+    i += 1
+    
+  if l >= 2:
+    i = l-1
+    v1 = pred_results[i-1]
+    v2 = pred_results[i]
+    if ( v1[1] > v2[0] + padding):
+      print("Found overlap pairs: ", v1, v2)
+    else:
+      newResults.append(v2)
   
-  lastTime = true_results[-1]
+  return newResults
   
-  #[ v for v in pred_results if v < lastTime + oneShotTimethresh]
+  if l == 1:
+    return pred_results
   
+def calculateF1(pred_results, true_results):  
   print("pred_results: ", pred_results, len(pred_results))
   print("true_results: ", true_results, len(true_results))
   
@@ -346,8 +380,8 @@ def findPairInValueList(pair, true_results):
 def findValueInPairList(v, pred_results):
   return any([v >= pair[0] and v <= pair[1]  for pair in pred_results])
 
-def isAbove(p1, p2):  
-  return p1[1] < p2[1]
+def isAbove(p1, p2, thresh = 0.0):  
+  return p1[1] < p2[1] - thresh
         
         
 def getWidthOfObject(bb):
@@ -451,8 +485,11 @@ def main():
   #predict_file = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_chop/prediction_1551538896210_sc99_01_q1.tsv"
   
   for predict_file in labelFileList:
-    
+    print("----Processing file: ", predict_file)
     pred_results =  findShot(dir + predict_file)
+    
+    checkResultsOverlap(pred_results)
+    
     true_results = None
     #if predict_file == "prediction_1551538896210_sc99_01_q1.tsv": 
     if predict_file == "1551538896210_sc99_01_q1_pd.tsv": 
@@ -474,7 +511,7 @@ def main():
       true_results = [ float(v) for v in read_file_to_list(dir + "NBA2.gt.txt") ]
     
     if true_results is not None:
-      print("----Processing file: ", predict_file)
+      print("----calculate F1 for file: ", predict_file)
       print("True_results:", true_results)
       calculateF1(pred_results, true_results)
     
