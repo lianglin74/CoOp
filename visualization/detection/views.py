@@ -407,8 +407,9 @@ def view_test_model(request, full_expid, predict_file):
                   context)
 
 
-def test_model(request):
-    assert request.method == 'POST'
+from django.views.decorators.csrf import csrf_exempt
+@csrf_exempt
+def api_test_model(request):
     coded = request.FILES['image_file'].read()
     import cv2
     import numpy as np
@@ -416,6 +417,29 @@ def test_model(request):
     im = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
     if max(im.shape[:2]) > 600:
         im_scale = float(600) / float(max(im.shape[:2]))
+        im = cv2.resize(im, None, None, fx=im_scale, fy=im_scale,
+                        interpolation=cv2.INTER_LINEAR)
+    else:
+        im_sclae = 1
+    from yolotrain import predict_one_view
+    predict_file = request.POST['predict_file']
+    all_bb, all_label, all_conf = run_in_qd(predict_one_view, im, 
+            request.POST['full_expid'], 
+            predict_file
+            )
+    result = [{'rect': [x * im_scale for x in bb], 'class': l, 'conf': conf } for bb, l, conf in zip(all_bb, all_label, all_conf)]
+    return JsonResponse({'pred': result})
+
+def test_model(request):
+    assert request.method == 'POST'
+    coded = request.FILES['image_file'].read()
+    import cv2
+    import numpy as np
+    nparr = np.frombuffer(coded, np.uint8)
+    im = cv2.imdecode(nparr, cv2.IMREAD_COLOR);
+    resize_thread = 2000
+    if max(im.shape[:2]) > resize_thread:
+        im_scale = float(resize_thread) / float(max(im.shape[:2]))
         im = cv2.resize(im, None, None, fx=im_scale, fy=im_scale,
                         interpolation=cv2.INTER_LINEAR)
     from yolotrain import predict_one_view
