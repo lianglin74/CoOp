@@ -715,29 +715,7 @@ def parse_test_data_with_version(predict_file):
         return result[0], result[1], v
 
 def parse_test_data(predict_file):
-    logging.info('use parse_test_data_with_version')
-    # e.g. 'model_iter_368408.caffemodel.Tax1300V14.1_OpenImageV4_448Test_with_bb.train.maintainRatio.OutTreePath.TreeThreshold0.1.ClsIndependentNMS.predict'
-
-    pattern = 'model(?:_iter)?_[0-9]*[e]?\.(?:caffemodel|pth\.tar|pth)\.(.*)\.(train|trainval|test)\..*\.predict'
-    match_result = re.match(pattern, predict_file)
-    if match_result and len(match_result.groups()) == 2:
-        return match_result.groups()
-    # the following will be deprecated gradually
-    parts = predict_file.split('.')
-    idx_caffemodel = [i for i, p in enumerate(parts) if 'caffemodel' in p]
-    if len(idx_caffemodel) == 1:
-        idx_caffemodel = idx_caffemodel[0]
-        test_data = parts[idx_caffemodel + 1]
-        test_data_split = parts[idx_caffemodel + 2]
-        if test_data_split in ['train', 'trainval', 'test']:
-            return test_data, test_data_split
-    all_data = os.listdir('data/')
-    candidates = [data for data in all_data if '.caffemodel.' + data in predict_file]
-    assert len(candidates) > 0
-    max_length = max([len(c) for c in candidates])
-    test_data = [c for c in candidates if len(c) == max_length][0]
-    test_data_split = 'test' if 'testOnTrain' not in predict_file else 'train'
-    return test_data, test_data_split
+    return parse_test_data_with_version(predict_file)[:2]
 
 def parse_data(full_expid):
     all_data = os.listdir('data/')
@@ -775,6 +753,9 @@ def get_all_predict_files(full_expid):
     predict_files = []
 
     found = glob.glob(op.join(model_folder, '*.predict'))
+    predict_files.extend([op.basename(f) for f in found])
+
+    found = glob.glob(op.join(model_folder, '*.predict.tsv'))
     predict_files.extend([op.basename(f) for f in found])
 
     iterations = [(parse_snapshot_rank(p), p) for p in predict_files]

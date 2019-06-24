@@ -14,6 +14,7 @@ from qd.qd_common import get_mpi_rank, get_mpi_size
 from qd.qd_common import get_mpi_local_rank, get_mpi_local_size
 from qd.qd_common import parse_general_args
 from qd.qd_common import plot_to_file
+from qd.qd_common import ensure_remove_dir
 from collections import OrderedDict
 from maskrcnn_benchmark.utils.comm import synchronize, get_rank
 from qd.process_tsv import load_key_rects
@@ -1058,71 +1059,130 @@ class TorchTrain(object):
             cc.append('Extract{}'.format(self.predict_extract))
 
     def monitor_train(self):
+        self._ensure_initialized()
         assert self.max_epoch == None, 'use iteration'
         #for e in range(self.max_epoch):
             #predict_result_file = self.ensure_predict(e + 1)
             #self.ensure_evaluate(predict_result_file)
-        self.standarize_intermediate_models()
         while True:
-            iter_to_eval = self.pred_eval_intermediate_models()
-            if self.is_train_finished():
-                break
+            self.standarize_intermediate_models()
+            need_wait_models = self.pred_eval_intermediate_models()
+            all_step = self.get_all_steps()
+            all_eval_file = [self._get_evaluate_file(self._get_predict_file(self._get_checkpoint_file(iteration=i)))
+                for i in all_step]
+            iter_to_eval = dict((i, get_acc_for_plot(eval_file))
+                    for i, eval_file in zip(all_step, all_eval_file) if
+                        op.isfile(eval_file))
             self.update_acc_iter(iter_to_eval)
+            if need_wait_models == 0:
+                break
             time.sleep(5)
+        self.save_to_tensorboard()
+
+    def save_to_tensorboard(self):
+        all_step = self.get_all_steps()
+        all_eval_file = [self._get_evaluate_file(self._get_predict_file(self._get_checkpoint_file(iteration=s)))
+            for s in all_step]
+        all_step_eval_result = [(s, get_acc_for_plot(e)) for s, e in zip(all_step,
+            all_eval_file) if op.isfile(e)]
+
+        tensorboard_folder = op.join('output', self.full_expid, 'tensorboard_data')
+        from torch.utils.tensorboard import SummaryWriter
+        ensure_remove_dir(tensorboard_folder)
+        wt = SummaryWriter(log_dir=tensorboard_folder)
+        for step, eval_result in all_step_eval_result:
+            for k in eval_result:
+                wt.add_scalar(tag=k, scalar_value=eval_result[k],
+                        global_step=step, walltime=0)
+        wt.close()
 
     def is_train_finished(self):
         return op.isfile(self._get_checkpoint_file())
 
     def update_acc_iter(self, iter_to_eval):
-        xys = list(iter_to_eval.items())
-        xys = sorted(xys, key=lambda x: x[0])
-        xs = [x for x, _ in xys]
-        ys = [y['all-all'] for _, y in xys]
+        if self.mpi_rank == 0:
+            xys = list(iter_to_eval.items())
+            xys = sorted(xys, key=lambda x: x[0])
+            xs = [x for x, _ in xys]
+            ys = [y['all-all'] for _, y in xys]
 
-        if len(xs) > 0:
-            out_file = os.path.join(
-                self.output_folder,
-                'map_{}_{}.png'.format(self.test_data,
-                    self.test_split))
-            logging.info('create {}'.format(out_file))
-            if op.isfile(out_file):
-                os.remove(out_file)
-            plot_to_file(xs, ys, out_file)
-        else:
-            logging.info('nothing plotted')
+            if len(xs) > 0:
+                out_file = os.path.join(
+                    self.output_folder,
+                    'map_{}_{}.png'.format(self.test_data,
+                        self.test_split))
+                logging.info('create {}'.format(out_file))
+                if op.isfile(out_file):
+                    os.remove(out_file)
+                plot_to_file(xs, ys, out_file)
+            else:
+                logging.info('nothing plotted')
+        synchronize()
 
-    def pred_eval_intermediate_models(self):
+    def get_all_steps(self):
         steps = self.get_snapshot_steps()
         curr = 0
-        result = {}
+        all_step = []
         while True:
             curr += steps
             if curr >= self.max_iter:
+                all_step.append(self.max_iter)
                 break
-            model_file = self._get_checkpoint_file(iteration=curr)
+            all_step.append(curr)
+        return all_step
+
+    def get_intermediate_model_status(self):
+        ready_predict = []
+        all_step = self.get_all_steps()
+        for step in all_step[:-1]:
+            model_file = self._get_checkpoint_file(iteration=step)
             if not op.isfile(model_file):
+                ready_predict.append(0)
                 continue
+            predict_result_file = self._get_predict_file(model_file)
+            eval_file = self._get_evaluate_file(predict_result_file)
+            if not worth_create(model_file, predict_result_file) and \
+                    not worth_create(predict_result_file, eval_file):
+                ready_predict.append(-1)
+                continue
+            ready_predict.append(1)
+        if self.mpi_size > 1:
+            # by default, we use nccl backend, which only supports gpu. Thus,
+            # we should not use cpu here.
+            ready_predict = torch.tensor(ready_predict).cuda()
+            dist.broadcast(ready_predict, src=0)
+            ready_predict = ready_predict.tolist()
+        return ready_predict
+
+    def pred_eval_intermediate_models(self):
+        ready_predict = self.get_intermediate_model_status()
+        all_step = self.get_all_steps()[:-1]
+        all_ready_predict_step = [step for step, status in zip(all_step, ready_predict) if status == 1]
+        for step in all_ready_predict_step:
+            model_file = self._get_checkpoint_file(iteration=step)
             pred = self.ensure_predict(model_file=model_file)
-            eval_file = self.ensure_evaluate(pred)
-            eval_result = get_acc_for_plot(eval_file)
-            result[curr] = eval_result
-        return result
+            self.ensure_evaluate(pred)
+        return len([x for x in ready_predict if x == 0])
 
     def standarize_intermediate_models(self):
         # hack the original file format
-        steps = self.get_snapshot_steps()
-        curr = 0
-        while True:
-            curr += steps
-            if curr >= self.max_iter:
-                break
-            original_model = self._get_old_check_point_file(curr)
-            new_model = self._get_checkpoint_file(iteration=curr)
-            # use copy since the continous training requires the original
-            # format in maskrcnn
-            from qd.qd_common import ensure_copy_file
-            if original_model != new_model and op.isfile(original_model):
-                ensure_copy_file(original_model, new_model)
+        if self.mpi_rank == 0:
+            steps = self.get_snapshot_steps()
+            curr = 0
+            while True:
+                curr += steps
+                if curr >= self.max_iter:
+                    break
+                original_model = self._get_old_check_point_file(curr)
+                new_model = self._get_checkpoint_file(iteration=curr)
+                # use copy since the continous training requires the original
+                # format in maskrcnn
+                from qd.qd_common import ensure_copy_file
+                if original_model != new_model and \
+                        op.isfile(original_model) and \
+                        not op.isfile(new_model):
+                    ensure_copy_file(original_model, new_model)
+        synchronize()
 
     def get_snapshot_steps(self):
         pass

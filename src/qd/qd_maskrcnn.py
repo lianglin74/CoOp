@@ -1,16 +1,11 @@
 import logging
 import time
-import datetime
-import pickle as pkl
 from torch import Tensor
 import json
 import copy
 import shutil
-import numpy as np
-
+from pprint import pformat
 import torch
-from torch import nn
-from torch.utils.data.dataset import Dataset
 import maskrcnn_benchmark
 from maskrcnn_benchmark.config import cfg
 from maskrcnn_benchmark.data import make_data_loader
@@ -69,21 +64,33 @@ def merge_dict_to_cfg(dict_param, cfg):
     trim_dict(trimed_param, cfg)
     cfg.merge_from_other_cfg(CfgNode(trimed_param))
 
-def convert_to_sync_bn(module):
+def convert_to_sync_bn(module, norm=torch.nn.SyncBatchNorm):
     module_output = module
+    info = {'num_convert_bn': 0, 'num_convert_gn': 0}
     if isinstance(module,
             maskrcnn_benchmark.layers.batch_norm.FrozenBatchNorm2d):
-        module_output = torch.nn.SyncBatchNorm(
+        module_output = norm(
                 module.bias.size())
         module_output.weight.data = module.weight.data.clone().detach()
         module_output.bias.data = module.bias.data.clone().detach()
 
         module_output.running_mean = module.running_mean
         module_output.running_var = module.running_var
+        info['num_convert_bn'] += 1
+    elif isinstance(module, torch.nn.GroupNorm):
+        # gn has no running mean and running var
+        module_output = norm(
+                module.bias.size())
+        module_output.weight.data = module.weight.data.clone().detach()
+        module_output.bias.data = module.bias.data.clone().detach()
+        info['num_convert_gn'] += 1
     for name, child in module.named_children():
-        module_output.add_module(name, convert_to_sync_bn(child))
+        child, child_info = convert_to_sync_bn(child, norm)
+        module_output.add_module(name, child)
+        for k, v in child_info.items():
+            info[k] += v
     del module
-    return module_output
+    return module_output, info
 
 def lock_except_classifier(model):
     ignore = 0
@@ -95,12 +102,28 @@ def lock_except_classifier(model):
             ignore += 1
     assert ignore == 2
 
+def update_bn_momentum(model, bn_momentum):
+    from collections import defaultdict
+    type_to_count = defaultdict(int)
+    for _, module in model.named_modules():
+        if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
+            module.momentum = bn_momentum
+            type_to_count[module.__class__.__name__] += 1
+    logging.info(pformat(dict(type_to_count)))
+
 def train(cfg, local_rank, distributed, log_step=20, sync_bn=False,
-        opt_cls_only=False):
+        opt_cls_only=False, bn_momentum=0.1):
     logging.info('start to train')
     model = build_detection_model(cfg)
     if sync_bn:
-        model = convert_to_sync_bn(model)
+        if get_mpi_size() == 1:
+            norm = torch.nn.BatchNorm2d
+        else:
+            norm = torch.nn.SyncBatchNorm
+        model, convert_info = convert_to_sync_bn(model, norm)
+        logging.info(pformat(convert_info))
+    if bn_momentum != 0.1:
+        update_bn_momentum(model, bn_momentum)
     if opt_cls_only:
         lock_except_classifier(model)
     device = torch.device(cfg.MODEL.DEVICE)
@@ -402,8 +425,13 @@ def only_inference_to_tsv(
         else:
             predictions = compute_on_dataset_iter(model, data_loader, device)
         ds = data_loader.dataset
+        from maskrcnn_benchmark.utils.metric_logger import MetricLogger
+        meters = MetricLogger(delimiter="  ")
         def gen_rows():
+            start = time.time()
             for idx, box_list in predictions:
+                meters.update(predict_time=time.time() - start)
+                start = time.time()
                 key = ds.id_to_img_map[idx]
                 wh_info = ds.get_img_info(idx)
                 box_list = box_list.resize((wh_info['width'],
@@ -412,8 +440,18 @@ def only_inference_to_tsv(
                 if predict_threshold is not None:
                     rects = [r for r in rects if r['conf'] >= predict_threshold]
                 str_rects = json.dumps(rects)
+                meters.update(encode_time=time.time() - start)
                 yield key, str_rects
+                start = time.time()
+        start = time.time()
         tsv_writer(gen_rows(), cache_file)
+        logging.info('total_time = {}'.format(time.time() - start))
+        loss_str = []
+        for name, meter in meters.meters.items():
+            loss_str.append(
+                "{}: {:.4f} ({:.4f})".format(name, meter.total, meter.median)
+            )
+        logging.info(';'.join(loss_str))
 
 def test(cfg, model, distributed, predict_files, label_id_to_label,
         **kwargs):
@@ -495,6 +533,7 @@ class MaskRCNNPipeline(ModelPipeline):
             'apply_nms_gt': True,
             'apply_nms_det': True,
             'expand_label_det': True,
+            'bn_momentum': 0.1,
             })
 
         maskrcnn_root = op.join('src', 'maskrcnn-benchmark')
@@ -599,7 +638,9 @@ class MaskRCNNPipeline(ModelPipeline):
         model_dir = os.getenv("TORCH_MODEL_ZOO", os.path.join(torch_home, "models"))
         ensure_directory(model_dir)
         train(cfg, self.mpi_local_rank, self.distributed, self.log_step,
-                self.sync_bn, self.opt_cls_only)
+                sync_bn=self.sync_bn,
+                opt_cls_only=self.opt_cls_only,
+                bn_momentum=self.bn_momentum)
 
     def append_predict_param(self, cc):
         super(MaskRCNNPipeline, self).append_predict_param(cc)
@@ -615,7 +656,7 @@ class MaskRCNNPipeline(ModelPipeline):
                     'model_{7d}.pth'.format(curr))
 
     def get_snapshot_steps(self):
-        return self.log_step
+        return cfg.SOLVER.CHECKPOINT_PERIOD
 
     def _get_old_check_point_file(self, i):
         return op.join(self.output_folder, 'snapshot',
@@ -640,6 +681,10 @@ class MaskRCNNPipeline(ModelPipeline):
 
     def predict(self, model_file, predict_result_file):
         model = build_detection_model(cfg)
+        if cfg.MODEL.FPN.USE_GN and self.sync_bn:
+            # need to convert to BN
+            model, convert_info = convert_to_sync_bn(model, torch.nn.BatchNorm2d)
+            logging.info(pformat(convert_info))
         model.to(cfg.MODEL.DEVICE)
         checkpointer = DetectronCheckpointer(cfg, model,
                 save_dir=self.output_folder)

@@ -1293,7 +1293,7 @@ def abort_submit(partial_id, **kwargs):
     if job_info['status'] in ['Queued', 'Running']:
         client.abort(job_info['appID'])
     else:
-        assert job_info['status'] in ['Failed', 'Pass']
+        assert job_info['status'] in ['Failed', 'Pass', 'Killed']
     logging.info('Done')
 
 def execute(task_type, **kwargs):
