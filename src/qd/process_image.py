@@ -268,7 +268,7 @@ def bytes_to_img_array(img_bytes, check_channel=True):
     else: # ["jpg", "jpeg", "png", "webp"]
         try:
             imarr = imageio.imread(BytesIO(img_bytes))
-        except ValueError:
+        except (ValueError, SyntaxError) as e:
             return None
 
     if imarr is None:
@@ -321,7 +321,8 @@ def bgra_to_bgr_img_arr(img_arr):
     h, w, c = img_arr.shape
     assert(c == 4)
     alpha_channel = img_arr[:, :, 3]
-    _, mask = cv2.threshold(alpha_channel, 254, 255, cv2.THRESH_BINARY)  # binarize mask
+    trans_thres = max(alpha_channel.max() // 2, 1)
+    _, mask = cv2.threshold(alpha_channel, trans_thres, 255, cv2.THRESH_BINARY)  # binarize mask
     color = img_arr[:, :, :3]
     new_img_arr = cv2.bitwise_not(cv2.bitwise_not(color, mask=mask))
     return new_img_arr

@@ -277,9 +277,9 @@ def scrape_image(args):
                     continue
                 # sanity check of image format
                 try:
-                    im = qd_common.img_from_base64(base64.b64encode(im_bytes))
+                    im = bytes_to_img_array(im_bytes, check_channel=True)
                     h, w, c = im.shape
-                    assert c == 3 or c == 4
+                    assert c == 3
                 except:
                     continue
                 # avoid key collision with existing images
@@ -362,14 +362,17 @@ def urls_to_img_file_parallel(in_rows, url_col_idx, out_cols_idx, outpath, keep_
                 break
             out_cols = [cols[i] for i in out_cols_idx]
             url = cols[url_col_idx]
-            img_bytes = image_url_to_bytes(url)
-            if img_bytes is not None:
-                imarr = bytes_to_img_array(img_bytes, check_channel=True)
-                if imarr is None:
-                    print("invalid image url: {}".format(url))
-                    continue
-                out_cols.append(encoded_from_img(imarr))
-                out_queue.put(out_cols)
+            try:
+                img_bytes = image_url_to_bytes(url)
+                if img_bytes is not None:
+                    imarr = bytes_to_img_array(img_bytes, check_channel=True)
+                    if imarr is None:
+                        print("invalid image url: {}".format(url))
+                        continue
+                    out_cols.append(encoded_from_img(imarr))
+                    out_queue.put(out_cols)
+            except Exception as exc:
+                print("Error with url: {}. Exception: {}".format(url, str(exc)))
 
     def writer_process(out_queue, num_workers, outpath):
         def gen_output():

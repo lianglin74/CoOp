@@ -66,7 +66,7 @@ def load_model(args):
             model = model.cuda()
 
     model.load_state_dict(checkpoint['state_dict'])
-    print "=> loaded checkpoint '{}' (epoch {}), use GPU: {}".format(args.model, checkpoint['epoch'], not is_cpu_only)
+    print("=> loaded checkpoint '{}' (epoch {}), use GPU: {}".format(args.model, checkpoint['epoch'], not is_cpu_only))
 
     cudnn.benchmark = True
 
@@ -129,7 +129,7 @@ def main(args):
                             'Data Loading Time {data_time.val:.3f} ({data_time.avg:.3f})'.format(
                             i, len(val_loader), speed=speed, compute_time=compute_time,
                             data_time=data_time)
-                print info_str
+                print(info_str)
                 tic = time.time()
 
 if __name__ == '__main__':

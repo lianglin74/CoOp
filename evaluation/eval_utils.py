@@ -71,13 +71,14 @@ class DetectionFile(object):
             fpos = 0
             fsize = os.fstat(self._fp.fileno()).st_size
             while fpos != fsize:
-                key = self._fp.readline().strip().split('\t')[self.key_col_idx]
+                line = self._fp.readline()
+                key = line.strip().split('\t')[self.key_col_idx]
                 self._keyidx[key] = fpos
                 fpos = self._fp.tell()
 
     def _ensure_tsv_opened(self):
         if self._fp is None:
-            self._fp = open(self.tsv_file, 'rb')
+            self._fp = open(self.tsv_file, 'r')
 
 
 class GroundTruthConfig(object):

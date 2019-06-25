@@ -628,7 +628,7 @@ def tsv_writer(values, tsv_file_name, sep='\t'):
 
 def tsv_reader(tsv_file_name, sep='\t'):
     with open(tsv_file_name, 'r') as fp:
-        for i, line in enumerate(fp):
+        for line in fp:
             yield [x.strip() for x in line.split(sep)]
 
 def csv_reader(tsv_file_name):

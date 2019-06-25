@@ -4,38 +4,39 @@ import os
 import os.path as op
 
 import _init_paths
+from generate_task import generate_task_files
+from analyze_task import analyze_draw_box_task
+from dataproc import scrape_image_parallel, scrape_image
+from uhrs import UhrsTaskManager
 
 from qd.qd_common import ensure_directory, json_dump
-from qd.tsv_io import tsv_reader, tsv_writer
+from qd.tsv_io import tsv_reader, tsv_writer, TSVDataset
 
 def scrape_keywords_to_search_images():
-    from dataproc import scrape_image_parallel, scrape_image
-    from generate_task import generate_task_files
-    from analyze_task import analyze_draw_box_task
-    from uhrs import UhrsTaskManager
-
-    dname = "logo200"
-    # dname = "2k_new"
-    ext = "png"
+    # dname = "logo200"
+    dname = "2k_new"
+    # ext = "png"
+    ext = "jpg"
+    img_type = "real"
     num_imgs_per_query = 80
-    rootdir = "//ivm-server2/IRIS/OD/xiaowh/vendor/"
-    # rootdir = "/mnt/ivm_server2_od/xiaowh/vendor/"
+    # rootdir = "//ivm-server2/IRIS/OD/xiaowh/vendor/"
+    rootdir = "/mnt/ivm_server2_od/xiaowh/vendor/"
     # keywords_file = r"C:\Users\xiaowh\OneDrive - Microsoft\share\filtered_labels_to_add.tsv"
     keywords_file = op.join(rootdir, dname, "2k_labels_to_add.txt")
-    outfile = op.join(rootdir, dname, "scraped_urls_canonical_{}.tsv".format(ext))
-    filtered_fname1 = "canonical_{}_dedup_scraped_urls1.tsv".format(ext)
-    filtered_fname2 = "canonical_{}_dedup_scraped_urls2.tsv".format(ext)
+    outfile = op.join(rootdir, dname, "scraped_urls_{}.tsv".format(img_type + '_' + ext))
+    filtered_fname1 = "{}_dedup_scraped_urls1.tsv".format(img_type + '_' + ext)
+    filtered_fname2 = "{}_dedup_scraped_urls2.tsv".format(img_type + '_' + ext)
     outdir = op.join(rootdir, dname)
-    log_file = "task_ids.tsv"
+    log_file = "task_ids_{}.tsv".format(img_type + '_' + ext)
 
     out_real_label_file = "url_bboxes_real.tsv"
     out_proto_label_file = "url_bboxes_proto.tsv"
-    phase = "download"
+    phase = "upload"
 
-    # ranked_list_file = op.join(rootdir, dname, "2k_ranked_logo_list.txt")
-    # blacklist_file = op.join(rootdir, dname, "no_found_logos.txt")
-    # blacklist_labels_set = set(p[0] for p in tsv_reader(blacklist_file))
-    # ranked_labels = [p[0] for p in tsv_reader(ranked_list_file) if p[0] not in blacklist_labels_set]
+    ranked_list_file = op.join(rootdir, dname, "2k_ranked_logo_list.txt")
+    blacklist_file = op.join(rootdir, dname, "no_found_logos.txt")
+    blacklist_labels_set = set(p[0] for p in tsv_reader(blacklist_file))
+    ranked_labels = [p[0] for p in tsv_reader(ranked_list_file) if p[0] not in blacklist_labels_set]
 
     if phase == "scrape":
         label2keywords = collections.defaultdict(list)
@@ -48,13 +49,15 @@ def scrape_keywords_to_search_images():
             if i%2 == 1:
                 cur_term = parts[brand_col_idx]
                 assert(parts[img_type_col_idx] == "prototype logo image")
+                continue
                 label2keywords[cur_term].append(cur_term + " logo")
             else:
                 assert cur_term is not None
                 assert parts[brand_col_idx] == ""
                 assert(parts[img_type_col_idx] == "real image")
-                # !!!!HACK: do not include real images for this time
-                continue
+                # # !!!!HACK: do not include real images for this time
+                # continue
+                label2keywords[cur_term].append(cur_term )
             for j in range(img_type_col_idx+1, len(parts)):
                 if parts[j]:
                     label2keywords[cur_term].append(parts[j])
@@ -91,15 +94,15 @@ def scrape_keywords_to_search_images():
             if idx < target_size:
                 outdata1.extend(label2parts[label])
             else:
-                outdata1.extend(label2parts[label])
+                outdata2.extend(label2parts[label])
 
         tsv_writer(outdata1, op.join(outdir, filtered_fname1))
         tsv_writer(outdata2, op.join(outdir, filtered_fname2))
 
     if phase == "upload":
         for label_file in [filtered_fname1, filtered_fname2]:
-            ensure_directory(op.join(outdir, "upload"))
-            outbase = op.join(outdir, "upload", label_file)
+            ensure_directory(op.join(outdir, "upload_{}".format(img_type)))
+            outbase = op.join(outdir, "upload_{}".format(img_type), label_file)
             task_files = generate_task_files("DrawBox", op.join(outdir, label_file), None, outbase,
                             None, num_tasks_per_hit=10, num_hp_per_hit=0,
                             num_hits_per_file=2000)
@@ -172,11 +175,14 @@ def scrape_keywords_to_search_images():
 
 def url_bboxes_to_tsvdataset():
     from dataproc import urls_to_img_file_parallel
-    from qd.qd_common import hash_sha1
+    from qd.qd_common import hash_sha1, ensure_directory
 
-    indir = "/mnt/ivm_server2_od/xiaowh/vendor/logo200"
-    tsvdataset_dir = "/mnt/gpu01_raid/data/logo200"
-    split2fpath = {"train": op.join(indir, "url_bboxes_real.tsv"), "test": op.join(indir, "url_bboxes_proto.tsv")}
+    # indir = "/mnt/ivm_server2_od/xiaowh/vendor/logo200"
+    # tsvdataset_dir = "/mnt/gpu01_raid/data/logo200"
+    indir = "/mnt/ivm_server2_od/xiaowh/vendor/2k_new"
+    tsvdataset_dir = "/mnt/vigstandard/data/logo2k"
+    ensure_directory(tsvdataset_dir)
+    split2fpath = {"test": op.join(indir, "url_bboxes_real.tsv"), "train": op.join(indir, "url_bboxes_proto.tsv")}
 
     def gen_in_rows(fpath):
         for parts in tsv_reader(fpath):
@@ -189,8 +195,37 @@ def url_bboxes_to_tsvdataset():
         outpath = op.join(tsvdataset_dir, split + ".tsv")
         urls_to_img_file_parallel(gen_in_rows(split2fpath[split]), 2, [0, 1], outpath)
 
+def draw_box_for_missing(dataset_name, split, outdir, version=-1):
+    from qd.process_tsv import ensure_upload_image_to_blob
 
+    ensure_upload_image_to_blob(dataset_name, split)
+    dataset = TSVDataset(dataset_name)
+
+    def gen_labels():
+        url_iter = dataset.iter_data(split, t='key.url', version=version)
+        label_iter = dataset.iter_data(split, t='label', version=version)
+        for url_parts, label_parts in zip(url_iter, label_iter):
+            assert(url_parts[0] == label_parts[0])
+            yield label_parts[0], label_parts[1], url_parts[1]
+
+    label_file = op.join(outdir, "labels.tsv")
+    tsv_writer(gen_labels(), label_file)
+    upload_dir = op.join(outdir, "upload")
+    ensure_directory(upload_dir)
+    task_files = generate_task_files("DrawBox", label_file, None, op.join(upload_dir, "relabel"),
+                        None, num_tasks_per_hit=10, num_hp_per_hit=0,
+                        num_hits_per_file=2000)
+
+    task_group_id = 91761
+    log_file = "task_log.tsv"
+    with open(op.join(outdir, log_file), 'a') as fp:
+        for task_file in task_files:
+            task_id = UhrsTaskManager.upload_task(task_group_id, task_file, num_judgment=1)
+            fp.write("{}\t{}\t{}\n".format(task_group_id, task_id, task_file))
 
 if __name__ == "__main__":
+    from qd.qd_common import init_logging
+    init_logging()
     # scrape_keywords_to_search_images()
-    url_bboxes_to_tsvdataset()
+    # url_bboxes_to_tsvdataset()
+    draw_box_for_missing("logo200", "test", "//ivm-server2/IRIS/OD/xiaowh/vendor/logo200/relabel/")
