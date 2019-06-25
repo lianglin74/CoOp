@@ -196,9 +196,9 @@ def url_bboxes_to_tsvdataset():
         urls_to_img_file_parallel(gen_in_rows(split2fpath[split]), 2, [0, 1], outpath)
 
 def draw_box_for_missing(dataset_name, split, outdir, version=-1):
-    from qd.process_tsv import ensure_upload_image_to_blob
+    from qd.process_tsv import upload_image_to_blob
 
-    ensure_upload_image_to_blob(dataset_name, split)
+    upload_image_to_blob(dataset_name, split)
     dataset = TSVDataset(dataset_name)
 
     def gen_labels():
@@ -216,16 +216,17 @@ def draw_box_for_missing(dataset_name, split, outdir, version=-1):
                         None, num_tasks_per_hit=10, num_hp_per_hit=0,
                         num_hits_per_file=2000)
 
-    task_group_id = 91761
-    log_file = "task_log.tsv"
-    with open(op.join(outdir, log_file), 'a') as fp:
-        for task_file in task_files:
-            task_id = UhrsTaskManager.upload_task(task_group_id, task_file, num_judgment=1)
-            fp.write("{}\t{}\t{}\n".format(task_group_id, task_id, task_file))
+    # task_group_id = 91761
+    # log_file = "task_log.tsv"
+    # with open(op.join(outdir, log_file), 'a') as fp:
+    #     for task_file in task_files:
+    #         task_id = UhrsTaskManager.upload_task(task_group_id, task_file, num_judgment=1)
+    #         fp.write("{}\t{}\t{}\n".format(task_group_id, task_id, task_file))
 
 if __name__ == "__main__":
     from qd.qd_common import init_logging
     init_logging()
     # scrape_keywords_to_search_images()
     # url_bboxes_to_tsvdataset()
-    draw_box_for_missing("logo200", "test", "//ivm-server2/IRIS/OD/xiaowh/vendor/logo200/relabel/")
+    outdir = "/mnt/ivm_server2_od/xiaowh/vendor/logo200/relabel/"
+    draw_box_for_missing("logo200", "test", outdir)

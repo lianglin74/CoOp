@@ -4,6 +4,7 @@ import logging
 import math
 import numpy as np
 import os
+import os.path as op
 
 import matplotlib
 # use a non-interactive backend to generate images without having a window appear
@@ -13,20 +14,29 @@ import matplotlib.pyplot as plt
 import _init_paths
 from logo.classifier import CropTaggingWrapper
 from logo import constants
-from qd.qd_common import init_logging, worth_create, read_to_buffer
+from evaluation.visual import get_wrong_pred, visualize_fp_fn_result
+from evaluation.utils import is_valid_bbox
+
+from qd.qd_common import init_logging, worth_create, read_to_buffer, ensure_directory, json_dump
 from qd.tsv_io import tsv_reader, tsv_writer, TSVDataset
 from qd import deteval, qd_common
 from qd.yolotrain import yolo_predict
 
 trained_dataset = "brand1048"
 trained_dataset_version = 2
-new_dataset = "logo40"
+# new_dataset = "logo40"
+new_dataset = "logo200"
 pair_dataset = "logo40_pair"
 data_split = "test"
-trained_gt = "/raid/data/brand1048/test.label.tsv"
-new_gt = "/raid/data/logo40/test.label.tsv"
 
-rootpath = "/raid/data/brand_output/"
+dataset_cfgs = [
+    {"data": "brand1048", "split": "test", "version": 2},
+    {"data": "logo200", "split": "test", "version": -1},
+    {"data": "logo40", "split": "test", "version": -1}
+]
+
+# rootpath = "/raid/data/brand_output/"
+rootpath = "/mnt/vigstandard/xiaowh/brand_output/"
 iou_thres = [0.5]
 
 det1_expid = "brand1048_darknet19_448_B_noreorg_rotate10_Init.best_model8022_extraConvKernel.1.3.1_TsvBoxSamples50ExtraConvGroups1_4_1EffectBatchSize128"
@@ -93,34 +103,50 @@ def evaluate_two_stage(det_expid, tag_expid):
 
 def evaluate_detector(det_expid):
     outdir = os.path.join(rootpath, "{}/deteval".format(det_expid))
-    if not os.path.exists(outdir):
-        os.makedirs(outdir)
+    ensure_directory(outdir)
 
     eval_res = []
     file_dict = {}
 
-    # pretrained
-    pred_file, _ = yolo_predict(full_expid=det_expid, test_data=trained_dataset, test_split=data_split)
-    fname = "{}.{}.pretrained.region.eval".format(trained_dataset, data_split)
-    eval_file = evaluate_detection(trained_dataset, data_split, pred_file,
-            os.path.join(outdir, fname), region_only=True, version=trained_dataset_version)
-    eval_res.extend(parse_eval_file(eval_file))
-    file_dict[fname] = eval_file
-    eval_file = evaluate_detection(trained_dataset, data_split, pred_file,
-            os.path.join(outdir, "{}.{}.pretrained.det.eval".format(trained_dataset, data_split)), version=trained_dataset_version)
-    eval_res.extend(parse_eval_file(eval_file))
+    for cfg in dataset_cfgs:
+        dataset_name = cfg["data"]
+        split = cfg["split"]
+        version = cfg["version"]
+        is_region_only = True
 
-    # logo/non-logo
-    pred_file, _ = yolo_predict(full_expid=det_expid, test_data=new_dataset, test_split=data_split)
-    fname = "{}.{}.new.region.eval".format(new_dataset, data_split)
-    eval_file = evaluate_detection(new_dataset, data_split, pred_file, os.path.join(outdir, fname), region_only=True)
-    eval_res.extend(parse_eval_file(eval_file))
-    file_dict[fname] = eval_file
-    # detector can not detect unknown categories
-    eval_res.extend(["N/A"]*len(iou_thres))
+        pred_file, _ = yolo_predict(full_expid=det_expid, test_data=dataset_name, test_split=split)
+        filter_invalid_bboxes(pred_file)
+        gt_dataset = TSVDataset(dataset_name)
+        gt_file = gt_dataset.get_data(split, t='label', version=version)
+
+        eval_file = _eval_helper(pred_file, dataset_name, split, version, is_region_only, outdir)
+        eval_res.extend(parse_eval_file(eval_file))
+        file_dict[op.basename(eval_file)] = eval_file
+
+        # visualize false positive, false negative
+        fp_fn_fpath = op.join(outdir, "{}_fp_fn_pred_gt.tsv".format(dataset_name))
+        visual_dir = op.join(outdir, "visualize")
+        ensure_directory(visual_dir)
+        get_wrong_pred(pred_file, gt_file, outfile=fp_fn_fpath,
+                   min_conf=0.2, iou=0.5, region_only=is_region_only, num_samples=100)
+        visualize_fp_fn_result(fp_fn_fpath, dataset_name, visual_dir)
 
     draw_pr_curve(file_dict, [0.3, 0.5], os.path.join(outdir, "pr_curve.png"))
+
     return eval_res
+
+def filter_invalid_bboxes(pred_file):
+    def gen_rows():
+        for parts in tsv_reader(pred_file):
+            bboxes = json.loads(parts[1])
+            valid_bboxes = []
+            for b in bboxes:
+                if is_valid_bbox(b):
+                    valid_bboxes.append(b)
+                else:
+                    logging.info("invalid bbox: {}".format(str(b)))
+            yield parts[0], json_dump(valid_bboxes)
+    tsv_writer(gen_rows(), pred_file)
 
 def _eval_helper(pred_file, dataset, split, version, is_region_only, outdir):
     eval_method = "region" if is_region_only else "det"
@@ -328,6 +354,7 @@ def eval_classifier(gt_dataset_name, split, version, det_expid, tag_expid,
         stats.append(topk_acc[k-1])
     # mAP with gt region (conf from tag)
     stats.append(cal_map(pred_file))
+    print(stats)
 
     for conf_from in [constants.CONF_TAG, constants.CONF_OBJ_TAG, constants.CONF_OBJ]:
         pred_file, _ = croptagger.predict_on_known_class(gt_dataset_name, split,
@@ -347,7 +374,8 @@ def run_all_eval_classifier():
 
     output_root = 'data/brand_output/'
     labelmap = None
-    tag_snap_pairs = [("logo40syn_combine", "snapshot_lr0.01")]
+    tag_snap_pairs = [
+            ("logo40syn_09v204", "snapshot")]
 
     def gen_rows():
         for tag_expid, tag_snap_id in tag_snap_pairs:
@@ -365,4 +393,8 @@ def run_all_eval_classifier():
 if __name__ == "__main__":
     init_logging()
     # main()
-    run_all_eval_classifier()
+    # run_all_eval_classifier()
+    expid1 = "TaxLogoV1_7_darknet19_448_C_Init.best_model9748_maxIter.75eEffectBatchSize128_bb_only"
+    expid2 = "TaxLogoNoLogoV2_5_darknet19_448_C_Init.best_model9748_maxIter.10eEffectBatchSize128Rotate10_bb_only"
+    for expid in [expid1, expid2]:
+        evaluate_detector(expid)
