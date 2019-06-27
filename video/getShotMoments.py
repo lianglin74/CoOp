@@ -1,7 +1,3 @@
-try:
-  from itertools import izip as zip
-except:
-  pass
 import json
 from qd import tsv_io
 from qd.process_tsv import onebb_in_list_of_bb
@@ -14,7 +10,7 @@ import math
 import copy 
   
 
-def findShot(predict_file):    
+def findShot(predict_file, frameRate = 25.0):
     #parameters:
     addMissingRim = True
     addMissingBall = True
@@ -40,8 +36,7 @@ def findShot(predict_file):
 	
     debug = 0
     
-    bufferSeconds = 2    
-    frameRate = 25.0
+    bufferSeconds = 2        
     totalBufferingFrames = 50
     #buffer for 3 seconds? 
     pred_key_to_rects = {}
@@ -445,6 +440,22 @@ def testGetDegreeOfTwoPoints():
     print("p1 is: ", p1)
     print("Angle is: ", getAngleOfTwoPoints(p1, p2) / math.pi * 180)
 
+def getFrameRate(video_name):
+    cap = cv2.VideoCapture(folderName + '/' + video_name)
+    
+    #get the total frame count 
+    # Find OpenCV version
+    (major_ver, minor_ver, subminor_ver) = (cv2.__version__).split('.')
+    if int(major_ver)  < 3 :
+        fps = cap.get(cv2.cv.CV_CAP_PROP_FPS)
+        print("Frames per second using OLD version", fps);
+    else :
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        print("Frames per second using new version", fps);
+    
+    cap.release();
+    return fps
+
 def writeToTSV(labelFile, pred_results):
   fileName = labelFile.replace(".tsv", "_events.tsv")
   videoFileName = labelFile.replace(".tsv", ".mp4")
@@ -477,6 +488,14 @@ def read_file_to_list(file_name):
   
   return res_lists;
   
+def getShotAPI(videoFileName, predict_file):
+    frameRate = getFrameRate(videoFileName)
+    pred_results =  findShot(predict_file, frameRate)
+    
+    writeToTSV(predict_file, pred_results)
+    
+    return True
+    
 def main():
   dir = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_demo_v3/"
   labelFiles = "labellist.txt"
