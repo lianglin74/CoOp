@@ -98,8 +98,15 @@ def getFPS(cap):
 
 
 def drawLabel(image, labels):
-  colorStep = 0
-  for v in labels:
+  skipPersons = True
+  
+  #matlab RGB to opencv BRG
+  colorMap = [(0, 1, 0), (1, 0, 0), (0.75, 0, 0.75), (0, 0, 1), (0, 0.5, 0), (0, 0.75, 0.75), (0.85, 0.325, 0.098), (0.63, 0.078, 0.1840), (0.929, 0.6940, 0.1250), (0, 0.447, 0.7410), (0.4660, 0.6740, 0.1880), (0.3010, 0.7450, 0.9330), (0.75, 0.75, 0)] 
+  #from: http://math.loyola.edu/~loberbro/matlab/html/colorsInMatlab.html
+  lenColor = len(colorMap)
+  
+  i = 0
+  for v in labels:    
     #[{"conf": 0.7487, "obj": 0.7487, "class": "basketball", "rect": [1033.5602188110352, 38.45284080505371, 1070.4107284545898, 68.64767646789551]}, {"conf": 0.8385, "obj": 0.8385, "class": "basketball rim", "rect": [408.87592697143555, 251.28884315490723, 486.58501052856445, 312.7845211029053]}, {"conf": 0.9332, "obj": 0.9332, "class": "backboard", "rect": [355.62933349609375, 127.55272674560547, 458.9013671875, 302.18677520751953]}]
     
     labelName = v["class"]
@@ -109,8 +116,9 @@ def drawLabel(image, labels):
       pos = (int(rect[2] + 3.0), int(rect[1] - 3.0))
     elif (labelName == "basketball"):
       pos = (int(rect[2] + 3.0), int(rect[1] + 15.0))
+    #elif (labelName == "person") and skipPersons:
+    #  continue
       
-    
     if 'conf' in v:
       conf = v['conf']
     else:
@@ -124,9 +132,10 @@ def drawLabel(image, labels):
     topLeft = (left,top)    
     lowerRight=(int(rect[2]), int(rect[3]))
     
-    colorStep = colorStep % 255
-    color = (colorStep, colorStep, colorStep); 
-    colorStep += 25
+    j = i % lenColor
+    color = (int(colorMap[j][2]*255), int(colorMap[j][1]*255), int(colorMap[j][0]*255));     
+    #print(color)
+    i += 1
     thickness = 2;
     
     image = cv2.rectangle(image, topLeft, lowerRight, color, thickness)
@@ -170,12 +179,19 @@ def rectInRect(rect0, rect1, thresh = 0.85):
       return 1. * i / a0 > thresh
   
 def main():
-  topDir = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_demo_v2/"
+  topDir = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_demo_v3/"
+  #labelFileName = "1551538896210_sc99_01_q1_opd.tsv"
+  labelFileName = "CBA2.tsv"
+  
   #labelFileName = "1551538896210_sc99_01_q1.tsv"
-  labelFileName = "temp.tsv"
-  video_name = "1551538896210_sc99_01_q1.mp4"
-  startSecond = 385.30
-  endSecond = 387
+  #labelFileName = "temp.tsv"
+  video_name = "CBA2.mp4"
+  
+  startSecond = 13 #173.151 #75.151
+  endSecond = startSecond + 10
+  
+  #startSecond = 385.30
+  #endSecond = 387
   writeImagesWithLabels(topDir, labelFileName, video_name, startSecond, endSecond)
 
   
