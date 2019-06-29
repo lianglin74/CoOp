@@ -4,13 +4,13 @@
 	branch = WinCaffe
 [submodule "src/objectdetection"]
 	path = src/objectdetection
-	url = git@github.com:amsword/objectdetection.git
+	url = git@ssh.dev.azure.com:v3/visionbio/objectdetection/objectdetection
 [submodule "src/maskrcnn-benchmark"]
 	path = src/maskrcnn-benchmark
-	url = https://github.com/amsword/maskrcnn-benchmark.git
+	url = git@ssh.dev.azure.com:v3/visionbio/maskrcnn-benchmark/maskrcnn-benchmark
 [submodule "src/mmcv"]
 	path = src/mmcv
-	url = git@github.com:amsword/mmcv.git
+	url = git@ssh.dev.azure.com:v3/visionbio/mmcv/mmcv
 [submodule "src/mmdetection"]
 	path = src/mmdetection
-	url = git@github.com:amsword/mmdetection.git
+	url = git@ssh.dev.azure.com:v3/visionbio/mmdetection/mmdetection
