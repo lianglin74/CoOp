@@ -21,6 +21,7 @@ except ImportError:
 import time
 import matplotlib.pyplot as plt
 from pprint import pprint
+from pprint import pformat
 import numpy as np
 import os.path as op
 import re
@@ -40,6 +41,7 @@ except ImportError:
     # py2
     from urllib2 import urlopen, Request
     from urllib2 import HTTPError
+import copy
 
 
 def try_once(func):
@@ -148,6 +150,12 @@ def zip_qd(out_zip):
             '-x',
             '\*build/temp.linux-x86_64-3.5/\*',
             '-x',
+            '\*build/lib.linux-x86_64-3.7/\*',
+            '-x',
+            '\*assets\*',
+            '-x',
+            '\*build/temp.linux-x86_64-3.7/\*',
+            '-x',
             '\*build/lib.linux-x86_64-3.6/\*',
             '-x',
             '\*build/temp.linux-x86_64-3.6/\*',
@@ -237,8 +245,13 @@ def remove_dir(d):
     ensure_remove_dir(d)
 
 def ensure_remove_dir(d):
-    if op.isdir(d):
-        shutil.rmtree(d)
+    is_dir = op.isdir(d)
+    is_link = op.islink(d)
+    if is_dir:
+        if not is_link:
+            shutil.rmtree(d)
+        else:
+            os.unlink(d)
 
 def split_to_chunk(all_task, num_chunk=None, num_task_each_chunk=None):
     if num_task_each_chunk is None:
@@ -259,7 +272,6 @@ def split_to_chunk(all_task, num_chunk=None, num_task_each_chunk=None):
 def hash_sha1(s):
     import hashlib
     if type(s) is not str:
-        from pprint import pformat
         s = pformat(s)
     return hashlib.sha1(s.encode('utf-8')).hexdigest()
 
@@ -803,13 +815,15 @@ def list_to_dict(l, idx, keep_one=False):
     return result
 
 def generate_lineidx(filein, idxout):
-    with open(filein,'r') as tsvin, open(idxout,'w') as tsvout:
+    idxout_tmp = idxout + '.tmp'
+    with open(filein, 'r') as tsvin, open(idxout_tmp,'w') as tsvout:
         fsize = os.fstat(tsvin.fileno()).st_size
         fpos = 0;
         while fpos!=fsize:
             tsvout.write(str(fpos)+"\n");
             tsvin.readline()
             fpos = tsvin.tell();
+    os.rename(idxout_tmp, idxout)
 
 def drop_second_batch_in_bn(net):
     assert net.layer[0].type == 'TsvBoxData'
@@ -1041,7 +1055,7 @@ def ensure_directory(path):
                 else:
                     raise
         # we should always check if it succeeds.
-        assert op.isdir(path), path
+        assert op.isdir(op.abspath(path)), path
 
 def parse_pattern(pattern, s):
     result = re.search(pattern, s)
@@ -1399,7 +1413,9 @@ def load_from_yaml_file(file_name):
 def write_to_file(contxt, file_name):
     p = os.path.dirname(file_name)
     ensure_directory(p)
-    with open(file_name, 'w') as fp:
+    if type(contxt) is str:
+        contxt = contxt.encode()
+    with open(file_name, 'wb') as fp:
         fp.write(contxt)
 
 def load_list_file(fname):
@@ -1668,10 +1684,74 @@ def get_pca(x, com):
     a = np.dot(x, evecs[:, :com])
     return a
 
+def plot_distribution(x, y, color=None, fname=None):
+    import seaborn as sns
+    x = sns.jointplot(x, y, kind='kde',
+            color=color)
+    if fname:
+        x.savefig(fname)
+        plt.close()
+    else:
+        plt.show()
+
+def run_if_not_cached(func, *args, **kwargs):
+    import pickle as pkl
+    key = hash_sha1(pkl.dumps(OrderedDict({'arg': args, 'kwargs': kwargs, 'func_name':
+        func.__name__})))
+    cache_file = op.join('/tmp', 'cache', key)
+
+    if op.isfile(cache_file):
+        logging.info('loading {}'.format(cache_file))
+        return pkl.loads(read_to_buffer(cache_file))
+    else:
+        result = func(*args, **kwargs)
+        logging.info('caching to file: {}'.format(cache_file))
+        write_to_file(pkl.dumps(result), cache_file)
+        return result
+
+def convert_to_command_line(param, script):
+    logging.info(pformat(param))
+    x = copy.deepcopy(param)
+    from qd.qd_common import dump_to_yaml_str
+    result = "python {} -bp {}".format(
+            script,
+            base64.b64encode(dump_to_yaml_str(x)).decode())
+    return result
+
+def print_table(a_to_bs, all_key=None):
+    if len(a_to_bs) == 0:
+        logging.info('no rows')
+        return
+    if not all_key:
+        all_key = []
+        for a_to_b in a_to_bs:
+            all_key.extend(a_to_b.keys())
+        all_key = list(set(all_key))
+    all_width = [max([len(str(a_to_b.get(k, ''))) for a_to_b in a_to_bs] +
+        [len(k)]) for k in all_key]
+    row_format = ' '.join(['{{:{}}}'.format(w) for w in all_width])
+
+    all_line = []
+    line = row_format.format(*all_key)
+    all_line.append(line.strip())
+    for a_to_b in a_to_bs:
+        line = row_format.format(*[str(a_to_b.get(k, '')) for k in all_key])
+        all_line.append(line)
+    logging.info('\n{}'.format('\n'.join(all_line)))
+
+def is_hvd_initialized():
+    try:
+        import horovod.torch as hvd
+        hvd.size()
+        return True
+    except ImportError:
+        return False
+    except ValueError:
+        return False
+
 if __name__ == '__main__':
     init_logging()
     kwargs = parse_general_args()
-    from pprint import pformat
     logging.info('param:\n{}'.format(pformat(kwargs)))
     function_name = kwargs['type']
     del kwargs['type']

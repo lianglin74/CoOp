@@ -6,6 +6,7 @@ from qd.qd_common import load_from_yaml_file
 from qd.qd_common import load_from_yaml_str
 from qd.qd_common import url_to_str
 from qd.qd_common import dict_update_nested_dict
+from qd.qd_common import print_table
 from qd.cloud_storage import create_cloud_storage
 import logging
 import simplejson as json
@@ -20,6 +21,7 @@ import os
 from collections import OrderedDict
 import glob
 from dateutil.parser import parse
+from deprecated import deprecated
 from qd.qd_common import get_file_size
 
 from qd.qd_common import dump_to_yaml_str
@@ -255,27 +257,6 @@ def parse_eta_in_hours(left):
         hours = gs[1] + gs[2] / 60. + gs[3] / 3600
         return days, hours
     return -1, -1
-
-def print_table(a_to_bs, all_key=None):
-    if len(a_to_bs) == 0:
-        logging.info('no rows')
-        return
-    if not all_key:
-        all_key = []
-        for a_to_b in a_to_bs:
-            all_key.extend(a_to_b.keys())
-        all_key = list(set(all_key))
-    all_width = [max([len(str(a_to_b.get(k, ''))) for a_to_b in a_to_bs] +
-        [len(k)]) for k in all_key]
-    row_format = ' '.join(['{{:{}}}'.format(w) for w in all_width])
-
-    all_line = []
-    line = row_format.format(*all_key)
-    all_line.append(line.strip())
-    for a_to_b in a_to_bs:
-        line = row_format.format(*[str(a_to_b.get(k, '')) for k in all_key])
-        all_line.append(line)
-    logging.info('\n{}'.format('\n'.join(all_line)))
 
 def decode_config_extra_param(extra_param):
     return load_from_yaml_str(base64.b64decode(extra_param))
@@ -1123,14 +1104,10 @@ def philly_ls(dest_dir, vc='input', return_output=False, cluster='philly-prod-cy
     sub_cmd = ['-ls', dest_dir]
     return philly_run(sub_cmd, vc, cluster, return_output)
 
+@deprecated('pls use convert_to_command_line')
 def convert_to_philly_extra_command(param, script='scripts/tools.py'):
-    logging.info(pformat(param))
-    x = copy.deepcopy(param)
-    from qd.qd_common import dump_to_yaml_str
-    result = "python {} -bp {}".format(
-            script,
-            base64.b64encode(dump_to_yaml_str(x)).decode())
-    return result
+    from qd.qd_common import convert_to_command_line
+    return convert_to_command_line(param, script)
 
 def submit_without_sync(cmd, **kwargs):
     isDebug = False
@@ -1211,7 +1188,7 @@ def parse_args():
     import argparse
     parser = argparse.ArgumentParser(description='Philly Interface')
     parser.add_argument('task_type',
-            choices=['ssh', 'query', 'abort', 'submit', 'sync',
+            choices=['ssh', 'q', 'query', 'a', 'abort', 'submit', 'sync',
                 'update_config', 'gc', 'blame', 'init', 'resubmit',
                 'summary', 'inject'])
     parser.add_argument('-wl', '--with_log', default=False, action='store_true')
@@ -1297,7 +1274,7 @@ def abort_submit(partial_id, **kwargs):
     logging.info('Done')
 
 def execute(task_type, **kwargs):
-    if task_type == 'query':
+    if task_type in ['q', 'query']:
         if len(kwargs.get('remainders', [])) > 0:
             assert len(kwargs['remainders']) == 1
             tracking(kwargs['remainders'][0], **kwargs)
@@ -1308,7 +1285,7 @@ def execute(task_type, **kwargs):
     elif task_type == 'submit':
         assert len(kwargs['remainders']) == 1
         submit_without_sync(cmd=kwargs['remainders'][0], **kwargs)
-    elif task_type == 'abort':
+    elif task_type in ['a', 'abort']:
         p = MultiPhillyVC(**kwargs)
         for v in kwargs['remainders']:
             v = v.strip()

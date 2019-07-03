@@ -289,16 +289,11 @@ def convert_pred_to_dataset_label(full_expid, predict_file,
     populate_dataset_details(data)
 
 def ensure_inject_expid(full_expid):
-    from .qd_caffe import load_solver
-    solver_prototxt = op.join('output', full_expid,
-        'solver.prototxt')
-    if not op.isfile(solver_prototxt):
-        logging.info('ignore since {} does not exist'.format(solver_prototxt))
-        return
-    solver_param = load_solver(solver_prototxt)
-    model_param = '{0}_iter_{1}.caffemodel'.format(
-            solver_param.snapshot_prefix, solver_param.max_iter)
-    all_predict = glob.glob(model_param + '*.predict')
+    all_predict = []
+    all_predict.extend(glob.glob(op.join('output', full_expid, 'snapshot',
+        '*.predict')))
+    all_predict.extend(glob.glob(op.join('output', full_expid, 'snapshot',
+        '*.predict.tsv')))
     for p in all_predict:
         ensure_inject_expid_pred(full_expid, op.basename(p))
 
@@ -4764,6 +4759,7 @@ def strict_rect_in_rects(target, rects):
     return any(float_tolorance_equal(target, r) for r in rects)
 
 def load_key_rects(iter_data):
+    assert type(iter_data) is not str
     result = []
     logging.info('loading key rects')
     for row in tqdm(iter_data):

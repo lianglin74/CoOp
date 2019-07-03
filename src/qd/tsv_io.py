@@ -112,8 +112,8 @@ class TSVFile(object):
 
     def _ensure_lineidx_loaded(self):
         if self._lineidx is None:
-            if not op.isfile(self.lineidx) and not op.islink(self.lineidx) \
-                    or worth_create(self.tsv_file, self.lineidx, buf_second=60):
+            # please do not check if it is expired. Reason: if we copy the data from somewhere else, the timestamp might not be kepts
+            if not op.isfile(self.lineidx) and not op.islink(self.lineidx):
                 generate_lineidx(self.tsv_file, self.lineidx)
             logging.info('loading lineidx: {}'.format(self.lineidx))
             with open(self.lineidx, 'r') as fp:
@@ -764,9 +764,10 @@ def create_inverted_list(rows):
             curr_unique_labels = [str(labels)]
             curr_unique_with_bb_labels = []
             curr_unique_no_bb_labels = curr_unique_labels
+            curr_unique_with_bb_verified_labels = set()
         def update(unique_labels, inv):
             for l in unique_labels:
-                assert type(l) == str or type(l) == unicode
+                assert type(l) == str
                 if l not in inv:
                     inv[l] = [i]
                 else:

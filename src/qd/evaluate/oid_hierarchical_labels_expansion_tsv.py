@@ -141,43 +141,43 @@ def expand_labels(tsv_file, imagelevel_label, json_hierarchy_file,
       from qd.tsv_io import TSVFile
       imagelevel_tsv = TSVFile(imagelevel_label)
       imagelevelrows_new = []
-  rows_new = []
-  for i, row in tqdm(enumerate(tsv_reader(tsv_file))):
-    if has_image_label:
-      expanded_boxes = expansion_generator.expand_boxes_from_tsv(row[-1])
-      expanded_boxes = _load_labels(expanded_boxes)
-      if apply_nms:
-        # attach the conf if there is no
-        if len(expanded_boxes) > 0:
-            has_conf = 'conf' in expanded_boxes[0]
-            if has_conf:
-                assert all('conf' in x for x in expanded_boxes)
-            else:
-                assert all('conf' not in x for x in expanded_boxes)
-            if not has_conf:
-                for x in expanded_boxes:
-                    x['conf'] = 1.
-        expanded_boxes = apply_per_class_nms(expanded_boxes)
+  def gen_rows():
+    for i, row in tqdm(enumerate(tsv_reader(tsv_file))):
+      if has_image_label:
+        expanded_boxes = expansion_generator.expand_boxes_from_tsv(row[-1])
         expanded_boxes = _load_labels(expanded_boxes)
-        if len(expanded_boxes) > 0:
-            if not has_conf:
-                for x in expanded_boxes:
-                    del x['conf']
-      expanded_boxes = json.dumps(expanded_boxes)
-      imagelevel_row = imagelevel_tsv[i]
-      assert row[0] == imagelevel_row[0]
-      expanded_labels = expansion_generator.expand_labels_from_tsv(imagelevel_row[1])
-      imagelevelrows_new.append((row[0], expanded_labels))
-      row_new = [row[0], expanded_boxes]
-    else:
-      expanded_boxes = expansion_generator.expand_boxes_from_tsv(row[-1])
-      if apply_nms:
-        expanded_boxes = apply_per_class_nms(expanded_boxes)
-      expanded_boxes = json.dumps(expanded_boxes)
-      row_new = [row[0], expanded_boxes]
-    rows_new.append(row_new)
+        if apply_nms:
+          # attach the conf if there is no
+          if len(expanded_boxes) > 0:
+              has_conf = 'conf' in expanded_boxes[0]
+              if has_conf:
+                  assert all('conf' in x for x in expanded_boxes)
+              else:
+                  assert all('conf' not in x for x in expanded_boxes)
+              if not has_conf:
+                  for x in expanded_boxes:
+                      x['conf'] = 1.
+          expanded_boxes = apply_per_class_nms(expanded_boxes)
+          expanded_boxes = _load_labels(expanded_boxes)
+          if len(expanded_boxes) > 0:
+              if not has_conf:
+                  for x in expanded_boxes:
+                      del x['conf']
+        expanded_boxes = json.dumps(expanded_boxes)
+        imagelevel_row = imagelevel_tsv[i]
+        assert row[0] == imagelevel_row[0]
+        expanded_labels = expansion_generator.expand_labels_from_tsv(imagelevel_row[1])
+        imagelevelrows_new.append((row[0], expanded_labels))
+        row_new = [row[0], expanded_boxes]
+      else:
+        expanded_boxes = expansion_generator.expand_boxes_from_tsv(row[-1])
+        if apply_nms:
+          expanded_boxes = apply_per_class_nms(expanded_boxes)
+        expanded_boxes = json.dumps(expanded_boxes)
+        row_new = [row[0], expanded_boxes]
+      yield row_new
 
-  tsv_writer(rows_new, save_file)
+  tsv_writer(gen_rows(), save_file)
 
   if has_image_label:
     tsv_writer(imagelevelrows_new, save_imagelevel_label_file)

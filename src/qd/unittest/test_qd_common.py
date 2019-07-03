@@ -24,5 +24,15 @@ class TestQDCommon(unittest.TestCase):
             self.assertEqual(s, os)
             self.assertEqual(ov, v)
 
+    def test_run_if_not_cached(self):
+        from qd.qd_common import run_if_not_cached
+
+        y = run_if_not_cached(lambda x: x, 2)
+        self.assertEqual(y, 2)
+
+        y = run_if_not_cached(lambda x: x, 2)
+        self.assertEqual(y, 2)
+
+
 if __name__ == '__main__':
     unittest.main()

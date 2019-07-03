@@ -51,6 +51,7 @@ def sync(ssh_info, from_folder='/home/jianfw/code/quickdetection/',
     exclude_if_exists('src/CCSCaffe/python/caffe/_caffe.so')
     exclude_if_exists('src/CCSCaffe/python/caffe/proto/')
     exclude_if_exists('src/CCSCaffe/Makefile.config')
+    exclude_if_exists('assets')
     exclude_if_exists('output')
     exclude_if_exists('data')
     exclude_if_exists('models')

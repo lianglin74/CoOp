@@ -46,6 +46,7 @@ def convert_to_cocoformat(predict_tsv, predict_json, label_to_id=None,
             annotations.append(ann)
 
     write_to_file(json.dumps(annotations), predict_json)
+    return annotations
 
 def convert_gt_to_cocoformat(gt_iter, gt_json):
     key_rects = load_key_rects(gt_iter)

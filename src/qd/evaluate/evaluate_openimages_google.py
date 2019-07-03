@@ -277,10 +277,12 @@ def evaluate(truths, imagelabel_truths, dets, shuf_file=None, expand_label_gt=Fa
             new_file = op.splitext(truths)[0] + '.expanded.nms.tsv'
             new_imagelevel_truths = op.splitext(imagelabel_truths)[0] + '.expanded.nms.tsv'
         print('expanding labels for ground-truth file and save to: ' + new_file)
-        expand_labels(truths, imagelabel_truths, json_hierarchy_file,
-                new_file, new_imagelevel_truths, True, apply_nms_gt)
+        if not (op.isfile(new_file) and op.isfile(new_imagelevel_truths)):
+            expand_labels(truths, imagelabel_truths, json_hierarchy_file,
+                    new_file, new_imagelevel_truths, True, apply_nms_gt)
         truths = new_file
         imagelabel_truths = new_imagelevel_truths
+
     if expand_label_det:
         assert json_hierarchy_file is not None, "need json hierarchy file for label expansion"
         if not apply_nms_det:
@@ -288,8 +290,9 @@ def evaluate(truths, imagelabel_truths, dets, shuf_file=None, expand_label_gt=Fa
         else:
             new_file = op.splitext(dets)[0] + '.expanded.nms.tsv'
         print('expanding labels for detection file and save to: ' + new_file)
-        expand_labels(dets, None, json_hierarchy_file, new_file,
-                None, False, apply_nms_det)
+        if not op.isfile(new_file):
+            expand_labels(dets, None, json_hierarchy_file, new_file,
+                    None, False, apply_nms_det)
         dets = new_file
 
     truths_dict = load_truths(truths, imagelabel_truths, shuf_file)

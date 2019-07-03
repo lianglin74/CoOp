@@ -394,15 +394,21 @@ class MCEBLoss(nn.Module):
                 target_with_bkg)
 
 class IBCEWithLogitsNegLoss(nn.Module):
-    def __init__(self, neg, pos, neg_pos_ratio=None):
+    def __init__(self, neg, pos, neg_pos_ratio=None,
+            ignore_hard_neg_th=None, ignore_hard_pos_th=None):
         super(IBCEWithLogitsNegLoss, self).__init__()
         self.neg = neg
         self.pos = pos
         self.neg_pos_ratio = neg_pos_ratio
         self.num_called = 0
         self.display = 100
+        self.ignore_hard_neg_th = ignore_hard_neg_th
+        self.ignore_hard_pos_th = ignore_hard_pos_th
 
     def forward(self, feature, target):
+        debug_info = ''
+        print_debug = (self.num_called % self.display) == 0
+
         pos_position = target == 1
         neg_position = target == 0
         ignore_position = target == -1
@@ -416,9 +422,27 @@ class IBCEWithLogitsNegLoss(nn.Module):
         weight[(neg_position) & (sig_feature <= self.neg)] = 0
         weight[(pos_position) & (sig_feature >= self.pos)] = 0
 
+        if print_debug:
+            debug_info += 'ignore easy neg = {}; '.format(
+                ((neg_position) & (sig_feature <= self.neg)).sum())
+            debug_info += 'ignore easy pos = {}; '.format(
+                ((pos_position) & (sig_feature >= self.pos)).sum())
+
+        if self.ignore_hard_neg_th is not None:
+            weight[(neg_position & (sig_feature >= self.ignore_hard_neg_th))] = 0
+            if print_debug:
+                debug_info += 'ignore hard neg = {}; '.format((neg_position & (sig_feature >=
+                    self.ignore_hard_neg_th)).sum())
+
+        if self.ignore_hard_pos_th is not None:
+            weight[(pos_position & (sig_feature <= self.ignore_hard_pos_th))] = 0
+            if print_debug:
+                debug_info += 'ignore hard pos = {}; '.format((pos_position &
+                    (sig_feature <= self.ignore_hard_pos_th)).sum())
+
         if self.neg_pos_ratio is not None:
-            pos_position_in_loss = pos_position & (sig_feature < self.pos)
-            neg_position_in_loss = neg_position & (sig_feature > self.neg)
+            pos_position_in_loss = pos_position & (weight > 0)
+            neg_position_in_loss = neg_position & (weight > 0)
             if self.neg_pos_ratio > 0:
                 num_pos_in_loss = pos_position_in_loss.sum()
                 num_neg_in_loss = neg_position_in_loss.sum()
@@ -433,15 +457,15 @@ class IBCEWithLogitsNegLoss(nn.Module):
                     weight[neg_position_in_loss] = neg_weight
             elif self.neg_pos_ratio == -1:
                 weight[pos_position_in_loss] = (target - sig_feature)[pos_position_in_loss]
-                pass
         else:
             pos_position_in_loss, neg_position_in_loss = None, None
 
         weight_sum = torch.sum(weight)
-        if (self.num_called % self.display) == 0:
+
+        if print_debug:
             if pos_position_in_loss is None:
-                pos_position_in_loss = pos_position & (sig_feature < self.pos)
-                neg_position_in_loss = neg_position & (sig_feature > self.neg)
+                pos_position_in_loss = pos_position & (weight > 0)
+                neg_position_in_loss = neg_position & (weight > 0)
                 num_pos_in_loss = pos_position_in_loss.sum()
                 num_neg_in_loss = neg_position_in_loss.sum()
             if num_pos_in_loss == 0:
@@ -452,25 +476,13 @@ class IBCEWithLogitsNegLoss(nn.Module):
                 avg_neg_in_loss = 0
             else:
                 avg_neg_in_loss = sig_feature[neg_position_in_loss].sum() / num_neg_in_loss
-            num_pos = pos_position.sum()
-            num_neg = neg_position.sum()
-            if num_pos == 0:
-                avg_pos = 0
-            else:
-                avg_pos = sig_feature[pos_position].sum() / num_pos
-            if num_neg == 0:
-                avg_neg = 0
-            else:
-                avg_neg = sig_feature[neg_position].sum() / num_neg
-            logging.info('#pos_in_loss = {}, avg_pos_in_loss = {}, '
-                        '#neg_in_loss = {}, avg_neg_in_loss = {} '
-                        '#pos = {}, avg pos = {}, '
-                        '#neg = {}, avg neg = {}'.format(
-                        num_pos_in_loss, avg_pos_in_loss,
-                        num_neg_in_loss, avg_neg_in_loss,
-                        num_pos, avg_pos,
-                        num_neg, avg_neg
-                        ))
+            debug_info += ('#pos_in_loss = {}, avg_pos_in_loss = {}, '
+                          '#neg_in_loss = {}, avg_neg_in_loss = {} '
+                          ).format(
+                          num_pos_in_loss, avg_pos_in_loss,
+                          num_neg_in_loss, avg_neg_in_loss,
+                          )
+            logging.info(debug_info)
 
         self.num_called += 1
 
@@ -551,6 +563,17 @@ def torch_save(t, f):
 
 def torch_load(filename):
     return torch.load(filename, map_location=lambda storage, loc: storage)
+
+def get_aml_mpi_host_names():
+    return os.environ['AZ_BATCH_HOST_LIST'].split(',')
+
+def get_master_node_ip():
+    if 'AZ_BATCH_HOST_LIST' in os.environ:
+        return get_aml_mpi_host_names()[0]
+    elif 'AZ_BATCHAI_JOB_MASTER_NODE_IP' in os.environ:
+        return os.environ['AZ_BATCHAI_JOB_MASTER_NODE_IP']
+    else:
+        return get_philly_mpi_hosts()[0]
 
 def get_philly_mpi_hosts():
     return load_list_file(op.expanduser('~/mpi-hosts'))
@@ -662,7 +685,9 @@ class TorchTrain(object):
                 'dist_url_tcp_port': 23456,
                 'random_seed': 6,
                 'apply_nms_gt': True,
-                'cudnn_benchmark': False}
+                'cudnn_benchmark': False,
+                'use_hvd': False,
+                }
 
         assert 'batch_size' not in kwargs, 'use effective_batch_size'
 
@@ -702,6 +727,7 @@ class TorchTrain(object):
 
         assert (self.test_batch_size % self.mpi_size) == 0, self.test_batch_size
         self.test_batch_size = self.test_batch_size // self.mpi_size
+        self.train_dataset = TSVDataset(self.data)
 
         self.initialized = False
 
@@ -720,7 +746,7 @@ class TorchTrain(object):
                 open(dist_file, 'a').close()
             dist_url = 'file://' + dist_file
         elif init_method_type == 'tcp':
-            dist_url = 'tcp://{}:{}'.format(get_philly_mpi_hosts()[0],
+            dist_url = 'tcp://{}:{}'.format(get_master_node_ip(),
                     self.dist_url_tcp_port)
         elif init_method_type == 'env':
             dist_url = 'env://'
@@ -732,7 +758,6 @@ class TorchTrain(object):
         if self._initialized:
             return
 
-        init_random_seed(self.random_seed)
         if self.cudnn_benchmark:
             torch.backends.cudnn.benchmark = True
 
@@ -741,22 +766,33 @@ class TorchTrain(object):
         # cuda.Float by default, it will crash there
         #torch.set_default_tensor_type('torch.cuda.FloatTensor')
         #torch.set_default_tensor_type('torch.FloatTensor')
+        if self.use_hvd:
+            # work with world size == 1, also
+            import horovod.torch as hvd
+            hvd.init()
+            torch.cuda.set_device(hvd.local_rank())
+            assert hvd.local_rank() == self.mpi_local_rank
+            assert hvd.rank() == self.mpi_rank
+            assert hvd.size() == self.mpi_size
+            assert hvd.local_size() == self.mpi_local_size
         if self.distributed:
-            dist_url = self.get_dist_url()
-            init_param = {'backend': self.dist_backend,
-                    'init_method': dist_url,
-                    'rank': self.mpi_rank,
-                    'world_size': self.mpi_size}
-            # always set the device at the very beginning
-            torch.cuda.set_device(self.mpi_local_rank)
-            logging.info('init param: \n{}'.format(pformat(init_param)))
-            if not dist.is_initialized():
-                dist.init_process_group(**init_param)
-            # we need to synchronise before exit here so that all workers can
-            # finish init_process_group(). If not, worker A might exit the
-            # whole program first, but worker B still needs to talk with A. In
-            # that case, worker B will never return and will hang there
-            synchronize()
+            if not self.use_hvd:
+                dist_url = self.get_dist_url()
+                init_param = {'backend': self.dist_backend,
+                        'init_method': dist_url,
+                        'rank': self.mpi_rank,
+                        'world_size': self.mpi_size}
+                # always set the device at the very beginning
+                torch.cuda.set_device(self.mpi_local_rank)
+                logging.info('init param: \n{}'.format(pformat(init_param)))
+                if not dist.is_initialized():
+                    dist.init_process_group(**init_param)
+                # we need to synchronise before exit here so that all workers can
+                # finish init_process_group(). If not, worker A might exit the
+                # whole program first, but worker B still needs to talk with A. In
+                # that case, worker B will never return and will hang there
+                synchronize()
+        init_random_seed(self.random_seed)
         self._initialized = True
 
     def _get_dataset(self, data, split, stage, labelmap):
@@ -821,17 +857,21 @@ class TorchTrain(object):
         if self.distributed:
             model.cuda()
             if self.mpi_local_size > 1:
-                model = torch.nn.parallel.DistributedDataParallel(model,
-                        device_ids=[self.mpi_local_rank])
+                if not self.use_hvd:
+                    model = torch.nn.parallel.DistributedDataParallel(model,
+                            device_ids=[self.mpi_local_rank])
             else:
-                model = torch.nn.parallel.DistributedDataParallel(model)
+                if not self.use_hvd:
+                    model = torch.nn.parallel.DistributedDataParallel(model)
         else:
             model = torch.nn.DataParallel(model).cuda()
         return model
 
     def _get_train_data_loader(self):
-        train_dataset = self._get_dataset(self.data, 'train',
-                stage='train', labelmap=self.train_dataset.load_labelmap())
+        train_dataset = self._get_dataset(self.data,
+                'train',
+                stage='train',
+                labelmap=self.train_dataset.load_labelmap())
 
         if self.distributed:
             self.train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
@@ -948,6 +988,10 @@ class TorchTrain(object):
         optimizer = torch.optim.SGD(model.parameters(), self.base_lr,
                                     momentum=0.9,
                                     weight_decay=1e-4)
+        if self.use_hvd:
+            import horovod.torch as hvd
+            optimizer = hvd.DistributedOptimizer(optimizer,
+                    model.named_parameters())
 
         start_epoch = 0
         if self.restore_snapshot_iter == -1:
@@ -1077,7 +1121,10 @@ class TorchTrain(object):
             if need_wait_models == 0:
                 break
             time.sleep(5)
-        self.save_to_tensorboard()
+
+        if self.mpi_rank == 0:
+            self.save_to_tensorboard()
+        synchronize()
 
     def save_to_tensorboard(self):
         all_step = self.get_all_steps()
@@ -1090,10 +1137,12 @@ class TorchTrain(object):
         from torch.utils.tensorboard import SummaryWriter
         ensure_remove_dir(tensorboard_folder)
         wt = SummaryWriter(log_dir=tensorboard_folder)
+        tag_prefix = '{}_{}'.format(self.test_data, self.test_split)
         for step, eval_result in all_step_eval_result:
             for k in eval_result:
-                wt.add_scalar(tag=k, scalar_value=eval_result[k],
-                        global_step=step, walltime=0)
+                wt.add_scalar(tag='{}_{}'.format(tag_prefix, k),
+                        scalar_value=eval_result[k],
+                        global_step=step)
         wt.close()
 
     def is_train_finished(self):
@@ -1322,7 +1371,7 @@ class TorchTrain(object):
         dataset = TSVDataset(self.test_data)
 
         if self.evaluate_method == 'map':
-            from .deteval import deteval_iter
+            from qd.deteval import deteval_iter
             deteval_iter(
                     dataset.iter_data(self.test_split, 'label',
                         version=self.test_version),
@@ -1331,9 +1380,9 @@ class TorchTrain(object):
                     ovthresh=self.ovthresh,
                     **self.kwargs)
         elif self.evaluate_method == 'coco_box':
-            from cocoeval import convert_gt_to_cocoformat
-            from cocoeval import convert_to_cocoformat
-            from cocoeval import coco_eval_json
+            from qd.cocoeval import convert_gt_to_cocoformat
+            from qd.cocoeval import convert_to_cocoformat
+            from qd.cocoeval import coco_eval_json
             gt_json = dataset.get_data(self.test_split, 'label.cocoformat',
                     version=self.test_version) + '.json'
             gt_iter = dataset.iter_data(self.test_split, 'label',
@@ -1343,10 +1392,31 @@ class TorchTrain(object):
                 convert_gt_to_cocoformat(gt_iter, gt_json)
 
             predict_json = predict_file + '.cocoformat.json'
+            is_empty = False
             if worth_create(predict_file, predict_json) or self.force_evaluate:
-                convert_to_cocoformat(predict_file, predict_json)
-
-            result = coco_eval_json(predict_json, gt_json)
+                annotations = convert_to_cocoformat(predict_file, predict_json)
+                if len(annotations) == 0:
+                    is_empty = True
+            else:
+                from qd.qd_common import get_file_size
+                if get_file_size(predict_json) < 100 and \
+                        len(json.loads(read_to_buffer(predict_json))) == 0:
+                    is_empty = True
+            if is_empty:
+                result = {'0.5-all': 0,
+                        '0.75-all': 0,
+                        'AR-all': 0,
+                        'AR-all-1': 0,
+                        'AR-all-10': 0,
+                        'AR-large': 0,
+                        'AR-medium': 0,
+                        'AR-small': 0,
+                        'all-all': 0,
+                        'all-large': 0,
+                        'all-medium': 0,
+                        'all-small': 0}
+            else:
+                result = coco_eval_json(predict_json, gt_json)
 
             write_to_yaml_file(result, evaluate_file)
         elif self.evaluate_method == 'top1':

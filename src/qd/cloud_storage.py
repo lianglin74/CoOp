@@ -63,57 +63,57 @@ def blob_upload(src, dst):
     c = create_cloud_storage('vig')
     c.az_upload2(src, dst)
 
-def blob_download_all_qdoutput(prefix):
-    c = create_cloud_storage('vig')
-    all_blob_name = list(c.list_blob_names(prefix))
+def get_root_all_full_expid(full_expid_prefix, all_blob_name):
+    all_comp_prefix = full_expid_prefix.split('/')
     def parse_blob_root_folder(b):
-        b = b.replace(prefix, '')
-        if b.startswith('/'):
-            b = b[1:]
-        while '/' in b:
-            b = op.dirname(b)
-        return b
-    all_full_expid = set([parse_blob_root_folder(b) for b in all_blob_name])
+        all_comp_b = b.split('/')
+        for i in range(len(all_comp_b)):
+            if all_comp_b[i] != all_comp_prefix[i]:
+                return all_comp_b[i], i
+        raise Exception('unknown full expid {}, {}'.format(b, full_expid_prefix))
+    all_full_expid_idx = [parse_blob_root_folder(b) for b in all_blob_name]
+    if len(all_full_expid_idx) > 1:
+        assert all(i == all_full_expid_idx[0][1] for _, i in all_full_expid_idx[1:])
+    idx = all_full_expid_idx[0][1]
+    root = '/'.join(all_comp_prefix[:idx])
+    all_full_expid = set([x for x, _ in all_full_expid_idx])
+    return root, all_full_expid
+
+def blob_download_all_qdoutput(prefix, c=None):
+    if c is None:
+        c = create_cloud_storage('vig')
+    all_blob_name = list(c.list_blob_names(prefix))
+    root, all_full_expid = get_root_all_full_expid(prefix, all_blob_name)
     for full_expid in all_full_expid:
         logging.info(full_expid)
         src_path = op.join(prefix, full_expid)
         target_folder = op.join('output', full_expid)
-        blob_download_qdoutput(src_path, target_folder)
+        c.blob_download_qdoutput(src_path, target_folder)
+
+def get_leaf_names(all_fname):
+    # build the tree first
+    from ete3 import Tree
+    root = Tree()
+    for fname in all_fname:
+        components = fname.split('/')
+        curr = root
+        for com in components:
+            currs = [c for c in curr.children if c.name == com]
+            if len(currs) == 0:
+                curr = curr.add_child(name=com)
+            else:
+                assert len(currs) == 1
+                curr = currs[0]
+    result = []
+    for node in root.iter_leaves():
+        ans = [s.name for s in node.get_ancestors()[:-1]]
+        ans.insert(0, node.name)
+        result.append('/'.join([a for a in ans[::-1]]))
+    return result
 
 def blob_download_qdoutput(src_path, target_folder):
     c = create_cloud_storage('vig')
-    def is_in_snapshot(b):
-        return op.basename(op.dirname(b)) == 'snapshot'
-    all_blob_name = list(c.list_blob_names(src_path))
-    in_snapshot_blobs = [b for b in all_blob_name if is_in_snapshot(b)]
-    not_in_snapshot_blobs = [b for b in all_blob_name if not is_in_snapshot(b)]
-    try:
-        not_in_snapshot_blobs.remove(src_path)
-    except:
-        pass
-    try:
-        not_in_snapshot_blobs.remove(src_path + '/snapshot')
-    except:
-        pass
-    need_download_blobs = []
-    need_download_blobs.extend(not_in_snapshot_blobs)
-    iters = [parse_iteration(f) for f in in_snapshot_blobs]
-    if len(iters) > 0:
-        max_iters = max(iters)
-        need_download_blobs.extend([f for f, i in zip(in_snapshot_blobs, iters) if i ==
-                max_iters])
-    to_remove = []
-    for i, b1 in enumerate(need_download_blobs):
-        for b2 in need_download_blobs:
-            if b1 != b2 and b2.startswith(b1) and b2.startswith(b1 + '/'):
-                to_remove.append(b1)
-                break
-    for t in to_remove:
-        need_download_blobs.remove(t)
-    for f in tqdm(need_download_blobs):
-        target_f = f.replace(src_path, target_folder)
-        if not op.isfile(target_f):
-            c.download_to_path(f, target_f)
+    c.blob_download_qdoutput(src_path, target_folder)
 
 class CloudStorage(object):
     def __init__(self, config=None):
@@ -245,8 +245,11 @@ class CloudStorage(object):
     def download_to_path(self, blob_name, local_path):
         from qd.qd_common import ensure_directory
         ensure_directory(op.dirname(local_path))
+        tmp_local_path = local_path + '.tmp'
         self.block_blob_service.get_blob_to_path(self.container_name,
-                blob_name, local_path)
+                blob_name, tmp_local_path)
+        import os
+        os.rename(tmp_local_path, local_path)
 
     def download_to_stream(self, blob_name, s):
         self.block_blob_service.get_blob_to_stream(self.container_name,
@@ -255,6 +258,42 @@ class CloudStorage(object):
     def exists(self, path):
         return self.block_blob_service.exists(
                 self.container_name, path)
+
+    def blob_download_qdoutput(self, src_path, target_folder):
+        def is_in_snapshot(b):
+            return op.basename(op.dirname(b)) == 'snapshot'
+        all_blob_name = list(self.list_blob_names(src_path))
+        all_blob_name = get_leaf_names(all_blob_name)
+        in_snapshot_blobs = [b for b in all_blob_name if is_in_snapshot(b)]
+        not_in_snapshot_blobs = [b for b in all_blob_name if not is_in_snapshot(b)]
+        try:
+            not_in_snapshot_blobs.remove(src_path)
+        except:
+            pass
+        try:
+            not_in_snapshot_blobs.remove(src_path + '/snapshot')
+        except:
+            pass
+        need_download_blobs = []
+        need_download_blobs.extend(not_in_snapshot_blobs)
+        iters = [parse_iteration(f) for f in in_snapshot_blobs]
+        if len(iters) > 0:
+            max_iters = max(iters)
+            need_download_blobs.extend([f for f, i in zip(in_snapshot_blobs, iters) if i ==
+                    max_iters])
+        to_remove = []
+        for i, b1 in enumerate(need_download_blobs):
+            for b2 in need_download_blobs:
+                if b1 != b2 and b2.startswith(b1) and b2.startswith(b1 + '/'):
+                    to_remove.append(b1)
+                    break
+        for t in to_remove:
+            need_download_blobs.remove(t)
+        for f in tqdm(need_download_blobs):
+            target_f = f.replace(src_path, target_folder)
+            if not op.isfile(target_f):
+                if len(f) > 0:
+                    self.download_to_path(f, target_f)
 
 if __name__ == '__main__':
     from qd.qd_common import init_logging

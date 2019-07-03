@@ -40,7 +40,6 @@ from qd.process_tsv import TSVFile, convert_one_label
 from yacs.config import CfgNode
 import os.path as op
 from tqdm import tqdm
-from apex import amp
 
 def merge_dict_to_cfg(dict_param, cfg):
     """merge the key, value pair in dict_param into cfg
@@ -130,24 +129,33 @@ def train(cfg, local_rank, distributed, log_step=20, sync_bn=False,
     model.to(device)
 
     optimizer = make_optimizer(cfg, model)
+    from qd.qd_common import is_hvd_initialized
+    use_hvd = is_hvd_initialized()
+    if use_hvd:
+        import horovod.torch as hvd
+        optimizer = hvd.DistributedOptimizer(optimizer,
+                model.named_parameters())
     scheduler = make_lr_scheduler(cfg, optimizer)
 
     if cfg.MODEL.DEVICE == 'cuda':
-        # Initialize mixed-precision training
-        use_mixed_precision = cfg.DTYPE == "float16"
-        amp_opt_level = 'O1' if use_mixed_precision else 'O0'
-        logging.info('start to amp init')
-        model, optimizer = amp.initialize(model, optimizer, opt_level=amp_opt_level)
-        logging.info('end amp init')
+        if not use_hvd:
+            from apex import amp
+            # Initialize mixed-precision training
+            use_mixed_precision = cfg.DTYPE == "float16"
+            amp_opt_level = 'O1' if use_mixed_precision else 'O0'
+            logging.info('start to amp init')
+            model, optimizer = amp.initialize(model, optimizer, opt_level=amp_opt_level)
+            logging.info('end amp init')
     else:
         assert cfg.MODEL.DEVICE == 'cpu'
 
     if distributed:
-        model = torch.nn.parallel.DistributedDataParallel(
-            model, device_ids=[local_rank], output_device=local_rank,
-            # this should be removed if we update BatchNorm stats
-            broadcast_buffers=False,
-        )
+        if not use_hvd:
+            model = torch.nn.parallel.DistributedDataParallel(
+                model, device_ids=[local_rank], output_device=local_rank,
+                # this should be removed if we update BatchNorm stats
+                broadcast_buffers=False,
+            )
 
     arguments = {}
     arguments["iteration"] = 0
@@ -161,6 +169,11 @@ def train(cfg, local_rank, distributed, log_step=20, sync_bn=False,
 
     extra_checkpoint_data = checkpointer.load(cfg.MODEL.WEIGHT,
             model_only=True)
+
+    if use_hvd:
+        import horovod.torch as hvd
+        hvd.broadcast_parameters(model.state_dict(), root_rank=0)
+        hvd.broadcast_optimizer_state(optimizer, root_rank=0)
 
     arguments.update(extra_checkpoint_data)
 
@@ -681,7 +694,7 @@ class MaskRCNNPipeline(ModelPipeline):
 
     def predict(self, model_file, predict_result_file):
         model = build_detection_model(cfg)
-        if cfg.MODEL.FPN.USE_GN and self.sync_bn:
+        if self.sync_bn:
             # need to convert to BN
             model, convert_info = convert_to_sync_bn(model, torch.nn.BatchNorm2d)
             logging.info(pformat(convert_info))

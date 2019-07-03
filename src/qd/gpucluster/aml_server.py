@@ -28,30 +28,44 @@ def unzip(zip_file, target_folder):
     zip_ref = zipfile.ZipFile(zip_file, 'r')
     zip_ref.extractall(path=target_folder)
 
-def cmd_run(cmd, working_directory='./', succeed=False):
+def cmd_run(cmd, working_directory='./', succeed=False,
+        return_output=False):
     e = os.environ.copy()
     e['PYTHONPATH'] = '/app/caffe/python:{}'.format(e.get('PYTHONPATH', ''))
+    # in the maskrcnn, it will download the init model to TORCH_HOME. By
+    # default, it is /root/.torch, which is different among diferent nodes.
+    # However, teh implementation assumes that folder is a share folder. Thus
+    # only rank 0 do the data downloading. Here, we assume the output folder is
+    # shared, which is the case in AML.
+    e['TORCH_HOME'] = './output/torch_home'
+    ensure_directory(e['TORCH_HOME'])
     logging.info('start to cmd run: {}'.format(' '.join(map(str, cmd))))
     for c in cmd:
         logging.info(c)
-    try:
-        p = sp.Popen(cmd, stdin=sp.PIPE,
-                cwd=working_directory,
-                env=e)
-        p.communicate()
-        if succeed:
-            assert p.returncode == 0
-    except:
-        if succeed:
-            raise
-            assert p.returncode == 0
+    if not return_output:
+        try:
+            p = sp.Popen(cmd, stdin=sp.PIPE,
+                    cwd=working_directory,
+                    env=e)
+            p.communicate()
+            if succeed:
+                assert p.returncode == 0
+        except:
+            if succeed:
+                raise
+                assert p.returncode == 0
+    else:
+        return sp.check_output(cmd)
 
 def ensure_directory(path):
     if path == '' or path == '.':
         return
     if path != None and len(path) > 0:
-        if not os.path.exists(path) and not op.islink(path):
-            os.makedirs(path)
+        try:
+            if not os.path.exists(path) and not op.islink(path):
+                os.makedirs(path)
+        except:
+            pass
 
 def compile_qd(folder):
     path = os.environ['PATH']
@@ -89,17 +103,34 @@ def releaseLock(locked_file_descriptor):
     ''' release exclusive lock file access '''
     locked_file_descriptor.close()
 
+def ensure_ssh_server_running():
+    ssh_folder = op.expanduser('~/.ssh')
+    cmd_run(['ls', ssh_folder], succeed=False)
+
+    y = cmd_run(['service', 'ssh', 'status'],
+            succeed=True, return_output=True)
+    y = y.decode()
+    if 'sshd is not running' in y:
+        cmd_run(['service', 'ssh', 'restart'],
+                succeed=True)
+    elif 'active (running)' in y or 'sshd is running' in y:
+        logging.info('ssh is running. ignore to start')
+    else:
+        logging.info('unknown ssh server satus: \n{}'.format(y))
+
 def wrap_all(code_zip, code_root,
         data_folder, model_folder, output_folder, command):
+    cmd_run(['ibstatus'])
+    cmd_run(['grep', 'Port', '/etc/ssh/sshd_config'])
+    cmd_run(['nvidia-smi'])
+    cmd_run(['ifconfig'])
+    cmd_run(['df', '-h'])
+    cmd_run(['ls', '/dev'])
+
     lock_fd = acquireLock()
+    # start the ssh server
     if not op.isdir(code_root):
-        cmd_run(['grep', 'Port', '/etc/ssh/sshd_config'])
-        cmd_run(['ifconfig'])
-        cmd_run(['df', '-h'])
-        cmd_run(['nvidia-smi'])
-
         ensure_directory(code_root)
-
         # set up the code, models, output under qd
         logging.info('unzipping {}'.format(code_zip))
         unzip(code_zip, code_root)
@@ -124,8 +155,10 @@ def wrap_all(code_zip, code_root,
 
         # compile the source code
         compile_qd(code_root)
+    ensure_ssh_server_running()
     releaseLock(lock_fd)
 
+    logging.info(command)
     if type(command) is str:
         command = list(command.split(' '))
 
@@ -183,12 +216,12 @@ def run_in_philly():
     # the permission should be changed because the output is there, but the
     # permission is for the docker job only and teh philly-fs cannot delete or
     # change it
-    if get_mpi_rank() == 0:
-        cmd_run(['chmod', '777',
-            dict_param['output_folder'],
-            '-R'], succeed=False)
+    #if get_mpi_rank() == 0:
+        #cmd_run(['chmod', '777',
+            #dict_param['output_folder'],
+            #'-R'], succeed=False)
 
 if __name__ == '__main__':
     init_logging()
-
+    #ensure_ssh_server_running()
     run_in_philly()

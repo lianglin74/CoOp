@@ -57,10 +57,14 @@ class AnnotationDB(object):
         self._label = self._qd['qd']['label']
         self._acc = self._qd['qd']['acc']
         self._phillyjob = self._qd['qd']['phillyjob']
+        import getpass
+        self.username = getpass.getuser()
 
     def insert_phillyjob(self, **kwargs):
         if 'create_time' not in kwargs:
             kwargs['create_time'] = datetime.now()
+        if 'username' not in kwargs:
+            kwargs['username'] = self.username
         self._phillyjob.insert_one(kwargs)
 
     def remove_phillyjob(self, **kwargs):

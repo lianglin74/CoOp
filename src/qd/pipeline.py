@@ -24,7 +24,6 @@ from qd.qd_common import hash_sha1
 from qd.qd_common import init_logging
 from qd.qd_common import dict_has_path, dict_get_path_value, dict_get_all_path
 
-
 def get_all_test_data(exp):
     pattern_to_test_datas = load_from_yaml_file('./aux_data/exp/pattern_to_test_datas.yaml')
     result = make_by_pattern_result(exp, pattern_to_test_datas)
@@ -84,6 +83,33 @@ def ensure_upload_init_model(param):
     c = create_cloud_storage('vig')
     if not c.exists(target_path):
         c.az_upload2(basemodel, target_path)
+
+def aml_func_run(func, param, **submit_param):
+    from qd.philly import create_multi_philly_client
+    client = create_multi_philly_client(**submit_param)
+    philly_client = client.select_client_for_submit()
+    if 'data' in param.get('param', {}):
+        ensure_upload_data_for_philly_jobs(param['param']['data'], philly_client)
+    if 'basemodel' in param.get('param', {}):
+        ensure_upload_init_model(param['param'])
+    assert func.__module__ != '__main__', \
+            'the executed func should not be in the main module'
+    assert 'type' not in param
+    param['type'] = func.__name__
+    #param['gpus'] = list(range(client.num_gpu))
+    if hasattr(func, 'func_code'):
+        # py2
+        code_file_name = func.func_code.co_filename
+    else:
+        # py3
+        code_file_name = func.__code__.co_filename
+    from qd.qd_common import convert_to_command_line
+    extra_param = convert_to_command_line(param,
+            script=op.relpath(code_file_name))
+    logging.info(extra_param)
+    from qd.gpucluster import create_aml_client
+    aml_client = create_aml_client(**submit_param)
+    aml_client.submit(extra_param)
 
 def philly_func_run(func, param, **submit_param):
     from qd.philly import create_multi_philly_client
@@ -219,6 +245,15 @@ def update_parameters(param):
             ('opt_cls_only', ('ClsOnly', None)),
             ('MODEL$FPN$USE_GN', ('FpnGN', None)),
             ('bn_momentum', 'BNMoment'),
+            ('use_hvd', ('HVD', None)),
+            ('yolo_train_session_param$use_maskrcnn_sampler', ('MaskSam', None)),
+            ('use_treestructure', ('Tree', None)),
+            ('MODEL$USE_TREESTRUCTURE', ('Tree', None)),
+            ('MaskTSVDataset$multi_hot_label', ('MultiHot', None)),
+            ('DATALOADER$ASPECT_RATIO_GROUPING', [None, 'NoARG']),
+            ('INPUT$USE_FIXED_SIZE_AUGMENTATION', ['FSize', None]),
+            ('dataset_type', ''),
+            ('step_lr', 'StepLR'),
             ]
 
     non_expid_impact_keys = ['data', 'net', 'expid_prefix',
@@ -237,12 +272,6 @@ def update_parameters(param):
             'SOLVER$CHECKPOINT_PERIOD',
             'yolo_train_session_param$display',
             ]
-    true_false_keys = OrderedDict([('use_treestructure', ('Tree', None)),
-        ('MODEL$USE_TREESTRUCTURE', ('Tree', None)),
-        ('MaskTSVDataset$multi_hot_label', ('MultiHot', None)),
-        ('DATALOADER$ASPECT_RATIO_GROUPING', [None, 'NoARG']),
-        ('INPUT$USE_FIXED_SIZE_AUGMENTATION', ['FSize', None]),
-        ])
 
     if param['pipeline_type'] == 'MaskRCNNPipeline':
         non_expid_impact_keys.extend(['DATASETS', ''])
@@ -279,18 +308,11 @@ def update_parameters(param):
                 continue
             else:
                 infos.append('{}{}'.format(v, pk))
-    for k in true_false_keys:
-        if dict_has_path(param, k):
-            if dict_get_path_value(param, k) and true_false_keys[k][0]:
-                infos.append(true_false_keys[k][0])
-            elif not dict_get_path_value(param, k) and true_false_keys[k][1]:
-                infos.append(true_false_keys[k][1])
 
     known_keys = []
     known_keys.extend((k for k in need_hash_sha_params))
     known_keys.extend((k for k in non_expid_impact_keys))
     known_keys.extend((s[0] for s in direct_add_value_keys))
-    known_keys.extend((k for k in true_false_keys))
 
     all_path = dict_get_all_path(param)
 
@@ -304,7 +326,7 @@ def update_parameters(param):
     param['expid'] = '_'.join(infos)
 
 def create_pipeline(kwargs):
-    pipeline_type = kwargs.get('pipeline_type', 'YoloV2PtPipeline')
+    pipeline_type = kwargs.get('pipeline_type')
     if pipeline_type == 'YoloV2PtPipeline':
         from qd.qd_pytorch import YoloV2PtPipeline
         return YoloV2PtPipeline(**kwargs)
@@ -314,6 +336,10 @@ def create_pipeline(kwargs):
     elif pipeline_type == 'MMDetPipeline':
         from qd.qd_mmdetection import MMDetPipeline
         return MMDetPipeline(**kwargs)
+    elif pipeline_type == 'classification':
+        from qd.qd_pytorch import TorchTrain
+        return TorchTrain(**kwargs)
+
 
 def load_pipeline(**kwargs):
     from qd.qd_pytorch import load_latest_parameters
