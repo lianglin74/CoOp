@@ -332,7 +332,7 @@ class CropClassTSVDatasetYaml():
         else:
             cfg = yaml_cfg
 
-        labelmap = cfg['labelmap']
+        labelmap = cfg.get('labelmap', None)
         img_files = cfg[session_name]['tsv']
         label_files = cfg[session_name]['label']
         if isinstance(img_files, six.string_types):
@@ -341,7 +341,10 @@ class CropClassTSVDatasetYaml():
             label_files = [label_files]
         assert(len(img_files) == len(label_files))
 
-        if isinstance(labelmap, six.string_types):
+        if not labelmap:
+            assert(session_name == "test")
+            self.labels = None
+        elif isinstance(labelmap, six.string_types):
             self.labels = [l[0] for l in tsv_reader(labelmap)]
         elif isinstance(labelmap, list):
             self.labels = labelmap
@@ -460,7 +463,6 @@ def gen_index(imgfile, labelfile, label_to_idx, for_test,
 
     m = pathos.multiprocessing.ProcessingPool(num_worker)
     all_res = m.map(_gen_index_helper, all_args)
-    m.join()
     x = []
     for r in all_res:
         if r is None:

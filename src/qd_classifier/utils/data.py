@@ -79,16 +79,15 @@ def get_testdata_loader(args):
     else:
         test_transform = get_pt_transform("test", args)
 
-    # NOTE: OpenCV transform is used in testing
-    val_dataset = CropClassTSVDatasetYaml(args.data, session_name='test',
-            transform=cv_transform, enlarge_bbox=args.enlarge_bbox)
+    test_dataset = CropClassTSVDatasetYaml(args.data, session_name='test',
+            transform=test_transform, enlarge_bbox=args.enlarge_bbox)
 
-    val_loader = torch.utils.data.DataLoader(
-        val_dataset, batch_size=args.batch_size, shuffle=False,
+    test_loader = torch.utils.data.DataLoader(
+        test_dataset, batch_size=args.batch_size, shuffle=False,
         collate_fn=my_collate,
         num_workers=args.workers, pin_memory=True)
 
-    return val_loader
+    return test_loader
 
 
 def get_pt_transform(phase, args):

@@ -20,7 +20,6 @@ from evaluation.utils import is_valid_bbox
 from qd.qd_common import init_logging, worth_create, read_to_buffer, ensure_directory, json_dump
 from qd.tsv_io import tsv_reader, tsv_writer, TSVDataset
 from qd import deteval, qd_common
-from qd.yolotrain import yolo_predict
 
 trained_dataset = "brand1048"
 trained_dataset_version = 2
@@ -30,9 +29,10 @@ pair_dataset = "logo40_pair"
 data_split = "test"
 
 dataset_cfgs = [
-    {"data": "brand1048", "split": "test", "version": 2},
-    {"data": "logo200", "split": "test", "version": -1},
-    {"data": "logo40", "split": "test", "version": -1}
+    {"data": "brand1048", "split": "test", "version": 4},
+    {"data": "sports_missingSplit", "split": "test", "version": 6},
+    {"data": "logo40", "split": "test", "version": 2},
+    # {"data": "logo200", "split": "test", "version": -1},
 ]
 
 # rootpath = "/raid/data/brand_output/"
@@ -102,6 +102,8 @@ def evaluate_two_stage(det_expid, tag_expid):
 
 
 def evaluate_detector(det_expid):
+    from qd.yolotrain import yolo_predict
+
     outdir = os.path.join(rootpath, "{}/deteval".format(det_expid))
     ensure_directory(outdir)
 
@@ -324,14 +326,14 @@ def filter_topN_pred(pred_file, topN, obj_thres=None):
     return new_pred_file
 
 def eval_classifier(gt_dataset_name, split, version, det_expid, tag_expid,
-            tag_snap_id, labelmap=None, iou_thres=0.5, enlarge_bbox=1.0,
+            tag_snap_id, tag_model_id, labelmap=None, iou_thres=0.5, enlarge_bbox=1.0,
             topN_rp=None, obj_thres=0):
     """ Calculates:
     top1/5 acc on gt region, mAP with gt region (conf from tag),
     mAP with logo/non-logo region (conf from tag, conf from tag*obj, conf from obj)
     """
     croptagger = CropTaggingWrapper(det_expid, tag_expid,
-            tag_snap_id=tag_snap_id, labelmap=labelmap)
+            tag_snap_id=tag_snap_id, tag_model_id=tag_model_id, labelmap=labelmap)
     stats = []
 
     def cal_map(pred_file):
@@ -353,48 +355,51 @@ def eval_classifier(gt_dataset_name, split, version, det_expid, tag_expid,
     for k in topk:
         stats.append(topk_acc[k-1])
     # mAP with gt region (conf from tag)
-    stats.append(cal_map(pred_file))
-    print(stats)
+    # stats.append(cal_map(pred_file))
 
-    for conf_from in [constants.CONF_TAG, constants.CONF_OBJ_TAG, constants.CONF_OBJ]:
-        pred_file, _ = croptagger.predict_on_known_class(gt_dataset_name, split,
-                    version=version, region_source=constants.PRED_REGION, enlarge_bbox=enlarge_bbox,
-                    conf_from=conf_from, eval_topk_acc=None)
-        if conf_from == constants.CONF_TAG and topN_rp:
-            pred_file = filter_topN_pred(pred_file, topN_rp, obj_thres=obj_thres)
+    # for conf_from in [constants.CONF_TAG, constants.CONF_OBJ_TAG, constants.CONF_OBJ]:
+    #     pred_file, _ = croptagger.predict_on_known_class(gt_dataset_name, split,
+    #                 version=version, region_source=constants.PRED_REGION, enlarge_bbox=enlarge_bbox,
+    #                 conf_from=conf_from, eval_topk_acc=None)
+    #     if conf_from == constants.CONF_TAG and topN_rp:
+    #         pred_file = filter_topN_pred(pred_file, topN_rp, obj_thres=obj_thres)
 
-        stats.append(cal_map(pred_file))
+    #     stats.append(cal_map(pred_file))
     return stats
 
 def run_all_eval_classifier():
-    gt_dataset_name = "logo40"
-    split = "test"
-    version = 2
     det_expid = det3_expid
 
-    output_root = 'data/brand_output/'
+    output_root = './brand_output/'
     labelmap = None
-    tag_snap_pairs = [
-            ("logo40syn_09v204", "snapshot")]
+    tag_models = [
+            ("brandsports_addlogo40syn", "snapshot", "model_best.pth.tar"),
+            ("brandsports_addlogo40syn", "snapshot", "None-0117.pth.tar"),
+            ("brandsports_addlogo40syn", "snapshot", "None-0118.pth.tar"),
+            ("brandsports_addlogo40syn", "snapshot", "None-0119.pth.tar"),
+            # ("logo40syn_09v204", "snapshot")
+    ]
 
     def gen_rows():
-        for tag_expid, tag_snap_id in tag_snap_pairs:
-            for obj_thres in [0.1, 0.3, 0.5, 0.6]:
-                for topN in [1, 3, 5, 10]:
-                    for enlarge_bbox in [2]:
-                        res = [obj_thres, topN, enlarge_bbox, tag_expid, tag_snap_id]
-                        res.extend(eval_classifier(gt_dataset_name, split, version, det_expid, tag_expid,
-                                tag_snap_id, labelmap=labelmap, iou_thres=0.5, enlarge_bbox=enlarge_bbox, topN_rp=topN, obj_thres=obj_thres))
-                        # print(res)
-                        yield res
+        for cfg in dataset_cfgs:
+            gt_dataset_name, split, version = cfg["data"], cfg["split"], cfg["version"]
+            for tag_expid, tag_snap_id, tag_model_id in tag_models:
+                for obj_thres in [0.6]:
+                    for topN in [10]:
+                        for enlarge_bbox in [2]:
+                            res = [gt_dataset_name, split, version, obj_thres, topN, enlarge_bbox, tag_expid, tag_snap_id, tag_model_id]
+                            res.extend(eval_classifier(gt_dataset_name, split, version, det_expid, tag_expid,
+                                    tag_snap_id, tag_model_id, labelmap=labelmap, iou_thres=0.5, enlarge_bbox=enlarge_bbox, topN_rp=topN, obj_thres=obj_thres))
+                            print(res)
+                            yield res
     tsv_writer(gen_rows(), os.path.join(output_root, 'tmp.tsv'))
 
 
 if __name__ == "__main__":
     init_logging()
     # main()
-    # run_all_eval_classifier()
-    expid1 = "TaxLogoV1_7_darknet19_448_C_Init.best_model9748_maxIter.75eEffectBatchSize128_bb_only"
-    expid2 = "TaxLogoNoLogoV2_5_darknet19_448_C_Init.best_model9748_maxIter.10eEffectBatchSize128Rotate10_bb_only"
-    for expid in [expid1, expid2]:
-        evaluate_detector(expid)
+    run_all_eval_classifier()
+    # expid1 = "TaxLogoV1_7_darknet19_448_C_Init.best_model9748_maxIter.75eEffectBatchSize128_bb_only"
+    # expid2 = "TaxLogoNoLogoV2_5_darknet19_448_C_Init.best_model9748_maxIter.10eEffectBatchSize128Rotate10_bb_only"
+    # for expid in [expid1, expid2]:
+    #     evaluate_detector(expid)

@@ -40,7 +40,7 @@ class SingleLabelAccuracy(Accuracy):
                 self.topk_acc[i].update(acc, output.size(0))
 
     def prec(self):
-        return self.topk_acc[0].avg
+        return [self.topk_acc[i].avg for i in range((len(self.topk)))]
 
     def result_str(self):
         acc_str = ['Prec@{k} {acc.val:.3f} ({acc.avg:.3f})'.format(k=self.topk[i], acc=self.topk_acc[i]) \

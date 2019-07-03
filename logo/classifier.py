@@ -21,18 +21,17 @@ from logo import constants
 from qd_classifier.scripts import extract, pred
 from qd_classifier.utils import accuracy
 from qd.qd_common import calculate_iou, write_to_yaml_file, load_from_yaml_file, init_logging, ensure_directory, int_rect, is_valid_rect, worth_create
-from qd.tsv_io import TSVDataset, TSVFile, tsv_reader, tsv_writer, reorder_tsv_keys
+from qd.tsv_io import TSVDataset, TSVFile, tsv_reader, tsv_writer, reorder_tsv_keys, rm_tsv
 from qd import tsv_io
-from qd.yolotrain import yolo_predict
-
 
 class CropTaggingWrapper(object):
-    def __init__(self, det_expid, tag_expid, tag_snap_id="snapshot", labelmap=None):
+    def __init__(self, det_expid, tag_expid, tag_snap_id="snapshot", tag_model_id="model_best.pth.tar", labelmap=None):
         self.det_expid = det_expid
-        self._data_folder = "data/brand_output/tmp"
-        self.eval_dir = "data/brand_output/{}/{}/eval".format(tag_expid, tag_snap_id)
+        self._data_folder = "./brand_output/tmp"
+        self.eval_dir = "./brand_output/{}/{}/eval".format(tag_expid, tag_snap_id)
         self.labelmap = labelmap
-        self.tag_model_path = os.path.join(os.path.dirname(self.eval_dir), "model_best.pth.tar")
+        self.tag_model_path = os.path.join(os.path.dirname(self.eval_dir), tag_model_id)
+        assert(os.path.isfile(self.tag_model_path))
         self.log_file = os.path.join(self.eval_dir, "prediction_log.txt")
         ensure_directory(self.eval_dir)
         ensure_directory(os.path.dirname(self.tag_model_path))
@@ -53,16 +52,18 @@ class CropTaggingWrapper(object):
         # get tagging results
         data_yaml = self._write_data_yaml(dataset_name, split, "test", rp_file, enlarge_bbox=enlarge_bbox)
         max_k = eval_topk_acc if eval_topk_acc else 1
-        tag_file = self.tag_predict(data_yaml, max_k=max_k, enlarge_bbox=enlarge_bbox)
+        tag_file = self.tag_predict(data_yaml, max_k=max_k, enlarge_bbox=enlarge_bbox, force_rewrite=True)
 
         # combine
         outfile = os.path.join(self.eval_dir, "{}.{}.tag.predict.tsv".format(dataset_name, split))
-        topk_acc = parse_tagging_predict(tag_file, outfile, conf_from=conf_from,
+        outfile_tmp = outfile + '.tmp'
+        topk_acc = parse_tagging_predict(tag_file, outfile_tmp, conf_from=conf_from,
                 eval_accuracy=(eval_topk_acc is not None))
         # align the order of imgkeys
         ordered_keys = TSVDataset(dataset_name).load_keys(split)
-        reorder_tsv_keys(outfile, ordered_keys, outfile)
-        return outfile, topk_acc
+        # reorder_tsv_keys(outfile_tmp, ordered_keys, outfile)
+        # rm_tsv(outfile_tmp)
+        return outfile_tmp, topk_acc
 
     def predict_on_unknown_class(self, dataset_name, split,
                 region_source=constants.PRED_REGION, version=-1):
@@ -94,8 +95,9 @@ class CropTaggingWrapper(object):
         # compare similarity
         outfile = os.path.join(self.eval_dir,
                 "{}.{}.fea.predict.region.{}.tsv".format(dataset_name, split, region_source))
-        if worth_create(fea_file, outfile) or worth_create(gt_fea_file, outfile):
-            acc_str = compare_similarity(gt_fea_file, fea_file, outfile, top_k_acc=top_k_acc)
+        outfile_tmp = outfile + '.tmp'
+        if worth_create(fea_file, outfile_tmp) or worth_create(gt_fea_file, outfile_tmp):
+            acc_str = compare_similarity(gt_fea_file, fea_file, outfile_tmp, top_k_acc=top_k_acc)
             if acc_str:
                 with open(self.log_file, 'a+') as fp:
                     fp.write("\nTime: {}\t Method: {}\n" \
@@ -106,7 +108,8 @@ class CropTaggingWrapper(object):
                     fp.write('\n')
         # align the order of imgkeys
         ordered_keys = TSVDataset(dataset_name).load_keys(split)
-        reorder_tsv_keys(outfile, ordered_keys, outfile)
+        reorder_tsv_keys(outfile_tmp, ordered_keys, outfile)
+        rm_tsv(outfile_tmp)
         return outfile
 
     def compare_pairs(self, dataset_name, split):
@@ -124,6 +127,7 @@ class CropTaggingWrapper(object):
         return outfile
 
     def det_predict(self, dataset_name, split):
+        from qd.yolotrain import yolo_predict
         pred_file, _ = yolo_predict(full_expid=self.det_expid, test_data=dataset_name, test_split=split)
         return pred_file
 
@@ -437,6 +441,9 @@ def parse_tagging_predict(infile, outfile, nms_type=None, bg_skip=1,
 
         if not is_bg:
             pred_dict[key].append(bbox)
+        else:
+            if key not in pred_dict:
+                pred_dict[key] = []
     if nms_type:
         for key in pred_dict:
             pred_dict[key] = nms_wrapper(pred_dict[key], nms_type=nms_type)

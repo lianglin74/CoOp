@@ -1,8 +1,9 @@
 import argparse
+import json
+import numpy as np
 import os
 import shutil
 import time
-import argparse
 
 import torch
 import torch.nn as nn
@@ -16,14 +17,13 @@ import torch.utils.data.distributed
 import torchvision.datasets as datasets
 import torchvision.models as models
 
-from ..utils.data import get_testdata_loader
-from ..utils.averagemeter import AverageMeter
-
+from qd_classifier.utils.data import get_testdata_loader
+from qd_classifier.utils.averagemeter import AverageMeter
+from qd_classifier.utils.accuracy import get_accuracy_calculator
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 # necessary inputs
-parser.add_argument('data', metavar='DIR',
-                    help='path to dataset')
+parser.add_argument('data', help='path to dataset yaml config')
 parser.add_argument('--model', default='', type=str, metavar='PATH',
                     help='path to latest checkpoint (default: none)')
 parser.add_argument('--labelmap', default='', type=str, metavar='PATH',
@@ -42,6 +42,8 @@ parser.add_argument('--enlarge_bbox', default=1.0, type=float,
                     help='make bbox larger (factor*width, factor*height)')
 parser.add_argument('--opencv', action='store_true',
                     help='use OpenCV transform to process image input')
+parser.add_argument('--evaluate', action='store_true',
+                    help='calculate top k accuracy')
 
 def load_labelmap(labelmap):
     with open(labelmap, 'r') as fp:
@@ -95,6 +97,13 @@ def main(args):
     # Load model and labelmap
     model, labelmap = load_model(args)
 
+    # Calculate accuracy
+    if args.evaluate:
+        accuracy = get_accuracy_calculator(multi_label=False)
+        label2idx = {l: i for i, l in enumerate(labelmap)}
+    else:
+        accuracy = None
+
     compute_time = AverageMeter()
     data_time = AverageMeter()
     end = time.time()
@@ -112,6 +121,10 @@ def main(args):
             # measure elapsed time
             compute_time.update((time.time() - end) / num_samples * 1000)
             end = time.time()
+
+            if accuracy:
+                target = torch.from_numpy(np.array([[label2idx[json.loads(cols[n][1])["class"]]] for n in range(num_samples)], dtype=np.int))
+                accuracy.calc(output, target)
 
             _, pred_topk = output.topk(args.topk, dim=1, largest=True)
             prob = F.softmax(output, dim=1)
@@ -131,6 +144,9 @@ def main(args):
                             data_time=data_time)
                 print(info_str)
                 tic = time.time()
+    if accuracy:
+        print(accuracy.result_str())
+        return accuracy.prec()
 
 if __name__ == '__main__':
     args = parser.parse_args()
