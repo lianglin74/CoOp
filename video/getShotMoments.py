@@ -9,13 +9,11 @@ from tqdm import tqdm
 import numpy as np
 import math
 import copy 
-  
 
 def findShot(predict_file, frameRate = 25.0):
     #parameters:
     addMissingRim = True
     addMissingBall = True
-    
   
     className = "shot"
     
@@ -245,9 +243,6 @@ def findShot(predict_file, frameRate = 25.0):
     
     return pred_results_angle
     #return pred_results
-
-def removeFalsePositive():
-  pass
 
 def predictBallRects(prevBallObjs, debug = 0):
   l = len( prevBallObjs )
