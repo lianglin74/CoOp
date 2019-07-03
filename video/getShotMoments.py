@@ -1,3 +1,4 @@
+import cv2
 import json
 from qd import tsv_io
 from qd.process_tsv import onebb_in_list_of_bb
@@ -441,7 +442,7 @@ def testGetDegreeOfTwoPoints():
     print("Angle is: ", getAngleOfTwoPoints(p1, p2) / math.pi * 180)
 
 def getFrameRate(video_name):
-    cap = cv2.VideoCapture(folderName + '/' + video_name)
+    cap = cv2.VideoCapture(video_name)
     
     #get the total frame count 
     # Find OpenCV version
@@ -494,11 +495,12 @@ def getShotAPI(videoFileName, predict_file):
     
     writeToTSV(predict_file, pred_results)
     
-    return True
+    return pred_results
     
 def main():
-  dir = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_demo_v3/"
+  dir = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_demo_v3/tmp/"
   labelFiles = "labellist.txt"
+  
   labelFileList = read_file_to_list(dir + labelFiles)
   #predict_file = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_chop/TSV/head350_prediction_1551538896210_sc99_01_q1.tsv"
   #predict_file = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_chop/prediction_1551538896210_sc99_01_q1.tsv"
