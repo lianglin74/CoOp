@@ -457,6 +457,9 @@ def gen_index(imgfile, labelfile, label_to_idx, for_test,
                 else:
                     # label only exists in training data
                     c = bbox["class"]
+                    if c not in label_to_idx:
+                        print("label file: {}, class: {} not in labelmap".format(labelfile, c))
+                        continue
                     info.append(label_to_idx[c])
                 ret.append(info)
         return ret

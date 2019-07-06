@@ -42,27 +42,29 @@ def get_data_loader(args, logger=None):
         num_workers=args.workers, pin_memory=True)
 
     if args.debug:
-        imgdir = os.path.join(args.output_dir, "imgs")
-        if not os.path.exists(imgdir):
-            os.mkdir(imgdir)
-        target_labels = {0:0, 1:0, 2:0, 3:0}
-        for idx in range(len(train_dataset)):
-            img, label = train_dataset[idx]
+        # imgdir = os.path.join(args.output_dir, "imgs")
+        # if not os.path.exists(imgdir):
+        #     os.mkdir(imgdir)
+        # target_labels = {0:0, 1:0, 2:0, 3:0}
+        # for idx in range(len(train_dataset)):
+        #     img, label = train_dataset[idx]
+        #     if label.item() in target_labels and target_labels[label.item()]<10:
+        #         save_image(img, os.path.join(imgdir, "train_{}_{}.jpg".format(label.item(), idx)))
+        #         target_labels[label.item()] += 1
 
-            if label.item() in target_labels and target_labels[label.item()]<10:
-                save_image(img, os.path.join(imgdir, "train_{}_{}.jpg".format(label.item(), idx)))
-                target_labels[label.item()] += 1
+        # target_labels = {0:0, 1:0, 2:0, 3:0}
+        # for idx in range(len(val_dataset)):
+        #     img, label = val_dataset[idx]
+        #     if label.item() in target_labels and target_labels[label.item()]<10:
+        #         save_image(img, os.path.join(imgdir, "val_{}_{}.jpg".format(label.item(), idx)))
+        #         target_labels[label.item()] += 1
 
-        target_labels = {0:0, 1:0, 2:0, 3:0}
-        for idx in range(len(val_dataset)):
-            img, label = val_dataset[idx]
-            if label.item() in target_labels and target_labels[label.item()]<10:
-                save_image(img, os.path.join(imgdir, "val_{}_{}.jpg".format(label.item(), idx)))
-                target_labels[label.item()] += 1
-
-        for i, (input, target, info) in enumerate(train_loader):
+        sample_counts = [0] * train_dataset.label_dim()
+        for i, (input, target) in enumerate(train_loader):
             if i%100==0:
                 print(i)
+            for t in range(len(target)):
+                sample_counts[target[t].item()] += 1
         import ipdb; ipdb.set_trace()
     return train_loader, val_loader, train_sampler, train_dataset
 

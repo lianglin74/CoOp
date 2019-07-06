@@ -36,6 +36,12 @@ parser.add_argument('--test-size', default=224, type=int,
                     help='test crop size (default: 224)')
 parser.add_argument('--output', default='', type=str, metavar='PATH',
                     help='path to save prediction result')
+parser.add_argument('--opencv', action='store_true',
+                    help='use OpenCV transform to process image input')
+parser.add_argument('--input_size', default=224, type=int,
+                    help='input image size')
+parser.add_argument('--enlarge_bbox', default=1.0, type=float,
+                    help='make bbox larger (factor*width, factor*height)')
 
 def load_model(args):
     checkpoint = torch.load(args.model)
