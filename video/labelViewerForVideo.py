@@ -98,7 +98,7 @@ def getFPS(cap):
 
 
 def drawLabel(image, labels):
-  skipPersons = True
+  skipPersons = False
   
   #matlab RGB to opencv BRG
   colorMap = [(0, 1, 0), (1, 0, 0), (0.75, 0, 0.75), (0, 0, 1), (0, 0.5, 0), (0, 0.75, 0.75), (0.85, 0.325, 0.098), (0.63, 0.078, 0.1840), (0.929, 0.6940, 0.1250), (0, 0.447, 0.7410), (0.4660, 0.6740, 0.1880), (0.3010, 0.7450, 0.9330), (0.75, 0.75, 0)] 
@@ -116,8 +116,8 @@ def drawLabel(image, labels):
       pos = (int(rect[2] + 3.0), int(rect[1] - 3.0))
     elif (labelName == "basketball"):
       pos = (int(rect[2] + 3.0), int(rect[1] + 15.0))
-    #elif (labelName == "person") and skipPersons:
-    #  continue
+    elif (labelName == "person") and skipPersons:
+      continue
       
     if 'conf' in v:
       conf = v['conf']
