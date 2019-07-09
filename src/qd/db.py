@@ -370,3 +370,18 @@ class BoundingBoxVerificationDB(object):
             self.collection.create_index([('rect.from', pymongo.ASCENDING)])
         return self.client[self.db_name][self.collection_name]
 
+def update_cluster_job_db(all_job_info):
+    c = create_annotation_db()
+    existing_job_infos = list(c.iter_phillyjob())
+
+    existing_job_appID = set([j['appID'] for j in existing_job_infos])
+    # we assume the appID is unique across multiple VCs
+    assert len(existing_job_appID) == len(existing_job_infos)
+
+    for job_info in all_job_info:
+        if job_info['appID'] in existing_job_appID:
+            c.update_phillyjob(query={'appID': job_info['appID']},
+                    update=job_info)
+        else:
+            c.insert_phillyjob(**job_info)
+

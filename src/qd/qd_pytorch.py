@@ -16,7 +16,7 @@ from qd.qd_common import parse_general_args
 from qd.qd_common import plot_to_file
 from qd.qd_common import ensure_remove_dir
 from collections import OrderedDict
-from maskrcnn_benchmark.utils.comm import synchronize, get_rank
+from maskrcnn_benchmark.utils.comm import synchronize
 from qd.process_tsv import load_key_rects
 from qd.process_tsv import hash_sha1
 from qd.tsv_io import tsv_writer, tsv_reader
@@ -487,11 +487,12 @@ class IBCEWithLogitsNegLoss(nn.Module):
         self.num_called += 1
 
         if weight_sum == 0:
-            return 0
+            return torch.zeros((), device=feature.device, dtype=feature.dtype)
         else:
             criterion = nn.BCEWithLogitsLoss(weight, reduction='sum')
             loss = criterion(feature, target)
-            return torch.sum(loss) / weight_sum
+            loss = torch.sum(loss) / weight_sum
+            return loss
 
 def mean_remove(x):
     assert x.dim() == 2

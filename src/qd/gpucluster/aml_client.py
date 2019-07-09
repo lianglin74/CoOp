@@ -2,7 +2,9 @@ from pprint import pformat
 from collections import OrderedDict
 import logging
 from qd.qd_common import load_from_yaml_file, dict_update_nested_dict
+from qd.qd_common import cmd_run
 from qd.cloud_storage import create_cloud_storage
+from qd.qd_common import decode_general_cmd
 
 def create_aml_client(**kwargs):
     param = load_from_yaml_file('./aux_data/configs/aml.yaml')
@@ -12,7 +14,9 @@ def create_aml_client(**kwargs):
 def parse_run_info(run):
     info = {}
     info['status'] = run.status
-    info['run_id'] = run.id
+    info['appID'] = run.id
+    info['appID-s'] = run.id[-5:]
+    info['cluster'] = 'aml'
     details = run.get_details()
     info['start_time'] = details.get('startTimeUtc')
     from dateutil.parser import parse
@@ -20,9 +24,13 @@ def parse_run_info(run):
     now = datetime.now(timezone.utc)
     if info['start_time'] is not None:
         d= (now - parse(info['start_time'])).total_seconds() / 3600
-        info['elapsed_hours'] = round(d, 2)
-    cmd = details['runDefinition']['arguments'][-1]
-    info['cmd'] = cmd
+        info['elapsedTime'] = round(d, 2)
+    if len(details['runDefinition']['arguments']) > 0:
+        cmd = details['runDefinition']['arguments'][-1]
+        info['cmd'] = cmd
+        info['cmd_param'] = decode_general_cmd(cmd)
+    info['num_gpu'] = details['runDefinition']['mpi']['processCountPerNode'] * \
+            details['runDefinition']['nodeCount']
     return info
 
 def print_run_info(run):
@@ -45,23 +53,31 @@ def create_aml_run(experiment, run_id):
 class AMLClient(object):
     status_running = 'Running'
     status_queued = 'Queued'
-    def __init__(self, azure_blob_id, config_param, docker, **kwargs):
+    def __init__(self, azure_blob_config_file, config_param, docker,
+            datastore_name, aml_config, use_custom_docker,
+            compute_target, source_directory, entry_script,
+            with_log=True,
+            **kwargs):
         self.kwargs = kwargs
-        self._initialized = False
-        self.aml_config = 'aux_data/aml/config.json'
-        self.compute_target = 'NC24RSV3'
+        self.aml_config = aml_config
+        self.compute_target = compute_target
         # do not change the datastore_name unless the storage account
         # information is changed
-        self.datastore_name = 'vig_data'
+        self.datastore_name = datastore_name
+        self.source_directory = source_directory
+        self.entry_script = entry_script
         # it does not matter what the name is
-        self.experiment_name = 'none'
+        if 'experiment_name' not in kwargs:
+            from qd.qd_common import get_user_name
+            self.experiment_name = get_user_name()
+        else:
+            self.experiment_name = kwargs['experiment_name']
         self.num_gpu = kwargs.get('num_gpu', 4)
-        self.azure_blob_id = azure_blob_id
         self.docker = docker
 
-        self.cloud_blob = create_cloud_storage(self.azure_blob_id)
+        self.cloud_blob = create_cloud_storage(config_file=azure_blob_config_file)
         self.config_param = config_param
-        self.with_log = True
+        self.with_log = with_log
 
         from azureml.core import Workspace
         ws = Workspace.from_config(self.aml_config)
@@ -81,6 +97,8 @@ class AMLClient(object):
         self.model_folder = ds.path(self.config_param['model_folder']).as_mount()
         self.output_folder = ds.path(self.config_param['output_folder']).as_mount()
 
+        self.use_custom_docker = use_custom_docker
+
         from azureml.core import Experiment
         self.experiment = Experiment(self.ws, name=self.experiment_name)
 
@@ -90,36 +108,64 @@ class AMLClient(object):
 
     def query(self, run_id=None):
         if run_id is None:
-            all_run = self.experiment.get_runs()
+            all_run = list(self.experiment.get_runs())
             all_info = [parse_run_info(r) for r in all_run]
-            running_runs = [r for r in all_run if r.status ==
-                    AMLClient.status_running]
-            for r in running_runs:
+            for info, r in zip(all_info, all_run):
+                if r.status != AMLClient.status_running:
+                    continue
                 all_log = list(r.get_all_logs())
-            #all_info = [parse_run_info(r) for r in all_run
-                    #if r.status in [AMLClient.status_running, AMLClient.status_queued]]
-            from qd.qd_common import print_table
-            all_info = [i for i in all_info if i['status'] in
-                [AMLClient.status_running, AMLClient.status_queued]]
-            print_table(all_info, ['status', 'run_id', 'elapsed_hours'])
+                info['all_log_path'] = all_log
+                if len(all_log) > 0:
+                    info['latest_log'] = cmd_run(['tail', '-n', '100',
+                        all_log[0]],
+                        return_output=True)
+                    from qd.qd_common import attach_log_parsing_result
+                    attach_log_parsing_result(info)
+            #all_info = [i for i in all_info if i['status'] in
+                #[AMLClient.status_running, AMLClient.status_queued]]
 
+            from qd.qd_common import print_job_infos
+            param_keys = ['data', 'net', 'expid']
+            for k in param_keys:
+                for info in all_info:
+                    if info is None:
+                        import ipdb;ipdb.set_trace(context=15)
+                    from qd.qd_common import dict_has_path
+                    if dict_has_path(info, 'cmd_param$param${}'.format(k)):
+                        v = info['cmd_param']['param'][k]
+                    else:
+                        v = None
+                    info[k] = v
+            print_job_infos(all_info)
+            return all_info
         else:
             r = create_aml_run(self.experiment, run_id)
+            logging.info(r.get_portal_url())
 
             if self.with_log:
                 all_log = r.get_all_logs()
-            from qd.qd_common import cmd_run
-            cmd_run(['tail', '-n', '100', all_log[0]])
-            logging.info(pformat(all_log))
+                if len(all_log) > 0:
+                    cmd_run(['tail', '-n', '100', all_log[0]])
+                    logging.info('log files: \n{}'.format(pformat(all_log)))
             print_run_info(r)
 
-    def submit(self, cmd):
-        script_params = {
-                '--code_path': self.code_path,
-                '--data_folder': self.data_folder,
-                '--model_folder': self.model_folder,
-                '--output_folder': self.output_folder,
-                '--command': cmd}
+    def resubmit(self, partial_id):
+        run = create_aml_run(self.experiment, partial_id)
+        run_info = parse_run_info(run)
+        self.submit(run_info['cmd'], run_info['num_gpu'])
+        run.cancel()
+
+    def submit(self, cmd, num_gpu=None):
+        if type(cmd) is str:
+            script_params = {
+                    '--code_path': self.code_path,
+                    '--data_folder': self.data_folder,
+                    '--model_folder': self.model_folder,
+                    '--output_folder': self.output_folder,
+                    '--command': cmd}
+        else:
+            assert isinstance(cmd, dict)
+            script_params = cmd
 
         from azureml.train.estimator import Estimator
         from azureml.train.dnn import PyTorch
@@ -143,36 +189,44 @@ class AMLClient(object):
 
         from azureml.core.runconfig import MpiConfiguration
         mpi_config = MpiConfiguration()
-        if self.num_gpu <= 4:
-            mpi_config.process_count_per_node = self.num_gpu
+        if num_gpu is None:
+            num_gpu = self.num_gpu
+        if num_gpu <= 4:
+            mpi_config.process_count_per_node = num_gpu
             node_count = 1
         else:
-            assert (self.num_gpu % 4) == 0
+            assert (num_gpu % 4) == 0
             mpi_config.process_count_per_node = 4
-            node_count = self.num_gpu // 4
+            node_count = num_gpu // 4
 
-        #estimator10 = PyTorch(
-                #source_directory='./src/qd/gpucluster',
-                #compute_target=self.compute_target,
-                #script_params=script_params,
-                #entry_script='aml_server.py',
-                #environment_definition=env,
-                #node_count=node_count,
-                #distributed_training=mpi_config,
-                #)
-
-        estimator10 = Estimator(
-                source_directory='./src/qd/gpucluster',
-                compute_target=self.compute_target,
-                script_params=script_params,
-                entry_script='aml_server.py',
-                environment_definition=env,
-                node_count=node_count,
-                distributed_training=mpi_config,
-                )
+        if self.use_custom_docker:
+            estimator10 = Estimator(
+                    source_directory=self.source_directory,
+                    compute_target=self.compute_target,
+                    script_params=script_params,
+                    entry_script=self.entry_script,
+                    environment_definition=env,
+                    node_count=node_count,
+                    distributed_training=mpi_config,
+                    )
+        else:
+            estimator10 = PyTorch(
+                    source_directory=self.source_directory,
+                    compute_target=self.compute_target,
+                    script_params=script_params,
+                    entry_script=self.entry_script,
+                    environment_definition=env,
+                    node_count=node_count,
+                    distributed_training=mpi_config,
+                    )
 
         r = self.experiment.submit(estimator10)
         logging.info('job id = {}, cmd = \n{}'.format(r.id, cmd))
+
+    def inject(self):
+        all_info = self.query()
+        from qd.db import update_cluster_job_db
+        update_cluster_job_db(all_info)
 
 def execute(task_type, **kwargs):
     if task_type in ['q', 'query']:
@@ -184,50 +238,37 @@ def execute(task_type, **kwargs):
             c = create_aml_client(**kwargs)
             c.query()
     elif task_type == 'submit':
-        assert len(kwargs['remainders']) == 1
-        submit_without_sync(cmd=kwargs['remainders'][0], **kwargs)
+        c = create_aml_client(**kwargs)
+        params = kwargs['remainders']
+        assert (len(params) % 2) == 0
+        cmd = OrderedDict([(params[i * 2], params[i * 2 + 1]) for i in
+            range(len(params) // 2)])
+        c.submit(cmd)
     elif task_type in ['a', 'abort']:
         c = create_aml_client(**kwargs)
         for v in kwargs['remainders']:
             v = v.strip('/')
             c.abort(v)
     elif task_type == 'blame':
+        raise NotImplementedError()
         blame(**kwargs)
-    elif task_type == 'ssh':
-        assert len(kwargs['remainders']) == 1
-        app_id = kwargs['remainders'][0]
-        p = create_multi_philly_client(**kwargs)
-        client, app_info = p.search_job_id(app_id)
-        cmd_run(app_info['ssh'].split(' '),
-                stdin=None,
-                shell=True)
-    elif task_type == 'sync':
-        p = create_philly_client(**kwargs)
-        p.sync_code('')
-    elif task_type == 'update_config':
-        p = create_philly_client(**kwargs)
-        p.update_config()
-    elif task_type == 'init':
-        ensure_init_config_files()
-        p = create_philly_client(**kwargs)
-        p.update_config()
-        p.sync_code('')
     elif task_type == 'resubmit':
         partial_ids = kwargs['remainders']
         del kwargs['remainders']
+        client = create_aml_client(**kwargs)
         if len(partial_ids) == 0:
-            multi_client = create_multi_philly_client(**kwargs)
-            multi_client.auto_resubmit()
+            client.auto_resubmit()
         else:
             for partial_id in partial_ids:
-                abort_submit(partial_id, **kwargs)
+                client.resubmit(partial_id)
     elif task_type == 'summary':
+        raise NotImplementedError()
         m = create_multi_philly_client()
         m.print_summary()
-    elif task_type == 'inject':
+    elif task_type in ['i', 'inject']:
         if not kwargs.get('with_log'):
             kwargs['with_log'] = True
-        m = create_multi_philly_client(**kwargs)
+        m = create_aml_client(**kwargs)
         m.inject()
     else:
         assert 'Unknown {}'.format(task_type)
@@ -237,9 +278,9 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Philly Interface')
     parser.add_argument('task_type',
             choices=['ssh', 'q', 'query', 'a', 'abort', 'submit', 'sync',
-                'update_config', 'gc', 'blame', 'init', 'resubmit',
-                'summary', 'inject'])
-    parser.add_argument('-wl', '--with_log', default=False, action='store_true')
+                'update_config', 'gc', 'blame', 'resubmit',
+                'summary', 'i', 'inject'])
+    parser.add_argument('-wl', '--with_log', default=True, action='store_true')
     parser.add_argument('-p', '--param', help='parameter string, yaml format',
             type=str)
     parser.add_argument('-c', '--cluster', default=argparse.SUPPRESS, type=str)

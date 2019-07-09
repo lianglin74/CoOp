@@ -118,6 +118,37 @@ def ensure_ssh_server_running():
     else:
         logging.info('unknown ssh server satus: \n{}'.format(y))
 
+def parse_gpu_usage_dict(result):
+    import re
+    used = []
+    p = '^\|.* ([0-9]*)MiB \/ *([0-9]*)MiB *\| *([0-9]*)\%.*Default \|$'
+    for line in result.split('\n'):
+        line = line.strip()
+        r = re.match(p, line)
+        if r != None:
+            u = [int(g) for g in r.groups()]
+            names = ['mem_used', 'mem_total', 'gpu_util']
+            used.append({n: v for n, v in zip(names, u)})
+    return used
+
+def monitor():
+    while True:
+        cmd_result = cmd_run(['nvidia-smi'], return_output=True).decode()
+        gpu_result = parse_gpu_usage_dict(cmd_result)
+        logging.info('{}'.format(gpu_result))
+        import time
+        time.sleep(60 * 30) # every 30 minutes
+
+def terminate_monitoring_process(p):
+    p.terminate()
+    p.join()
+
+def launch_monitoring_process():
+    from multiprocessing import Process
+    p = Process(target=monitor)
+    p.start()
+    return p
+
 def wrap_all(code_zip, code_root,
         data_folder, model_folder, output_folder, command):
     cmd_run(['ibstatus'])
@@ -127,7 +158,11 @@ def wrap_all(code_zip, code_root,
     cmd_run(['df', '-h'])
     cmd_run(['ls', '/dev'])
 
+    if get_mpi_rank() == 0:
+        p = launch_monitoring_process()
+
     lock_fd = acquireLock()
+    logging.info('got the lock')
     # start the ssh server
     if not op.isdir(code_root):
         ensure_directory(code_root)
@@ -158,12 +193,18 @@ def wrap_all(code_zip, code_root,
     ensure_ssh_server_running()
     releaseLock(lock_fd)
 
+    # after the code is compiled, let's check the lib version
+    cmd_run(['pip', 'freeze'])
     logging.info(command)
     if type(command) is str:
         command = list(command.split(' '))
 
     if len(command) > 0:
-        cmd_run(command, working_directory=code_root)
+        cmd_run(command, working_directory=code_root,
+                succeed=True)
+
+    if get_mpi_rank() == 0:
+        terminate_monitoring_process(p)
 
 def get_mpi_local_rank():
     return int(os.environ.get('OMPI_COMM_WORLD_LOCAL_RANK', '0'))
@@ -192,7 +233,7 @@ def parse_args():
     args = parser.parse_args()
     return args
 
-def run_in_philly():
+def run():
     from pprint import pformat
     logging.info(pformat(sys.argv))
     dict_param = vars(parse_args())
@@ -213,15 +254,7 @@ def run_in_philly():
             dict_param['data_folder'], dict_param['model_folder'],
             dict_param['output_folder'], dict_param['command'])
 
-    # the permission should be changed because the output is there, but the
-    # permission is for the docker job only and teh philly-fs cannot delete or
-    # change it
-    #if get_mpi_rank() == 0:
-        #cmd_run(['chmod', '777',
-            #dict_param['output_folder'],
-            #'-R'], succeed=False)
-
 if __name__ == '__main__':
     init_logging()
     #ensure_ssh_server_running()
-    run_in_philly()
+    run()

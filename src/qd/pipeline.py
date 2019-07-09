@@ -197,6 +197,13 @@ def except_to_update_fixed_jitter(param):
     else:
         return True
 
+def except_to_update_lr_policy(param):
+    if dict_has_path(param, 'SOLVER$LR_POLICY'):
+        value = dict_get_path_value(param, 'SOLVER$LR_POLICY')
+        return value == 'multistep'
+    else:
+        return True
+
 def update_parameters(param):
     default_param = {
             'max_iter': 10000,
@@ -241,7 +248,6 @@ def update_parameters(param):
                 except_to_update_classification_loss),
             ('min_size_range32', 'Min'),
             ('with_dcn', ('DCN', None)),
-            ('sync_bn', ('SyncBN', None)),
             ('opt_cls_only', ('ClsOnly', None)),
             ('MODEL$FPN$USE_GN', ('FpnGN', None)),
             ('bn_momentum', 'BNMoment'),
@@ -254,6 +260,12 @@ def update_parameters(param):
             ('INPUT$USE_FIXED_SIZE_AUGMENTATION', ['FSize', None]),
             ('dataset_type', ''),
             ('step_lr', 'StepLR'),
+            ('MODEL$RPN$USE_BN', ('RpnBN', None)),
+            ('MODEL$ROI_BOX_HEAD$USE_GN', ('HeadGN', None)),
+            ('sync_bn', ('SyncBN', None)),
+            ('SOLVER$LR_POLICY', 'LRP', except_to_update_lr_policy),
+            ('SOLVER$WARMUP_ITERS', 'Warm'),
+            ('MODEL$BACKBONE$FREEZE_CONV_BODY_AT', 'Freeze'),
             ]
 
     non_expid_impact_keys = ['data', 'net', 'expid_prefix',
@@ -271,6 +283,7 @@ def update_parameters(param):
             'expand_label_det',
             'SOLVER$CHECKPOINT_PERIOD',
             'yolo_train_session_param$display',
+            'INPUT$MIN_SIZE_TEST',
             ]
 
     if param['pipeline_type'] == 'MaskRCNNPipeline':
@@ -298,7 +311,7 @@ def update_parameters(param):
                 pk = pk.replace('/', '.')
             elif type(pk) in [list, tuple]:
                 pk = '.'.join(map(str, pk))
-            if type(v) is tuple:
+            if type(v) is tuple or type(v) is list:
                 assert pk in [True, False]
                 assert len(v) == 2
                 if pk and v[0]:

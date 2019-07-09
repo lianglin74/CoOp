@@ -7,6 +7,9 @@ from qd.qd_common import load_from_yaml_str
 from qd.qd_common import url_to_str
 from qd.qd_common import dict_update_nested_dict
 from qd.qd_common import print_table
+from qd.qd_common import decode_general_cmd
+from qd.qd_common import print_job_infos
+from qd.qd_common import attach_log_parsing_result
 from qd.cloud_storage import create_cloud_storage
 import logging
 import simplejson as json
@@ -20,7 +23,6 @@ import copy
 import os
 from collections import OrderedDict
 import glob
-from dateutil.parser import parse
 from deprecated import deprecated
 from qd.qd_common import get_file_size
 
@@ -205,12 +207,6 @@ def create_multi_philly_client(**kwargs):
     dict_update_nested_dict(param, kwargs)
     return MultiPhillyVC(**param)
 
-def decode_extra_param(extraParam):
-    re_result = re.match('.*python scripts/.*\.py -bp (.*)', extraParam)
-    if re_result and len(re_result.groups()) == 1:
-        ps = load_from_yaml_str(base64.b64decode(re_result.groups()[0]))
-        return ps
-
 def get_http_prefix(vc_type):
     if vc_type == 'ap':
         return 'http://phillyonap'
@@ -218,45 +214,6 @@ def get_http_prefix(vc_type):
         return 'https://philly'
     else:
         return 'https://philly'
-
-def attach_log_parsing_result(job_info):
-    logs = job_info['latest_log']
-    all_log = logs.split('\n')
-    for log in reversed(all_log):
-        pattern = '.*solver\.cpp:[0-9]*] Iteration [0-9]* \(.* iter\/s, ([0-9\.]*s\/100) iters, left: ([0-9\.]*h)\), loss = [0-9\.]*'
-        result = re.match(pattern, log)
-        if result and result.groups():
-            job_info['speed'], job_info['left'] = result.groups()
-            del job_info['latest_log']
-            return
-
-        pattern = '(.*): .*: eta: (.*) iter: [0-9]*  speed: ([0-9\.]*).*'
-        # 2019-05-26T22:36:42.365Z: [1,0]<stdout>:2019-05-26 22:36:42,364.364 trainer.py:116   do_train(): eta: 5 days, 2:12:43  iter: 277800  speed: 63.3 images/sec  loss: 0.4990 (0.5110)  loss_box_reg: 0.1158 (0.1131)  loss_classifier: 0.2901 (0.3015)  loss_objectness: 0.0528 (0.0543)  loss_rpn_box_reg: 0.0336 (0.0420)  time: 0.2521 (0.2739)  data: 0.0035 (0.0119)  lr: 0.020000  max mem: 2107
-        result = re.match(pattern, log)
-        if result and result.groups():
-            log_time, left, speed = result.groups()
-            job_info['speed'] = speed
-            from datetime import datetime, timezone
-            now = datetime.now(timezone.utc)
-            log_time = parse(log_time)
-            delay = (now - log_time).total_seconds()
-            d, h = parse_eta_in_hours(left)
-            job_info['left'] = '{}-{:.1f}h({:.1f}s)'.format(d, h, delay)
-            del job_info['latest_log']
-            return
-    del job_info['latest_log']
-
-def parse_eta_in_hours(left):
-    pattern = '(?:([0-9]*) day[s]?, )?([0-9]*):([0-9]*):([0-9]*)'
-    result = re.match(pattern, left)
-    if result:
-        gs = result.groups()
-        gs = [float(g) if g else 0 for g in gs]
-        assert int(gs[0]) == gs[0]
-        days = int(gs[0])
-        hours = gs[1] + gs[2] / 60. + gs[3] / 3600
-        return days, hours
-    return -1, -1
 
 def decode_config_extra_param(extra_param):
     return load_from_yaml_str(base64.b64decode(extra_param))
@@ -664,7 +621,7 @@ class PhillyVC(object):
 
         status = json.loads(self.philly_job_status(job_id))
 
-        meta = decode_extra_param(json.loads(self.philly_job_meta(job_id))['cmd'])
+        meta = decode_general_cmd(json.loads(self.philly_job_meta(job_id))['cmd'])
         logging.info(pformat(meta))
 
         logging.info('satus = {}'.format(status['status']))
@@ -960,23 +917,8 @@ class MultiPhillyVC(object):
 
     def inject(self):
         all_job_info = self.query()
-
-        from qd.db import create_annotation_db
-        c = create_annotation_db()
-        existing_job_infos = list(c.iter_phillyjob())
-        existing_job_appID = set([j['appID'] for j in existing_job_infos])
-        # we assume the appID is unique across multiple VCs
-        assert len(existing_job_appID) == len(existing_job_infos)
-
-        for job_info in all_job_info:
-            if job_info['appID'] in existing_job_appID:
-                c.update_phillyjob(query={'appID': job_info['appID']},
-                        update=job_info)
-                existing_job_appID.remove(job_info['appID'])
-            else:
-                c.insert_phillyjob(**job_info)
-        for j in existing_job_appID:
-            c.remove_phillyjob(appID=j)
+        from qd.db import update_cluster_job_db
+        update_cluster_job_db(all_job_info)
 
     def print_summary(self):
         all_summary = [c.get_summary() for c in self.clients]
@@ -1190,7 +1132,7 @@ def parse_args():
     parser.add_argument('task_type',
             choices=['ssh', 'q', 'query', 'a', 'abort', 'submit', 'sync',
                 'update_config', 'gc', 'blame', 'init', 'resubmit',
-                'summary', 'inject'])
+                'summary', 'i', 'inject'])
     parser.add_argument('-wl', '--with_log', default=False, action='store_true')
     parser.add_argument('-p', '--param', help='parameter string, yaml format',
             type=str)
@@ -1221,31 +1163,6 @@ def ensure_init_config_files():
     config_file = './aux_data/configs/philly_vc.yaml'
     config_template = './aux_data/configs/philly_vc.template.yaml'
     infinite_check(config_file, config_template)
-
-def print_job_infos(all_job_info):
-    all_key = [
-            'cluster',
-            'status', 'appID-s', 'elapsedTime',
-            'retries', 'preempts', 'mem_used', 'gpu_util',
-            'speed', 'left']
-    keys = ['data', 'net', 'expid']
-    meta_keys = ['num_gpu']
-    all_key.extend(keys)
-    all_key.extend(meta_keys)
-
-    # find the keys whose values are the same
-    def all_equal(x):
-        assert len(x) > 0
-        return all(y == x[0] for y in x[1:])
-
-    if len(all_job_info) > 1:
-        equal_keys = [k for k in all_key if all_equal([j.get(k) for j in all_job_info])]
-        if len(equal_keys) > 0:
-            logging.info('equal key values for all jobs')
-            print_table(all_job_info[0:1], all_key=equal_keys)
-        all_key = [k for k in all_key if not all_equal([j.get(k) for j in all_job_info])]
-
-    print_table(all_job_info, all_key=all_key)
 
 def parse_job_command(job_info):
     config_extra_param = job_info['meta']['extra_param']
@@ -1323,7 +1240,7 @@ def execute(task_type, **kwargs):
     elif task_type == 'summary':
         m = create_multi_philly_client()
         m.print_summary()
-    elif task_type == 'inject':
+    elif task_type in ['i', 'inject']:
         if not kwargs.get('with_log'):
             kwargs['with_log'] = True
         m = create_multi_philly_client(**kwargs)

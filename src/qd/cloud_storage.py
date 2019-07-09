@@ -10,8 +10,10 @@ import logging
 from tqdm import tqdm
 logger.propagate = False
 
-def create_cloud_storage(x):
-    c = CloudStorage(load_from_yaml_file('./aux_data/configs/{}blob_account.yaml'.format(x)))
+def create_cloud_storage(x=None, config_file=None):
+    if config_file is None:
+        config_file = './aux_data/configs/{}blob_account.yaml'.format(x)
+    c = CloudStorage(load_from_yaml_file(config_file))
     return c
 
 def azcopy_upload(src, dest_url, dest_key):
@@ -64,19 +66,14 @@ def blob_upload(src, dst):
     c.az_upload2(src, dst)
 
 def get_root_all_full_expid(full_expid_prefix, all_blob_name):
-    all_comp_prefix = full_expid_prefix.split('/')
-    def parse_blob_root_folder(b):
-        all_comp_b = b.split('/')
-        for i in range(len(all_comp_b)):
-            if all_comp_b[i] != all_comp_prefix[i]:
-                return all_comp_b[i], i
-        raise Exception('unknown full expid {}, {}'.format(b, full_expid_prefix))
-    all_full_expid_idx = [parse_blob_root_folder(b) for b in all_blob_name]
-    if len(all_full_expid_idx) > 1:
-        assert all(i == all_full_expid_idx[0][1] for _, i in all_full_expid_idx[1:])
-    idx = all_full_expid_idx[0][1]
-    root = '/'.join(all_comp_prefix[:idx])
-    all_full_expid = set([x for x, _ in all_full_expid_idx])
+    # full_expid_prefix can be the folder of full_expid; or with some prefix so
+    # that we can filter
+    if all(b.startswith(full_expid_prefix + '/') for b in all_blob_name):
+        root = full_expid_prefix
+    else:
+        root = op.dirname(full_expid_prefix)
+    all_full_expid = set(b[len(root) + 1:].split('/')[0] for b in
+            all_blob_name if b.startswith(root))
     return root, all_full_expid
 
 def blob_download_all_qdoutput(prefix, c=None):

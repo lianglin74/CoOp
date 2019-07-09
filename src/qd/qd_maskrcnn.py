@@ -63,13 +63,17 @@ def merge_dict_to_cfg(dict_param, cfg):
     trim_dict(trimed_param, cfg)
     cfg.merge_from_other_cfg(CfgNode(trimed_param))
 
-def convert_to_sync_bn(module, norm=torch.nn.SyncBatchNorm):
+from qd.layers import ensure_shape_bn_layer
+
+def convert_to_sync_bn(module, norm=torch.nn.SyncBatchNorm,
+        is_pre_linear=False):
     module_output = module
     info = {'num_convert_bn': 0, 'num_convert_gn': 0}
     if isinstance(module,
-            maskrcnn_benchmark.layers.batch_norm.FrozenBatchNorm2d):
-        module_output = norm(
-                module.bias.size())
+            maskrcnn_benchmark.layers.batch_norm.FrozenBatchNorm2d) or \
+        isinstance(module, torch.nn.BatchNorm2d):
+        module_output = ensure_shape_bn_layer(norm, module.bias.size(),
+                is_pre_linear)
         module_output.weight.data = module.weight.data.clone().detach()
         module_output.bias.data = module.bias.data.clone().detach()
 
@@ -78,16 +82,19 @@ def convert_to_sync_bn(module, norm=torch.nn.SyncBatchNorm):
         info['num_convert_bn'] += 1
     elif isinstance(module, torch.nn.GroupNorm):
         # gn has no running mean and running var
-        module_output = norm(
-                module.bias.size())
+        module_output = ensure_shape_bn_layer(norm, module.bias.size(),
+                is_pre_linear)
         module_output.weight.data = module.weight.data.clone().detach()
         module_output.bias.data = module.bias.data.clone().detach()
         info['num_convert_gn'] += 1
+    # if the previous is a linear layer, we will not convert it to BN
+    is_pre_linear = False
     for name, child in module.named_children():
-        child, child_info = convert_to_sync_bn(child, norm)
+        child, child_info = convert_to_sync_bn(child, norm, is_pre_linear)
         module_output.add_module(name, child)
         for k, v in child_info.items():
             info[k] += v
+        is_pre_linear = isinstance(child, torch.nn.Linear)
     del module
     return module_output, info
 
@@ -118,6 +125,9 @@ def train(cfg, local_rank, distributed, log_step=20, sync_bn=False,
         if get_mpi_size() == 1:
             norm = torch.nn.BatchNorm2d
         else:
+            # SyncBatchNorm only works in distributed env. We have not tested
+            # the same code path if size == 1,e.g. initialize parallel group
+            # also when size = 1
             norm = torch.nn.SyncBatchNorm
         model, convert_info = convert_to_sync_bn(model, norm)
         logging.info(pformat(convert_info))
@@ -125,6 +135,7 @@ def train(cfg, local_rank, distributed, log_step=20, sync_bn=False,
         update_bn_momentum(model, bn_momentum)
     if opt_cls_only:
         lock_except_classifier(model)
+    logging.info(model)
     device = torch.device(cfg.MODEL.DEVICE)
     model.to(device)
 
@@ -166,7 +177,6 @@ def train(cfg, local_rank, distributed, log_step=20, sync_bn=False,
     checkpointer = DetectronCheckpointer(
         cfg, model, optimizer, scheduler, output_dir, save_to_disk
     )
-
     extra_checkpoint_data = checkpointer.load(cfg.MODEL.WEIGHT,
             model_only=True)
 
@@ -176,6 +186,15 @@ def train(cfg, local_rank, distributed, log_step=20, sync_bn=False,
         hvd.broadcast_optimizer_state(optimizer, root_rank=0)
 
     arguments.update(extra_checkpoint_data)
+    if arguments['iteration'] != 0:
+        old_last_epoch = scheduler.last_epoch
+        # in the trainer, it first call step and then do the update. Thus, -1
+        new_last_epoch = arguments['iteration'] - 1
+        logging.info('Resume from a non-0 iteration. Resetting the last_epoch'
+                ' of scheduler from {} to {}'.format(old_last_epoch,
+                    new_last_epoch))
+        scheduler.last_epoch = new_last_epoch
+
 
     data_loader = make_data_loader(
         cfg,
@@ -663,6 +682,8 @@ class MaskRCNNPipeline(ModelPipeline):
             cc.append('{}'.format(cfg.MODEL.ROI_BOX_HEAD.CLASSIFICATION_ACTIVATE))
         if self.predict_threshold is not None:
             cc.append('th{}'.format(self.predict_threshold))
+        if cfg.INPUT.MIN_SIZE_TEST != 800:
+            cc.append('testInputSize{}'.format(cfg.INPUT.MIN_SIZE_TEST))
 
     def get_old_check_point_file(self, curr):
         return op.join(self.output_folder, 'snapshot',
@@ -696,7 +717,8 @@ class MaskRCNNPipeline(ModelPipeline):
         model = build_detection_model(cfg)
         if self.sync_bn:
             # need to convert to BN
-            model, convert_info = convert_to_sync_bn(model, torch.nn.BatchNorm2d)
+            model, convert_info = convert_to_sync_bn(model,
+                    torch.nn.BatchNorm2d)
             logging.info(pformat(convert_info))
         model.to(cfg.MODEL.DEVICE)
         checkpointer = DetectronCheckpointer(cfg, model,

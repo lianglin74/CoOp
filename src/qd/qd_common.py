@@ -1605,6 +1605,8 @@ def dict_has_path(d, p):
     cur_dict = d
     while True:
         if len(ps) > 0:
+            if not isinstance(cur_dict, dict):
+                return False
             if ps[0] in cur_dict:
                 cur_dict = cur_dict[ps[0]]
                 ps = ps[1:]
@@ -1749,6 +1751,131 @@ def is_hvd_initialized():
         return False
     except ValueError:
         return False
+
+def get_user_name():
+    import getpass
+    return getpass.getuser()
+
+def decode_general_cmd(extraParam):
+    re_result = re.match('.*python (?:scripts|src)/.*\.py -bp (.*)', extraParam)
+    if re_result and len(re_result.groups()) == 1:
+        ps = load_from_yaml_str(base64.b64decode(re_result.groups()[0]))
+        return ps
+
+def print_job_infos(all_job_info):
+    all_key = [
+            'cluster',
+            'status', 'appID-s', 'elapsedTime',
+            'retries', 'preempts', 'mem_used', 'gpu_util',
+            'speed', 'left']
+    keys = ['data', 'net', 'expid']
+    meta_keys = ['num_gpu']
+    all_key.extend(keys)
+    all_key.extend(meta_keys)
+
+    # find the keys whose values are the same
+    def all_equal(x):
+        assert len(x) > 0
+        return all(y == x[0] for y in x[1:])
+
+    if len(all_job_info) > 1:
+        equal_keys = [k for k in all_key if all_equal([j.get(k) for j in all_job_info])]
+        if len(equal_keys) > 0:
+            logging.info('equal key values for all jobs')
+            print_table(all_job_info[0:1], all_key=equal_keys)
+        all_key = [k for k in all_key if not all_equal([j.get(k) for j in all_job_info])]
+
+    print_table(all_job_info, all_key=all_key)
+
+def parse_eta_in_hours(left):
+    pattern = '(?:([0-9]*) day[s]?, )?([0-9]*):([0-9]*):([0-9]*)'
+    result = re.match(pattern, left)
+    if result:
+        gs = result.groups()
+        gs = [float(g) if g else 0 for g in gs]
+        assert int(gs[0]) == gs[0]
+        days = int(gs[0])
+        hours = gs[1] + gs[2] / 60. + gs[3] / 3600
+        return days, hours
+    return -1, -1
+
+def attach_philly_maskrcnn_log_if_is(all_log, job_info):
+    for log in reversed(all_log):
+        # Philly, maskrcnn-benchmark log
+        pattern = '(.*): .*: eta: (.*) iter: [0-9]*  speed: ([0-9\.]*).*'
+        result = re.match(pattern, log)
+        if result and result.groups():
+            log_time, left, speed = result.groups()
+            job_info['speed'] = speed
+            from datetime import datetime, timezone
+            now = datetime.now(timezone.utc)
+            from dateutil.parser import parse
+            log_time = parse(log_time)
+            job_info['log_time'] = log_time
+            delay = (now - log_time).total_seconds()
+            d, h = parse_eta_in_hours(left)
+            job_info['left'] = '{}-{:.1f}h({:.1f}s)'.format(d, h, delay)
+            return True
+    return False
+
+def attach_aml_maskrcnn_log_if_is(all_log, job_info):
+    for log in reversed(all_log):
+        pattern = r'(.*),.* trainer\.py.*do_train\(\): eta: (.*) iter: [0-9]*  speed: ([0-9\.]*).*'
+        result = re.match(pattern, log)
+        if result and result.groups():
+            log_time, left, speed = result.groups()
+            job_info['speed'] = speed
+            from datetime import datetime
+            now = datetime.now()
+            from dateutil.parser import parse
+            log_time = parse(log_time)
+            job_info['log_time'] = log_time
+            delay = (now - log_time).total_seconds()
+            d, h = parse_eta_in_hours(left)
+            job_info['left'] = '{}-{:.1f}h({:.1f}s)'.format(d, h, delay)
+            return True
+    return False
+
+def attach_philly_caffe_log_if_is(all_log, job_info):
+    for log in reversed(all_log):
+        # philly, caffe log
+        pattern = '.*solver\.cpp:[0-9]*] Iteration [0-9]* \(.* iter\/s, ([0-9\.]*s\/100) iters, left: ([0-9\.]*h)\), loss = [0-9\.]*'
+        result = re.match(pattern, log)
+        if result and result.groups():
+            job_info['speed'], job_info['left'] = result.groups()
+            return True
+    return False
+
+def attach_gpu_utility_from_log(all_log, job_info):
+    for log in reversed(all_log):
+        # philly, caffe log
+        pattern = '.*aml_server.py:.*monitor.*\[(.*)\]'
+        result = re.match(pattern, log)
+        if result and result.groups():
+            all_info = json.loads('[{}]'.format(result.groups()[0].replace('\'', '\"')))
+            min_gpu_mem = min([i['mem_used'] for i in all_info])
+            max_gpu_mem = max([i['mem_used'] for i in all_info])
+            min_gpu_util = min([i['gpu_util'] for i in all_info])
+            max_gpu_util = max([i['gpu_util'] for i in all_info])
+            # GB
+            job_info['mem_used'] = '{}-{}'.format(round(min_gpu_mem/1024, 1),
+                    round(max_gpu_mem/1024., 1))
+            job_info['gpu_util'] = '{}-{}'.format(min_gpu_util, max_gpu_util)
+            return True
+    return False
+
+def attach_log_parsing_result(job_info):
+    # run unit test if modified
+    logs = job_info['latest_log']
+    all_log = logs.split('\n')
+    del job_info['latest_log']
+    attach_gpu_utility_from_log(all_log, job_info)
+    if attach_philly_maskrcnn_log_if_is(all_log, job_info):
+        return
+    if attach_aml_maskrcnn_log_if_is(all_log, job_info):
+        return
+    if attach_philly_caffe_log_if_is(all_log, job_info):
+        return
 
 def print_offensive_folder(folder):
     all_folder = os.listdir(folder)
