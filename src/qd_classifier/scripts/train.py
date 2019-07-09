@@ -108,7 +108,6 @@ def main(args):
 
     criterion = get_criterion(train_dataset.is_multi_label(), args.neg_weight_file, class_weights=class_weights)
     optimizer = get_optimizer(model, args)
-    scheduler = get_scheduler(optimizer, args)
     accuracy = get_accuracy_calculator(multi_label=train_dataset.is_multi_label())
 
     best_prec1 = 0
@@ -121,11 +120,18 @@ def main(args):
             args.start_epoch = checkpoint['epoch']
             load_model_state_dict(model, checkpoint['state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer'])
+            for state in optimizer.state.values():
+                for k, v in state.items():
+                    if torch.is_tensor(v):
+                        state[k] = v.cuda()
             best_prec1 = checkpoint['best_prec1']
             logger.info("=> loaded checkpoint '{}' (epoch {})"
                   .format(args.resume, checkpoint['epoch']))
         else:
             logger.info("=> no checkpoint found at '{}'".format(args.resume))
+
+    # create schedule after resume to properly set start_epoch for learning rate
+    scheduler = get_scheduler(optimizer, args)
 
     if args.custom_pretrained:
         assert(not args.resume and os.path.isfile(args.custom_pretrained))

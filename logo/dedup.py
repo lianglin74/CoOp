@@ -8,7 +8,7 @@ from qd.tsv_io import TSVDataset, TSVFile, tsv_reader
 from qd.qd_common import write_to_yaml_file
 from qd_classifier.scripts import extract
 
-def dedup(model_pth, dataset_name, split, version=-1):
+def dedup(model_pth, dataset_name, split, version=-1, similar_thres=0.7, verbal=False):
     assert(op.isfile(model_pth))
     outdir = op.join(op.dirname(model_pth), 'eval')
     fea_file = op.join(outdir, "{}.{}.{}.{}.features.tsv".format(op.basename(model_pth), dataset_name, split, version))
@@ -20,10 +20,33 @@ def dedup(model_pth, dataset_name, split, version=-1):
         label2rows[label].append(row_idx)
 
     fea_tsv = TSVFile(fea_file)
+    dup_imgkeys = set()
+    generate_info = []
     for label, row_indices in label2rows.items():
         features = [fea_tsv.seek(i)[-1] for i in row_indices]
-        is_dup = pairwise_dedup(features, 0.9)
-        print(label, len(is_dup), sum(is_dup))
+        dup_flags = pairwise_dedup(features, similar_thres)
+        for i in range(len(features)):
+            if dup_flags[i] != i:
+                img1, str_bbox1 = fea_tsv.seek(row_indices[i])[:-1]
+                img2, str_bbox2 = fea_tsv.seek(row_indices[dup_flags[i]])[:-1]
+                assert(img1 != img2)
+                dup_imgkeys.add(img1)
+                generate_info.append(["dedup", img1, str_bbox1, img2, str_bbox2])
+                if verbal:
+                    print("detect duplication: {} {} and {} {}".format(img1, str_bbox1, img2, str_bbox2))
+
+    if verbal:
+        num_total_dups = len(dup_imgkeys)
+        print(len(fea_tsv), num_total_dups, float(num_total_dups) / len(fea_tsv))
+
+    dataset = TSVDataset(dataset_name)
+    def gen_new_labels():
+        for imgkey, str_rects in dataset.iter_data(split, t='label', version=version):
+            if imgkey in dup_imgkeys:
+                yield imgkey, "[]"
+            else:
+                yield imgkey, str_rects
+    dataset.update_data(gen_new_labels(), split, t='label', generate_info=generate_info)
 
 def extract_img_feature(model_pth, outfile, dataset_name, split, version):
     data_yaml_path = outfile + ".datacfg.yaml"

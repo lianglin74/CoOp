@@ -14,7 +14,6 @@ import matplotlib.pyplot as plt
 import _init_paths
 from logo.classifier import CropTaggingWrapper
 from logo import constants
-from evaluation.visual import get_wrong_pred, visualize_fp_fn_result
 from evaluation.utils import is_valid_bbox
 
 from qd.qd_common import init_logging, worth_create, read_to_buffer, ensure_directory, json_dump
@@ -36,7 +35,7 @@ dataset_cfgs = [
 ]
 
 # rootpath = "/raid/data/brand_output/"
-rootpath = "/mnt/vigstandard/xiaowh/brand_output/"
+rootpath = "brand_output/"
 iou_thres = [0.5]
 
 det1_expid = "brand1048_darknet19_448_B_noreorg_rotate10_Init.best_model8022_extraConvKernel.1.3.1_TsvBoxSamples50ExtraConvGroups1_4_1EffectBatchSize128"
@@ -103,6 +102,7 @@ def evaluate_two_stage(det_expid, tag_expid):
 
 def evaluate_detector(det_expid):
     from qd.yolotrain import yolo_predict
+    from evaluation.visual import get_wrong_pred, visualize_fp_fn_result
 
     outdir = os.path.join(rootpath, "{}/deteval".format(det_expid))
     ensure_directory(outdir)

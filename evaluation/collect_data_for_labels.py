@@ -195,33 +195,74 @@ def url_bboxes_to_tsvdataset():
         outpath = op.join(tsvdataset_dir, split + ".tsv")
         urls_to_img_file_parallel(gen_in_rows(split2fpath[split]), 2, [0, 1], outpath)
 
-def draw_box_for_missing(dataset_name, split, outdir, version=-1):
+def draw_box_for_missing(phase, dataset_name, split, outdir, version=-1):
     from qd.process_tsv import upload_image_to_blob
+    from qd.qd_common import calculate_iou
 
-    upload_image_to_blob(dataset_name, split)
+    # upload_image_to_blob(dataset_name, split)
     dataset = TSVDataset(dataset_name)
+    log_file = op.join(outdir, "task_log.tsv")
 
-    def gen_labels():
-        url_iter = dataset.iter_data(split, t='key.url', version=version)
-        label_iter = dataset.iter_data(split, t='label', version=version)
-        for url_parts, label_parts in zip(url_iter, label_iter):
-            assert(url_parts[0] == label_parts[0])
-            yield label_parts[0], label_parts[1], url_parts[1]
+    if phase == "upload":
+        def gen_labels():
+            url_iter = dataset.iter_data(split, t='key.url', version=version)
+            label_iter = dataset.iter_data(split, t='label', version=version)
+            for url_parts, label_parts in zip(url_iter, label_iter):
+                assert(url_parts[0] == label_parts[0])
+                yield label_parts[0], label_parts[1], url_parts[1]
 
-    label_file = op.join(outdir, "labels.tsv")
-    tsv_writer(gen_labels(), label_file)
-    upload_dir = op.join(outdir, "upload")
-    ensure_directory(upload_dir)
-    task_files = generate_task_files("DrawBox", label_file, None, op.join(upload_dir, "relabel"),
-                        None, num_tasks_per_hit=10, num_hp_per_hit=0,
-                        num_hits_per_file=2000)
+        label_file = op.join(outdir, "labels.tsv")
+        tsv_writer(gen_labels(), label_file)
+        upload_dir = op.join(outdir, "upload")
+        ensure_directory(upload_dir)
+        task_files = generate_task_files("DrawBox", label_file, None, op.join(upload_dir, "relabel"),
+                            None, num_tasks_per_hit=10, num_hp_per_hit=0,
+                            num_hits_per_file=2000)
 
-    # task_group_id = 91761
-    # log_file = "task_log.tsv"
-    # with open(op.join(outdir, log_file), 'a') as fp:
-    #     for task_file in task_files:
-    #         task_id = UhrsTaskManager.upload_task(task_group_id, task_file, num_judgment=1)
-    #         fp.write("{}\t{}\t{}\n".format(task_group_id, task_id, task_file))
+        task_group_id = 91761
+        with open(log_file, 'a') as fp:
+            for task_file in task_files:
+                task_id = UhrsTaskManager.upload_task(task_group_id, task_file, num_judgment=1)
+                fp.write("{}\t{}\t{}\n".format(task_group_id, task_id, task_file))
+
+    if phase == "download":
+        download_dir = op.join(outdir, "download")
+        ensure_directory(download_dir)
+        res_files = []
+        # for parts in tsv_reader(log_file):
+        #     task_group_id = int(parts[0])
+        #     task_id = int(parts[1])
+        #     fname = op.basename(parts[2])
+        #     if UhrsTaskManager.is_task_completed(task_group_id, task_id):
+        #         fpath = op.join(download_dir, fname)
+        #         print(fpath)
+        #         UhrsTaskManager.download_task(task_group_id, task_id, fpath)
+        #         res_files.append(fpath)
+
+        res_files = [op.join(download_dir, fname) for fname in os.listdir(download_dir)]
+        url_ans_tsv = op.join(outdir, "url_bboxes.tsv")
+        url2ans = analyze_draw_box_task(res_files, url_ans_tsv)
+
+        key_url_iter = dataset.iter_data(split, t="key.url")
+        key_rects_iter = dataset.iter_data(split, t='label', version=version)
+        generate_info = []
+        def gen_new_labels():
+            for (key, url), (key1, str_rects) in zip(key_url_iter, key_rects_iter):
+                assert(key == key1)
+                old_rects = json.loads(str_rects)
+                new_rects = url2ans[url]
+                for bi in old_rects:
+                    is_found = False
+                    for bj in new_rects:
+                        if bi["class"] == bj["class"] and calculate_iou(bi["rect"], bj["rect"]) > 0.5:
+                            is_found = True
+                            break
+                    if not is_found:
+                        generate_info.append(["remove", key, json.dumps(bi)])
+                yield key, json_dump(new_rects)
+
+        dataset.update_data(gen_new_labels(), split, t='label', generate_info=generate_info)
+
 
 if __name__ == "__main__":
     from qd.qd_common import init_logging
@@ -229,4 +270,5 @@ if __name__ == "__main__":
     # scrape_keywords_to_search_images()
     # url_bboxes_to_tsvdataset()
     outdir = "/mnt/ivm_server2_od/xiaowh/vendor/logo200/relabel/"
-    draw_box_for_missing("logo200", "test", outdir)
+    # outdir = "//ivm-server2/IRIS/OD/xiaowh/vendor/logo200/relabel/"
+    draw_box_for_missing("download", "logo200", "test", outdir)
