@@ -13,6 +13,7 @@ import numpy as np
 import logging
 import glob
 import re
+import tqdm
 try:
     from itertools import izip as zip
 except ImportError:
@@ -1748,6 +1749,31 @@ def is_hvd_initialized():
         return False
     except ValueError:
         return False
+
+def print_offensive_folder(folder):
+    all_folder = os.listdir(folder)
+    name_to_size = {}
+    for i, f in enumerate(tqdm(all_folder)):
+        sec = 60 * 10
+        f = op.join(folder, f)
+        size = run_if_not_cached(get_folder_size, f, sec)
+        name_to_size[f] = size
+        logging.info('{}: {}'.format(f, size))
+    logging.info(', '.join([op.basename(n) for n, s in name_to_size.items() if
+        s < 0]))
+
+def get_folder_size(f, sec):
+    cmd = ['du', '--max-depth=0', f]
+    import subprocess
+    from subprocess import check_output
+    try:
+        out = check_output(cmd, timeout=sec)
+    except subprocess.TimeoutExpired:
+        logging.info('{}'.format(f))
+        return -1
+    out = out.decode()
+    size = [x.strip() for x in out.split('\t')][0]
+    return int(size)
 
 if __name__ == '__main__':
     init_logging()
