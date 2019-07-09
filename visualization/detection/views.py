@@ -407,9 +407,8 @@ def view_test_model(request, full_expid, predict_file):
                   context)
 
 
-from django.views.decorators.csrf import csrf_exempt
-@csrf_exempt
-def api_test_model(request):
+def test_model(request):
+    assert request.method == 'POST'
     coded = request.FILES['image_file'].read()
     import cv2
     import numpy as np
@@ -417,29 +416,6 @@ def api_test_model(request):
     im = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
     if max(im.shape[:2]) > 600:
         im_scale = float(600) / float(max(im.shape[:2]))
-        im = cv2.resize(im, None, None, fx=im_scale, fy=im_scale,
-                        interpolation=cv2.INTER_LINEAR)
-    else:
-        im_sclae = 1
-    from yolotrain import predict_one_view
-    predict_file = request.POST['predict_file']
-    all_bb, all_label, all_conf = run_in_qd(predict_one_view, im, 
-            request.POST['full_expid'], 
-            predict_file
-            )
-    result = [{'rect': [x * im_scale for x in bb], 'class': l, 'conf': conf } for bb, l, conf in zip(all_bb, all_label, all_conf)]
-    return JsonResponse({'pred': result})
-
-def test_model(request):
-    assert request.method == 'POST'
-    coded = request.FILES['image_file'].read()
-    import cv2
-    import numpy as np
-    nparr = np.frombuffer(coded, np.uint8)
-    im = cv2.imdecode(nparr, cv2.IMREAD_COLOR);
-    resize_thread = 2000
-    if max(im.shape[:2]) > resize_thread:
-        im_scale = float(resize_thread) / float(max(im.shape[:2]))
         im = cv2.resize(im, None, None, fx=im_scale, fy=im_scale,
                         interpolation=cv2.INTER_LINEAR)
     from yolotrain import predict_one_view
@@ -1150,7 +1126,8 @@ def view_compare(request):
         dataPath = "./data/" + data
         os.chdir(get_qd_root())
 
-        print "dataPath:", dataPath
+        print("dataPath:{}".format(dataPath))
+
         # print data
         leftFile, rightFile, data_source_name, leftLabel, rightLabel, leftThreshold, rightThreshold, leftDisplay, rightDisplay = parse_compare_data(data)
 
@@ -1175,16 +1152,12 @@ def view_compare(request):
 
         imageFile = "./data/" + data_source_name +  "/" + split + ".tsv"
 
-        print leftFile
-        print rightFile
-        print imageFile
-
         if os.path.isfile(dataPath +"/test.tsv"):
             if worth_create(leftFile, dataPath +"/test.tsv") or worth_create(rightFile, dataPath +"/test.tsv"):
                 shutil.rmtree( dataPath )
 
         if not op.isdir(dataPath):
-            os.mkdir(dataPath, 0755)
+            os.mkdir(dataPath, 755)
 
             if leftThreshold != None:
                 leftThreshold = op.join(predictConfigPath, leftThreshold)
@@ -1434,6 +1407,7 @@ def view_image(request):
         start_id = request.GET.get('start_id')
         
         result = view_image_js(request, data, split, version, label, start_id, key, min_conf)
+        return result
 
 
 def get_data_sources_for_composite():
@@ -1461,7 +1435,7 @@ def get_data_sources_for_composite():
 
 @csrf_exempt
 def input_taxonomy(request):
-    print 'in input taxonomy'
+    print('in input taxonomy')
     if request.method == 'POST':
         return validate_taxonomy2(request)
     datas = get_data_sources_for_composite()
@@ -1507,8 +1481,8 @@ def validate_taxonomy(request):
                       {'error': 'Please specify at least one data source'})
     try:
         build_taxonomy_impl(kwargs_mimic['input'], **kwargs_mimic)
-    except Exception, e:
-        print str(e)
+    except Exception as e:
+        print(str(e))
         context = dict()
         context['files'] = []
         if str(e) == "":
@@ -1569,14 +1543,114 @@ def clean_up_taxonomy_folders(folder):
 
 def download_file(request, *callback_args, **callback_kwargs):
     request_url = ' %s' % (request.get_full_path)
-    print request_url
+    print(request_url)
     file_path = request_url.split('\'')[1].split(
         'http://10.137.68.61:8000/detection/media/')[0].replace('/detection/media', '')
     file_type = file_path.split('/')[-1].split('.')[-1]
     file_name = file_path.split('/')[-1]
-    print file_path
-    print file_type
+    print(file_path)
+    print(file_type)
     FilePointer = open(file_path, "r")
     response = HttpResponse(FilePointer, content_type='application/'+file_type)
     response['Content-Disposition'] = 'attachment; filename=' + file_name
     return response
+
+def get_video_info(name=None):
+    if name is None:
+        file_list = sorted(os.listdir('./data/video'))
+        video_list = []
+        for fname in file_list:
+            if "mp4" in fname and "647b025243d74e719b36d24a0c19df37_sc99__q1_withbb" not in fname:
+                video_list.append(op.splitext(fname)[0])
+        return video_list
+    else:
+        if "_withbb_ffmpeg" in name:
+            name = name.replace("_withbb_ffmpeg", "")
+
+        if "_withbb" in name:
+            name = name.replace("_withbb", "")
+
+
+        filename = "data/video/{}_events.tsv".format(name)
+        events = []
+        if op.isfile(filename):
+            with open(filename, 'r') as fp:
+                for i, line in enumerate(fp):
+                    cols = line.split('\t')
+                    if len(cols) == 2:
+                        events = json.loads(cols[1])
+        return events
+
+
+def view_video(request):
+    if request.GET.get('data', '') == '':
+        curr_dir = os.curdir
+        os.chdir(get_qd_root())
+        names = get_video_info()
+        os.chdir(curr_dir)
+        context = {'names': names}
+        return render(request, 'detection/video_list_test.html', context)
+    else:
+        data = request.GET.get('data')
+        curr_dir = os.curdir
+        os.chdir(get_qd_root())
+        os.chdir(curr_dir)
+        events = get_video_info(data)
+        context = {'data_name': data, 'events': json.dumps(events)}
+        return render(request, 'detection/view_video_index_test.html', context)
+
+
+def view_video_2(request):
+    if request.GET.get('data', '') == '':
+        curr_dir = os.curdir
+        os.chdir(get_qd_root())
+        names = get_video_info(folder_name="CBA_demo_v2")
+        os.chdir(curr_dir)
+        context = {'names': names}
+        return render(request, 'detection/video_list_2.html', context)
+    else:
+        data = request.GET.get('data')
+        curr_dir = os.curdir
+        os.chdir(get_qd_root())
+        os.chdir(curr_dir)
+        events = get_video_info(data)
+        context = {'data_name': data, 'events': json.dumps(events)}
+        return render(request, 'detection/view_video_index_test.html', context)
+
+
+def view_video_test(request):
+    if request.GET.get('data', '') == '':
+        curr_dir = os.curdir
+        os.chdir(get_qd_root())
+        names = get_video_info()
+        os.chdir(curr_dir)
+        context = {'names': names}
+        return render(request, 'detection/video_list_test.html', context)
+    else:
+        data = request.GET.get('data')
+        curr_dir = os.curdir
+        os.chdir(get_qd_root())
+        os.chdir(curr_dir)
+        events = get_video_info(data)
+        context = {'data_name': data, 'events': json.dumps(events)}
+        return render(request, 'detection/view_video_index_test.html', context)
+
+def upload_video(request):
+    if request.GET.get('data', '') == '':
+        curr_dir = os.curdir
+        os.chdir(get_qd_root())
+        result = {"status": "sucessed"}
+        return "test"
+        # names = get_video_info()
+        # os.chdir(curr_dir)
+        # context = {'names': names}
+        # return render(request, 'detection/video_list_test.html', context)
+    else:
+        data = request.GET.get('data')
+        curr_dir = os.curdir
+        os.chdir(get_qd_root())
+        os.chdir(curr_dir)
+        events = get_video_info(data)
+        context = {'data_name': data, 'events': json.dumps(events)}
+
+        return request, 'detection/view_video_index_test.html', context
