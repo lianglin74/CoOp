@@ -75,7 +75,7 @@ def build_side_by_side_compare(
     dictLeftResult = read_result(inLeftResultTsvFilename, dictLeftThreshold, leftDisplay)
     dictRightResult = read_result(inRightResultTsvFilename, dictRightThreshold, rightDisplay)
 
-    print 'Start to write compare result . . .'
+    print('Start to write compare result . . .')
     
     f_out_tsv = open(outTsvFilename, 'w')
 
@@ -97,11 +97,11 @@ def build_side_by_side_compare(
             line = f_in_tsv.readline()
             cnt = cnt + 1
             if cnt % 100 == 0:
-                print cnt
+                print(cnt)
 
     f_out_tsv.close()
-    print 'Total lines=' + str(cnt)
-    print 'Finished building compare result.'
+    print('Total lines=' + str(cnt))
+    print('Finished building compare result.')
 
 
 def parse_args():

@@ -21,12 +21,12 @@ from process_tsv import ImageTypeParser
 from process_tsv import visualize_box
 from process_image import draw_bb, show_image, save_image
 import base64
-from yolotrain import CaffeWrapper
+#from yolotrain import CaffeWrapper
 from tsv_io import load_labels
 from process_tsv import update_confusion_matrix
 from pprint import pformat
 import os
-from yolotrain import get_confusion_matrix
+#from yolotrain import get_confusion_matrix
 from qd_common import readable_confusion_entry
 from process_tsv import gt_predict_images
 from qd_common import get_target_images
@@ -45,7 +45,7 @@ from django.http import HttpResponseRedirect
 from django.urls import reverse
 import cv2
 from django import template
-import simplejson as json
+import json
 from process_tsv import build_taxonomy_impl
 import sys
 import traceback2 as traceback
