@@ -404,6 +404,7 @@ class CropClassTSVDatasetYaml():
 def gen_index(imgfile, labelfile, label_to_idx, for_test,
                 enlarge_bbox, key_col, label_col, img_col,
                 logger, min_pixels):
+    from tqdm import tqdm
     all_args = []
     num_worker = mp.cpu_count()
     num_tasks = num_worker * 3
@@ -428,7 +429,7 @@ def gen_index(imgfile, labelfile, label_to_idx, for_test,
             label_tsv = TSVFile(labelfile)
         else:
             label_tsv = None
-        for idx in range(start, end):
+        for idx in tqdm(range(start, end)):
             img_row = img_tsv.seek(idx)
             if label_tsv:
                 label_row = label_tsv.seek(idx)

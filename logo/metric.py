@@ -325,6 +325,28 @@ def filter_topN_pred(pred_file, topN, obj_thres=None):
     tsv_writer(gen_rows(), new_pred_file)
     return new_pred_file
 
+def calculate_confusion_matrix(gt_pred_file, outfile):
+    gt2preds = collections.defaultdict(list)
+    for parts in tsv_reader(gt_pred_file):
+        gt_label = json.loads(parts[1])["class"]
+        pred = parts[2].split(';')[0].split(':')[0]
+        gt2preds[gt_label].append(pred)
+
+    pred_correct_rates = []
+    for gt_label in gt2preds:
+        pred_labels = gt2preds[gt_label]
+        pred_counts = collections.Counter(pred_labels)
+        sorted_pred_counts = sorted([[pred, count] for pred, count in pred_counts.items()], key=lambda t: t[1], reverse=True)
+        top_pred = sorted_pred_counts[0][0]
+        if top_pred != gt_label:
+            correct_rate = 0.0
+        else:
+            correct_rate = sorted_pred_counts[0][1] / len(pred_labels)
+        pred_correct_rates.append([correct_rate, gt_label] + sorted_pred_counts)
+
+    pred_correct_rates = sorted(pred_correct_rates, key = lambda t: t[0])
+    tsv_writer(pred_correct_rates, outfile)
+
 def eval_classifier(gt_dataset_name, split, version, det_expid, tag_expid,
             tag_snap_id, tag_model_id, labelmap=None, iou_thres=0.5, enlarge_bbox=1.0,
             topN_rp=None, obj_thres=0):
@@ -349,16 +371,20 @@ def eval_classifier(gt_dataset_name, split, version, det_expid, tag_expid,
 
     # top1/5 acc on gt region
     topk = (1, 5)
-    pred_file, topk_acc = croptagger.predict_on_known_class(gt_dataset_name, split,
+    pred_file, topk_acc, tag_file = croptagger.predict_on_known_class(gt_dataset_name, split,
                 version=version, region_source=constants.GT_REGION, enlarge_bbox=enlarge_bbox,
                 conf_from=constants.CONF_TAG, eval_topk_acc=max(topk))
+
+    # confusion matrix
+    calculate_confusion_matrix(tag_file, tag_file + "confusion")
+
     for k in topk:
         stats.append(topk_acc[k-1])
     # mAP with gt region (conf from tag)
-    # stats.append(cal_map(pred_file))
+    stats.append(cal_map(pred_file))
 
     # for conf_from in [constants.CONF_TAG, constants.CONF_OBJ_TAG, constants.CONF_OBJ]:
-    #     pred_file, _ = croptagger.predict_on_known_class(gt_dataset_name, split,
+    #     pred_file, _, _ = croptagger.predict_on_known_class(gt_dataset_name, split,
     #                 version=version, region_source=constants.PRED_REGION, enlarge_bbox=enlarge_bbox,
     #                 conf_from=conf_from, eval_topk_acc=None)
     #     if conf_from == constants.CONF_TAG and topN_rp:
@@ -374,9 +400,6 @@ def run_all_eval_classifier():
     labelmap = None
     tag_models = [
             ("brandsports_addlogo40syn", "snapshot", "model_best.pth.tar"),
-            ("brandsports_addlogo40syn", "snapshot", "None-0117.pth.tar"),
-            ("brandsports_addlogo40syn", "snapshot", "None-0118.pth.tar"),
-            ("brandsports_addlogo40syn", "snapshot", "None-0119.pth.tar"),
             # ("logo40syn_09v204", "snapshot")
     ]
 
@@ -392,14 +415,12 @@ def run_all_eval_classifier():
                                     tag_snap_id, tag_model_id, labelmap=labelmap, iou_thres=0.5, enlarge_bbox=enlarge_bbox, topN_rp=topN, obj_thres=obj_thres))
                             print(res)
                             yield res
-    tsv_writer(gen_rows(), os.path.join(output_root, 'tmp.tsv'))
+    tsv_writer(gen_rows(), os.path.join(output_root, "brandsports_addlogo40syn", "snapshot", 'eval.tsv'))
 
 
 if __name__ == "__main__":
     init_logging()
     # main()
     run_all_eval_classifier()
-    # expid1 = "TaxLogoV1_7_darknet19_448_C_Init.best_model9748_maxIter.75eEffectBatchSize128_bb_only"
-    # expid2 = "TaxLogoNoLogoV2_5_darknet19_448_C_Init.best_model9748_maxIter.10eEffectBatchSize128Rotate10_bb_only"
-    # for expid in [expid1, expid2]:
-    #     evaluate_detector(expid)
+    # tag_file = "brand_output/brandsports_addlogo40syn/snapshot/eval/logo40.test.2.label-8067034370336282024.dataset.tagging.tsv"
+

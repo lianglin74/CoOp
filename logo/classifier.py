@@ -56,14 +56,14 @@ class CropTaggingWrapper(object):
 
         # combine
         outfile = os.path.join(self.eval_dir, "{}.{}.tag.predict.tsv".format(dataset_name, split))
-        outfile_tmp = outfile + '.tmp'
-        topk_acc = parse_tagging_predict(tag_file, outfile_tmp, conf_from=conf_from,
+        outfile_unordered = outfile + '.tmp'
+        topk_acc = parse_tagging_predict(tag_file, outfile_unordered, conf_from=conf_from,
                 eval_accuracy=(eval_topk_acc is not None))
         # align the order of imgkeys
-        ordered_keys = TSVDataset(dataset_name).load_keys(split)
-        # reorder_tsv_keys(outfile_tmp, ordered_keys, outfile)
-        # rm_tsv(outfile_tmp)
-        return outfile_tmp, topk_acc
+        # ordered_keys = TSVDataset(dataset_name).load_keys(split)
+        # reorder_tsv_keys(outfile_unordered, ordered_keys, outfile)
+        # rm_tsv(outfile_unordered)
+        return outfile_unordered, topk_acc, tag_file
 
     def predict_on_unknown_class(self, dataset_name, split,
                 region_source=constants.PRED_REGION, version=-1):
