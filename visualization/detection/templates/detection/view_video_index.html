@@ -1,0 +1,246 @@
+{% load static %}
+
+<!doctype html>
+<html lang="en">
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <title>Video demo</title>
+    <!-- CSS -->
+    <style>
+        body { font: 12px/20px sans-serif; margin:0; padding:0; }
+        a { color: #666; }
+        a:hover { color: #C00; }
+        section, footer, form { width:720px; margin:20px auto; }
+        video {  cursor:pointer; background: #FFF; }
+        footer { text-align:center; color: #666; }
+
+        form { text-align: center; }
+        input { width: 240px; }
+        button { width: 120px;  }
+
+        #bar {
+            width: 720px;
+            position: relative;
+            left: 19.3%;
+            cursor: pointer;
+            background: #000;
+            color: #CCC; 
+            line-height:40px;
+            height:30px;
+            text-indent: 20px;
+        }
+        #bar span {
+            pointer-events: none;
+            display: block;
+            position: absolute;
+            top: 0;
+            background-color: #C00;
+            height: 30px;
+            width: 4px;
+        }
+
+        .scrollit {
+            overflow:scroll;
+            height:500px;
+        }
+    </style>
+    <style>
+        a.one {font-family:monospace; font-size:150%;}
+        a.one:link {color:#000000;}
+        a.one:visited {color:#0000ff;}
+        a.one:hover {text-decoration:underline;}
+    </style>
+    <link rel="stylesheet" href="{% static "css/font.knightlab.css" %}">
+    <link title="timeline-styles" rel="stylesheet" href="{% static "css/timeline.css" %}">
+    <link href="{% static  "css/css" %}" rel="stylesheet">
+    <link href="{% static  "css/bootstrap.min.css" %}" rel="stylesheet">
+    <link href="{% static  "css/font-awesome.min.css" %}" rel="stylesheet">
+    <link href="{% static  "css/monokai.css" %}" rel="stylesheet">
+    <link href="{% static  "css/all.css" %}" rel="stylesheet">
+    <link href="{% static  "css/spinner.css" %}" rel="stylesheet">
+    <link href="{% static  "css/dots.css" %}" rel="stylesheet">
+    <link href="{% static  "css/custom.css" %}" rel="stylesheet">
+    <!-- CSS -->
+
+    <script src="https://code.jquery.com/jquery-1.10.2.js"></script>
+</head>
+
+<body onload="onPageLoad()">
+
+<section class="container results" id="results-video">
+    <div class="row">
+        {% comment %} <h4 class="result-title col-sm-12">Video : {{ data_name|escapejs }}</h4> {% endcomment %}
+        <h4 class="result-title col-sm-12">Video</h4>
+        <div class="result-wrapper">
+            <video class="result-video" width=900 autoplay controls="">
+                <source src="http://vigdgx02/mp4/CBA_demo/{{ data_name|escapejs }}.mp4" type="video/mp4"/>
+                {% comment %} <track src="http://vigdgx02/mp4/CBA_demo/{{ data_name|escapejs }}.vtt" kind="metadata" default=""> {% endcomment %}
+            </video>
+            {% comment %} <div id="bar">Search for "dunk", "2 point shot" or "3 point shot"</div>
+            <form class="result-title col-sm-12">
+                <input class="result-title col-sm-10" type="search">
+                <button  class="result-title col-sm-2" type="submit">Search</button>
+            </form> {% endcomment %}
+
+        </div>
+    </div>
+
+    {% comment %} <div class="row">
+        <div class="result-wrapper">
+            <span class="current_time"></span>
+            Start: <input type="number" class="slider_control" data-pos="0" value="0" title="Start" />
+            End: <input type="number" class="slider_control" data-pos="1" value="1" title="End" />
+            <button class='play_toggle' onClick="pause_toggle()">&#10074;&#10074;</button>
+            <label for="mute_toggle">Mute:</label><input type="checkbox" id="mute_toggle" checked />
+        </div>
+    </div> {% endcomment %}
+
+    {% comment %} <div class="row">
+        <button class='play_toggle' onClick="pause_toggle()">Clear Time</button>
+    </div> {% endcomment %}
+    
+    <div class="row">
+        <h4 class="result-title col-sm-12">Timeline</h4>
+        <div class="result-output2 col-sm-12">
+        <div class="scrollit">
+            <table class="table table-hover" id="eventsTable">
+                <tbody>
+                    <tr>
+                        <th  style="width:10%">Id</th>
+                        <th  style="width:60%">Event Type</th> 
+                        <th  style="width:30%">Start Time - End Time (hh:mm:ss)</th>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        </div>
+    </div>
+</section>
+
+<script>
+    let time_start = 0;
+    let time_end = 1;
+
+    var video_width = 720;
+    var video =  document.querySelector("video");
+    //var bar =  document.querySelector("#bar");
+    //var frm =  document.querySelector("form");
+
+    video.addEventListener('timeupdate', update, false);
+    //bar.addEventListener('click', seek, false);
+    //frm.addEventListener('submit',search, false);
+    
+    $(".result-video").bind("loadedmetadata", function (e) {
+		video_size = {'w': this.videoWidth, 'h': this.videoHeight};
+	}).bind('loadeddata', function(e) {
+		// noinspection JSIgnoredPromiseFromCall
+        addTableRows();
+        time_end = this.duration;
+		e.target.play();  // start playing
+	}).on('pause', (e)=>{
+		console.log('Paused: ', e.target.currentTime)
+	});
+
+    $('table').scrollTableBody();
+    
+    function onPageLoad() {
+        
+    }
+
+    function addTableRows() {
+        //var sampledata = [{"start": 12.5, "end": 14.0, "id": 0, "class": "3 point shot"}, {"start": 34.0, "end": 36.0, "id": 1, "class": "2 point shot"}];
+        var events_str = "{{ events|escapejs }}";
+        events = JSON.parse(events_str);
+        //console.log(events);
+        //console.log(sampledata);
+        var tbody = $('#eventsTable').children('tbody');
+        //Then if no tbody just select your table 
+        var table = tbody.length ? tbody : $('#eventsTable');
+        table.append('<tr><td>' + 0 + ' </td><td>' + "Whole Video" + 
+                '</td><td><a class=\"one\" onclick=\"setTimeSpan(' + 0 + "," + video.duration + ")\">" + 
+                second2HHMMSS(0) + " - " + second2HHMMSS(video.duration) + 
+                "</a></td></tr>");
+
+        for (var i = 0;  i < events.length; i++){
+            table.append('<tr><td>' + (i+1) + ' </td><td>' + events[i].class + 
+                '</td><td><a class=\"one\" onclick=\"setTimeSpan(' + events[i].start + "," + events[i].end + ")\">" + 
+                second2HHMMSS(events[i].start) + " - " + second2HHMMSS(events[i].end) + 
+                "</a> </td></tr>");
+        }
+    }
+
+    function second2HHMMSS(time){
+        dateStr = new Date(time * 1000).toISOString().substr(11, 8);
+        return dateStr;
+    }
+
+    function setTimeSpan(startTime, endTime)
+    {
+        time_start = startTime;
+        time_end = endTime
+    }
+
+    function setStartTime(time){
+        time_start = time;
+    }
+
+    function setEndTime(time){
+        time_end = time;
+    }
+
+    function jumpToVideo(time){
+        vid.currentTime = time;
+    }
+
+    function search(e) {
+        console.log("search(e)")
+        // prevent reload, grab cues+query
+        //e.preventDefault();
+        var a = [];
+        var c = vid.textTracks[0].cues;
+        var q = document.querySelector("input").value.toLowerCase();
+        // search captions for query
+        for(var j=0; j<c.length; j++) {
+            if(c[j].text.toLowerCase().indexOf(q) > -1) {
+                a.push(c[j]);
+            }
+        }
+        // update bar text
+        if(a.length) { 
+        bar.innerHTML = '';
+        } else { 
+        bar.innerHTML = 'No results found...';
+        }
+        // place results on bar
+        for (var i=0; i<a.length; i++) {
+            var s = document.createElement("span");
+            s.style.left = (a[i].startTime/video.duration*video_width-2)+"px";
+            s.style.width = ((a[i].endTime-a[i].startTime)/video.duration*video_width)+"px";
+            bar.appendChild(s);
+        }
+    };
+
+    function play() {
+        if(video.paused) { video.play(); } else { video.pause(); }
+    };
+
+    function update() {
+        if (video.currentTime < time_start)
+		    video.currentTime = time_start;
+	    if (video.currentTime > time_end)
+		    video.currentTime = time_start;
+        //var pct = vid.currentTime/vid.duration*100;
+        //bar.style.background = "linear-gradient(to right, #500 "+pct+"%, #000 "+pct+"%)";
+    };
+
+    function seek(e) {
+        video.currentTime = (e.pageX - bar.offsetLeft)*vid.duration/video_width;
+        if(video.paused) { video.play(); }
+    };
+
+
+
+</script>
+</body>
+</html>
+

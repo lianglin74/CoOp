@@ -46,10 +46,6 @@ urlpatterns = [
     url(r'^video/upload$',
         views.upload_video,
         name='upload_video'),
-#     $env:AZCOPY_CRED_TYPE = "Anonymous";
-# ./azcopy.exe copy "I:\ChinaMobile\Video\CBA\5102215894_5004648487_92.mp4" "https://vigstandard.blob.core.windows.net/data/video/5102215894_5004648487_92.mp4?se=2019-07-11T18%3A25%3A53Z&sp=rwl&sv=2018-03-28&sr=c&sig=I5pxsFjQ7cV5s7O2%2Fm60yEXoPQcDZ6f5cYsyywUECq8%3D" --overwrite=false --follow-symlinks --recursive --from-to=LocalBlob --blob-type=BlockBlob --put-md5;
-# $env:AZCOPY_CRED_TYPE = "";
-
     # if no parameter is given -> show all the exps
     # if full_expid is given -> show all the prediction results, i.e. *.predict
     # file

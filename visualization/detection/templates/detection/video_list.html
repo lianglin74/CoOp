@@ -1,0 +1,76 @@
+{% load static %}
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <title>Video demo</title>
+    <!-- CSS -->
+    <style>
+        body { font: 12px/20px sans-serif; margin:0; padding:0; }
+        a { color: #666; }
+        a:hover { color: #C00; }
+        section, footer, form { width:720px; margin:20px auto; }
+        video {  cursor:pointer; background: #000; }
+        footer { text-align:center; color: #666; }
+
+        form { text-align: center; }
+        input { width: 240px; }
+        button { width: 120px;  }
+
+        #bar {
+            width: 720px;
+            position: relative;
+            left: 19.3%;
+            cursor: pointer;
+            background: #000;
+            color: #CCC; 
+            line-height:40px;
+            height:30px;
+            text-indent: 20px;
+        }
+        #bar span {
+            pointer-events: none;
+            display: block;
+            position: absolute;
+            top: 0;
+            background-color: #C00;
+            height: 30px;
+            width: 4px;
+        }
+        
+    </style>
+    <style>
+        a.one {font-family:monospace; font-size:150%;}
+        a.one:link {color:#000000;}
+        a.one:visited {color:#0000ff;}
+        a.one:hover {text-decoration:underline;}
+    </style>
+
+    <link rel="stylesheet" href="{% static "css/font.knightlab.css" %}">
+    <link title="timeline-styles" rel="stylesheet" href="{% static "css/timeline.css" %}">
+    <link href="{% static  "css/css" %}" rel="stylesheet">
+    <link href="{% static  "css/bootstrap.min.css" %}" rel="stylesheet">
+    <link href="{% static  "css/font-awesome.min.css" %}" rel="stylesheet">
+    <link href="{% static  "css/monokai.css" %}" rel="stylesheet">
+    <link href="{% static  "css/all.css" %}" rel="stylesheet">
+    <link href="{% static  "css/spinner.css" %}" rel="stylesheet">
+    <link href="{% static  "css/dots.css" %}" rel="stylesheet">
+    <link href="{% static  "css/custom.css" %}" rel="stylesheet">
+    <!-- CSS -->
+
+    <script src="https://code.jquery.com/jquery-1.10.2.js"></script>
+</head>
+
+<h2 class="result-title col-sm-12">Demo Video list</h2>
+
+<body>
+    <ul>
+    {% for name in names %}
+    <li><a class="one" href="{% url 'detection:view_video' %}?data={{ name }}" target='_blank'>{{ name }}</a>
+    </li>
+    {% endfor %}
+    </ul>
+</body>
+</html>
+

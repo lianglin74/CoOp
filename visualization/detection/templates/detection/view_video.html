@@ -1,0 +1,159 @@
+{% load static %}
+
+<html>
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  
+  <title>Timeline Search</title>
+  <style>
+    body { font: 12px/20px sans-serif; margin:0; padding:0; }
+    a { color: #666; }
+    a:hover { color: #C00; }
+    section, footer, form { width:720px; margin:20px auto; }
+    section { box-shadow: 0 0 5px rgba(0,0,0,0.5); }
+    video {  cursor:pointer; background: #000; }
+    footer { text-align:center; color: #666; }
+
+    form { text-align: center; }
+    input { width: 240px; }
+    button { width: 120px;  }
+
+    #bar {
+      position: relative;
+      cursor: pointer;
+      background: #000;
+      color: #CCC; 
+      line-height:40px;
+      height:30px;
+      text-indent: 20px;
+    }
+    #bar span {
+      pointer-events: none;
+      display: block;
+      position: absolute;
+      top: 0;
+      background-color: #C00;
+      height: 30px;
+      width: 4px;
+    }
+  </style>
+</head>
+<body>
+
+<section>
+  <video id="myvideo" width="720" controls>
+    <source src="http://vigdgx02/mp4/CBA_chop/1551538896210_sc99_01_q1.mp4" type="video/mp4">
+    <track src={% static "sample.vtt" %} kind="metadata" default="">
+  </video>
+
+  <div id="bar">Search for "dunk", "2 point shot" or "3 point shot"</div>
+  <table class="table table-hover">
+  <tbody>
+  <tr>
+    <td>3 point shot</td>
+    <td><nobr><a onclick="jumpToVideo(1.79)">00:00:02.500</a> <a onclick="jumpToVideo(1.99)">00:00:04.300</a>s<br></nobr></td>
+  </tr>
+  <tr>
+    <td>dunk</td>
+    <td><nobr><a onclick="jumpToVideo(4.07)">00:03:06.000</a> - <a onclick="jumpToVideo(4.47)">00:03:07.000</a>s</nobr></td>
+    </tr></tbody>
+    </table>
+
+  {% comment %} <ol>
+    <li>3 point shot        00:00:02.500 00:00:04.300</li>
+    <li>2 point shot        00:00:04.000 00:00:05.000</li>
+    <li>dunk                00:03:06.000 00:03:07.000</li>
+  </ol> {% endcomment %}
+</section>
+
+<form>
+    <input type="search">
+    <button type="submit">Search</button>
+</form>
+
+<footer>
+  This demo shows Sports events detection results produced by 
+  <a href="https://azure.microsoft.com/en-us/services/cognitive-services/directory/vision/">Microsoft Cognition Vision Team</a>
+  <br>
+</footer>
+
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/2.1.1/jquery.min.js"></script>
+
+<script type="text/javascript">
+  var video_width = 720;
+  var vid =  document.querySelector("video");
+  var bar =  document.querySelector("#bar");
+  var frm =  document.querySelector("form");
+
+    {% comment %} vid.addEventListener('click',play, false); {% endcomment %}
+    vid.addEventListener('timeupdate',update, false);
+    bar.addEventListener('click',seek, false);
+    frm.addEventListener('submit',search, false);
+
+  function play() {
+    if(vid.paused) { vid.play(); } else { vid.pause(); }
+  };
+
+  function update() {
+    var pct = vid.currentTime/vid.duration*100;
+    bar.style.background = "linear-gradient(to right, #500 "+pct+"%, #000 "+pct+"%)";
+  };
+
+  function search(e) {
+    // prevent reload, grab cues+query
+    e.preventDefault();
+    var a = [];
+    var c = vid.textTracks[0].cues;
+    var q = document.querySelector("input").value.toLowerCase();
+    // search captions for query
+    for(var j=0; j<c.length; j++) {
+      if(c[j].text.toLowerCase().indexOf(q) > -1) {
+        a.push(c[j]);
+      }
+    }
+    // update bar text
+    if(a.length) { 
+      bar.innerHTML = '';
+    } else { 
+      bar.innerHTML = 'No results found...';
+    }
+    // place results on bar
+    for (var i=0; i<a.length; i++) {
+      var s = document.createElement("span");
+      s.style.left = (a[i].startTime/vid.duration*video_width-2)+"px";
+      s.style.width = ((a[i].endTime-a[i].startTime)/vid.duration*video_width)+"px";
+      bar.appendChild(s);
+    }
+  };
+
+  function seek(e) {
+    vid.currentTime = (e.pageX - bar.offsetLeft)*vid.duration/video_width;
+    if(vid.paused) { vid.play(); }
+  };
+
+  {% comment %} var vidLinks = document.querySelectorAll('.navBtns a');
+
+  for(var i = 0, l = vidLinks.length; ++i){
+      makeVideoLink(vidLinks[i]);
+  }
+
+  function jumpToTime(time){
+      v.currentTime = time;
+  }
+
+  function makeVideoLink(element){
+      // Extract the `t=` hash from the link
+      var timestamp = element.hash.match(/\d+$/,'')[0] * 1000;
+
+      element.addEventListener('click', function videoLinkClick(e){
+          jumpToTime(timestamp);
+
+          return false;
+      },false)
+  } {% endcomment %}
+
+</script>
+
+
+</body>
+</html>
