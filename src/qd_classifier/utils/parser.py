@@ -23,46 +23,43 @@ def get_arg_parser(model_names):
                         help='number of total epochs to run')
     parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                         help='manual epoch number (useful on restarts)')
-    parser.add_argument('-b', '--batch-size', default=256, type=int,
-                        metavar='N', help='mini-batch size (default: 256)')
+    parser.add_argument('-b', '--effective-batch-size', default=256, type=int,
+                        metavar='N', help='num of samples in a batch given to all GPUs')
+    parser.add_argument('--batch_size', default=0, type=int,
+                        help='do not use this, use effective_batch_size')
     parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
                         metavar='LR', help='initial learning rate')
     parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                         help='momentum')
     parser.add_argument('--weight-decay', '--wd', default=1e-4, type=float,
                         metavar='W', help='weight decay (default: 1e-4)')
+
     parser.add_argument('--print-freq', '-p', default=10, type=int,
                         metavar='N', help='print frequency (default: 10)')
     parser.add_argument('--resume', default='', type=str, metavar='PATH',
-                        help='path to latest checkpoint (default: none)')
-    parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
-                        help='evaluate model on validation set')
+                        help='path to checkpoint to resume from (default: none)')
+    parser.add_argument('--restore_latest_snapshot', action='store_true',
+                        help='restore from latest snapshot')
     parser.add_argument('--pretrained', dest='pretrained', action='store_true',
                         help='use pre-trained model')
-    parser.add_argument('--custom_pretrained', default='', type=str, metavar='PATH',
-                        help='path to a pretrained model to initialize')
+    parser.add_argument('--init_from', default='', type=str, metavar='PATH',
+                        help='path to a pretrained model to initialize from')
     parser.add_argument('--skip_unmatched_layers', action='store_true',
-                        help='used in pair with custom_pretrained, skip unmatched layers if True, otherwise raise error')
+                        help='used in pair with init_from, skip unmatched layers if True, otherwise raise error')
 
     # distributed training
-    parser.add_argument('--world-size', default=1, type=int,
-                        help='number of distributed processes')
-    # parser.add_argument('--dist-url', default='tcp://224.66.41.62:23456', type=str,
-    #                     help='url used to set up distributed training')
-    parser.add_argument('--dist-url', default='env://', type=str,
-                        help='url used to set up distributed training')
-    parser.add_argument('--dist-backend', default='gloo', type=str,
+    parser.add_argument('--dist-backend', default='nccl', type=str,
                         help='distributed backend')
-    parser.add_argument("--local_rank", default=0, type=int,
-                        help='manual rank assignment')
+    parser.add_argument('--init_method_type', default='tcp', type=str)
+    parser.add_argument('--dist_url_tcp_port', default=23456, type=int)
+
+    parser.add_argument('--random_seed', default=6, type=int)
 
     # need setup output dir
-    parser.add_argument('--shuffle', dest='shuffle', action='store_true',
-                        help='shuffle data during training')
     parser.add_argument('--output-dir', default='./outputs/resnet18', type=str,
                         help='path to save checkpoint and log (default: ./outputs/resnet18)')
-    parser.add_argument('--prefix', default=None, type=str,
-                        help='model prefix (default: same with model names)')
+    # parser.add_argument('--prefix', default=None, type=str,
+    #                     help='model prefix (default: same with model names)')
 
     # Optimization setting
     parser.add_argument('--lr-policy', default='STEP', type=str,

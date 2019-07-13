@@ -148,7 +148,7 @@ def set_bn_eval(m):
     if classname.find('BatchNorm') != -1:
         m.eval()
 
-def train(args, train_loader, model, criterion, optimizer, epoch, logger, accuracy):
+def train_epoch(args, train_loader, model, criterion, optimizer, epoch, accuracy):
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
@@ -226,5 +226,6 @@ def train(args, train_loader, model, criterion, optimizer, epoch, logger, accura
                             orig_loss=orig_losses, ccs_loss=ccs_losses)
                 info_str += loss_str
             info_str += accuracy.result_str()
-            logger.info(info_str)
+            logging.info(info_str)
             tic = time.time()
+    return model

@@ -8,6 +8,7 @@ from qd.qd_common import img_from_base64, generate_lineidx, load_from_yaml_file,
 import base64
 from collections import OrderedDict, defaultdict
 import json
+import logging
 import math
 import multiprocessing as mp
 import numpy as np
@@ -217,7 +218,7 @@ class TSVDatasetWithoutLabel(TSVDatasetPlus):
 class CropClassTSVDataset(Dataset):
     def __init__(self, tsvfile, labelmap, labelfile=None,
                  transform=None, logger=None, for_test=False, enlarge_bbox=1.0,
-                 use_cache=False):
+                 use_cache=True):
         """ TSV dataset with cropped images from bboxes labels
         Params:
             tsvfile: image tsv file, columns are key, bboxes, b64_image_string
@@ -253,6 +254,7 @@ class CropClassTSVDataset(Dataset):
         self._enlarge_bbox = enlarge_bbox
         self._label_counts = None
 
+        # TODO: generate idx file offline
         _cache_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".cache")
         self._bbox_idx_file = os.path.join(_cache_dir, "{}.tsv".format(
                 hash_sha1((tsvfile, labelfile if labelfile else "", str(for_test), str(enlarge_bbox)))))
@@ -404,7 +406,6 @@ class CropClassTSVDatasetYaml():
 def gen_index(imgfile, labelfile, label_to_idx, for_test,
                 enlarge_bbox, key_col, label_col, img_col,
                 logger, min_pixels):
-    from tqdm import tqdm
     all_args = []
     num_worker = mp.cpu_count()
     num_tasks = num_worker * 3
@@ -429,7 +430,7 @@ def gen_index(imgfile, labelfile, label_to_idx, for_test,
             label_tsv = TSVFile(labelfile)
         else:
             label_tsv = None
-        for idx in tqdm(range(start, end)):
+        for idx in range(start, end):
             img_row = img_tsv.seek(idx)
             if label_tsv:
                 label_row = label_tsv.seek(idx)
@@ -459,12 +460,13 @@ def gen_index(imgfile, labelfile, label_to_idx, for_test,
                     # label only exists in training data
                     c = bbox["class"]
                     if c not in label_to_idx:
-                        print("label file: {}, class: {} not in labelmap".format(labelfile, c))
+                        logging.info("label file: {}, class: {} not in labelmap".format(labelfile, c))
                         continue
                     info.append(label_to_idx[c])
                 ret.append(info)
         return ret
 
+    logging.info("generating index...")
     m = pathos.multiprocessing.ProcessingPool(num_worker)
     all_res = m.map(_gen_index_helper, all_args)
     x = []
@@ -472,4 +474,5 @@ def gen_index(imgfile, labelfile, label_to_idx, for_test,
         if r is None:
             raise Exception("fail to generate index")
         x.extend(r)
+    logging.info("finished generating index")
     return x

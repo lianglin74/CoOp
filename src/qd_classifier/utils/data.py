@@ -1,4 +1,5 @@
 import cv2
+from deprecated import deprecated
 import numpy as np
 import os
 import torch
@@ -10,7 +11,28 @@ from torch.utils.data.dataloader import default_collate
 
 from ..lib.dataset import TSVDataset, TSVDatasetPlusYaml, TSVDatasetWithoutLabel, CropClassTSVDataset, CropClassTSVDatasetYaml
 
-def get_data_loader(args, logger=None):
+def get_train_data_loader(args):
+    train_dataset = _get_dataset("train", args)
+
+    if args.balance_sampler:
+        assert not args.balance_class and not args.distributed
+        train_sampler = make_class_balanced_sampler(train_dataset)
+    else:
+        if args.distributed:
+            train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
+        else:
+            train_sampler = None
+
+    train_loader = torch.utils.data.DataLoader(
+            train_dataset, batch_size=args.batch_size,
+            shuffle=(train_sampler is None),
+            num_workers=args.num_workers, pin_memory=True,
+            sampler=train_sampler)
+
+    return train_dataset, train_loader, train_sampler
+
+@deprecated("use get_train_data_loader or get_test_data_loader")
+def get_data_loader(args):
     train_transform = get_pt_transform("train", args)
     test_transform = get_pt_transform("test", args)
 
@@ -91,6 +113,18 @@ def get_testdata_loader(args):
 
     return test_loader
 
+def _get_dataset(phase, args):
+    if phase == "train":
+        transform = get_pt_transform("train", args)
+    else:
+        assert phase == "test"
+        if args.opencv:
+            transform = cv_transform
+        else:
+            transform = get_pt_transform("test", args)
+
+    assert args.data.endswith("yaml"), "not supported data type: {}".format(args.data)
+    return CropClassTSVDatasetYaml(args.data, session_name=phase, transform=transform, enlarge_bbox=args.enlarge_bbox)
 
 def get_pt_transform(phase, args):
     rgb_normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],

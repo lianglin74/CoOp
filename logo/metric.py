@@ -29,8 +29,8 @@ data_split = "test"
 
 dataset_cfgs = [
     {"data": "brand1048", "split": "test", "version": 4},
-    {"data": "sports_missingSplit", "split": "test", "version": 6},
-    {"data": "logo40", "split": "test", "version": 2},
+    {"data": "sports_missingSplit", "split": "test", "version": -1},
+    {"data": "logo40", "split": "test", "version": -1},
     # {"data": "logo200", "split": "test", "version": -1},
 ]
 
@@ -376,7 +376,7 @@ def eval_classifier(gt_dataset_name, split, version, det_expid, tag_expid,
                 conf_from=constants.CONF_TAG, eval_topk_acc=max(topk))
 
     # confusion matrix
-    calculate_confusion_matrix(tag_file, tag_file + "confusion")
+    calculate_confusion_matrix(tag_file, tag_file + ".confusion")
 
     for k in topk:
         stats.append(topk_acc[k-1])
@@ -399,8 +399,7 @@ def run_all_eval_classifier():
     output_root = './brand_output/'
     labelmap = None
     tag_models = [
-            ("brandsports_addlogo40syn", "snapshot", "model_best.pth.tar"),
-            # ("logo40syn_09v204", "snapshot")
+            ("brandsports_addlogo40syn", "snapshot_fixlabel", "model_best.pth.tar"),
     ]
 
     def gen_rows():
@@ -415,7 +414,7 @@ def run_all_eval_classifier():
                                     tag_snap_id, tag_model_id, labelmap=labelmap, iou_thres=0.5, enlarge_bbox=enlarge_bbox, topN_rp=topN, obj_thres=obj_thres))
                             print(res)
                             yield res
-    tsv_writer(gen_rows(), os.path.join(output_root, "brandsports_addlogo40syn", "snapshot", 'eval.tsv'))
+    tsv_writer(gen_rows(), os.path.join(output_root, "brandsports_addlogo40syn", "snapshot_fixlabel", 'eval.tsv'))
 
 
 if __name__ == "__main__":
