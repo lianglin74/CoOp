@@ -200,6 +200,8 @@ class UhrsTaskManager():
             return 113972
         elif task_group == "crowdsource_draw_box":
             return 86129
+        elif task_group == "cv_internal":
+            return 117630
         else:
             raise Exception("Unknown task: {}".format(task_group))
 
