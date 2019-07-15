@@ -1,7 +1,7 @@
 from video.getShotMoments import getShotAPI
 
-videoFileName="/home/mtcadmin/test/1551538896210_sc99_01_q1.mp4"
-predict_file="/home/mtcadmin/test/1551538896210_sc99_01_q1.tsv"
+videoFileName="/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_selected_training/5102222619_5004703696_92.mp4"
+predict_file="/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_selected_training/5102222619_5004703696_92.tsv"
 
 pred_results = getShotAPI(videoFileName, predict_file)
-print pred_results
+print(pred_results)
