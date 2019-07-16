@@ -166,6 +166,7 @@ def train(cfg, local_rank, distributed, log_step=20, sync_bn=False,
                 model, device_ids=[local_rank], output_device=local_rank,
                 # this should be removed if we update BatchNorm stats
                 broadcast_buffers=False,
+                find_unused_parameters=True,
             )
 
     arguments = {}
@@ -556,6 +557,20 @@ def test(cfg, model, distributed, predict_files, label_id_to_label,
                 reorder_tsv_keys(predict_file, ordered_keys, predict_file)
         synchronize()
 
+def upgrade_maskrcnn_param(kwargs):
+    old_key = 'MODEL$BACKBONE$OUT_CHANNELS'
+    if dict_has_path(kwargs, old_key):
+        from qd.qd_common import dict_get_path_value, dict_update_path_value
+        origin = dict_get_path_value(kwargs, old_key)
+        new_key = 'MODEL$RESNETS$BACKBONE_OUT_CHANNELS'
+        if not dict_has_path(kwargs, new_key):
+            dict_update_path_value(kwargs, new_key,
+                    origin)
+        else:
+            assert dict_get_path_value(kwargs, new_key)== origin
+        from qd.qd_common import dict_remove_path
+        dict_remove_path(kwargs, old_key)
+
 class MaskRCNNPipeline(ModelPipeline):
     def __init__(self, **kwargs):
         super(MaskRCNNPipeline, self).__init__(**kwargs)
@@ -637,6 +652,7 @@ class MaskRCNNPipeline(ModelPipeline):
 
         # use self.kwargs instead  of kwargs because we might load parameters
         # from local disk not from the input argument
+        upgrade_maskrcnn_param(self.kwargs)
         merge_dict_to_cfg(self.kwargs, cfg)
 
         # train -> iter
@@ -647,6 +663,7 @@ class MaskRCNNPipeline(ModelPipeline):
         self._default['ovthresh'] = [-1, 0.3, 0.5]
 
         cfg.freeze()
+        logging.info('cfg = \n{}'.format(cfg))
 
     def train(self):
         ensure_directory(cfg.OUTPUT_DIR)

@@ -8,6 +8,7 @@ from qd.qd_common import cmd_run
 from qd.qd_common import parse_iteration
 import logging
 from tqdm import tqdm
+import os
 logger.propagate = False
 
 def create_cloud_storage(x=None, config_file=None):
@@ -160,7 +161,6 @@ class CloudStorage(object):
             return x
         folder = remove_tailing(folder)
         target_prefix = remove_tailing(target_prefix)
-        import os
         for root, dirs, files in os.walk(folder):
             for f in files:
                 src_file = op.join(root, f)
@@ -241,11 +241,14 @@ class CloudStorage(object):
 
     def download_to_path(self, blob_name, local_path):
         from qd.qd_common import ensure_directory
-        ensure_directory(op.dirname(local_path))
+        dir_path = op.dirname(local_path)
+        from qd.qd_common import get_file_size
+        if op.isfile(dir_path) and get_file_size(dir_path) == 0:
+            os.remove(dir_path)
+        ensure_directory(dir_path)
         tmp_local_path = local_path + '.tmp'
         self.block_blob_service.get_blob_to_path(self.container_name,
                 blob_name, tmp_local_path)
-        import os
         os.rename(tmp_local_path, local_path)
 
     def download_to_stream(self, blob_name, s):

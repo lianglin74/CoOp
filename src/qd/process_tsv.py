@@ -1368,7 +1368,6 @@ def update_confusion_matrix(predicts, gts, threshold,
                 inc_one_dic_dic(confusion_gt_pred,
                         gt_class, 'None')
 
-
 def normalize_to_str(s):
     if sys.version_info.major == 3:
         return s
@@ -4321,6 +4320,7 @@ def build_taxonomy_from_single_source(source_data,
         source_split, source_version,
         min_image_per_label,
         out_data):
+    populate_dataset_details(source_data)
     dataset = TSVDataset(source_data)
     label_to_idx = dataset.load_inverted_label(source_split,
             version=source_version)
@@ -5238,14 +5238,16 @@ def gen_merged_candidate(prediction_file,
     # duplicate addition
     iou_th = kwargs['merge_max_iou']
     aug_labels = kwargs['aug_labels']
-    key_to_pred = {}
     prediction = tsv_reader(prediction_file)
+    is_aligned = kwargs.get('is_aligned', False)
     logging.info('loading prediction: {}'.format(prediction_file))
-    for p in tqdm(prediction):
-        assert len(p) == 2
-        key = p[0]
-        rects = json.loads(p[1])
-        key_to_pred[key] = rects
+    if not is_aligned:
+        key_to_pred = {}
+        for p in tqdm(prediction):
+            assert len(p) == 2
+            key = p[0]
+            rects = json.loads(p[1])
+            key_to_pred[key] = rects
     num_image = 0
     num_added = 0
     for gt in tqdm(gts):
@@ -5255,10 +5257,15 @@ def gen_merged_candidate(prediction_file,
         g_rects = json.loads(gt[1])
         origin_g_rects = copy.deepcopy(g_rects)
         add_rects = []
-        if key not in key_to_pred:
-            yield key, origin_g_rects, add_rects, g_rects
-            continue
-        p_rects = key_to_pred[key]
+        if not is_aligned:
+            if key not in key_to_pred:
+                yield key, origin_g_rects, add_rects, g_rects
+                continue
+            p_rects = key_to_pred[key]
+        else:
+            p_key, p_rects = next(prediction)
+            p_rects = json.loads(p_rects)
+            assert key == p_key
         p_rects = [r for r in p_rects if r['conf'] > prob_th and
                 r['conf'] <= prob_th_max]
         if aug_labels is not None:
@@ -5322,21 +5329,19 @@ def merge_prediction_to_gt(prediction_file, gts, im_rows, dataset, split,
                 merged_rects = gt2[3]
                 if len(add_rects) == 0:
                     continue
-                im_origin_gt = np.copy(im)
-                draw_rects(origin_rects, im_origin_gt)
                 add_class = list(set([r['class'] for r in add_rects]))
                 for c in add_class:
                     c_rects = [r for r in add_rects if r['class'] == c]
                     im_add = np.copy(im)
                     draw_rects(c_rects, im_add, add_label=False)
                     im_origin = np.copy(im)
-                    draw_rects(origin_rects, im_origin)
+                    draw_rects([x for x in origin_rects if x['class'] == c], im_origin)
                     im_merged = np.copy(im)
-                    draw_rects(merged_rects, im_merged)
+                    draw_rects([x for x in merged_rects if x['class'] == c], im_merged)
                     top = np.concatenate((im, im_add), 1)
                     bottom = np.concatenate((im_origin, im_merged), 1)
                     x = np.concatenate((top, bottom), 0)
-                    save_image(x, '/mnt/jianfw_desk/add_image/{}/{}.jpg'.format(
+                    save_image(x, './output/add_image/{}_{}.jpg'.format(
                         c, im_row[0]))
     else:
         meta = {'num_image': 0,

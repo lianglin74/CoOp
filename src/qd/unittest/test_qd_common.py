@@ -18,6 +18,8 @@ class TestQDCommon(unittest.TestCase):
                     'Top100Instagram_with_bb', 'test', 5),
                 ('model_iter_0090000.pt.OpenImageV5C.trainval.predict.tsv',
                     'OpenImageV5C', 'trainval', 0),
+                ('model_iter_0090000.pt.coco2017Full.test.testInputSize640.predict.coco_box.report',
+                    'coco2017Full', 'test', 0),
                 ]
         for f, d, s, v in pred_data_split_versions:
             from qd.qd_common import parse_test_data_with_version
@@ -73,6 +75,42 @@ class TestQDCommon(unittest.TestCase):
         logging.info(info)
         self.assertEqual(info['mem_used'], '3.7-4.1')
         self.assertEqual(info['gpu_util'], '90-97')
+
+    def test_dict_remove_path(self):
+        from qd.qd_common import dict_remove_path
+        d = {'a': {'b': {'c': 'd'}}}
+        p = 'a$b$c'
+        dict_remove_path(d, p)
+
+        self.assertEqual(len(d), 0)
+
+    def test_dict_remove_path2(self):
+        from qd.qd_common import dict_remove_path
+        d = {'a': {'b': {'c': 'd',
+                         'e': 'f'}}}
+        p = 'a$b$c'
+        dict_remove_path(d, p)
+
+        self.assertEqual(len(d), 1)
+        self.assertEqual(len(d['a']), 1)
+        self.assertEqual(d['a']['b']['e'], 'f')
+
+    def test_dict_remove_path3(self):
+        from qd.qd_common import dict_remove_path
+        d = {'a': {'b': {'c': 'd'},
+                   'e': 'f'}}
+        p = 'a$b$c'
+        dict_remove_path(d, p)
+
+        self.assertEqual(len(d), 1)
+        self.assertEqual(len(d['a']), 1)
+        self.assertEqual(d['a']['e'], 'f')
+
+    def test_dict_ensure_path_key_converted(self):
+        from qd.qd_common import dict_ensure_path_key_converted
+        x = {'a$b': 'c'}
+        dict_ensure_path_key_converted(x)
+        self.assertDictEqual(x, {'a': {'b': 'c'}})
 
 if __name__ == '__main__':
     unittest.main()

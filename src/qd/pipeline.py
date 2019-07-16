@@ -23,6 +23,9 @@ from qd.qd_common import load_from_yaml_file
 from qd.qd_common import hash_sha1
 from qd.qd_common import init_logging
 from qd.qd_common import dict_has_path, dict_get_path_value, dict_get_all_path
+from qd.qd_common import dict_update_nested_dict
+from qd.qd_common import dict_ensure_path_key_converted
+
 
 def get_all_test_data(exp):
     pattern_to_test_datas = load_from_yaml_file('./aux_data/exp/pattern_to_test_datas.yaml')
@@ -78,6 +81,9 @@ def ensure_upload_init_model(param):
     if 'basemodel' not in param:
         return
     basemodel = param['basemodel']
+    if basemodel == '' or basemodel.startswith('http'):
+        logging.info('No need to upload base model')
+        return
     target_path = op.join('jianfw', 'work',
             basemodel.replace('output/', 'qd_output/'))
     c = create_cloud_storage('vig')
@@ -204,6 +210,13 @@ def except_to_update_lr_policy(param):
     else:
         return True
 
+def except_to_update_bb_loss_type(param):
+    if dict_has_path(param, 'MODEL$ROI_BOX_HEAD$BOUNDINGBOX_LOSS_TYPE'):
+        value = dict_get_path_value(param, 'MODEL$ROI_BOX_HEAD$BOUNDINGBOX_LOSS_TYPE')
+        return value == 'SL1'
+    else:
+        return True
+
 def update_parameters(param):
     default_param = {
             'max_iter': 10000,
@@ -266,6 +279,10 @@ def update_parameters(param):
             ('SOLVER$LR_POLICY', 'LRP', except_to_update_lr_policy),
             ('SOLVER$WARMUP_ITERS', 'Warm'),
             ('MODEL$BACKBONE$FREEZE_CONV_BODY_AT', 'Freeze'),
+            ('MODEL$ROI_BOX_HEAD$BOUNDINGBOX_LOSS_TYPE', '', except_to_update_bb_loss_type),
+            ('MODEL$RESNETS$STEM_FUNC', '', {'default_value': 'StemWithFixedBatchNorm'}),
+            ('MODEL$RESNETS$TRANS_FUNC', '', {'default_value': 'BottleneckWithFixedBatchNorm'}),
+            ('MODEL$FPN$USE_RELU', ('FPNRelu', None)),
             ]
 
     non_expid_impact_keys = ['data', 'net', 'expid_prefix',
@@ -300,13 +317,20 @@ def update_parameters(param):
     need_hash_sha_params = ['basemodel']
     for k in need_hash_sha_params:
         if k in param:
-            infos.append('{}{}'.format(k, hash_sha1(param[k])[:5]))
+            if len(param[k]) > 5:
+                infos.append('{}{}'.format(k, hash_sha1(param[k])[:5]))
+            else:
+                infos.append('{}{}'.format(k, param[k]))
     for setting in direct_add_value_keys:
         k, v = setting[:2]
         if dict_has_path(param, k):
             pk = dict_get_path_value(param, k)
-            if len(setting) == 3 and setting[2](param):
-                continue
+            if len(setting) == 3:
+                if isinstance(setting[2], dict):
+                    if setting[2]['default_value'] == pk:
+                        continue
+                elif setting[2](param):
+                    continue
             if type(pk) is str:
                 pk = pk.replace('/', '.')
             elif type(pk) in [list, tuple]:
@@ -358,7 +382,6 @@ def load_pipeline(**kwargs):
     from qd.qd_pytorch import load_latest_parameters
     kwargs_f = load_latest_parameters(op.join('output',
         kwargs['full_expid']))
-    from qd.qd_common import dict_update_nested_dict
     dict_update_nested_dict(kwargs_f, kwargs)
     return create_pipeline(kwargs_f)
 
@@ -372,7 +395,8 @@ def pipeline_train_eval_multi(all_test_data, param, **kwargs):
     param['full_expid'] = pip.full_expid
     for test_data_info in all_test_data:
         curr_param = copy.deepcopy(param)
-        curr_param.update(test_data_info)
+        dict_ensure_path_key_converted(test_data_info)
+        dict_update_nested_dict(curr_param, test_data_info)
         pip = load_pipeline(**curr_param)
         pip.ensure_predict()
         pip.ensure_evaluate()
@@ -382,14 +406,16 @@ def pipeline_train_eval_multi(all_test_data, param, **kwargs):
 def pipeline_monitor_train(param, all_test_data, **kwargs):
     for test_data_info in all_test_data:
         curr_param = copy.deepcopy(param)
-        curr_param.update(test_data_info)
+        dict_ensure_path_key_converted(test_data_info)
+        dict_update_nested_dict(curr_param, test_data_info)
         pip = load_pipeline(**curr_param)
         pip.monitor_train()
 
 def pipeline_eval_multi(param, all_test_data, **kwargs):
     for test_data_info in all_test_data:
         curr_param = copy.deepcopy(param)
-        curr_param.update(test_data_info)
+        dict_ensure_path_key_converted(test_data_info)
+        dict_update_nested_dict(curr_param, test_data_info)
         pip = load_pipeline(**curr_param)
         pip.ensure_predict()
         pip.ensure_evaluate()

@@ -701,11 +701,26 @@ def get_all_tree_data():
     return [name for name in names
         if op.isfile(op.join('data', name, 'root_enriched.yaml'))]
 
-def parse_test_data_with_version(predict_file):
-    # run test_parse_test_data_with_version() if any change is made to this
-    # function
+def parse_test_data_with_version_with_more_param(predict_file):
     pattern = \
-        'model(?:_iter)?_-?[0-9]*[e]?\.(?:caffemodel|pth\.tar|pth|pt)\.(.*)\.(trainval|train|test).*?(\.v[0-9])?\.(?:predict|report)'
+        'model(?:_iter)?_-?[0-9]*[e]?\.(?:caffemodel|pth\.tar|pth|pt)\.(.*)\.(trainval|train|test)\..*?(\.v[0-9])?\.(?:predict|report)'
+    match_result = re.match(pattern, predict_file)
+    if match_result:
+        assert match_result
+        result = match_result.groups()
+        if result[2] is None:
+            v = 0
+        else:
+            v = int(result[2][2])
+        return result[0], result[1], v
+
+def parse_test_data_with_version(predict_file):
+    # with version
+    result = parse_test_data_with_version_with_more_param(predict_file)
+    if result is not None:
+        return result
+    pattern = \
+        'model(?:_iter)?_-?[0-9]*[e]?\.(?:caffemodel|pth\.tar|pth|pt)\.(.*)\.(trainval|train|test)\.(\.v[0-9])?(?:predict|report)'
     match_result = re.match(pattern, predict_file)
     if match_result is None:
         pattern = \
@@ -1590,6 +1605,25 @@ def dict_update_nested_dict(a, b):
             else:
                 a[k] = v
 
+def dict_ensure_path_key_converted(a):
+    for k in list(a.keys()):
+        v = a[k]
+        if '$' in k:
+            parts = k.split('$')
+            x = {}
+            x_curr = x
+            for p in parts[:-1]:
+                x_curr[p] = {}
+                x_curr = x_curr[p]
+            if isinstance(v, dict):
+                dict_ensure_path_key_converted(v)
+            x_curr[parts[-1]] = v
+            dict_update_nested_dict(a, x)
+            del a[k]
+        else:
+            if isinstance(v, dict):
+                dict_ensure_path_key_converted(v)
+
 def dict_get_all_path(d):
     all_path = []
     for k, v in viewitems(d):
@@ -1625,6 +1659,27 @@ def dict_update_path_value(d, p, v):
             if ps[0] not in d:
                 d[ps[0]] = {}
             d = d[ps[0]]
+            ps = ps[1:]
+
+def dict_remove_path(d, p):
+    ps = p.split('$')
+    assert len(ps) > 0
+    cur_dict = d
+    need_delete = ()
+    while True:
+        if len(ps) == 1:
+            if len(need_delete) > 0 and len(cur_dict) == 1:
+                del need_delete[0][need_delete[1]]
+            else:
+                del cur_dict[ps[0]]
+            return
+        else:
+            if len(cur_dict) == 1:
+                if len(need_delete) == 0:
+                    need_delete = (cur_dict, ps[0])
+            else:
+                need_delete = (cur_dict, ps[0])
+            cur_dict = cur_dict[ps[0]]
             ps = ps[1:]
 
 def dict_get_path_value(d, p):
@@ -1830,7 +1885,8 @@ def attach_aml_maskrcnn_log_if_is(all_log, job_info):
             from dateutil.parser import parse
             log_time = parse(log_time)
             job_info['log_time'] = log_time
-            delay = (now - log_time).total_seconds()
+            # log_time here is UTC. convert it to local time
+            delay = (now - log_time).total_seconds() + 7 * 3600.
             d, h = parse_eta_in_hours(left)
             job_info['left'] = '{}-{:.1f}h({:.1f}s)'.format(d, h, delay)
             return True

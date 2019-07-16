@@ -121,8 +121,6 @@ class AMLClient(object):
                         return_output=True)
                     from qd.qd_common import attach_log_parsing_result
                     attach_log_parsing_result(info)
-            #all_info = [i for i in all_info if i['status'] in
-                #[AMLClient.status_running, AMLClient.status_queued]]
 
             from qd.qd_common import print_job_infos
             param_keys = ['data', 'net', 'expid']

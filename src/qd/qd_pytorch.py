@@ -418,7 +418,7 @@ class IBCEWithLogitsNegLoss(nn.Module):
         weight = torch.ones_like(target)
 
         weight[ignore_position] = 0
-        sig_feature = F.sigmoid(feature)
+        sig_feature = torch.sigmoid(feature)
         weight[(neg_position) & (sig_feature <= self.neg)] = 0
         weight[(pos_position) & (sig_feature >= self.pos)] = 0
 
@@ -487,7 +487,12 @@ class IBCEWithLogitsNegLoss(nn.Module):
         self.num_called += 1
 
         if weight_sum == 0:
-            return torch.zeros((), device=feature.device, dtype=feature.dtype)
+            return torch.tensor(0, device=feature.device, dtype=feature.dtype,
+                    requires_grad=True)
+            # Do not use the following, since .backward may give the error of
+            # element 0 of tensors does not require grad and does not have a
+            # grad_fn
+            #return torch.zeros((), device=feature.device, dtype=feature.dtype)
         else:
             criterion = nn.BCEWithLogitsLoss(weight, reduction='sum')
             loss = criterion(feature, target)
@@ -951,13 +956,12 @@ class TorchTrain(object):
         logging.info(pformat(self.kwargs))
         logging.info('torch version = {}'.format(torch.__version__))
 
-        train_result = self.train()
-        synchronize()
-
-        # save the source code after training
         if self.mpi_rank == 0 and not self.debug_train:
             from qd.qd_common import zip_qd
             zip_qd(op.join(self.output_folder, 'source_code'))
+
+        train_result = self.train()
+        synchronize()
 
         return train_result
 
@@ -1486,6 +1490,12 @@ class YoloV2PtPipeline(ModelPipeline):
         iteration = self.parse_iter(iteration)
         return op.join(self.output_folder, 'snapshot',
                 "model_{:07d}.pth".format(iteration))
+
+    def monitor_train(self):
+        # not implemented. but we just return rather than throw exception
+        # need to use maskrcnn checkpointer to load and save the intermediate
+        # models.
+        return
 
     def train(self):
         dataset = TSVDataset(self.data)
