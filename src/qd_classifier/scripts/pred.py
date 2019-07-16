@@ -9,12 +9,9 @@ import torch
 import torch.nn as nn
 import torch.nn.parallel
 import torch.backends.cudnn as cudnn
-import torch.distributed as dist
 import torch.nn.functional as F
 import torch.optim
 import torch.utils.data
-import torch.utils.data.distributed
-import torchvision.datasets as datasets
 import torchvision.models as models
 
 from qd_classifier.utils.data import get_testdata_loader
@@ -44,6 +41,8 @@ parser.add_argument('--opencv', action='store_true',
                     help='use OpenCV transform to process image input')
 parser.add_argument('--evaluate', action='store_true',
                     help='calculate top k accuracy')
+parser.add_argument('--cache_policy', default=None, type=str,
+                        help='use cache policy in TSVFile ')
 
 def load_labelmap(labelmap):
     with open(labelmap, 'r') as fp:

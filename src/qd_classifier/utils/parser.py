@@ -105,7 +105,7 @@ def get_arg_parser(model_names):
                         help='input image size')
 
     # cache policy
-    parser.add_argument('--cache_tmp', action='store_true',
-                        help='use cache policy tmp in TSVFile ')
+    parser.add_argument('--cache_policy', default=None, type=str,
+                        help='use cache policy in TSVFile ')
 
     return parser

@@ -2,6 +2,8 @@ import cv2
 from deprecated import deprecated
 import numpy as np
 import os
+from PIL import Image
+
 import torch
 import torchvision.transforms as transforms
 from torchvision.utils import save_image
@@ -9,16 +11,23 @@ import torch.utils.data
 import torch.utils.data.distributed
 from torch.utils.data.dataloader import default_collate
 
-from ..lib.dataset import TSVDataset, TSVDatasetPlusYaml, TSVDatasetWithoutLabel, CropClassTSVDataset, CropClassTSVDatasetYaml
+from ..lib.dataset import CropClassTSVDatasetYaml, TSVSplitImageBoxCrop
 
-def get_train_data_loader(args):
+class ConvertBGR2RGB(object):
+    def __call__(self, src_bgr_image):
+        src_B, src_G, src_R = src_bgr_image.getchannel('R'), src_bgr_image.getchannel('G'), src_bgr_image.getchannel('B')
+        rgb_image = Image.merge('RGB', [src_R, src_G, src_B])
+
+        return rgb_image
+
+def get_train_data_loader(args, is_distributed):
     train_dataset = _get_dataset("train", args)
 
     if args.balance_sampler:
-        assert not args.balance_class and not args.distributed
+        assert not args.balance_class and not is_distributed
         train_sampler = make_class_balanced_sampler(train_dataset)
     else:
-        if args.distributed:
+        if is_distributed:
             train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
         else:
             train_sampler = None
@@ -30,6 +39,16 @@ def get_train_data_loader(args):
             sampler=train_sampler)
 
     return train_dataset, train_loader, train_sampler
+
+def get_testdata_loader(args):
+    test_dataset = _get_dataset("test", args)
+
+    test_loader = torch.utils.data.DataLoader(
+        test_dataset, batch_size=args.batch_size, shuffle=False,
+        collate_fn=my_collate,
+        num_workers=args.workers, pin_memory=True)
+
+    return test_loader
 
 @deprecated("use get_train_data_loader or get_test_data_loader")
 def get_data_loader(args):
@@ -81,7 +100,7 @@ def get_data_loader(args):
         #         save_image(img, os.path.join(imgdir, "val_{}_{}.jpg".format(label.item(), idx)))
         #         target_labels[label.item()] += 1
 
-        sample_counts = [0] * train_dataset.label_dim()
+        sample_counts = [0] * train_dataset.get_num_labels()
         for i, (input, target) in enumerate(train_loader):
             if i%100==0:
                 print(i)
@@ -95,24 +114,6 @@ def my_collate(batch):
     cols = [item[1] for item in batch]
     return [imgs, cols]
 
-def get_testdata_loader(args):
-    if not args.data.lower().endswith('.yaml'):
-        raise NotImplementedError()
-    if args.opencv:
-        test_transform = cv_transform
-    else:
-        test_transform = get_pt_transform("test", args)
-
-    test_dataset = CropClassTSVDatasetYaml(args.data, session_name='test',
-            transform=test_transform, enlarge_bbox=args.enlarge_bbox)
-
-    test_loader = torch.utils.data.DataLoader(
-        test_dataset, batch_size=args.batch_size, shuffle=False,
-        collate_fn=my_collate,
-        num_workers=args.workers, pin_memory=True)
-
-    return test_loader
-
 def _get_dataset(phase, args):
     if phase == "train":
         transform = get_pt_transform("train", args)
@@ -123,8 +124,12 @@ def _get_dataset(phase, args):
         else:
             transform = get_pt_transform("test", args)
 
-    assert args.data.endswith("yaml"), "not supported data type: {}".format(args.data)
-    return CropClassTSVDatasetYaml(args.data, session_name=phase, transform=transform, enlarge_bbox=args.enlarge_bbox)
+    if args.data.endswith("yaml"):
+        return CropClassTSVDatasetYaml(args.data, session_name=phase, transform=transform, enlarge_bbox=args.enlarge_bbox)
+    else:
+        dataset_name, split, version = args.data.rsplit('.', 2)
+        return TSVSplitImageBoxCrop(dataset_name, split, int(version), transform=transform,
+            cache_policy=args.cache_policy, labelmap=None, for_test=(phase == "test"), enlarge_bbox=args.enlarge_bbox)
 
 def get_pt_transform(phase, args):
     rgb_normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
@@ -143,6 +148,7 @@ def get_pt_transform(phase, args):
         if hasattr(args, "data_aug") and args.data_aug == 1:
             test_transform = transforms.Compose([
                     transforms.ToPILImage(),
+                    ConvertBGR2RGB(),
                     transforms.Resize(target_size),
                     transforms.CenterCrop(crop_size),
                     transforms.ToTensor(),
@@ -151,6 +157,7 @@ def get_pt_transform(phase, args):
         else:
             test_transform = transforms.Compose([
                     transforms.ToPILImage(),
+                    ConvertBGR2RGB(),
                     transforms.Resize(target_size),
                     transforms.CenterCrop(crop_size),
                     transforms.ToTensor(),
@@ -162,6 +169,7 @@ def get_pt_transform(phase, args):
         if args.data_aug == 0:
             train_transform = transforms.Compose([
                     transforms.ToPILImage(),
+                    ConvertBGR2RGB(),
                     # transforms.RandomAffine(degrees=10),
                     transforms.RandomResizedCrop(crop_size, scale=(0.25,1), ratio=(2./3., 3./2.)),
                     transforms.ColorJitter(brightness=0.5, contrast=0, saturation=0.5, hue=0.1),
@@ -171,6 +179,7 @@ def get_pt_transform(phase, args):
         elif args.data_aug == 1:
             train_transform = transforms.Compose([
                     transforms.ToPILImage(),
+                    ConvertBGR2RGB(),
                     transforms.RandomResizedCrop(crop_size, scale=(0.25,1)),
                     # transforms.ColorJitter(brightness=(0.66667, 1.5), contrast=0, saturation=(0.66667, 1.5), hue=(-0.1, 0.1)),
                     # transforms.RandomHorizontalFlip(0.5),
@@ -180,6 +189,7 @@ def get_pt_transform(phase, args):
         elif args.data_aug == 2:
             train_transform = transforms.Compose([
                     transforms.ToPILImage(),
+                    ConvertBGR2RGB(),
                     # transforms.RandomAffine(0, shear=15),
                     transforms.RandomAffine(degrees=10),
                     # transforms.RandomAffine(0, shear=15),
@@ -191,6 +201,7 @@ def get_pt_transform(phase, args):
         elif args.data_aug == 3:
             train_transform = transforms.Compose([
                     transforms.ToPILImage(),
+                    ConvertBGR2RGB(),
                     transforms.RandomAffine(0, shear=15),
                     transforms.RandomAffine(degrees=10),
                     transforms.RandomAffine(0, shear=15),
@@ -202,6 +213,7 @@ def get_pt_transform(phase, args):
         elif args.data_aug == 4:
             train_transform = transforms.Compose([
                     transforms.ToPILImage(),
+                    ConvertBGR2RGB(),
                     transforms.RandomResizedCrop(crop_size, scale=(0.25,1), ratio=(2./3., 3./2.)),
                     transforms.RandomHorizontalFlip(0.5),
                     transforms.ToTensor(),
@@ -247,7 +259,7 @@ def make_class_balanced_sampler(train_dataset):
             weight_per_class.append(0.0)
         else:
             weight_per_class.append(max(len(train_dataset)/float(count), 9e-4))
-    assert len(weight_per_class) == train_dataset.label_dim()
+    assert len(weight_per_class) == train_dataset.get_num_labels()
     weights = torch.tensor([0.] * len(train_dataset))
     for i in range(len(train_dataset)):
         weights[i] = weight_per_class[train_dataset.get_target(i)]

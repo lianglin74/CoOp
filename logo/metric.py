@@ -32,6 +32,8 @@ dataset_cfgs = [
     {"data": "sports_missingSplit", "split": "test", "version": -1},
     {"data": "logo40", "split": "test", "version": -1},
     # {"data": "logo200", "split": "test", "version": -1},
+    {"data": "logo40_overlap", "split": "test", "version": -1},
+    {"data": "logo40_unique", "split": "test", "version": -1},
 ]
 
 # rootpath = "/raid/data/brand_output/"
@@ -399,7 +401,9 @@ def run_all_eval_classifier():
     output_root = './brand_output/'
     labelmap = None
     tag_models = [
-            ("brandsports_addlogo40syn", "snapshot_fixlabel", "model_best.pth.tar"),
+        ("logo40syn_09v204", "snapshot", "model_best.pth.tar"),
+        ("sports_logo40syn", "snapshot", "model_best.pth.tar"),
+        ("brandsports_addlogo40syn", "snapshot_fixlabel", "model_best.pth.tar"),
     ]
 
     def gen_rows():
@@ -414,7 +418,7 @@ def run_all_eval_classifier():
                                     tag_snap_id, tag_model_id, labelmap=labelmap, iou_thres=0.5, enlarge_bbox=enlarge_bbox, topN_rp=topN, obj_thres=obj_thres))
                             print(res)
                             yield res
-    tsv_writer(gen_rows(), os.path.join(output_root, "brandsports_addlogo40syn", "snapshot_fixlabel", 'eval.tsv'))
+    tsv_writer(gen_rows(), os.path.join(output_root, "brandsports_addlogo40syn", 'eval.tsv'))
 
 
 if __name__ == "__main__":

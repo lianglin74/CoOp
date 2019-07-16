@@ -2,11 +2,13 @@ import base64
 import collections
 import copy
 import datetime
+from deprecated import deprecated
 import json
 import logging
 import math
 import numpy as np
 import os
+import os.path as op
 import torch
 
 from sklearn.metrics import roc_curve, auc
@@ -50,20 +52,16 @@ class CropTaggingWrapper(object):
                 region_source=region_source, version=version)
 
         # get tagging results
-        data_yaml = self._write_data_yaml(dataset_name, split, "test", rp_file, enlarge_bbox=enlarge_bbox)
+        # data_yaml = self._write_data_yaml(dataset_name, split, "test", rp_file, enlarge_bbox=enlarge_bbox)
         max_k = eval_topk_acc if eval_topk_acc else 1
-        tag_file = self.tag_predict(data_yaml, max_k=max_k, enlarge_bbox=enlarge_bbox, force_rewrite=True)
+        tag_file = self.tag_predict(dataset_name, split, version, max_k=max_k, enlarge_bbox=enlarge_bbox)
 
         # combine
-        outfile = os.path.join(self.eval_dir, "{}.{}.tag.predict.tsv".format(dataset_name, split))
-        outfile_unordered = outfile + '.tmp'
-        topk_acc = parse_tagging_predict(tag_file, outfile_unordered, conf_from=conf_from,
+        outfile = tag_file + ".parsed"
+        topk_acc = parse_tagging_predict(tag_file, outfile, conf_from=conf_from,
                 eval_accuracy=(eval_topk_acc is not None))
-        # align the order of imgkeys
-        # ordered_keys = TSVDataset(dataset_name).load_keys(split)
-        # reorder_tsv_keys(outfile_unordered, ordered_keys, outfile)
-        # rm_tsv(outfile_unordered)
-        return outfile_unordered, topk_acc, tag_file
+
+        return outfile, topk_acc, tag_file
 
     def predict_on_unknown_class(self, dataset_name, split,
                 region_source=constants.PRED_REGION, version=-1):
@@ -198,8 +196,24 @@ class CropTaggingWrapper(object):
             fp.write(log_str)
             fp.write('\n')
 
+    def tag_predict(self, data, split, version, max_k=1, enlarge_bbox=1.0):
+        """ Tagging on given images and regions
+        output: TSV file of image_key, json bbox(rect, obj), tag:conf list separated by ;
+        """
+        ensure_populate_dataset_crop_index(data, split, version)
+        outpath = op.join(self.eval_dir, '.'.join([data, split, str(version), str(enlarge_bbox)]) + ".tagging.tsv")
+        args = [
+            '.'.join([data, split, str(version)]),
+            "--model", self.tag_model_path,
+            "--output", outpath,
+            "--topk", str(max_k),
+            "--workers", str(self.num_workers),
+            '--enlarge_bbox', str(enlarge_bbox)
+        ]
+        pred.main(args)
+        return outpath
 
-    def tag_predict(self, datayaml, force_rewrite=False, max_k=1, enlarge_bbox=1.0):
+    def tag_predict_deprecated(self, datayaml, force_rewrite=False, max_k=1, enlarge_bbox=1.0):
         """ Tagging on given images and regions
         output: TSV file of image_key, json bbox(rect, obj), tag:conf list separated by ;
         """
@@ -590,3 +604,27 @@ def nms(dets, thresh):
                 suppressed[j] = 1
 
     return keep
+
+def ensure_populate_dataset_crop_index(data, split, version):
+    from qd.qd_common import int_rect
+
+    dataset = TSVDataset(data)
+    outfile = dataset.get_data(split, t='crop.index', version=version)
+    if op.isfile(outfile):
+        return
+
+    hw_iter = dataset.iter_data(split, t='hw')
+    label_iter = dataset.iter_data(split, t='label', version=version)
+    def gen_rows():
+        for img_idx, (parts1, parts2) in enumerate(zip(hw_iter, label_iter)):
+            assert parts1[0] == parts2[0]
+            im_h, im_w = parts1[1].split(' ')
+            for bbox_idx, bbox in enumerate(json.loads(parts2[1])):
+                rect = int_rect(bbox["rect"], im_h=int(im_h), im_w=int(im_w))
+                left, top, right, bot = rect
+                if right - left >= 3 and bot - top >= 3:
+                    yield img_idx, bbox_idx
+                else:
+                    logging.info("invalid bbox at data:{} split:{} version:{} image:{} bbox:{}"
+                        .format(data, split, version, parts2[0], json.dumps(bbox)))
+    tsv_writer(gen_rows(), outfile)

@@ -2,8 +2,9 @@ import os
 import torch
 from torch.utils.data import Dataset
 
-from qd.tsv_io import TSVFile, tsv_reader, tsv_writer
-from qd.qd_common import img_from_base64, generate_lineidx, load_from_yaml_file, FileProgressingbar, int_rect, hash_sha1, worth_create
+from qd.tsv_io import TSVDataset, TSVFile, tsv_reader, tsv_writer
+from qd.qd_common import img_from_base64, generate_lineidx, load_from_yaml_file, FileProgressingbar, int_rect, hash_sha1, worth_create, load_list_file, json_dump
+from qd.qd_pytorch import TSVSplitProperty
 
 import base64
 from collections import OrderedDict, defaultdict
@@ -17,202 +18,88 @@ import six
 import time
 import yaml
 
+class TSVSplitImageBoxCrop(Dataset):
+    def __init__(self, data, split, version, transform=None,
+            cache_policy=None, labelmap=None, for_test=False, enlarge_bbox=1.0):
+        self._image_tsv = TSVSplitProperty(data, split, t=None, cache_policy=cache_policy)
+        self._label_tsv = TSVSplitProperty(data, split, t='label', version=version, cache_policy=cache_policy)
+        self._crop_index_tsv = TSVSplitProperty(data, split, t='crop.index', version=version, cache_policy=cache_policy)
 
-class TSVDataset(Dataset):
-    """ TSV dataset for ImageNet 1K training
-    """
-    def __init__(self, tsv_file, transform=None):
-        self.tsv = TSVFile(tsv_file)
+        # load the label map
+        dataset = TSVDataset(data)
+        if labelmap is None:
+            labelmap = load_list_file(dataset.get_data(split, t='labelmap', version=version))
+        elif type(labelmap) is str:
+            labelmap = load_list_file(labelmap)
+        assert type(labelmap) is list
+        self.labelmap = labelmap
+        self.label_to_idx = {l: i for i, l in enumerate(labelmap)}
+
         self.transform = transform
+        self.for_test = for_test
+        self.enlarge_bbox = enlarge_bbox
+        self._label_counts = None
 
     def __getitem__(self, index):
-        row = self.tsv.seek(index)
-        img = img_from_base64(row[-1])
-        img = Image.fromarray(img)
+        img_idx, bbox_idx = self._crop_index_tsv[index]
+        img_idx, bbox_idx = int(img_idx), int(bbox_idx)
+        key, _, str_img = self._image_tsv[img_idx]
+        _, str_rects = self._label_tsv[img_idx]
+        bbox = json.loads(str_rects)[bbox_idx]
+
+        # NOTE: convert image array to RGB order
+        cropped_img = self._crop_image(str_img, bbox["rect"])[:, :, ::-1]
         if self.transform is not None:
-            img = self.transform(img)
-        idx = int(row[1])
-        label = torch.from_numpy(np.array(idx, dtype=np.int))
-        return img, label
+            cropped_img = self.transform(cropped_img)
+
+        if self.for_test:
+            return cropped_img, (key, json_dump(bbox))
+        else:
+            # NOTE: currenly only support single label
+            label_idx = self.label_to_idx[bbox["class"]]
+            label = torch.from_numpy(np.array(label_idx, dtype=np.int))
+            return cropped_img, label
 
     def __len__(self):
-        return self.tsv.num_rows()
+        return len(self._crop_index_tsv)
 
-    def label_dim(self):
-        return 1000
+    def _crop_image(self, img_str, rect):
+        # NOTE: the image is BGR order
+        img_arr = img_from_base64(img_str)
+        height, width, _ = img_arr.shape
+        new_rect = int_rect(rect, enlarge_factor=self.enlarge_bbox,
+                            im_h=height, im_w=width)
+        left, top, right, bot = new_rect
+        return img_arr[top:bot, left:right]
 
     def is_multi_label(self):
         return False
 
-    def get_labelmap(self):
-        return [str(i) for i in range(1000)]
-
-
-class TSVDatasetPlus(TSVDataset):
-    """ TSV dataset plus supporting separate label file and shuffle file
-    This dataset class supports the use of:
-        1. an optional separate label file - as labels often need to be changed over time.
-        2. an optional shuffle file - a list of line numbers to specify a subset of images in the tsv_file.
-        3. an optional labelmap file - to map a string label to a class id on the fly
-    """
-    def __init__(self, tsv_file, label_file=None, shuf_file=None, labelmap=None,
-                 col_label=0, multi_label=False,
-                 transform=None):
-        self.tsv = TSVFile(tsv_file)
-        self.tsv_label = None if label_file is None else TSVFile(label_file)
-        self.shuf_list = self._load_shuffle_file(shuf_file)
-        self.labelmap = self._load_labelmap(labelmap)
-
-        self.transform = transform
-        self.col_image = self._guess_col_image()
-        self.col_label = col_label
-        self.multi_label = multi_label
-
-    def __getitem__(self, index):
-        line_no = self._line_no(index)
-        cols = self.tsv.seek(line_no)
-        img = img_from_base64(cols[self.col_image])
-        img = Image.fromarray(img)
-
-        if self.transform is not None:
-            img = self.transform(img)
-
-        lbl = cols[self.col_label] if self.tsv_label is None else self.tsv_label.seek(line_no)[self.col_label]
-        label = self._transform_label(lbl)
-
-        return img, label
-
-    def __len__(self):
-        return self.tsv.num_rows() if self.shuf_list is None else len(self.shuf_list)
-
-    def label_dim(self):
-        return 1000 if self.labelmap is None else len(self.labelmap)
-
-    def is_multi_label(self):
-        return self.multi_label
+    def get_num_labels(self):
+        return len(self.label_to_idx)
 
     def get_labelmap(self):
-        return self.labelmap.keys()
+        return self.labelmap
 
-    def _line_no(self, idx):
-        return idx if self.shuf_list is None else self.shuf_list[idx]
+    @property
+    def label_counts(self):
+        assert not self.for_test
+        if self._label_counts is None:
+            self._label_counts = np.zeros(len(self.label_to_idx))
+            for index in range(len(self._crop_index_tsv)):
+                img_idx, bbox_idx = self._crop_index_tsv[index]
+                img_idx, bbox_idx = int(img_idx), int(bbox_idx)
+                _, str_rects = self._label_tsv[img_idx]
+                bbox = json.loads(str_rects)[bbox_idx]
+                self._label_counts[self.label_to_idx[bbox["class"]]] += 1
+        return self._label_counts
 
-    def _guess_col_image(self):
-        # peek one line to find the longest column as col_image
-        with open(self.tsv.tsv_file, 'r') as f:
-            cols = [s.strip() for s in f.readline().split('\t')]
-        return max(enumerate(cols), key=lambda x: len(x[1]))[0]
-
-    def _load_labelmap(self, labelmap):
-        label_dict = None
-        if labelmap is not None:
-            label_dict = OrderedDict()
-            with open(labelmap, 'r') as fp:
-                for line in fp:
-                    label = line.strip().split('\t')[0]
-                    if label in label_dict:
-                        raise ValueError("Duplicate label " + label + " in labelmap.")
-                    else:
-                        label_dict[label] = len(label_dict)
-        return label_dict
-
-    def _load_shuffle_file(self, shuf_file):
-        shuf_list = None
-        if shuf_file is not None:
-            with open(shuf_file, 'r') as fp:
-                bar = FileProgressingbar(fp, 'Loading shuffle file {0}: '.format(shuf_file))
-                shuf_list = []
-                for i in fp:
-                    shuf_list.append(int(i.strip()))
-                    bar.update()
-                print
-        return shuf_list
-
-    def _transform_label(self, label):
-        if self.multi_label:
-            assert self.labelmap is not None, 'Expect labelmap for multi labels'
-            _label = np.zeros(len(self.labelmap))
-            labels = label.replace(',', ';').split(';')
-            for l in labels:
-                if l in self.labelmap:  # if a label is unknown, it will be skipped
-                    _label[self.labelmap[l]] = 1
-            return torch.from_numpy(np.array(_label, dtype=np.float32))
-        else:
-            _label = int(label) if self.labelmap is None else self.labelmap[label]
-            return torch.from_numpy(np.array(_label, dtype=np.int))
-
-class TSVDatasetPlusYaml(TSVDatasetPlus):
-    """ TSVDatasetPlus taking a Yaml file for easy function call
-    """
-    def __init__(self, yaml_file, session_name='', transform=None):
-        cfg = load_from_yaml_file(yaml_file)
-        root = os.path.dirname(yaml_file)
-
-        if session_name:
-            cfg = cfg.get(session_name, None)
-            assert cfg is not None, 'Invalid session name in Yaml. Please check.'
-
-        tsv_file = os.path.join(root, cfg['tsv'])
-
-        label_file = cfg.get('label', None)
-        if label_file is not None:
-            label_file = os.path.join(root, label_file)
-
-        shuf_file = cfg.get('shuffle', None)
-        if shuf_file is not None:
-            shuf_file = os.path.join(root, shuf_file)
-
-        labelmap = cfg.get('labelmap', None)
-        if labelmap is not None:
-            labelmap = os.path.join(root, labelmap)
-
-        multi_label = cfg.get('multi_label', False)
-        col_label = cfg['col_label']
-
-        super(TSVDatasetPlusYaml, self).__init__(
-            tsv_file, label_file, shuf_file, labelmap,
-            col_label, multi_label,
-            transform)
-
-
-class TSVDatasetWithoutLabel(TSVDatasetPlus):
-    """ TSV dataset with no labels. The simplest format for testing.
-    """
-    def __init__(self, data_file, session_name='', transform=None):
-        """ data_file could be just a tsv file, or a yaml file including tsv & shuffle files
-        """
-        if data_file.endswith('.tsv'):
-            tsv_file = data_file
-            shuf_file = None
-        else:
-            cfg = load_from_yaml_file(data_file)
-            root = os.path.dirname(data_file)
-
-            if session_name:
-                cfg = cfg.get(session_name, None)
-                assert cfg is not None, 'Invalid session name in Yaml. Please check.'
-
-            tsv_file = os.path.join(root, cfg['tsv'])
-
-            shuf_file = cfg.get('shuffle', None)
-            if shuf_file is not None:
-                shuf_file = os.path.join(root, shuf_file)
-
-        self.tsv = TSVFile(tsv_file)
-        self.shuf_list = self._load_shuffle_file(shuf_file)
-
-        self.transform = transform
-        self.col_image = self._guess_col_image()
-
-    def __getitem__(self, index):
-        line_no = self._line_no(index)
-        cols = self.tsv.seek(line_no)
-        img = img_from_base64(cols[self.col_image])
-        img = Image.fromarray(img)
-        if self.transform is not None:
-            img = self.transform(img)
-        cols.pop(self.col_image)
-        return img, cols
+    def get_target(self, index):
+        img_idx, bbox_idx = self._crop_index_tsv[index]
+        img_idx, bbox_idx = int(img_idx), int(bbox_idx)
+        _, str_rects = self._label_tsv[img_idx]
+        bbox = json.loads(str_rects)[bbox_idx]
+        return self.label_to_idx[bbox["class"]]
 
 
 class CropClassTSVDataset(Dataset):

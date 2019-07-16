@@ -16,7 +16,6 @@ from qd.qd_common import parse_general_args
 from qd.qd_common import plot_to_file
 from qd.qd_common import ensure_remove_dir
 from collections import OrderedDict
-from maskrcnn_benchmark.utils.comm import synchronize
 from qd.process_tsv import load_key_rects
 from qd.process_tsv import hash_sha1
 from qd.tsv_io import tsv_writer, tsv_reader
@@ -53,6 +52,20 @@ import re
 import glob
 import torch.nn.functional as F
 
+def synchronize():
+    """
+    copied from maskrcnn_benchmark.utils.comm
+    Helper function to synchronize (barrier) among all processes when
+    using distributed training
+    """
+    if not dist.is_available():
+        return
+    if not dist.is_initialized():
+        return
+    world_size = dist.get_world_size()
+    if world_size == 1:
+        return
+    dist.barrier()
 
 def compare_caffeconverted_vs_pt(pt2, pt1):
     state1 = torch.load(pt1)

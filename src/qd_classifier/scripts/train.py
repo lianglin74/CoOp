@@ -95,7 +95,7 @@ class ClassifierTrain(object):
         return train_result
 
     def train(self):
-        train_dataset, train_loader, train_sampler = get_train_data_loader(self.config)
+        train_dataset, train_loader, train_sampler = get_train_data_loader(self.config, self.distributed)
         num_classes = train_dataset.label_dim()
 
         model = self._get_model(num_classes)
