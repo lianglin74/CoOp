@@ -57,9 +57,15 @@
        # the path here is relative to the azure blob container
        # where the zipped source code is
        code_path: alias/code/quickdetection.zip 
-       data_folder: alias/data/qd_data # after the source code is unzipped, this folder will be as $ROOT/data
-       model_folder: alias/work/qd_models # this folder will be as $ROOT/models
-       output_folder: alias/work/qd_output # this folder will be as $ROOT/output
+       # after the source code is unzipped, this folder will be as $ROOT/data
+       # if aml_server.py is the entry_script
+       data_folder: alias/data/qd_data
+       # this folder will be as $ROOT/models if aml_server.py is the
+       # entry_script
+       model_folder: alias/work/qd_models 
+       # this folder will be as $ROOT/output if aml_server.py is the
+       # entry_script
+       output_folder: alias/work/qd_output 
    # if False, it will use AML's PyTorch estimator, which is not heavily tested here
    use_custom_docker: true
    # this is from AML admin. don't change it unless got notified
