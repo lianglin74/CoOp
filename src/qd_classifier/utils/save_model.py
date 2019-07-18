@@ -4,11 +4,11 @@ import shutil
 import torch
 
 
-def save_checkpoint(state, is_best, prefix, epoch, output_dir):
-    filename = os.path.join(output_dir, '%s-%04d.pth.tar' % (prefix, epoch))
+def save_checkpoint(state, epoch, model_dir, is_best):
+    filename = os.path.join(model_dir, 'model_epoch_{:04d}.pth.tar'.format(epoch))
     torch.save(state, filename)
     if is_best:
-        shutil.copyfile(filename, os.path.join(output_dir, 'model_best.pth.tar'))
+        shutil.copyfile(filename, os.path.join(model_dir, 'model_best.pth.tar'))
     # comment out to keep only the latest 3 models
     # if epoch >= 3:
     #     old_filename = os.path.join(output_dir, '%s-%04d.pth.tar' % (prefix, epoch - 3))

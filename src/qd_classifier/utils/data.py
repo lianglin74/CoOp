@@ -125,11 +125,22 @@ def _get_dataset(phase, args):
             transform = get_pt_transform("test", args)
 
     if args.data.endswith("yaml"):
-        return CropClassTSVDatasetYaml(args.data, session_name=phase, transform=transform, enlarge_bbox=args.enlarge_bbox)
+        dataset = CropClassTSVDatasetYaml(args.data, session_name=phase, transform=transform, enlarge_bbox=args.enlarge_bbox)
     else:
         dataset_name, split, version = args.data.rsplit('.', 2)
-        return TSVSplitImageBoxCrop(dataset_name, split, int(version), transform=transform,
+        dataset = TSVSplitImageBoxCrop(dataset_name, split, int(version), transform=transform,
             cache_policy=args.cache_policy, labelmap=None, for_test=(phase == "test"), enlarge_bbox=args.enlarge_bbox)
+
+    # DEBUG
+    # if args.debug:
+    #     imgdir = os.path.join(os.path.dirname(args.output), "imgs")
+    #     if not os.path.exists(imgdir):
+    #         os.mkdir(imgdir)
+
+    #     for idx in range(10):
+    #         img, label = dataset[idx]
+    #         save_image(img, os.path.join(imgdir, "{}_{}.jpg".format(label[0], idx)))
+    return dataset
 
 def get_pt_transform(phase, args):
     rgb_normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],

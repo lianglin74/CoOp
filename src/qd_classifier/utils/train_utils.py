@@ -1,3 +1,4 @@
+import logging
 import time
 import torch
 import torch.nn as nn
@@ -50,23 +51,7 @@ def get_init_lr(args):
     return lr
 
 
-def set_default_hyper_parameter(args):
-    args.epochs = 120
-    args.batch_size = 256
-    args.lr = 0.1
-    args.momentum = 0.9
-    args.weight_decay = 1e-4
-    args.lr_policy = 'STEP'
-    args.step_size = 30
-    args.gamma = 0.1
-
-
 def get_optimizer(model, args):
-    # use default parameter for reproducible network
-    if not args.force:
-        print('Use default hyper parameter')
-        set_default_hyper_parameter(args)
-
     init_lr = get_init_lr(args)
     print('initial learning rate: %f' % init_lr)
 
@@ -81,8 +66,8 @@ def get_optimizer(model, args):
             else:
                 group_decay.append(param)
 
-        groups = [{'params': group_decay, 'lr': args.lr, 'weight_decay': args.weight_decay},
-                  {'params': group_no_decay, 'lr': args.lr, 'weight_decay': 0}]
+        groups = [{'params': group_decay, 'initial_lr': init_lr, 'weight_decay': args.weight_decay},
+                  {'params': group_no_decay, 'initial_lr': init_lr, 'weight_decay': 0}]
 
     elif args.fixpartialfeature:
         group_decay = []
@@ -117,7 +102,7 @@ def get_optimizer(model, args):
         else:
             groups = model.parameters()
 
-    optimizer = torch.optim.SGD(groups, args.lr,
+    optimizer = torch.optim.SGD(groups, init_lr,
                                 momentum=args.momentum,
                                 weight_decay=args.weight_decay)
     return optimizer
@@ -212,7 +197,7 @@ def train_epoch(args, train_loader, model, criterion, optimizer, epoch, accuracy
         end = time.time()
 
         if i % args.print_freq == 0 or i == train_loader_len-1:
-            speed = args.print_freq * args.batch_size / float(args.world_size) / (time.time() - tic)
+            speed = args.print_freq * args.batch_size / (time.time() - tic)
             info_str = 'Epoch: [{0}][{1}/{2}]\t' \
                         'Speed: {speed:.2f} samples/sec\t' \
                         'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t' \
@@ -228,4 +213,5 @@ def train_epoch(args, train_loader, model, criterion, optimizer, epoch, accuracy
             info_str += accuracy.result_str()
             logging.info(info_str)
             tic = time.time()
+
     return model

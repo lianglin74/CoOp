@@ -47,8 +47,7 @@ class TSVSplitImageBoxCrop(Dataset):
         _, str_rects = self._label_tsv[img_idx]
         bbox = json.loads(str_rects)[bbox_idx]
 
-        # NOTE: convert image array to RGB order
-        cropped_img = self._crop_image(str_img, bbox["rect"])[:, :, ::-1]
+        cropped_img = self._crop_image(str_img, bbox["rect"])
         if self.transform is not None:
             cropped_img = self.transform(cropped_img)
 
@@ -184,8 +183,7 @@ class CropClassTSVDataset(Dataset):
         info = self._bbox_idx_tsv.seek(index)
         img_idx, left, top, right, bot = (int(info[i]) for i in range(5))
         row = self.tsv.seek(img_idx)
-        # NOTE: convert image array to RGB order
-        img = img_from_base64(row[self.img_col])[:,:,::-1]
+        img = img_from_base64(row[self.img_col])
         cropped_img = img[top:bot, left:right]
         if self.transform is not None:
             cropped_img = self.transform(cropped_img)

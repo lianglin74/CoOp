@@ -17,32 +17,32 @@ import torch.nn.parallel
 import torch.backends.cudnn as cudnn
 import torch.distributed as dist
 import torch.optim
-import torch.utils.data
 import torch.utils.data.distributed
-import torchvision.transforms as transforms
-import torchvision.datasets as datasets
 import torchvision.models as models
 from torchvision.models.resnet import model_urls
 
 from qd_classifier.lib import layers
-from qd_classifier.lib.dataset import TSVDataset, TSVDatasetPlusYaml
 from qd_classifier.utils.parser import get_arg_parser
 from qd_classifier.utils.data import get_train_data_loader
 from qd_classifier.utils.comm import get_dist_url, synchronize, init_random_seed, save_parameters
 from qd_classifier.utils.train_utils import get_criterion, get_optimizer, get_scheduler, get_accuracy_calculator, train_epoch
 from qd_classifier.utils.test import validate
-from qd_classifier.utils.save_model import save_checkpoint, load_model_state_dict
-from qd_classifier.utils.logger import Logger, DistributedLogger
+from qd_classifier.utils.save_model import load_model_state_dict
 
 from qd.qd_common import get_mpi_local_rank, get_mpi_local_size, get_mpi_rank, get_mpi_size, ensure_directory
+from qd.qd_common import zip_qd
 
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
     and callable(models.__dict__[name]))
 
-class ClassifierTrain(object):
+class ClassifierPipeline(object):
     def __init__(self, config):
         self.config = config
+
+        self.model_prefix = "model_epoch"
+        self.full_expid = '.'.join([self.config.data, self.config.arch, self.config.expid])
+        self.output_folder = op.join(self.config.output_dir, self.full_expid)
 
         self.mpi_rank = get_mpi_rank()
         self.mpi_size= get_mpi_size()
@@ -58,7 +58,6 @@ class ClassifierTrain(object):
             self.distributed = True
         else:
             self.distributed = False
-            self.is_master = True
         self.is_master = self.mpi_rank == 0
 
         assert (self.config.effective_batch_size % self.mpi_size) == 0, (self.config.effective_batch_size, self.mpi_size)
@@ -74,29 +73,28 @@ class ClassifierTrain(object):
             logging.info('skip to train')
             return
 
-        ensure_directory(op.join(self.config.output_dir, 'snapshot'))
+        ensure_directory(op.join(self.output_folder, 'snapshot'))
 
         if self.mpi_rank == 0:
-            save_parameters(vars(self.config), self.config.output_dir)
-
-        ensure_directory(self.config.output_dir)
+            all_params = vars(self.config)
+            all_params.update({"FULL_EXPID": self.full_expid})
+            save_parameters(all_params, self.output_folder)
 
         logging.info(pformat(vars(self.config)))
         logging.info('torch version = {}'.format(torch.__version__))
 
-        train_result = self.train()
+        trained_model = self.train()
         synchronize()
 
         # save the source code after training
         if self.mpi_rank == 0 and not self.config.debug:
-            from qd.qd_common import zip_qd
-            zip_qd(op.join(self.config.output_dir, 'source_code'))
+            zip_qd(op.join(self.output_folder, 'source_code'))
 
-        return train_result
+        return trained_model
 
     def train(self):
         train_dataset, train_loader, train_sampler = get_train_data_loader(self.config, self.distributed)
-        num_classes = train_dataset.label_dim()
+        num_classes = train_dataset.get_num_labels()
 
         model = self._get_model(num_classes)
         model = self._data_parallel_wrap(model)
@@ -105,6 +103,7 @@ class ClassifierTrain(object):
         optimizer = get_optimizer(model, self.config)
 
         assert self.config.start_epoch == 0
+        last_checkpoint = None
         if self.config.restore_latest_snapshot:
             last_checkpoint = self._get_latest_checkpoint()
             if last_checkpoint and self.config.resume:
@@ -133,7 +132,7 @@ class ClassifierTrain(object):
 
         logging.info('start to train')
         for epoch in range(self.config.start_epoch, self.config.epochs):
-            if self.config.distributed:
+            if self.distributed:
                 train_sampler.set_epoch(epoch)
 
             if scheduler != None:
@@ -148,10 +147,12 @@ class ClassifierTrain(object):
                     'arch': self.config.arch,
                     'state_dict': model.state_dict(),
                     'optimizer' : optimizer.state_dict(),
-                    'num_classes': train_dataset.label_dim(),
+                    'num_classes': train_dataset.get_num_labels(),
                     'multi_label': train_dataset.is_multi_label(),
                     'labelmap': train_dataset.get_labelmap(),
                 }, self._get_checkpoint_file(epoch = epoch+1))
+
+        return model
 
     def _get_model(self, num_classes):
         # create model
@@ -175,6 +176,8 @@ class ClassifierTrain(object):
 
         if self.config.ccs_loss_param > 0:
             model = layers.ResNetFeatureExtract(model)
+
+        return model
 
     def _data_parallel_wrap(self, model):
         if self.distributed:
@@ -245,7 +248,7 @@ class ClassifierTrain(object):
     def _setup_logging(self):
         # all ranker outputs the log to a file
         # only rank 0 print the log to console
-        log_file = op.join(self.config.output_dir,
+        log_file = op.join(self.output_folder,
             'log_{}_rank{}.txt'.format(
                 datetime.now().strftime('%Y_%m_%d_%H_%M_%S'),
                 self.mpi_rank))
@@ -269,15 +272,15 @@ class ClassifierTrain(object):
         assert(iteration is None)
         if epoch is None:
             epoch = self.config.epochs
-        return op.join(self.config.output_dir, 'snapshot',
-                'model_epoch_{:04d}.pth.tar'.format(epoch))
+        return op.join(self.output_folder, 'snapshot',
+                '{}_{:04d}.pth.tar'.format(self.model_prefix, epoch))
 
     def _get_latest_checkpoint(self):
-        all_snapshot = glob.glob(op.join(self.config.output_dir, 'snapshot',
-            'model_epoch_*.pth.tar'.format()))
+        all_snapshot = glob.glob(op.join(self.output_folder, 'snapshot',
+            '{}_*.pth.tar'.format(self.model_prefix)))
         if len(all_snapshot) == 0:
             return
-        snapshot_epochs = [(s, int(s[12:17])) for s in all_snapshot]
+        snapshot_epochs = [(s, int(op.basename(s)[len(self.model_prefix)+1: len(self.model_prefix)+5])) for s in all_snapshot]
         s, _ = max(snapshot_epochs, key=lambda x: x[1])
         return s
 
@@ -384,7 +387,7 @@ def main(args):
             scheduler.step()
 
         # train for one epoch
-        train(args, train_loader, model, criterion, optimizer, epoch, logger, accuracy)
+        train_epoch(args, train_loader, model, criterion, optimizer, epoch, accuracy)
 
         if args.local_rank == 0:
             # evaluate on validation set
@@ -405,7 +408,7 @@ def main(args):
                 'multi_label': train_dataset.is_multi_label(),
                 'labelmap': train_dataset.get_labelmap(),
                 # 'best_prec1': best_prec1,
-            }, is_best, args.prefix, epoch, args.output_dir)
+            }, epoch, op.join(args.output_dir, "snapshot"), is_best)
             # info_str = 'Epoch: [{0}]\t' \
             #            'Best Epoch {1:d}\t' \
             #            'Best Prec1 {2:.3f}'.format(epoch, best_epoch, best_prec1)
@@ -415,5 +418,5 @@ def main(args):
 if __name__ == '__main__':
     parser = get_arg_parser(model_names)
     # main(parser.parse_args())
-    c = ClassifierTrain(parser.parse_args())
+    c = ClassifierPipeline(parser.parse_args())
     c.ensure_train()

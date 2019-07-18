@@ -11,7 +11,12 @@ def get_arg_parser(model_names):
                         help='model architecture: ' +
                             ' | '.join(model_names) +
                             ' (default: resnet18)')
-    parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
+    parser.add_argument('--expid', default=None, type=str,
+                        help='full_expid is [data].[arch].[expid], model will be saved to output_dir/full_expid')
+    # need setup output dir
+    parser.add_argument('--output-dir', default='./brand_output', type=str,
+                        help='path to save checkpoint and log (default: ./brand_output)')
+    parser.add_argument('-j', '--num_workers', default=4, type=int, metavar='N',
                         help='number of data loading workers (default: 4)')
 
     # DEBUG
@@ -27,12 +32,6 @@ def get_arg_parser(model_names):
                         metavar='N', help='num of samples in a batch given to all GPUs')
     parser.add_argument('--batch_size', default=0, type=int,
                         help='do not use this, use effective_batch_size')
-    parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
-                        metavar='LR', help='initial learning rate')
-    parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
-                        help='momentum')
-    parser.add_argument('--weight-decay', '--wd', default=1e-4, type=float,
-                        metavar='W', help='weight decay (default: 1e-4)')
 
     parser.add_argument('--print-freq', '-p', default=10, type=int,
                         metavar='N', help='print frequency (default: 10)')
@@ -55,33 +54,34 @@ def get_arg_parser(model_names):
 
     parser.add_argument('--random_seed', default=6, type=int)
 
-    # need setup output dir
-    parser.add_argument('--output-dir', default='./outputs/resnet18', type=str,
-                        help='path to save checkpoint and log (default: ./outputs/resnet18)')
-    # parser.add_argument('--prefix', default=None, type=str,
-    #                     help='model prefix (default: same with model names)')
-
     # Optimization setting
     parser.add_argument('--lr-policy', default='STEP', type=str,
                         help='learning rate decay policy: STEP, MULTISTEP, EXPONENTIAL, PLATEAU, CONSTANT '
                              '(default: STEP)')
+    parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
+                        metavar='LR', help='initial learning rate')
     parser.add_argument('--step-size', default=30, type=int,
                         help='step size for STEP decay policy (default: 30)')
     parser.add_argument('--milestones', default='30,60,90', type=str,
                         help='milestones for MULTISTEP decay policy (default: 30,60,90)')
     parser.add_argument('--gamma', default=0.1, type=float,
                         help='gamma for learning rate decay (default: 0.1)')
-    parser.add_argument('--neg', dest='neg_weight_file', default=None,
-                        help='weights of negative samples used in multi-label training. If specified, balanced loss will be used, otherwise, BCELoss will be used.')
+    parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
+                        help='momentum')
+    parser.add_argument('--weight-decay', '--wd', default=1e-4, type=float,
+                        metavar='W', help='weight decay (default: 1e-4)')
+
+    parser.add_argument('--bn_no_weight_decay', action='store_true',
+                        help='No weight decay for bn and bias during taining')
 
     # force using customized hyper parameter
     parser.add_argument('-f', '--force', dest='force', action='store_true',
                         help='force using customized hyper parameter')
 
-    parser.add_argument('--bn_no_weight_decay', dest='bn_no_weight_decay', action='store_true',
-                        help='No weight decay for bn and bias during taining')
     parser.add_argument('--BatchNormEvalMode', dest='BatchNormEvalMode', action='store_true',
                         help='Use eval mode for batch normalization layer. Corresponding to Caffe use global statistics')
+    parser.add_argument('--neg', dest='neg_weight_file', default=None,
+                        help='weights of negative samples used in multi-label training. If specified, balanced loss will be used, otherwise, BCELoss will be used.')
 
     parser.add_argument('--finetune', dest='finetune', action='store_true',
                         help='finetune last layer by using 0.1x lr for previous layers')

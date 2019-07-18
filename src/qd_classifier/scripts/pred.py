@@ -50,6 +50,7 @@ def load_labelmap(labelmap):
 
 def load_model(args):
     is_cpu_only = not torch.cuda.is_available()
+    print("=> loading checkpoint '{}', use GPU: {}".format(args.model, not is_cpu_only))
     if is_cpu_only:
         checkpoint = torch.load(args.model, map_location='cpu')
     else:
