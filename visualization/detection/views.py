@@ -21,12 +21,12 @@ from process_tsv import ImageTypeParser
 from process_tsv import visualize_box
 from process_image import draw_bb, show_image, save_image
 import base64
-from yolotrain import CaffeWrapper
+# from yolotrain import CaffeWrapper
 from tsv_io import load_labels
 from process_tsv import update_confusion_matrix
 from pprint import pformat
 import os
-from yolotrain import get_confusion_matrix
+# from yolotrain import get_confusion_matrix
 from qd_common import readable_confusion_entry
 from process_tsv import gt_predict_images
 from qd_common import get_target_images
@@ -1635,22 +1635,22 @@ def view_video_test(request):
         context = {'data_name': data, 'events': json.dumps(events)}
         return render(request, 'detection/view_video_index_test.html', context)
 
+# {% cloudinary_js_config %}
 def upload_video(request):
     if request.GET.get('data', '') == '':
         curr_dir = os.curdir
         os.chdir(get_qd_root())
         result = {"status": "sucessed"}
-        return "test"
+        return "upload file name is empty"
+
         # names = get_video_info()
         # os.chdir(curr_dir)
         # context = {'names': names}
         # return render(request, 'detection/video_list_test.html', context)
     else:
         data = request.GET.get('data')
-        curr_dir = os.curdir
-        os.chdir(get_qd_root())
-        os.chdir(curr_dir)
-        events = get_video_info(data)
-        context = {'data_name': data, 'events': json.dumps(events)}
+        # cloudinary.uploader.upload(data, 
+        #     resource_type = "video", 
+        #     <optional_parameters...>)
 
-        return request, 'detection/view_video_index_test.html', context
+        return (request, 'detection/upload_video.html', context)
