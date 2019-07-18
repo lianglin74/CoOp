@@ -1,6 +1,6 @@
 [submodule "src/CCSCaffe"]
 	path = src/CCSCaffe
-	url = https://github.com/leizhangcn/caffe
+	url = git@ssh.dev.azure.com:v3/visionbio/caffe/caffe
 	branch = WinCaffe
 [submodule "src/objectdetection"]
 	path = src/objectdetection
