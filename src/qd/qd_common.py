@@ -1958,6 +1958,18 @@ def get_folder_size(f, sec):
     size = [x.strip() for x in out.split('\t')][0]
     return int(size)
 
+class make_namespace_by_dict(object):
+    def __init__(self, d):
+        for k in d:
+            v = d[k]
+            if type(v) is dict:
+                self.__dict__[k] = make_namespace_by_dict(v)
+            else:
+                self.__dict__[k] = v
+    def clone(self):
+        c = copy.deepcopy(self.__dict__)
+        return make_namespace_by_dict(c)
+
 if __name__ == '__main__':
     init_logging()
     kwargs = parse_general_args()
