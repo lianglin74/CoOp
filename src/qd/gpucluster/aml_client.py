@@ -289,7 +289,9 @@ def parse_args():
                 'sync',
                 'update_config', 'gc', 'blame', 'resubmit',
                 'summary', 'i', 'inject'])
-    parser.add_argument('-wl', '--with_log', default=False, action='store_true')
+    parser.add_argument('-wl', dest='with_log', default=True, action='store_true')
+    parser.add_argument('-no-wl', dest='with_log',
+            action='store_false')
     parser.add_argument('-p', '--param', help='parameter string, yaml format',
             type=str)
     parser.add_argument('-c', '--cluster', default=argparse.SUPPRESS, type=str)
