@@ -7,7 +7,7 @@ from qd.cloud_storage import create_cloud_storage
 from qd.qd_common import decode_general_cmd
 
 def create_aml_client(**kwargs):
-    param = load_from_yaml_file('./aux_data/configs/aml.yaml')
+    param = load_from_yaml_file('./aux_data/aml/aml.yaml')
     dict_update_nested_dict(param, kwargs)
     return AMLClient(**param)
 
@@ -110,17 +110,18 @@ class AMLClient(object):
         if run_id is None:
             all_run = list(self.experiment.get_runs())
             all_info = [parse_run_info(r) for r in all_run]
-            for info, r in zip(all_info, all_run):
-                if r.status != AMLClient.status_running:
-                    continue
-                all_log = list(r.get_all_logs())
-                info['all_log_path'] = all_log
-                if len(all_log) > 0:
-                    info['latest_log'] = cmd_run(['tail', '-n', '100',
-                        all_log[0]],
-                        return_output=True)
-                    from qd.qd_common import attach_log_parsing_result
-                    attach_log_parsing_result(info)
+            if self.with_log:
+                for info, r in zip(all_info, all_run):
+                    if r.status != AMLClient.status_running:
+                        continue
+                    all_log = list(r.get_all_logs())
+                    info['all_log_path'] = all_log
+                    if len(all_log) > 0:
+                        info['latest_log'] = cmd_run(['tail', '-n', '100',
+                            all_log[0]],
+                            return_output=True)
+                        from qd.qd_common import attach_log_parsing_result
+                        attach_log_parsing_result(info)
 
             from qd.qd_common import print_job_infos
             param_keys = ['data', 'net', 'expid']
@@ -150,20 +151,16 @@ class AMLClient(object):
     def resubmit(self, partial_id):
         run = create_aml_run(self.experiment, partial_id)
         run_info = parse_run_info(run)
-        self.submit(run_info['cmd'], run_info['num_gpu'])
+        self.submit(run_info['cmd'])
         run.cancel()
 
     def submit(self, cmd, num_gpu=None):
-        if type(cmd) is str:
-            script_params = {
-                    '--code_path': self.code_path,
-                    '--data_folder': self.data_folder,
-                    '--model_folder': self.model_folder,
-                    '--output_folder': self.output_folder,
-                    '--command': cmd}
-        else:
-            assert isinstance(cmd, dict)
-            script_params = cmd
+        script_params = {
+                '--code_path': self.code_path,
+                '--data_folder': self.data_folder,
+                '--model_folder': self.model_folder,
+                '--output_folder': self.output_folder,
+                '--command': cmd}
 
         from azureml.train.estimator import Estimator
         from azureml.train.dnn import PyTorch
@@ -226,6 +223,19 @@ class AMLClient(object):
         from qd.db import update_cluster_job_db
         update_cluster_job_db(all_info)
 
+    def sync_code(self, random_id):
+        random_qd = 'quickdetection{}'.format(random_id)
+        import os.path as op
+        random_abs_qd = op.join('/tmp', '{}.zip'.format(random_qd))
+        logging.info('{}'.format(random_qd))
+        from qd.qd_common import zip_qd
+        # zip it
+        zip_qd(random_abs_qd)
+
+        rel_code_path = self.config_param['code_path']
+        # upload it
+        self.cloud_blob.az_upload2(random_abs_qd, rel_code_path)
+
 def execute(task_type, **kwargs):
     if task_type in ['q', 'query']:
         if len(kwargs.get('remainders', [])) > 0:
@@ -235,12 +245,13 @@ def execute(task_type, **kwargs):
         else:
             c = create_aml_client(**kwargs)
             c.query()
+    elif task_type == 'init':
+        c = create_aml_client(**kwargs)
+        c.sync_code('')
     elif task_type == 'submit':
         c = create_aml_client(**kwargs)
         params = kwargs['remainders']
-        assert (len(params) % 2) == 0
-        cmd = OrderedDict([(params[i * 2], params[i * 2 + 1]) for i in
-            range(len(params) // 2)])
+        cmd = ' '.join(params)
         c.submit(cmd)
     elif task_type in ['a', 'abort']:
         c = create_aml_client(**kwargs)
@@ -264,8 +275,6 @@ def execute(task_type, **kwargs):
         m = create_multi_philly_client()
         m.print_summary()
     elif task_type in ['i', 'inject']:
-        if not kwargs.get('with_log'):
-            kwargs['with_log'] = True
         m = create_aml_client(**kwargs)
         m.inject()
     else:
@@ -275,10 +284,12 @@ def parse_args():
     import argparse
     parser = argparse.ArgumentParser(description='Philly Interface')
     parser.add_argument('task_type',
-            choices=['ssh', 'q', 'query', 'a', 'abort', 'submit', 'sync',
+            choices=['ssh', 'q', 'query', 'a', 'abort', 'submit',
+                'init',
+                'sync',
                 'update_config', 'gc', 'blame', 'resubmit',
                 'summary', 'i', 'inject'])
-    parser.add_argument('-wl', '--with_log', default=True, action='store_true')
+    parser.add_argument('-wl', '--with_log', default=False, action='store_true')
     parser.add_argument('-p', '--param', help='parameter string, yaml format',
             type=str)
     parser.add_argument('-c', '--cluster', default=argparse.SUPPRESS, type=str)
