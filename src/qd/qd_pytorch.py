@@ -545,6 +545,12 @@ def multi_hot_cross_entropy(pred, soft_targets):
         return torch.sum(-soft_targets * logsoftmax(pred)) / target_sum
 
 def load_latest_parameters(folder):
+    yaml_file = get_latest_parameter_file(folder)
+    logging.info('using {}'.format(yaml_file))
+    param = load_from_yaml_file(yaml_file)
+    return param
+
+def get_latest_parameter_file(folder):
     yaml_pattern = op.join(folder,
             'parameters_*.yaml')
     yaml_files = glob.glob(yaml_pattern)
@@ -557,9 +563,7 @@ def load_latest_parameters(folder):
     fts = [(f, t) for f, t in zip(yaml_files, times)]
     fts.sort(key=lambda x: x[1], reverse=True)
     yaml_file = fts[0][0]
-    logging.info('using {}'.format(yaml_file))
-    param = load_from_yaml_file(yaml_file)
-    return param
+    return yaml_file
 
 def parse_epoch(s):
     s = op.basename(s)

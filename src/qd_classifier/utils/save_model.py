@@ -3,6 +3,28 @@ import os
 import shutil
 import torch
 
+import torchvision.models as models
+
+def load_from_checkpoint(model_file):
+    is_cpu_only = not torch.cuda.is_available()
+    print("=> loading checkpoint '{}', use GPU: {}".format(model_file, not is_cpu_only))
+    if is_cpu_only:
+        checkpoint = torch.load(model_file, map_location='cpu')
+    else:
+        checkpoint = torch.load(model_file)
+    arch = checkpoint['arch']
+    model = models.__dict__[arch](num_classes=checkpoint['num_classes'])
+
+    load_model_state_dict(model, checkpoint['state_dict'], skip_unmatched_layers=False)
+    print("=> loaded checkpoint '{}' (epoch {}), use GPU: {}".format(model_file, checkpoint['epoch'], not is_cpu_only))
+
+    # load labelmap
+    if 'labelmap' in checkpoint:
+        labelmap = checkpoint['labelmap']
+    else:
+        labelmap = [str(i) for i in range(checkpoint['num_classes'])]
+
+    return model, labelmap
 
 def save_checkpoint(state, epoch, model_dir, is_best):
     filename = os.path.join(model_dir, 'model_epoch_{:04d}.pth.tar'.format(epoch))

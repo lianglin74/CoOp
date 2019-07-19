@@ -4,15 +4,18 @@ import argparse
 def get_arg_parser(model_names):
     parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
     # necessary inputs
-    parser.add_argument('data', metavar='DIR',
+    parser.add_argument('--full_expid', default=None, type=str,
+                        help='model will be saved to output_dir/full_expid')
+    parser.add_argument('--data',
                         help='path to dataset')
     parser.add_argument('--arch', '-a', metavar='ARCH', default='resnet18',
                         choices=model_names,
                         help='model architecture: ' +
                             ' | '.join(model_names) +
                             ' (default: resnet18)')
-    parser.add_argument('--expid', default=None, type=str,
-                        help='full_expid is [data].[arch].[expid], model will be saved to output_dir/full_expid')
+    parser.add_argument('--load_parameters', action='store_true',
+                        help='load previous experiment, full_expid must exist')
+
     # need setup output dir
     parser.add_argument('--output-dir', default='./brand_output', type=str,
                         help='path to save checkpoint and log (default: ./brand_output)')

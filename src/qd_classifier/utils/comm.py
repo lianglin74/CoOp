@@ -8,7 +8,8 @@ import torch
 import torch.distributed as dist
 
 from qd.qd_common import ensure_directory, load_list_file, write_to_yaml_file
-from qd.qd_pytorch import get_master_node_ip, get_philly_mpi_hosts, get_aml_mpi_host_names, init_random_seed, save_parameters
+from qd.qd_pytorch import get_master_node_ip, get_philly_mpi_hosts, get_aml_mpi_host_names, init_random_seed
+from qd.qd_pytorch import save_parameters, get_latest_parameter_file
 
 def get_dist_url(init_method_type, dist_url_tcp_port=23456):
     if init_method_type == 'file':

@@ -20,33 +20,38 @@ class ConvertBGR2RGB(object):
 
         return rgb_image
 
-def get_train_data_loader(args, is_distributed):
+def get_train_data_loader(args, mpi_size):
     train_dataset = _get_dataset("train", args)
 
+    assert (args.effective_batch_size % mpi_size) == 0, ("batch size:", args.effective_batch_size, mpi_size)
+    batch_size = args.effective_batch_size // mpi_size
+
     if args.balance_sampler:
-        assert not args.balance_class and not is_distributed
+        assert not args.balance_class and mpi_size==1
         train_sampler = make_class_balanced_sampler(train_dataset)
     else:
-        if is_distributed:
+        if mpi_size > 1:
             train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
         else:
             train_sampler = None
 
     train_loader = torch.utils.data.DataLoader(
-            train_dataset, batch_size=args.batch_size,
+            train_dataset, batch_size=batch_size,
             shuffle=(train_sampler is None),
             num_workers=args.num_workers, pin_memory=True,
             sampler=train_sampler)
 
     return train_dataset, train_loader, train_sampler
 
-def get_testdata_loader(args):
+def get_testdata_loader(args, mpi_size):
     test_dataset = _get_dataset("test", args)
+    assert (args.effective_batch_size % mpi_size) == 0, ("batch size:", args.effective_batch_size, mpi_size)
+    batch_size = args.effective_batch_size // mpi_size
 
     test_loader = torch.utils.data.DataLoader(
-        test_dataset, batch_size=args.batch_size, shuffle=False,
+        test_dataset, batch_size=batch_size, shuffle=False,
         collate_fn=my_collate,
-        num_workers=args.workers, pin_memory=True)
+        num_workers=args.num_workers, pin_memory=True)
 
     return test_loader
 
@@ -117,19 +122,19 @@ def my_collate(batch):
 def _get_dataset(phase, args):
     if phase == "train":
         transform = get_pt_transform("train", args)
+        data = args.data
     else:
         assert phase == "test"
-        if args.opencv:
-            transform = cv_transform
-        else:
-            transform = get_pt_transform("test", args)
+        transform = get_pt_transform("test", args)
+        data = args.test_data
 
-    if args.data.endswith("yaml"):
-        dataset = CropClassTSVDatasetYaml(args.data, session_name=phase, transform=transform, enlarge_bbox=args.enlarge_bbox)
+    cache_policy = args.cache_policy if args.cache_policy else None
+    if data.endswith("yaml"):
+        dataset = CropClassTSVDatasetYaml(data, session_name=phase, transform=transform, enlarge_bbox=args.enlarge_bbox)
     else:
-        dataset_name, split, version = args.data.rsplit('.', 2)
+        dataset_name, split, version = data.rsplit('.', 2)
         dataset = TSVSplitImageBoxCrop(dataset_name, split, int(version), transform=transform,
-            cache_policy=args.cache_policy, labelmap=None, for_test=(phase == "test"), enlarge_bbox=args.enlarge_bbox)
+            cache_policy=cache_policy, labelmap=None, for_test=(phase == "test"), enlarge_bbox=args.enlarge_bbox)
 
     # DEBUG
     # if args.debug:

@@ -18,31 +18,29 @@ import torch.backends.cudnn as cudnn
 import torch.distributed as dist
 import torch.optim
 import torch.utils.data.distributed
+# from torch.utils.tensorboard import SummaryWriter
 import torchvision.models as models
 from torchvision.models.resnet import model_urls
 
+from qd_classifier.utils.config import create_config
 from qd_classifier.lib import layers
-from qd_classifier.utils.parser import get_arg_parser
-from qd_classifier.utils.data import get_train_data_loader
-from qd_classifier.utils.comm import get_dist_url, synchronize, init_random_seed, save_parameters
+from qd_classifier.utils.data import get_train_data_loader, get_testdata_loader
+from qd_classifier.utils.comm import get_dist_url, synchronize, init_random_seed, save_parameters, get_latest_parameter_file
 from qd_classifier.utils.train_utils import get_criterion, get_optimizer, get_scheduler, get_accuracy_calculator, train_epoch
 from qd_classifier.utils.test import validate
-from qd_classifier.utils.save_model import load_model_state_dict
+from qd_classifier.utils.save_model import load_model_state_dict, load_from_checkpoint
+from qd_classifier.scripts.pred import _predict, _evaluate
 
-from qd.qd_common import get_mpi_local_rank, get_mpi_local_size, get_mpi_rank, get_mpi_size, ensure_directory
-from qd.qd_common import zip_qd
-
-model_names = sorted(name for name in models.__dict__
-    if name.islower() and not name.startswith("__")
-    and callable(models.__dict__[name]))
+from qd.qd_common import get_mpi_local_rank, get_mpi_local_size, get_mpi_rank, get_mpi_size, ensure_directory, ensure_remove_dir
+from qd.qd_common import zip_qd, worth_create
+from qd.tsv_io import tsv_writer
 
 class ClassifierPipeline(object):
     def __init__(self, config):
-        self.config = config
-
         self.model_prefix = "model_epoch"
-        self.full_expid = '.'.join([self.config.data, self.config.arch, self.config.expid])
-        self.output_folder = op.join(self.config.output_dir, self.full_expid)
+        self.output_folder = op.join(config.output_dir, config.FULL_EXPID)
+
+        self.config = config
 
         self.mpi_rank = get_mpi_rank()
         self.mpi_size= get_mpi_size()
@@ -60,8 +58,6 @@ class ClassifierPipeline(object):
             self.distributed = False
         self.is_master = self.mpi_rank == 0
 
-        assert (self.config.effective_batch_size % self.mpi_size) == 0, (self.config.effective_batch_size, self.mpi_size)
-        self.config.batch_size = self.config.effective_batch_size // self.mpi_size
         self._initialized = False
 
     def ensure_train(self):
@@ -77,7 +73,6 @@ class ClassifierPipeline(object):
 
         if self.mpi_rank == 0:
             all_params = vars(self.config)
-            all_params.update({"FULL_EXPID": self.full_expid})
             save_parameters(all_params, self.output_folder)
 
         logging.info(pformat(vars(self.config)))
@@ -93,10 +88,10 @@ class ClassifierPipeline(object):
         return trained_model
 
     def train(self):
-        train_dataset, train_loader, train_sampler = get_train_data_loader(self.config, self.distributed)
+        train_dataset, train_loader, train_sampler = get_train_data_loader(self.config, self.mpi_size)
         num_classes = train_dataset.get_num_labels()
 
-        model = self._get_model(num_classes)
+        model = self._get_model(num_classes, self.config.pretrained)
         model = self._data_parallel_wrap(model)
         self.init_model(model)
 
@@ -143,20 +138,88 @@ class ClassifierPipeline(object):
 
             if self.is_master:
                 torch.save({
-                    'epoch': epoch + 1,
+                    'epoch': epoch,
                     'arch': self.config.arch,
                     'state_dict': model.state_dict(),
                     'optimizer' : optimizer.state_dict(),
                     'num_classes': train_dataset.get_num_labels(),
                     'multi_label': train_dataset.is_multi_label(),
                     'labelmap': train_dataset.get_labelmap(),
-                }, self._get_checkpoint_file(epoch = epoch+1))
+                }, self._get_checkpoint_file(epoch = epoch))
 
         return model
 
-    def _get_model(self, num_classes):
+    def ensure_predict(self, model_file=None):
+        if not self.config.test_data:
+            raise ValueError("no test data")
+
+        self._ensure_initialized()
+        if not model_file:
+            model_file = self._get_checkpoint_file()
+        predict_file = self._get_predict_file(model_file, self.config.test_data)
+        if self.is_master:
+            if not model_file or not op.isfile(model_file):
+                logging.info('ignore predict since {} does not exist'.format(
+                    model_file))
+                return predict_file
+            if not worth_create(model_file, predict_file) and not self.config.force_predict:
+                logging.info('ignore to do prediction {}'.format(predict_file))
+                return predict_file
+
+            model, labelmap = load_from_checkpoint(model_file)
+            test_dataloader = get_testdata_loader(self.config, self.mpi_size)
+            # NOTE: not support distributed now
+            assert not self.distributed
+            model = self._data_parallel_wrap(model)
+            _predict(model, predict_file, test_dataloader, labelmap, evaluate=True)
+
+        synchronize()
+        return predict_file
+
+    def ensure_evaluate(self, predict_file=None):
+        if not self.is_master:
+            logging.info('skip evaluation because the rank {} != 0'.format(self.mpi_rank))
+            return
+        self._ensure_initialized()
+        if not predict_file:
+            predict_file = self.ensure_predict()
+        evaluate_file = self._get_evaluate_file(predict_file)
+
+        eval_dict = _evaluate(predict_file, predict_file + ".det.tsv", evaluate_file)
+        return eval_dict
+
+    def monitor_train(self):
+        self._ensure_initialized()
+        all_step_eval = []
+        for step in range(self.config.epochs + 1):
+            model_file = self._get_checkpoint_file(epoch=step)
+            if op.isfile(model_file):
+                predict_file = self.ensure_predict(model_file=model_file)
+                eval_dict = self.ensure_evaluate(predict_file=predict_file)
+                all_step_eval.append([step, eval_dict])
+
+        if self.is_master:
+            tensorboard_folder = op.join(self.output_folder, 'tensorboard_data')
+            ensure_remove_dir(tensorboard_folder)
+            # writer = SummaryWriter(log_dir=tensorboard_folder)
+            tag_prefix = self.config.test_data
+            # for step, eval_dict in all_step_eval:
+            #     for k in eval_dict:
+            #         writer.add_scalar(tag='{}_{}'.format(tag_prefix, k),
+            #             scalar_value=eval_dict[k],
+            #             global_step=step)
+            # writer.close()
+            header = ["step"] + [k for k in eval_dict]
+            summary = []
+            for step, eval_dict in all_step_eval:
+                summary.append([step] + [eval_dict[k] for k in header[1:]])
+            tsv_writer([header] + summary, op.join(tensorboard_folder, tag_prefix+".eval"))
+
+        synchronize()
+
+    def _get_model(self, num_classes, pretrained=False):
         # create model
-        if self.config.pretrained:
+        if pretrained:
             logging.info("=> using pre-trained model '{}'".format(self.config.arch))
             model_urls[self.config.arch] = model_urls[self.config.arch].replace('https://', 'http://')
             model = models.__dict__[self.config.arch](pretrained=True)
@@ -284,139 +347,36 @@ class ClassifierPipeline(object):
         s, _ = max(snapshot_epochs, key=lambda x: x[1])
         return s
 
+    def _get_predict_file(self, model_file, test_data):
+        cc = [model_file, test_data]
+        cc.append('predict')
+        cc.append('tsv')
+        return '.'.join(cc)
 
-def main(args):
-    if isinstance(args, list) or isinstance(args, six.string_types):
-        parser = get_arg_parser(model_names)
-        args = parser.parse_args(args)
+    def _get_evaluate_file(self, predict_file):
+        cc = [predict_file, "report"]
+        return '.'.join(cc)
 
+def main():
+    parser = argparse.ArgumentParser(description="PyTorch Classifier training/evaluation pipeline")
+    parser.add_argument(
+        "--config-file",
+        metavar="FILE",
+        default=None,
+        help="path to config file",
+    )
+    parser.add_argument(
+        "opts",
+        help="Modify config options using the command-line",
+        default=None,
+        nargs=argparse.REMAINDER,
+    )
 
-    # Data loading code
-    train_loader, val_loader, train_sampler, train_dataset = get_data_loader(args, logger)
-
-    # create model
-    if args.pretrained:
-        logger.info("=> using pre-trained model '{}'".format(args.arch))
-        model_urls[args.arch] = model_urls[args.arch].replace('https://', 'http://')
-        model = models.__dict__[args.arch](pretrained=True)
-        model.fc = nn.Linear(model.fc.in_features, train_dataset.label_dim())
-
-        for m in model.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.normal_(m.weight, 0, 0.01)
-                nn.init.constant_(m.bias, 0)
-        torch.nn.init.xavier_uniform_(model.fc.weight)
-    else:
-        if args.input_size == 112:
-            model = layers.ResNetInput112(args.arch, train_dataset.label_dim())
-        else:
-            logger.info("=> creating model '{}'".format(args.arch))
-            model = models.__dict__[args.arch](num_classes=train_dataset.label_dim())
-
-    if args.ccs_loss_param > 0:
-        model = layers.ResNetFeatureExtract(model)
-
-    # get loss function (criterion), optimizer, and scheduler (for learning rate)
-    class_weights = None
-    if args.balance_class:
-        assert not args.balance_sampler
-        class_counts = train_dataset.label_counts
-        num_pos_classes = np.count_nonzero(class_counts)
-        assert num_pos_classes > 0
-        class_weights = np.zeros(train_dataset.label_dim())
-        for idx, c in enumerate(class_counts):
-            if c > 0:
-                class_weights[idx] = float(len(train_dataset)) / (num_pos_classes * c)
-        logger.info("use balanced class weights")
-        class_weights = torch.from_numpy(class_weights).float().cuda()
-
-    criterion = get_criterion(train_dataset.is_multi_label(), args.neg_weight_file, class_weights=class_weights)
-    optimizer = get_optimizer(model, args)
-    accuracy = get_accuracy_calculator(multi_label=train_dataset.is_multi_label())
-
-    # best_prec1 = 0
-    # best_epoch = 0
-    # optionally resume from a checkpoint
-    if args.resume:
-        if os.path.isfile(args.resume):
-            logger.info("=> loading checkpoint '{}'".format(args.resume))
-            checkpoint = torch.load(args.resume)
-            args.start_epoch = checkpoint['epoch']
-            load_model_state_dict(model, checkpoint['state_dict'])
-            optimizer.load_state_dict(checkpoint['optimizer'])
-            for state in optimizer.state.values():
-                for k, v in state.items():
-                    if torch.is_tensor(v):
-                        state[k] = v.cuda()
-            # best_prec1 = checkpoint['best_prec1']
-            logger.info("=> loaded checkpoint '{}' (epoch {})"
-                  .format(args.resume, checkpoint['epoch']))
-        else:
-            logger.info("=> no checkpoint found at '{}'".format(args.resume))
-
-    # create schedule after resume to properly set start_epoch for learning rate
-    scheduler = get_scheduler(optimizer, args)
-
-    if args.custom_pretrained:
-        assert(not args.resume and os.path.isfile(args.custom_pretrained))
-        logger.info("=> loading pretrained model '{}'".format(args.custom_pretrained))
-        checkpoint = torch.load(args.custom_pretrained)
-        load_model_state_dict(model, checkpoint['state_dict'], skip_unmatched_layers=args.skip_unmatched_layers)
-
-    if not args.distributed:
-        if args.arch.startswith('alexnet') or args.arch.startswith('vgg'):
-            model.features = torch.nn.DataParallel(model.features)
-            model.cuda()
-        else:
-            model = torch.nn.DataParallel(model).cuda()
-    else:
-        model.cuda()
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.local_rank], output_device=args.local_rank)
-
-    cudnn.benchmark = True
-    if args.evaluate:
-        prec1 = validate(val_loader, model, criterion, logger)
-        print("top1 accuracy: {}".format(prec1))
-        return
-
-    for epoch in range(args.start_epoch, args.epochs):
-        if args.distributed:
-            train_sampler.set_epoch(epoch)
-
-        if scheduler != None:
-            scheduler.step()
-
-        # train for one epoch
-        train_epoch(args, train_loader, model, criterion, optimizer, epoch, accuracy)
-
-        if args.local_rank == 0:
-            # evaluate on validation set
-            # prec1 = validate(val_loader, model, criterion, logger)
-
-            # remember best prec@1 and save checkpoint
-            # is_best = prec1 > best_prec1
-            # if is_best:
-            #     best_epoch = epoch
-            # best_prec1 = max(prec1, best_prec1)
-            is_best = False
-            save_checkpoint({
-                'epoch': epoch,
-                'arch': args.arch,
-                'state_dict': model.state_dict(),
-                'optimizer' : optimizer.state_dict(),
-                'num_classes': train_dataset.label_dim(),
-                'multi_label': train_dataset.is_multi_label(),
-                'labelmap': train_dataset.get_labelmap(),
-                # 'best_prec1': best_prec1,
-            }, epoch, op.join(args.output_dir, "snapshot"), is_best)
-            # info_str = 'Epoch: [{0}]\t' \
-            #            'Best Epoch {1:d}\t' \
-            #            'Best Prec1 {2:.3f}'.format(epoch, best_epoch, best_prec1)
-            # logger.info(info_str)
-
+    args = parser.parse_args()
+    cfg = create_config(args)
+    pip = ClassifierPipeline(cfg)
+    # pip.ensure_train()
+    pip.monitor_train()
 
 if __name__ == '__main__':
-    parser = get_arg_parser(model_names)
-    # main(parser.parse_args())
-    c = ClassifierPipeline(parser.parse_args())
-    c.ensure_train()
+    main()
