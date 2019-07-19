@@ -1,6 +1,7 @@
 import argparse
 import collections
 import json
+import logging
 import numpy as np
 import os
 import shutil
@@ -73,10 +74,10 @@ def _predict(model, output_file, test_dataloader, labelmap, topk=5, evaluate=Fal
                             'Data Loading Time {data_time.val:.3f} ({data_time.avg:.3f})'.format(
                             i, len(test_dataloader), speed=speed, compute_time=compute_time,
                             data_time=data_time)
-                print(info_str)
+                logging.info(info_str)
                 tic = time.time()
     if accuracy:
-        print(accuracy.result_str())
+        logging.info(accuracy.result_str())
         return accuracy.prec()
     else:
         return None

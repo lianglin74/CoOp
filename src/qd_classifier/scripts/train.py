@@ -161,17 +161,15 @@ class ClassifierPipeline(object):
             if not model_file or not op.isfile(model_file):
                 logging.info('ignore predict since {} does not exist'.format(
                     model_file))
-                return predict_file
-            if not worth_create(model_file, predict_file) and not self.config.force_predict:
+            elif not worth_create(model_file, predict_file) and not self.config.force_predict:
                 logging.info('ignore to do prediction {}'.format(predict_file))
-                return predict_file
-
-            model, labelmap = load_from_checkpoint(model_file)
-            test_dataloader = get_testdata_loader(self.config, self.mpi_size)
-            # NOTE: not support distributed now
-            assert not self.distributed
-            model = self._data_parallel_wrap(model)
-            _predict(model, predict_file, test_dataloader, labelmap, evaluate=True)
+            else:
+                model, labelmap = load_from_checkpoint(model_file)
+                test_dataloader = get_testdata_loader(self.config, self.mpi_size)
+                # NOTE: not support distributed now
+                if not self.distributed:
+                    model = self._data_parallel_wrap(model)
+                _predict(model, predict_file, test_dataloader, labelmap, evaluate=True)
 
         synchronize()
         return predict_file
