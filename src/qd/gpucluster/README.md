@@ -73,6 +73,10 @@
    docker:
        # the custom docker. If use_custom_docker is False, this will be ignored
        image: amsword/setup:py36pt11 
+   # please make the experiment name start with your alias, because the
+   #   experiment cannot be deleted in AML and it is hard to figure out the
+   #   user name based on the experiment name or job ID
+   experiment_name: your_alias
    ```
 
 5. Set an alias
