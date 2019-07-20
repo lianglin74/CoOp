@@ -48,12 +48,15 @@ def cmd_run(cmd, working_directory='./', succeed=True):
     logging.info('start to cmd run: {}'.format(' '.join(map(str, cmd))))
     for c in cmd:
         logging.info(c)
-    p = sp.Popen(cmd, stdin=sp.PIPE,
-            cwd=working_directory,
-            env=e)
-    p.communicate()
-    if succeed:
+    try:
+        p = sp.Popen(cmd, stdin=sp.PIPE,
+                cwd=working_directory,
+                env=e)
+        p.communicate()
         assert p.returncode == 0
+    except:
+        if succeed:
+            raise
 
 def ensure_directory(path):
     if path == '' or path == '.':
@@ -127,7 +130,7 @@ def wrap_all(code_zip, code_root,
         logging.info('unzipping {}'.format(code_zip))
         unzip(code_zip, code_root)
         cmd_run(['rm', 'data'], code_root)
-        cmd_run(['rm', 'models'], code_root)
+        cmd_run(['rm', 'models'], code_root, succeed=False)
         cmd_run(['rm', 'output'], code_root)
         cmd_run(['ln', '-s',
             data_folder,

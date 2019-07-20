@@ -6,7 +6,7 @@ _C = CN()
 _C.FULL_EXPID = ""
 _C.arch = "resnet18"
 _C.data = ""
-_C.output_dir = "./brand_output"
+_C.output_dir = "./output"
 _C.test_data = ""
 
 # data

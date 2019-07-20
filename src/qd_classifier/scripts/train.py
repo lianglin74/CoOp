@@ -373,8 +373,8 @@ def main():
     args = parser.parse_args()
     cfg = create_config(args)
     pip = ClassifierPipeline(cfg)
-    # pip.ensure_train()
-    pip.monitor_train()
+    pip.ensure_train()
+    # pip.monitor_train()
 
 if __name__ == '__main__':
     main()

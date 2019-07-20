@@ -1200,8 +1200,11 @@ def execute(task_type, **kwargs):
             p.print_summary()
             p.query()
     elif task_type == 'submit':
-        assert len(kwargs['remainders']) == 1
-        submit_without_sync(cmd=kwargs['remainders'][0], **kwargs)
+        params = kwargs['remainders']
+        cmd = ' '.join(params)
+        submit_without_sync(cmd=cmd, **kwargs)
+        # assert len(kwargs['remainders']) == 1
+        # submit_without_sync(cmd=kwargs['remainders'][0], **kwargs)
     elif task_type in ['a', 'abort']:
         p = MultiPhillyVC(**kwargs)
         for v in kwargs['remainders']:
