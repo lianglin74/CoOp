@@ -87,6 +87,12 @@ class AnnotationDB(object):
     def iter_acc(self, **query):
         return self._acc.find(query)
 
+    def update_one_acc(self, query, update):
+        if '$set' in update and len(update) == 1:
+            if 'create_time' not in update['$set']:
+                update['$set']['create_time'] = datetime.now()
+        self._acc.update_one(query, update)
+
     def iter_unique_test_info_in_acc(self):
         pipeline = [
                 {'$group': {'_id': {'test_data': '$test_data',

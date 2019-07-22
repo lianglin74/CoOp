@@ -36,15 +36,13 @@ def iter_to_be_deleted(folder, threshold_in_days=30, must_have_in_folder=None):
     if must_have_in_folder is None:
         must_have_in_folder = ['']
     total_size = 0
-    for root, dirnames, file_names in os.walk(folder):
+    for root, _, file_names in os.walk(folder):
         total_size += sum([get_file_size(op.join(root, f)) for f in file_names])
-        matched = False
-        for f in must_have_in_folder:
-            if f in root:
-                matched = True
-                break
+        matched = all(f in root for f in must_have_in_folder)
         if not matched:
+            logging.info('skipping {}'.format(root))
             continue
+        logging.info('deleting in {}'.format(root))
         from qd.qd_common import parse_iteration
         ms = [(f, parse_iteration(f)) for f in file_names]
         ms = [(f, m) for f, m in ms if m > 0]

@@ -279,8 +279,12 @@ class PhillyVC(object):
         summary = self.philly_rest_api(cmd)
         summary = json.loads(summary)
         result = {}
-        result['quota'] = summary['queueStatus']['virtualClusters'][self.vc]['quota']
-        result['activeGpus'] = summary['activeGPUsByVc'][self.vc]
+        if 'ExceptionType' in summary:
+            result['quota'] = 0
+            result['activeGpus'] = 400
+        else:
+            result['quota'] = summary['queueStatus']['virtualClusters'][self.vc]['quota']
+            result['activeGpus'] = summary['activeGPUsByVc'][self.vc]
 
         return result
 
@@ -501,6 +505,10 @@ class PhillyVC(object):
                 # fixed in NCCL 2.4.6.
                 # https://github.com/pytorch/pytorch/issues/20630
                 custom_mpi_args += ' NCCL_LL_THRESHOLD=0'
+                # not sure if the following can fix the problem, described also
+                # in https://github.com/NVIDIA/nccl/issues/230
+                custom_mpi_args += ' NCCL_IB_TIMEOUT=24'
+
         data = {
             "ClusterId": cluster,
             "VcId": vc,

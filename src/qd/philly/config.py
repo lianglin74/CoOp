@@ -115,6 +115,10 @@ def releaseLock(locked_file_descriptor):
 
 def wrap_all(code_zip, code_root,
         data_folder, model_folder, output_folder, command):
+
+    if get_mpi_rank() == 0:
+        p = launch_monitoring_process()
+
     lock_fd = acquireLock()
     logging.info('got the lock')
     if not op.isdir(code_root):
@@ -159,6 +163,40 @@ def wrap_all(code_zip, code_root,
 
     if len(command) > 0:
         cmd_run(command, working_directory=code_root)
+
+    if get_mpi_rank() == 0:
+        terminate_monitoring_process(p)
+
+def terminate_monitoring_process(p):
+    p.terminate()
+    p.join()
+
+def parse_gpu_usage_dict(result):
+    import re
+    used = []
+    p = '^\|.* ([0-9]*)MiB \/ *([0-9]*)MiB *\| *([0-9]*)\%.*Default \|$'
+    for line in result.split('\n'):
+        line = line.strip()
+        r = re.match(p, line)
+        if r != None:
+            u = [int(g) for g in r.groups()]
+            names = ['mem_used', 'mem_total', 'gpu_util']
+            used.append({n: v for n, v in zip(names, u)})
+    return used
+
+def monitor():
+    while True:
+        cmd_result = cmd_run(['nvidia-smi'], return_output=True).decode()
+        gpu_result = parse_gpu_usage_dict(cmd_result)
+        logging.info('{}'.format(gpu_result))
+        import time
+        time.sleep(60 * 30) # every 30 minutes
+
+def launch_monitoring_process():
+    from multiprocessing import Process
+    p = Process(target=monitor)
+    p.start()
+    return p
 
 def get_mpi_local_rank():
     return int(os.environ.get('OMPI_COMM_WORLD_LOCAL_RANK', '0'))

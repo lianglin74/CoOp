@@ -118,7 +118,7 @@ def update_bn_momentum(model, bn_momentum):
     logging.info(pformat(dict(type_to_count)))
 
 def train(cfg, local_rank, distributed, log_step=20, sync_bn=False,
-        opt_cls_only=False, bn_momentum=0.1):
+        opt_cls_only=False, bn_momentum=0.1, init_model_only=True):
     logging.info('start to train')
     model = build_detection_model(cfg)
     if sync_bn:
@@ -178,8 +178,14 @@ def train(cfg, local_rank, distributed, log_step=20, sync_bn=False,
     checkpointer = DetectronCheckpointer(
         cfg, model, optimizer, scheduler, output_dir, save_to_disk
     )
+
+    # model_only should be True by default. That means, we only initialize the
+    # weight and ignore teh parameters in optimizer and lr_scheduler. The
+    # scenario is to finetune the model we trained before. If there is a
+    # checkpoint in the current training, the model_only will be set back to
+    # False. That means, it is compatible for continous training
     extra_checkpoint_data = checkpointer.load(cfg.MODEL.WEIGHT,
-            model_only=True)
+            model_only=init_model_only)
 
     if use_hvd:
         import horovod.torch as hvd
@@ -187,15 +193,6 @@ def train(cfg, local_rank, distributed, log_step=20, sync_bn=False,
         hvd.broadcast_optimizer_state(optimizer, root_rank=0)
 
     arguments.update(extra_checkpoint_data)
-    if arguments['iteration'] != 0:
-        old_last_epoch = scheduler.last_epoch
-        # in the trainer, it first call step and then do the update. Thus, -1
-        new_last_epoch = arguments['iteration'] - 1
-        logging.info('Resume from a non-0 iteration. Resetting the last_epoch'
-                ' of scheduler from {} to {}'.format(old_last_epoch,
-                    new_last_epoch))
-        scheduler.last_epoch = new_last_epoch
-
 
     data_loader = make_data_loader(
         cfg,
@@ -575,12 +572,16 @@ class MaskRCNNPipeline(ModelPipeline):
     def __init__(self, **kwargs):
         super(MaskRCNNPipeline, self).__init__(**kwargs)
 
-        self._default.update({'workers': 4,
+        self._default.update({
+            'workers': 4,
             'log_step': 20,
             'apply_nms_gt': True,
             'apply_nms_det': True,
             'expand_label_det': True,
             'bn_momentum': 0.1,
+            # for the inital model, whether we want to load the lr scheduler and
+            # optimer
+            'init_model_only': True,
             })
 
         maskrcnn_root = op.join('src', 'maskrcnn-benchmark')
@@ -689,7 +690,8 @@ class MaskRCNNPipeline(ModelPipeline):
         train(cfg, self.mpi_local_rank, self.distributed, self.log_step,
                 sync_bn=self.sync_bn,
                 opt_cls_only=self.opt_cls_only,
-                bn_momentum=self.bn_momentum)
+                bn_momentum=self.bn_momentum,
+                init_model_only=self.init_model_only)
 
     def append_predict_param(self, cc):
         super(MaskRCNNPipeline, self).append_predict_param(cc)

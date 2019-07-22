@@ -64,8 +64,8 @@ class TestQDCommon(unittest.TestCase):
         attach_log_parsing_result(info)
         logging.info(pformat(info))
         import datetime
-        self.assertTrue(info['log_time'], datetime.datetime(2019, 7, 5, 5, 29, 15))
-        self.assertTrue(info['speed'], 63.3)
+        self.assertEqual(info['log_time'], datetime.datetime(2019, 7, 5, 5, 29, 15))
+        self.assertEqual(info['speed'], 63.3)
 
     def test_attach_gpu_utility_from_log(self):
         log = r"07-05 22:32:53.330 67bc8cd0f14741d2b64331f9356eb105000001 905 aml_server.py:138    monitor(): [{'mem_used': 4178, 'mem_total': 16130, 'gpu_util': 97}, {'mem_used': 3820, 'mem_total': 16130, 'gpu_util': 91}, {'mem_used': 3806, 'mem_total': 16130, 'gpu_util': 94}, {'mem_used': 3784, 'mem_total': 16130, 'gpu_util': 90}]"

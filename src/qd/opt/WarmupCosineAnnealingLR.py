@@ -47,5 +47,5 @@ class WarmupCosineAnnealingLR(torch.optim.lr_scheduler._LRScheduler):
 def create_warmup_cosine_annealing_lr(optimizer,
         T_max, warmup_factor, warmup_iters, warmup_method, last_epoch=-1):
     return WarmupCosineAnnealingLR(optimizer,
-            T_max, 0., warmup_factor, warmup_iters, warmup_method, last_epoch=-1)
+            T_max, 0., warmup_factor, warmup_iters, warmup_method, last_epoch=last_epoch)
 

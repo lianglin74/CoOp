@@ -84,7 +84,7 @@ def blob_download_all_qdoutput(prefix, c=None):
     root, all_full_expid = get_root_all_full_expid(prefix, all_blob_name)
     for full_expid in all_full_expid:
         logging.info(full_expid)
-        src_path = op.join(prefix, full_expid)
+        src_path = op.join(root, full_expid)
         target_folder = op.join('output', full_expid)
         c.blob_download_qdoutput(src_path, target_folder)
 

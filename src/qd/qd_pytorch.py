@@ -58,14 +58,22 @@ def synchronize():
     Helper function to synchronize (barrier) among all processes when
     using distributed training
     """
-    if not dist.is_available():
-        return
-    if not dist.is_initialized():
-        return
-    world_size = dist.get_world_size()
-    if world_size == 1:
-        return
-    dist.barrier()
+    from qd.qd_common import is_hvd_initialized
+    use_hvd = is_hvd_initialized()
+    if not use_hvd:
+        if not dist.is_available():
+            return
+        if not dist.is_initialized():
+            return
+        world_size = dist.get_world_size()
+        if world_size == 1:
+            return
+        dist.barrier()
+    else:
+        from qd.qd_common import get_mpi_size
+        if get_mpi_size() > 1:
+            import horovod.torch as hvd
+            hvd.allreduce(torch.tensor(0), name='barrier')
 
 def compare_caffeconverted_vs_pt(pt2, pt1):
     state1 = torch.load(pt1)
@@ -374,20 +382,6 @@ def get_data_normalize():
                                      std=[0.229, 0.224, 0.225])
     return normalize
 
-class ModelLoss(nn.Module):
-    def __init__(self, model, criterion):
-        super(ModelLoss, self).__init__()
-        self.module = model
-        self.criterion = criterion
-
-    def forward(self, data, target):
-        out = self.module(data)
-        loss = self.criterion(out, target)
-        # make sure the length of the loss is the same with the dim 0. The
-        # loss should be the sum of the result.
-        N = data.shape[0]
-        return loss.expand(N) / N
-
 class MultiHotCrossEntropyLoss(nn.Module):
     def __init__(self):
         super(MultiHotCrossEntropyLoss, self).__init__()
@@ -490,11 +484,19 @@ class IBCEWithLogitsNegLoss(nn.Module):
             else:
                 avg_neg_in_loss = sig_feature[neg_position_in_loss].sum() / num_neg_in_loss
             debug_info += ('#pos_in_loss = {}, avg_pos_in_loss = {}, '
-                          '#neg_in_loss = {}, avg_neg_in_loss = {} '
+                          '#neg_in_loss = {}, avg_neg_in_loss = {}, '
                           ).format(
                           num_pos_in_loss, avg_pos_in_loss,
                           num_neg_in_loss, avg_neg_in_loss,
                           )
+            debug_info += ('ignore_hard_neg_th = {}, '
+                    'ignore_hard_pos_th = {}, '
+                    'neg = {}, '
+                    'pos = {}').format(
+                    self.ignore_hard_neg_th,
+                    self.ignore_hard_pos_th,
+                    self.neg,
+                    self.pos)
             logging.info(debug_info)
 
         self.num_called += 1
@@ -673,6 +675,8 @@ def init_random_seed(random_seed):
 def get_acc_for_plot(eval_file):
     if 'coco_box' in eval_file:
         return load_from_yaml_file(eval_file)
+    elif 'top1' in eval_file:
+        return load_from_yaml_file(eval_file)
     else:
         raise NotImplementedError()
 
@@ -694,7 +698,7 @@ class TorchTrain(object):
                 'log_step': 100,
                 'evaluate_method': 'map',
                 'test_split': 'test',
-                'num_workers': 0,
+                'num_workers': 4,
                 'test_normalize_module': 'softmax',
                 'restore_snapshot_iter': -1,
                 'ovthresh': [-1],
@@ -724,7 +728,11 @@ class TorchTrain(object):
         self.test_data = kwargs.get('test_data', self.data)
         self.test_batch_size = kwargs.get('test_batch_size',
                 self.effective_batch_size)
-
+        if self.max_epoch is None and \
+                type(self.max_iter) is str and \
+                self.max_iter.endswith('e'):
+            # we will not use max_epoch gradually
+            self.max_epoch = int(self.max_iter[: -1])
         self.mpi_rank = get_mpi_rank()
         self.mpi_size= get_mpi_size()
         self.mpi_local_rank = get_mpi_local_rank()
@@ -753,6 +761,11 @@ class TorchTrain(object):
         self.train_dataset = TSVDataset(self.data)
 
         self.initialized = False
+
+    def get_labelmap(self):
+        if not self.labelmap:
+            self.labelmap = self.train_dataset.load_labelmap()
+        return self.labelmap
 
     def __getattr__(self, key):
         if key in self.kwargs:
@@ -890,7 +903,7 @@ class TorchTrain(object):
             model = torch.nn.DataParallel(model).cuda()
         return model
 
-    def _get_train_data_loader(self):
+    def _get_train_data_loader(self, start_iter=0):
         train_dataset = self._get_dataset(self.data,
                 'train',
                 stage='train',
@@ -978,6 +991,7 @@ class TorchTrain(object):
             zip_qd(op.join(self.output_folder, 'source_code'))
 
         train_result = self.train()
+
         synchronize()
 
         return train_result
@@ -994,15 +1008,23 @@ class TorchTrain(object):
             else:
                 raise ValueError('unknown init type = {}'.format(self.init_from['type']))
 
+    def get_optimizer(self, model):
+        optimizer = torch.optim.SGD(model.parameters(), self.base_lr,
+                                    momentum=0.9,
+                                    weight_decay=1e-4)
+        return optimizer
+
+    def get_lr_scheduler(self, optimizer, last_epoch=-1):
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer,
+                step_size=self.parse_iter(self.step_lr),
+                last_epoch=last_epoch)
+        return scheduler
+
     def train(self):
         train_dataset, train_loader = self._get_train_data_loader()
         num_class = train_dataset.get_num_pos_labels()
 
         model = self._get_model(self.pretrained, num_class)
-        parallel_criterion = self.parallel_criterion
-        if parallel_criterion:
-            criterion = self._get_criterion()
-            model = ModelLoss(model, criterion)
         model = self._data_parallel_wrap(model)
 
         self.init_model(model)
@@ -1020,10 +1042,7 @@ class TorchTrain(object):
             last_checkpoint = self.get_latest_checkpoint()
             if last_checkpoint:
                 checkpoint = torch.load(last_checkpoint)
-                if parallel_criterion:
-                    model.module.load_state_dict(checkpoint['state_dict'])
-                else:
-                    model.load_state_dict(checkpoint['state_dict'])
+                model.load_state_dict(checkpoint['state_dict'])
                 optimizer.load_state_dict(checkpoint['optimizer'])
                 start_epoch = checkpoint['epoch']
 
@@ -1044,9 +1063,9 @@ class TorchTrain(object):
                 torch_save({
                     'epoch': epoch + 1,
                     'net': self.net,
-                    'state_dict': model.state_dict() if not parallel_criterion else model.module.state_dict(),
+                    'state_dict': model.state_dict(),
                     'optimizer' : optimizer.state_dict(),
-                }, self._get_checkpoint_file(epoch + 1))
+                }, self._get_checkpoint_file(iteration='{}e'.format(epoch + 1)))
 
     def train_epoch(self, train_loader, model, optimizer, epoch,
             max_iter=None):
@@ -1058,9 +1077,7 @@ class TorchTrain(object):
         iter_start = time.time()
         log_start = iter_start
         log_step = self.log_step
-        parallel_criterion = self.parallel_criterion
-        if not parallel_criterion:
-            criterion = self._get_criterion()
+        criterion = self._get_criterion()
         for i, (input, target, _) in enumerate(train_loader):
             # measure data loading time
             data_time.update(time.time() - iter_start)
@@ -1068,12 +1085,8 @@ class TorchTrain(object):
             target = target.cuda(non_blocking=True)
 
             # compute output
-            if parallel_criterion:
-                loss = model(input, target)
-                loss = torch.mean(loss)
-            else:
-                output = model(input)
-                loss = criterion(output, target)
+            output = model(input)
+            loss = criterion(output, target)
 
             losses.update(loss.item(), input.size(0))
 
@@ -1110,8 +1123,7 @@ class TorchTrain(object):
 
     def _get_predict_file(self, model_file=None):
         if model_file is None:
-            model_file = self._get_checkpoint_file(self.max_epoch,
-                    self.max_iter)
+            model_file = self._get_checkpoint_file(iteration=self.max_iter)
         cc = [model_file, self.test_data, self.test_split]
         self.append_predict_param(cc)
         cc.append('predict')
@@ -1175,7 +1187,11 @@ class TorchTrain(object):
             xys = list(iter_to_eval.items())
             xys = sorted(xys, key=lambda x: x[0])
             xs = [x for x, _ in xys]
-            ys = [y['all-all'] for _, y in xys]
+            if all('all-all' in y for _, y in xys):
+                # coco accuracy
+                ys = [y['all-all'] for _, y in xys]
+            elif all('top1' in y for _, y in xys):
+                ys = [y['top1'] for _, y in xys]
 
             if len(xs) > 0:
                 out_file = os.path.join(
@@ -1256,7 +1272,7 @@ class TorchTrain(object):
         synchronize()
 
     def get_snapshot_steps(self):
-        pass
+        return 5000
 
     def ensure_predict(self, epoch=None, iteration=None, model_file=None):
         # deprecate epoch and iteration. use model_file, gradually
@@ -1266,7 +1282,7 @@ class TorchTrain(object):
             logging.warn('use model_file rather than epoch or iteration, pls')
             if epoch is None:
                 epoch = self.max_epoch
-            model_file = self._get_checkpoint_file(epoch=epoch, iteration=iteration)
+            model_file = self._get_checkpoint_file(iteration=iteration)
         else:
             if model_file is None:
                 model_file = self._get_checkpoint_file()
@@ -1294,42 +1310,44 @@ class TorchTrain(object):
         return func
 
     def predict(self, model_file, predict_result_file):
-        train_dataset = TSVDataset(self.data)
-        labelmap = train_dataset.load_labelmap()
+        if self.mpi_rank == 0:
+            train_dataset = TSVDataset(self.data)
+            labelmap = train_dataset.load_labelmap()
 
-        model = self._get_model(pretrained=False, num_class=len(labelmap))
-        model = self._data_parallel_wrap(model)
+            model = self._get_model(pretrained=False, num_class=len(labelmap))
+            model = self._data_parallel_wrap(model)
 
-        checkpoint = torch_load(model_file)
+            checkpoint = torch_load(model_file)
 
-        model.load_state_dict(checkpoint['state_dict'])
+            model.load_state_dict(checkpoint['state_dict'])
 
-        test_dataset, dataloader = self._get_test_data_loader(self.test_data,
-                self.test_split, labelmap)
+            test_dataset, dataloader = self._get_test_data_loader(self.test_data,
+                    self.test_split, labelmap)
 
-        softmax_func = self._get_test_normalize_module()
+            softmax_func = self._get_test_normalize_module()
 
-        # save top 50
-        topk = 50
-        model.eval()
-        def gen_rows():
-            pbar = tqdm(total=len(test_dataset))
-            for i, (inputs, labels, keys) in enumerate(dataloader):
-                inputs = inputs.cuda()
-                labels = labels.cuda()
-                output = model(inputs)
-                output = softmax_func(output)
+            # save top 50
+            topk = 50
+            model.eval()
+            def gen_rows():
+                pbar = tqdm(total=len(test_dataset))
+                for i, (inputs, labels, keys) in enumerate(dataloader):
+                    inputs = inputs.cuda()
+                    labels = labels.cuda()
+                    output = model(inputs)
+                    output = softmax_func(output)
 
-                all_tops, all_top_indexes = output.topk(topk, dim=1,
-                        largest=True, sorted=False)
+                    all_tops, all_top_indexes = output.topk(topk, dim=1,
+                            largest=True, sorted=False)
 
-                for key, tops, top_indexes in zip(keys, all_tops, all_top_indexes):
-                    all_tag = [{'class': labelmap[i], 'conf': float(t)} for t, i in
-                            zip(tops, top_indexes)]
-                    yield key, json.dumps(all_tag)
-                pbar.update(len(keys))
+                    for key, tops, top_indexes in zip(keys, all_tops, all_top_indexes):
+                        all_tag = [{'class': labelmap[i], 'conf': float(t)} for t, i in
+                                zip(tops, top_indexes)]
+                        yield key, json.dumps(all_tag)
+                    pbar.update(len(keys))
 
-        tsv_writer(gen_rows(), predict_result_file)
+            tsv_writer(gen_rows(), predict_result_file)
+        synchronize()
         return predict_result_file
 
     def _get_evaluate_file(self, predict_file=None):
@@ -1370,8 +1388,7 @@ class TorchTrain(object):
 
         self._ensure_initialized()
         if not predict_file:
-            model_file = self._get_checkpoint_file(self.max_epoch,
-                    self.max_iter)
+            model_file = self._get_checkpoint_file(iteration=self.max_iter)
             predict_file = self._get_predict_file(model_file)
         evaluate_file = self._get_evaluate_file(predict_file)
         if evaluate_file is None:
@@ -1481,158 +1498,6 @@ class TorchTrain(object):
 
 class ModelPipeline(TorchTrain):
     pass
-
-class YoloV2PtPipeline(ModelPipeline):
-    def __init__(self, **kwargs):
-        super(YoloV2PtPipeline, self).__init__(**kwargs)
-        self._default.update({'stagelr': [0.0001,0.001,0.0001,0.00001],
-            'effective_batch_size': 64,
-            'ovthresh': [0.5],
-            'display': 100,
-            'lr_policy': 'multifixed',
-            'momentum': 0.9,
-            'is_caffemodel_for_predict': False,
-            'workers': 4})
-        self.num_train_images = None
-
-    def append_predict_param(self, cc):
-        super(YoloV2PtPipeline, self).append_predict_param(cc)
-        if self.yolo_predict_session_param:
-            test_input_size = self.yolo_predict_session_param.get('test_input_size', 416)
-            if test_input_size != 416:
-                cc.append('InputSize{}'.format(test_input_size))
-
-    def _get_checkpoint_file(self, epoch=None, iteration=None):
-        assert epoch is None, 'not supported'
-        iteration = self.parse_iter(iteration)
-        return op.join(self.output_folder, 'snapshot',
-                "model_{:07d}.pth".format(iteration))
-
-    def monitor_train(self):
-        # not implemented. but we just return rather than throw exception
-        # need to use maskrcnn checkpointer to load and save the intermediate
-        # models.
-        return
-
-    def train(self):
-        dataset = TSVDataset(self.data)
-        param = {
-                'is_caffemodel': True,
-                'logdir': self.output_folder,
-                'labelmap': dataset.get_labelmap_file(),
-                }
-        if not self.use_treestructure:
-            param.update({'use_treestructure': False})
-        else:
-            param.update({'use_treestructure': True,
-                          'tree': dataset.get_tree_file()})
-        train_data_path = '$'.join([self.data, 'train'])
-
-        lr_policy = self.lr_policy
-        snapshot_prefix = os.path.join(self.output_folder, 'snapshot', 'model')
-        max_iter = self.parse_iter(self.max_iter)
-
-        stageiter = list(map(lambda x:int(x*max_iter/7000),
-            [100,5000,6000,7000]))
-
-        solver_param = {
-                'lr_policy': lr_policy,
-                'gamma': 0.1,
-                'momentum': self.momentum,
-                'stagelr': self.stagelr,
-                'stageiter': stageiter,
-                'weight_decay': self.weight_decay,
-                'snapshot_prefix': op.relpath(snapshot_prefix),
-                'max_iter': max_iter,
-                'snapshot': 500,
-                }
-
-        solver_yaml = op.join(self.output_folder,
-                'solver.yaml')
-
-        write_to_yaml_file(solver_param, solver_yaml)
-
-        base_model = self.base_model
-        assert self.effective_batch_size % self.mpi_size == 0
-        if 'WORLD_SIZE' in os.environ:
-            assert int(os.environ['WORLD_SIZE']) == self.mpi_size
-        else:
-            os.environ['WORLD_SIZE'] = str(self.mpi_size)
-        if 'RANK' in os.environ:
-            assert int(os.environ['RANK']) == self.mpi_rank
-        else:
-            os.environ['RANK'] = str(self.mpi_rank)
-
-        param.update({'solver': solver_yaml,
-                      'only_backbone': False,
-                      'batch_size': self.effective_batch_size // self.mpi_size,
-                      'workers': self.workers,
-                      'model': base_model,
-                      'restore': False,
-                      'latest_snapshot': None,
-                      'display': self.display,
-                      'train': train_data_path})
-
-        is_local_rank0 = self.mpi_local_rank == 0
-
-        from mmod.file_logger import FileLogger
-        log = FileLogger(self.output_folder, is_master=self.is_master,
-                is_rank0=is_local_rank0)
-
-        param.update({'distributed': self.distributed,
-                      'local_rank': self.mpi_local_rank,
-                      'dist_url': self.get_dist_url()})
-
-        param_yaml = op.join(self.output_folder,
-                'param.yaml')
-        write_to_yaml_file(param, param_yaml)
-
-        if self.yolo_train_session_param is not None:
-            from qd.qd_common import dict_update_nested_dict
-            dict_update_nested_dict(param, self.yolo_train_session_param)
-
-        from mmod import yolo_train_session
-        snapshot_file = yolo_train_session.main(param, log)
-
-        if self.is_master:
-            import shutil
-            shutil.copyfile(snapshot_file,
-                    self._get_checkpoint_file())
-
-    def predict(self, model_file, predict_result_file):
-        if self.mpi_rank != 0:
-            logging.info('ignore to predict for non-master process')
-            return
-        from mmod.file_logger import FileLogger
-        from mmod import yolo_predict_session
-
-        dataset = TSVDataset(self.data)
-        param = {
-                'model': model_file,
-                'labelmap': dataset.get_labelmap_file(),
-                'test': '$'.join([self.test_data, self.test_split]),
-                'output': predict_result_file,
-                'logdir': self.output_folder,
-                'batch_size': 64,
-                'workers': self.workers,
-                'is_caffemodel': self.is_caffemodel_for_predict,
-                'single_class_nms': False,
-                'obj_thresh': 0.01,
-                'thresh': 0.01,
-                'log_interval': 100,
-                }
-        is_tree = self.use_treestructure
-        param['use_treestructure'] = is_tree
-        if is_tree:
-            param['tree'] = dataset.get_tree_file()
-
-        if self.yolo_predict_session_param is not None:
-            param.update(self.yolo_predict_session_param)
-
-        is_local_rank0 = self.mpi_local_rank == 0
-        log = FileLogger(self.output_folder, is_master=self.is_master,
-                is_rank0=is_local_rank0)
-        yolo_predict_session.main(param, log)
 
 def evaluate_topk(predict_file, label_tsv_file):
     predicts = load_key_rects(tsv_reader(predict_file))

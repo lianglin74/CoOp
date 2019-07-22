@@ -283,6 +283,9 @@ def update_parameters(param):
             ('MODEL$RESNETS$STEM_FUNC', '', {'default_value': 'StemWithFixedBatchNorm'}),
             ('MODEL$RESNETS$TRANS_FUNC', '', {'default_value': 'BottleneckWithFixedBatchNorm'}),
             ('MODEL$FPN$USE_RELU', ('FPNRelu', None)),
+            ('init_model_only', (None, 'Continue')),
+            ('MODEL$RESNETS$USE_SE', ('SE', None)),
+            ('SOLVER$GAMMA', 'Gamma'),
             ]
 
     non_expid_impact_keys = ['data', 'net', 'expid_prefix',
@@ -376,7 +379,14 @@ def create_pipeline(kwargs):
     elif pipeline_type == 'classification':
         from qd.qd_pytorch import TorchTrain
         return TorchTrain(**kwargs)
-
+    elif pipeline_type == 'classification_for_mask':
+        from qd.pipelines.classification_for_maskrcnn import ClassificationForMaskRCNN
+        return ClassificationForMaskRCNN(**kwargs)
+    elif pipeline_type == 'classification_by_mask':
+        from qd.pipelines.classification_by_maskrcnn import MaskClassificationPipeline
+        return MaskClassificationPipeline(**kwargs)
+    else:
+        raise NotImplementedError()
 
 def load_pipeline(**kwargs):
     from qd.qd_pytorch import load_latest_parameters

@@ -5469,10 +5469,20 @@ def inject_accuracy_one(full_expid):
         for k in list(acc.keys()):
             curr = copy.deepcopy(info)
             curr['metric_name'] = k
-            if c.exist_acc(**curr):
-                continue
-            curr['metric_value'] = acc[k]
-            c.insert_acc(**curr)
+            exist = False
+            for found in c.iter_acc(**curr):
+                exist = True
+                if found['metric_value'] == acc[k]:
+                    continue
+                else:
+                    # the newer one will overwrite the old one. Sometimes, the
+                    # code has issues and the experiment results are not
+                    # correct
+                    c.update_one_acc(query=curr,
+                            update={'$set': {'metric_value': acc[k]}})
+            if not exist:
+                curr['metric_value'] = acc[k]
+                c.insert_acc(**curr)
 
 def find_predict_file(report_file, all_predict):
     found = False
