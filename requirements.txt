@@ -5,6 +5,9 @@ django==1.11
 easydict
 ete3
 future
+ipython
+ipdb
+jinja2
 matplotlib
 nltk
 numpy
@@ -24,4 +27,5 @@ sklearn
 scikit-image
 tqdm
 traceback2
+tb-nightly
 yacs
