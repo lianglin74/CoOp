@@ -352,6 +352,36 @@ def parallel_map(func, all_task, isDebug=False):
             result.append(func(t))
         return result
 
+def url_to_file_by_wget(url, fname):
+    ensure_directory(op.dirname(fname))
+    cmd_run(['wget', url, '-O', fname])
+
+# this is specifically for azure blob url, where the last 1k bytes operation is
+# not supported. We have to first find the length and then find the start
+# point
+def get_url_fsize(url):
+    result = cmd_run(['curl', '-sI', url], return_output=True)
+    for row in result.split('\n'):
+        ss = [s.strip() for s in row.split(':')]
+        if len(ss) == 2 and ss[0] == 'Content-Length':
+            size_in_bytes = int(ss[1])
+            return size_in_bytes
+
+def url_to_file_by_curl(url, fname, bytes_start=None, bytes_end=None):
+    ensure_directory(op.dirname(fname))
+    if bytes_start is None:
+        bytes_start = 0
+    elif bytes_start < 0:
+        size = get_url_fsize(url)
+        bytes_start = size + bytes_start
+        if bytes_start < 0:
+            bytes_start = 0
+    if bytes_end is None:
+        cmd_run(['curl', '-r', '{}-'.format(bytes_start),
+            url, '--output', fname])
+    else:
+        raise NotImplementedError
+
 def url_to_str(url):
     try:
         fp = urlopen(url, timeout=30)
@@ -500,7 +530,7 @@ def print_as_html(table, html_output):
     write_to_file(r, html_output)
 
 def parse_general_args():
-    parser = argparse.ArgumentParser(description='Train a Yolo network')
+    parser = argparse.ArgumentParser(description='General Parser')
     parser.add_argument('-c', '--config_file', help='config file',
             type=str)
     parser.add_argument('-p', '--param', help='parameter string, yaml format',

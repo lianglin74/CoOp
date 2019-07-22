@@ -52,8 +52,8 @@ def cmd_run(cmd, working_directory='./', succeed=False,
                 assert p.returncode == 0
         except:
             if succeed:
+                logging.info('raising exception')
                 raise
-                assert p.returncode == 0
     else:
         return sp.check_output(cmd)
 

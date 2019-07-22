@@ -1,23 +1,20 @@
+import os.path as op
 from pprint import pformat
-from collections import OrderedDict
 import logging
+
 from qd.qd_common import load_from_yaml_file, dict_update_nested_dict
 from qd.qd_common import cmd_run
-from qd.cloud_storage import create_cloud_storage
 from qd.qd_common import decode_general_cmd
+from qd.qd_common import ensure_directory
+from qd.cloud_storage import create_cloud_storage
+
 
 def create_aml_client(**kwargs):
     param = load_from_yaml_file('./aux_data/aml/aml.yaml')
     dict_update_nested_dict(param, kwargs)
     return AMLClient(**param)
 
-def parse_run_info(run):
-    info = {}
-    info['status'] = run.status
-    info['appID'] = run.id
-    info['appID-s'] = run.id[-5:]
-    info['cluster'] = 'aml'
-    details = run.get_details()
+def update_by_run_details(info, details):
     info['start_time'] = details.get('startTimeUtc')
     from dateutil.parser import parse
     from datetime import datetime, timezone
@@ -31,6 +28,40 @@ def parse_run_info(run):
         info['cmd_param'] = decode_general_cmd(cmd)
     info['num_gpu'] = details['runDefinition']['mpi']['processCountPerNode'] * \
             details['runDefinition']['nodeCount']
+    info['logFiles'] = details['logFiles']
+
+def parse_run_info(run, with_details=True,
+        with_log=False, log_full=True):
+    info = {}
+    info['status'] = run.status
+    info['appID'] = run.id
+    info['appID-s'] = run.id[-5:]
+    info['cluster'] = 'aml'
+    if not with_details:
+        return info
+    details = run.get_details()
+    update_by_run_details(info, details)
+    if with_log:
+        all_log = download_run_logs(info, full=log_full)
+        info['all_log_path'] = all_log
+        if len(all_log) > 0:
+            logging.info('parsing the log for {}'.format(info['appID']))
+            info['latest_log'] = cmd_run(['tail', '-n', '100',
+                all_log[0]],
+                return_output=True)
+            from qd.qd_common import attach_log_parsing_result
+            attach_log_parsing_result(info)
+
+    logging.info(run.get_portal_url())
+
+    param_keys = ['data', 'net', 'expid']
+    for k in param_keys:
+        from qd.qd_common import dict_has_path
+        if dict_has_path(info, 'cmd_param$param${}'.format(k)):
+            v = info['cmd_param']['param'][k]
+        else:
+            v = None
+        info[k] = v
     return info
 
 def print_run_info(run):
@@ -49,6 +80,28 @@ def create_aml_run(experiment, run_id):
             matched_runs])
         r = matched_runs[0]
     return r
+
+def download_run_logs(run_info, full=True):
+    # Do not use r.get_all_logs(), which could be stuck. Use
+    # wget instead by calling download_run_logs
+    if 'logFiles' not in run_info:
+        return []
+    all_log_file = []
+    for k, v in run_info['logFiles'].items():
+        target_file = op.join('assets', run_info['appID'], k)
+        from qd.qd_common import url_to_file_by_wget
+        from qd.qd_common import url_to_file_by_curl
+        if full:
+            url_to_file_by_wget(v, target_file)
+        else:
+            url_to_file_by_curl(v, target_file, -1024 * 100 )
+        all_log_file.append(target_file)
+    return all_log_file
+
+def get_compute_status(compute_target):
+    info = {}
+    info['running_node_count'] = compute_target.status.node_state_counts.running_node_count
+    return info
 
 class AMLClient(object):
     status_running = 'Running'
@@ -86,11 +139,14 @@ class AMLClient(object):
         self.compute_target = compute_target
 
         from azureml.core import Datastore
-        ds = Datastore.register_azure_blob_container(workspace=ws,
-                                                     datastore_name=self.datastore_name,
-                                                     container_name=self.cloud_blob.container_name,
-                                                     account_name=self.cloud_blob.account_name,
-                                                     account_key=self.cloud_blob.account_key)
+        try:
+            ds = Datastore.get(ws, self.datastore_name)
+        except:
+            ds = Datastore.register_azure_blob_container(workspace=ws,
+                                                         datastore_name=self.datastore_name,
+                                                         container_name=self.cloud_blob.container_name,
+                                                         account_name=self.cloud_blob.account_name,
+                                                         account_key=self.cloud_blob.account_key)
 
         self.code_path = ds.path(self.config_param['code_path']).as_mount()
         self.data_folder = ds.path(self.config_param['data_folder']).as_mount()
@@ -102,6 +158,11 @@ class AMLClient(object):
         from azureml.core import Experiment
         self.experiment = Experiment(self.ws, name=self.experiment_name)
 
+    def get_compute_status(self):
+        compute_status = get_compute_status(self.compute_target)
+
+        return compute_status
+
     def abort(self, run_id):
         run = create_aml_run(self.experiment, run_id)
         run.cancel()
@@ -109,44 +170,24 @@ class AMLClient(object):
     def query(self, run_id=None):
         if run_id is None:
             all_run = list(self.experiment.get_runs())
-            all_info = [parse_run_info(r) for r in all_run]
-            if self.with_log:
-                for info, r in zip(all_info, all_run):
-                    if r.status != AMLClient.status_running:
-                        continue
-                    all_log = list(r.get_all_logs())
-                    info['all_log_path'] = all_log
-                    if len(all_log) > 0:
-                        info['latest_log'] = cmd_run(['tail', '-n', '100',
-                            all_log[0]],
-                            return_output=True)
-                        from qd.qd_common import attach_log_parsing_result
-                        attach_log_parsing_result(info)
 
+            def check_with_details(r):
+                return self.with_log and r.status in [self.status_running,
+                        self.status_queued]
+            all_info = [parse_run_info(r, with_details=check_with_details(r),
+                with_log=self.with_log, log_full=False) for r in all_run]
             from qd.qd_common import print_job_infos
-            param_keys = ['data', 'net', 'expid']
-            for k in param_keys:
-                for info in all_info:
-                    if info is None:
-                        import ipdb;ipdb.set_trace(context=15)
-                    from qd.qd_common import dict_has_path
-                    if dict_has_path(info, 'cmd_param$param${}'.format(k)):
-                        v = info['cmd_param']['param'][k]
-                    else:
-                        v = None
-                    info[k] = v
             print_job_infos(all_info)
             return all_info
         else:
             r = create_aml_run(self.experiment, run_id)
-            logging.info(r.get_portal_url())
-
-            if self.with_log:
-                all_log = r.get_all_logs()
-                if len(all_log) > 0:
-                    cmd_run(['tail', '-n', '100', all_log[0]])
-                    logging.info('log files: \n{}'.format(pformat(all_log)))
-            print_run_info(r)
+            info = parse_run_info(r,
+                    with_details=True,
+                    with_log=self.with_log,
+                    log_full=True)
+            if 'all_log_path' in info and len(info['all_log_path']) > 0:
+                cmd_run(['tail', '-n', '100', info['all_log_path'][0]])
+            logging.info(pformat(info))
 
     def resubmit(self, partial_id):
         run = create_aml_run(self.experiment, partial_id)
@@ -221,6 +262,9 @@ class AMLClient(object):
     def inject(self):
         all_info = self.query()
         from qd.db import update_cluster_job_db
+        for info in all_info:
+            if 'logFiles' in info:
+                del info['logFiles']
         update_cluster_job_db(all_info)
 
     def sync_code(self, random_id):
@@ -235,6 +279,14 @@ class AMLClient(object):
         rel_code_path = self.config_param['code_path']
         # upload it
         self.cloud_blob.az_upload2(random_abs_qd, rel_code_path)
+
+def inject_to_tensorboard(info):
+    log_folder = 'output/tensorboard/aml'
+    ensure_directory(log_folder)
+    from torch.utils.tensorboard import SummaryWriter
+    wt = SummaryWriter(log_dir=log_folder)
+    for k, v in info.items():
+        wt.add_scalar(tag=k, scalar_value=v)
 
 def execute(task_type, **kwargs):
     if task_type in ['q', 'query']:
@@ -270,10 +322,11 @@ def execute(task_type, **kwargs):
         else:
             for partial_id in partial_ids:
                 client.resubmit(partial_id)
-    elif task_type == 'summary':
-        raise NotImplementedError()
-        m = create_multi_philly_client()
-        m.print_summary()
+    elif task_type in ['s', 'summary']:
+        m = create_aml_client(**kwargs)
+        info = m.get_compute_status()
+        logging.info(pformat(info))
+        inject_to_tensorboard(info)
     elif task_type in ['i', 'inject']:
         m = create_aml_client(**kwargs)
         m.inject()
@@ -288,7 +341,7 @@ def parse_args():
                 'init',
                 'sync',
                 'update_config', 'gc', 'blame', 'resubmit',
-                'summary', 'i', 'inject'])
+                's', 'summary', 'i', 'inject'])
     parser.add_argument('-wl', dest='with_log', default=True, action='store_true')
     parser.add_argument('-no-wl', dest='with_log',
             action='store_false')
