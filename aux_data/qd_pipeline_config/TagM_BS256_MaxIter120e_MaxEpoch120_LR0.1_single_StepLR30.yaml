@@ -1,0 +1,18 @@
+all_test_data:
+- test_data: imagenet2012
+  test_split: test
+param:
+  base_lr: 0.1
+  data: imagenet2012
+  dataset_type: single
+  dist_url_tcp_port: 26889
+  effective_batch_size: 256
+  evaluate_method: top1
+  expid: TagM_BS256_MaxIter120e_MaxEpoch120_LR0.1_single_StepLR30
+  expid_prefix: TagM
+  max_epoch: 120
+  max_iter: 120e
+  net: resnet18
+  pipeline_type: classification
+  step_lr: 30
+type: pipeline_train_eval_multi
