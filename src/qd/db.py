@@ -60,7 +60,14 @@ class AnnotationDB(object):
         import getpass
         self.username = getpass.getuser()
 
+    def add_meta_data(self, kwargs):
+        if 'create_time' not in kwargs:
+            kwargs['create_time'] = datetime.now()
+        if 'username' not in kwargs:
+            kwargs['username'] = self.username
+
     def insert_phillyjob(self, **kwargs):
+        # use self.add_meta_data
         if 'create_time' not in kwargs:
             kwargs['create_time'] = datetime.now()
         if 'username' not in kwargs:
@@ -80,8 +87,7 @@ class AnnotationDB(object):
 
     # acc related
     def insert_acc(self, **kwargs):
-        if 'create_time' not in kwargs:
-            kwargs['create_time'] = datetime.now()
+        self.add_meta_data(kwargs)
         self._acc.insert_one(kwargs)
 
     def iter_acc(self, **query):
@@ -89,8 +95,7 @@ class AnnotationDB(object):
 
     def update_one_acc(self, query, update):
         if '$set' in update and len(update) == 1:
-            if 'create_time' not in update['$set']:
-                update['$set']['create_time'] = datetime.now()
+            self.add_meta_data(update['$set'])
         self._acc.update_one(query, update)
 
     def iter_unique_test_info_in_acc(self):
@@ -385,6 +390,9 @@ def update_cluster_job_db(all_job_info):
     assert len(existing_job_appID) == len(existing_job_infos)
 
     for job_info in all_job_info:
+        non_value_keys = [k for k, v in job_info.items() if v is None]
+        for k in non_value_keys:
+            del job_info[k]
         if job_info['appID'] in existing_job_appID:
             c.update_phillyjob(query={'appID': job_info['appID']},
                     update=job_info)
