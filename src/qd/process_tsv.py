@@ -4351,7 +4351,7 @@ def build_taxonomy_from_single_source(source_data,
     random.shuffle(result)
     out_dataset = TSVDataset(out_data)
     tsv_writer(((0, r) for r in result), out_dataset.get_train_shuffle_file())
-    ensure_copy_file(dataset.get_labelmap_file(),
+    ensure_copy_file(dataset.get_data(source_split, t='labelmap', version=source_version),
             out_dataset.get_labelmap_file())
 
     write_to_file(dataset.get_data('train'),

@@ -273,6 +273,13 @@ class PhillyVC(object):
             result = result[1:]
         return result
 
+    def get_output_folder_in_blob(self):
+        assert self.config_param['output_folder'].startswith(self.blob_mount_point)
+        result = self.config_param['output_folder'][len(self.blob_mount_point): ]
+        if result.startswith('/'):
+            result = result[1:]
+        return result
+
     def get_summary(self):
         cmd = 'https://philly/api/summary?clusterId={}'.format(
                 self.cluster)
@@ -796,6 +803,26 @@ class PhillyVC(object):
             self.increment_upload_dir_to_hdfs(data_root,
                     self.get_qd_data_rel_path_in_hdfs(self.config_param['data_folder'])
                     )
+
+    def upload_qd_model(self, model_file):
+        def split_all_path(fpath):
+            path_splits = []
+            dirname, basename = op.split(fpath)
+            while basename:
+                path_splits.append(basename)
+                dirname, basename = op.split(dirname)
+            path_splits.append(dirname)
+            return path_splits[::-1]
+
+        assert(op.isfile(model_file))
+        path_splits = split_all_path(model_file)
+        assert(len(path_splits) >= 3 and path_splits[-2] == "snapshot")
+        if self.use_blob_as_input:
+            target_path = op.join(self.get_output_folder_in_blob(),
+                    path_splits[-3], path_splits[-2], path_splits[-1])
+            cloud = self.get_cloud_storage()
+            if not cloud.exists(target_path):
+                cloud.az_upload2(model_file, target_path)
 
     def get_qd_data_rel_path_in_hdfs(self, hdfs_path):
         prefix = '/hdfs/{}/'.format(self.vc)

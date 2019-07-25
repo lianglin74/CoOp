@@ -1,4 +1,4 @@
-# import torch first because it can help resolve some symbolic issues: 
+# import torch first because it can help resolve some symbolic issues:
 # Once your extension is built, you can simply import it in Python, using the name you specified in your setup.py script. Just be sure to import torch first, as this will resolve some symbols that the dynamic linker must see
 # https://pytorch.org/tutorials/advanced/cpp_extension.html
 import torch
@@ -77,18 +77,22 @@ def ensure_upload_data_for_philly_jobs(data, philly_client):
         if op.isdir(TSVDataset(d)._data_root):
             philly_client.upload_qd_data(d)
 
-def ensure_upload_init_model(param):
+def ensure_upload_init_model(param, philly_client=None):
     if 'basemodel' not in param:
         return
     basemodel = param['basemodel']
     if basemodel == '' or basemodel.startswith('http'):
         logging.info('No need to upload base model')
         return
-    target_path = op.join('jianfw', 'work',
-            basemodel.replace('output/', 'qd_output/'))
-    c = create_cloud_storage('vig')
-    if not c.exists(target_path):
-        c.az_upload2(basemodel, target_path)
+    assert(op.isfile(basemodel))
+    if not philly_client:
+        target_path = op.join('jianfw', 'work',
+                basemodel.replace('output/', 'qd_output/'))
+        c = create_cloud_storage('vig')
+        if not c.exists(target_path):
+            c.az_upload2(basemodel, target_path)
+    else:
+        philly_client.upload_qd_model(basemodel)
 
 def aml_func_run(func, param, **submit_param):
     from qd.philly import create_multi_philly_client
@@ -97,7 +101,7 @@ def aml_func_run(func, param, **submit_param):
     if 'data' in param.get('param', {}):
         ensure_upload_data_for_philly_jobs(param['param']['data'], philly_client)
     if 'basemodel' in param.get('param', {}):
-        ensure_upload_init_model(param['param'])
+        ensure_upload_init_model(param['param'], philly_client)
     assert func.__module__ != '__main__', \
             'the executed func should not be in the main module'
     assert 'type' not in param
@@ -126,7 +130,7 @@ def philly_func_run(func, param, **submit_param):
         # TODO: the following only uploads data to blob. implement to upload to
         # hdfs also if philly still supports that
     if 'basemodel' in param.get('param', {}):
-        ensure_upload_init_model(param['param'])
+        ensure_upload_init_model(param['param'], philly_client)
     assert func.__module__ != '__main__'
     assert 'type' not in param
     param['type'] = func.__name__
@@ -368,7 +372,7 @@ def update_parameters(param):
 def create_pipeline(kwargs):
     pipeline_type = kwargs.get('pipeline_type')
     if pipeline_type == 'YoloV2PtPipeline':
-        from qd.qd_pytorch import YoloV2PtPipeline
+        from qd.pipelines.yolov2_pt import YoloV2PtPipeline
         return YoloV2PtPipeline(**kwargs)
     elif pipeline_type == 'MaskRCNNPipeline':
         from qd.qd_maskrcnn import MaskRCNNPipeline

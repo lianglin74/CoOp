@@ -615,6 +615,7 @@ class MaskRCNNPipeline(ModelPipeline):
             dump_to_yaml_str(train_arg).decode()),)
         test_arg = {'data': self.test_data,
                 'split': self.test_split,
+                'version': self.test_version,
                 'remove_images_without_annotations': False}
         self.kwargs['DATASETS']['TEST'] = ('${}'.format(
             dump_to_yaml_str(test_arg).decode()),)
