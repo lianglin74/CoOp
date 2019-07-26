@@ -106,6 +106,7 @@ def get_compute_status(compute_target):
 class AMLClient(object):
     status_running = 'Running'
     status_queued = 'Queued'
+    status_failed = 'Failed'
     def __init__(self, azure_blob_config_file, config_param, docker,
             datastore_name, aml_config, use_custom_docker,
             compute_target, source_directory, entry_script,
@@ -167,13 +168,17 @@ class AMLClient(object):
         run = create_aml_run(self.experiment, run_id)
         run.cancel()
 
-    def query(self, run_id=None):
+    def query(self, run_id=None, by_status=None):
         if run_id is None:
             all_run = list(self.experiment.get_runs())
+            if by_status:
+                assert by_status in [self.status_failed, self.status_queued,
+                        self.status_running], "Unknown status: {}".format(by_status)
+                all_run = [r for r in all_run if r.status == by_status]
 
             def check_with_details(r):
                 return self.with_log and r.status in [self.status_running,
-                        self.status_queued]
+                        self.status_queued, self.status_failed]
             all_info = [parse_run_info(r, with_details=check_with_details(r),
                 with_log=self.with_log, log_full=False) for r in all_run]
             from qd.qd_common import print_job_infos
@@ -297,6 +302,9 @@ def execute(task_type, **kwargs):
         else:
             c = create_aml_client(**kwargs)
             c.query()
+    elif task_type in ['f', 'failed']:
+        c = create_aml_client(**kwargs)
+        c.query(by_status=AMLClient.status_failed)
     elif task_type == 'init':
         c = create_aml_client(**kwargs)
         c.sync_code('')
@@ -337,7 +345,7 @@ def parse_args():
     import argparse
     parser = argparse.ArgumentParser(description='Philly Interface')
     parser.add_argument('task_type',
-            choices=['ssh', 'q', 'query', 'a', 'abort', 'submit',
+            choices=['ssh', 'q', 'query', 'f', 'failed', 'a', 'abort', 'submit',
                 'init',
                 'sync',
                 'update_config', 'gc', 'blame', 'resubmit',

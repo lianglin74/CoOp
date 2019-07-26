@@ -728,11 +728,14 @@ class TorchTrain(object):
         self.test_data = kwargs.get('test_data', self.data)
         self.test_batch_size = kwargs.get('test_batch_size',
                 self.effective_batch_size)
-        if self.max_epoch is None and \
-                type(self.max_iter) is str and \
-                self.max_iter.endswith('e'):
-            # we will not use max_epoch gradually
-            self.max_epoch = int(self.max_iter[: -1])
+        # if self.max_epoch is None and \
+        #         type(self.max_iter) is str and \
+        #         self.max_iter.endswith('e'):
+        #     # we will not use max_epoch gradually
+        #     self.max_epoch = int(self.max_iter[: -1])
+
+        # deprecate max_epoch, use max_iter
+        assert self.max_epoch is None and self.max_iter is not None
         self.mpi_rank = get_mpi_rank()
         self.mpi_size= get_mpi_size()
         self.mpi_local_rank = get_mpi_local_rank()

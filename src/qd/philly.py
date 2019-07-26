@@ -589,7 +589,6 @@ class PhillyVC(object):
             '--user', 'redmond\\{}:{}'.format(self.user_name, self.password),
             '-X', 'POST', submit_url, '-k', '--ntlm',
             '-n', '-d', "{}".format(en_data)]
-
         if self.dry_run:
             if self.password is None:
                 user_info = '"redmond\\{}"'.format(self.user_name)
@@ -1087,7 +1086,6 @@ def convert_to_philly_extra_command(param, script='scripts/tools.py'):
     return convert_to_command_line(param, script)
 
 def submit_without_sync(cmd, **kwargs):
-    isDebug = False
     all_extra_param = []
     if cmd == 'gc':
         params = {'type': 'del_intermediate_models'}
@@ -1095,12 +1093,12 @@ def submit_without_sync(cmd, **kwargs):
                 script='garbage_collector')
         all_extra_param.append(extra_param)
     elif cmd == 'ssh':
-        isDebug = True
+        kwargs.update({'isDebug': True})
         extra_param = 'ls'
         all_extra_param.append(extra_param)
     else:
         all_extra_param.append(cmd)
-    kwargs.update({'isDebug': isDebug})
+
     logging.info(all_extra_param)
     p = create_philly_client(**kwargs)
     if kwargs.get('real_submit', True):
