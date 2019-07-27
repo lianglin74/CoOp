@@ -1,0 +1,18 @@
+all_test_data:
+- test_data: coco2017Full
+  test_split: test
+param:
+  base_lr: 0.02
+  data: coco2017Full
+  dist_url_tcp_port: 20575
+  effective_batch_size: 16
+  evaluate_method: coco_box
+  expid: M_BS16_MaxIter90000_LR0.02
+  expid_prefix: M
+  max_iter: 90000
+  net: e2e_faster_rcnn_R_34_FPN_1x
+  pipeline_type: MaskRCNNPipeline
+  test_data: coco2017Full
+  test_split: test
+  test_version: 0
+type: pipeline_train_eval_multi
