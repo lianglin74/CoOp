@@ -1,0 +1,21 @@
+all_test_data:
+- test_data: product_SKU110K
+  test_split: test
+- test_data: product_SKU110K
+  test_split: trainval
+param:
+  base_lr: 0.01
+  data: product_SKU110K
+  dist_url_tcp_port: 20630
+  effective_batch_size: 8
+  evaluate_method: map
+  expid: M_BS8_MaxIter20e_LR0.01
+  expid_prefix: M
+  log_step: 100
+  max_iter: 20e
+  net: e2e_faster_rcnn_R_50_FPN_1x
+  pipeline_type: MaskRCNNPipeline
+  test_data: coco2017Full
+  test_split: test
+  test_version: 0
+type: pipeline_train_eval_multi
