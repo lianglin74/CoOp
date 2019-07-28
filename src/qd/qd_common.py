@@ -1786,7 +1786,8 @@ def run_if_not_cached(func, *args, **kwargs):
     import pickle as pkl
     key = hash_sha1(pkl.dumps(OrderedDict({'arg': args, 'kwargs': kwargs, 'func_name':
         func.__name__})))
-    cache_file = op.join('/tmp', 'cache', key)
+    cache_folder = op.expanduser('./output/run_if_not_cached/')
+    cache_file = op.join(cache_folder, key)
 
     if op.isfile(cache_file):
         logging.info('loading {}'.format(cache_file))

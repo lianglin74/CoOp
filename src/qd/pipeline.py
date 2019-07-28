@@ -14,8 +14,8 @@ import copy
 
 from qd.process_tsv import convertcomposite_to_standard
 from qd.cloud_storage import create_cloud_storage
-from qd.philly import create_philly_client
-from qd.philly import convert_to_philly_extra_command
+from qd.gpucluster import create_philly_client
+from qd.gpucluster import convert_to_philly_extra_command
 from qd.tsv_io import TSVDataset
 from qd.qd_common import make_by_pattern_maker
 from qd.qd_common import make_by_pattern_result
@@ -426,6 +426,11 @@ def pipeline_monitor_train(param, all_test_data, **kwargs):
         pip.monitor_train()
 
 def pipeline_eval_multi(param, all_test_data, **kwargs):
+    pip = load_pipeline(**param)
+    if not pip.is_train_finished():
+        logging.info('the model specified by the following is not ready\n{}'.format(
+            pformat(param)))
+        return
     for test_data_info in all_test_data:
         curr_param = copy.deepcopy(param)
         dict_ensure_path_key_converted(test_data_info)

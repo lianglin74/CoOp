@@ -5454,6 +5454,8 @@ def inject_accuracy_one(full_expid):
             else:
                 key = 'gmAP'
             acc = {key: acc['map']}
+        elif '.top1.' in report_file:
+            acc = load_from_yaml_file(report_file)
         else:
             map_json_file = report_file + '.map.json'
             if op.isfile(map_json_file):

@@ -80,7 +80,7 @@ class AnnotationDB(object):
     def update_phillyjob(self, query, update):
         if 'create_time' not in update:
             update['create_time'] = datetime.now()
-        return self._phillyjob.update(query, update)
+        return self._phillyjob.update_one(query, {'$set': update})
 
     def iter_phillyjob(self, **kwargs):
         return self._phillyjob.find(**kwargs)

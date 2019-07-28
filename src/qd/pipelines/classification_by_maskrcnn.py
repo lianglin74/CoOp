@@ -94,35 +94,43 @@ class MaskClassificationPipeline(ModelPipeline):
         return last_iter
 
     def _get_data_loader(self, data, split, stage, shuffle=True, start_iter=0):
-        train_dataset = self._get_dataset(data, split, stage=stage,
+        dataset = self._get_dataset(data, split, stage=stage,
                 labelmap=self.get_labelmap())
 
         if self.distributed:
             from maskrcnn_benchmark.data import samplers
-            train_sampler = samplers.DistributedSampler(train_dataset,
+            sampler = samplers.DistributedSampler(dataset,
                     shuffle=shuffle,
                     length_divisible=self.batch_size)
         else:
             if shuffle:
-                train_sampler = torch.utils.data.sampler.RandomSampler(
-                        train_dataset)
+                sampler = torch.utils.data.sampler.RandomSampler(
+                        dataset)
             else:
-                train_sampler = torch.utils.data.sampler.SequentialSampler(train_dataset)
-
-        batch_sampler = torch.utils.data.sampler.BatchSampler(
-            train_sampler, self.batch_size, drop_last=False
-        )
-        from maskrcnn_benchmark.data import samplers
-        batch_sampler = samplers.IterationBasedBatchSampler(
-            batch_sampler, self.max_iter, start_iter
-        )
-        train_loader = torch.utils.data.DataLoader(
-            train_dataset,
-            num_workers=self.num_workers,
-            pin_memory=True,
-            batch_sampler=batch_sampler,
+                sampler = torch.utils.data.sampler.SequentialSampler(dataset)
+        if stage == 'train':
+            batch_sampler = torch.utils.data.sampler.BatchSampler(
+                sampler, self.batch_size, drop_last=False
             )
-        return train_loader
+            from maskrcnn_benchmark.data import samplers
+            batch_sampler = samplers.IterationBasedBatchSampler(
+                batch_sampler, self.max_iter, start_iter
+            )
+            loader = torch.utils.data.DataLoader(
+                dataset,
+                num_workers=self.num_workers,
+                pin_memory=True,
+                batch_sampler=batch_sampler,
+                )
+        else:
+            loader = torch.utils.data.DataLoader(
+                dataset,
+                sampler=sampler,
+                batch_size=self.test_batch_size,
+                num_workers=self.num_workers,
+                pin_memory=True,
+                )
+        return loader
 
     def _get_test_data_loader(self, test_data, test_split, labelmap):
         test_dataset = self._get_dataset(test_data, test_split, stage='test',
@@ -164,19 +172,40 @@ class MaskClassificationPipeline(ModelPipeline):
         softmax_func = self._get_test_normalize_module()
 
         model.eval()
+        from maskrcnn_benchmark.utils.metric_logger import MetricLogger
+        import time
+        meters = MetricLogger(delimiter="  ")
         def gen_rows():
             from tqdm import tqdm
-            for i, (inputs, labels, keys) in tqdm(enumerate(dataloader)):
+            start = time.time()
+            for i, (inputs, labels, keys) in tqdm(enumerate(dataloader),
+                    total=len(dataloader)):
+                meters.update(data=time.time() - start)
+                start = time.time()
                 inputs = inputs.cuda()
                 labels = labels.cuda()
+                meters.update(input_to_cuda=time.time() - start)
+                start = time.time()
                 output = model(inputs)
+                meters.update(model=time.time() - start)
+                start = time.time()
                 output = softmax_func(output)
+                meters.update(softmax=time.time() - start)
                 for row in self.predict_output_to_tsv_row(output, keys):
                     yield row
+                start = time.time()
+        if not op.isfile(sub_predict_file):
+            tsv_writer(gen_rows(), sub_predict_file)
+        else:
+            logging.info('ignore to run since {} exists'.format(
+                sub_predict_file))
+        logging.info(str(meters))
 
-        tsv_writer(gen_rows(), sub_predict_file)
-
-        if self.mpi_size > 1:
+        from maskrcnn_benchmark.utils.comm import is_main_process
+        # we need to sync before merging all to make sure each rank finish its
+        # own task
+        synchronize()
+        if self.mpi_size > 1 and is_main_process():
             from qd.process_tsv import concat_tsv_files
             cache_files = [self.get_rank_specific_tsv(predict_result_file, i)
                 for i in range(self.mpi_size)]

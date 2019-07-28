@@ -223,6 +223,7 @@ class TSVSplit(Dataset):
         return len(self.tsv)
 
 class TSVSplitImage(TSVSplit):
+    # prefer to use TSVSplitProperty
     def __init__(self, data, split, version, transform=None,
             cache_policy=None, labelmap=None):
         super(TSVSplitImage, self).__init__(data, split, version,
@@ -236,6 +237,9 @@ class TSVSplitImage(TSVSplit):
             labelmap = load_list_file(labelmap)
         assert type(labelmap) is list
         self.label_to_idx = {l: i for i, l in enumerate(labelmap)}
+
+    def get_keys(self):
+        return [self.label_tsv[i][0] for i in range(len(self.label_tsv))]
 
     def __getitem__(self, index):
         key, str_label, str_im = super(TSVSplitImage, self).__getitem__(index)
@@ -1503,13 +1507,14 @@ class ModelPipeline(TorchTrain):
     pass
 
 def evaluate_topk(predict_file, label_tsv_file):
-    predicts = load_key_rects(tsv_reader(predict_file))
-    predicts = {key: rects for key, rects in predicts}
     correct = 0
     total = 0
-    for key, str_rects in tsv_reader(label_tsv_file):
+    iter_label_tsv = tsv_reader(label_tsv_file)
+    iter_pred_tsv = tsv_reader(predict_file)
+    for (key, str_rects), (key_pred, str_pred) in zip(iter_label_tsv, iter_pred_tsv):
         total = total + 1
-        curr_predict = predicts.get(key, [])
+        assert key == key_pred
+        curr_predict = json.loads(str_pred)
         if len(curr_predict) == 0:
             continue
         curr_gt_rects = json.loads(str_rects)
