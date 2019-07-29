@@ -598,18 +598,11 @@ class TSVDataset(object):
 
         return [(d, s, int(v)) for d, s, v in matched_result]
 
-
-def tsv_writer(values, file_name):
-    file_writer(values, file_name, sep='\t')
-    return
-
-
 def csv_writer(values, file_name):
-    file_writer(values, file_name, sep=',')
+    tsv_writer(values, file_name, sep=',')
     return
 
-
-def file_writer(values, tsv_file_name, sep='\t'):
+def tsv_writer(values, tsv_file_name, sep='\t'):
     ensure_directory(os.path.dirname(tsv_file_name))
     tsv_lineidx_file = os.path.splitext(tsv_file_name)[0] + '.lineidx'
     idx = 0
