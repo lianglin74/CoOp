@@ -1556,8 +1556,9 @@ def download_file(request, *callback_args, **callback_kwargs):
     return response
 
 def get_video_info(name=None):
+    video_path='./data/video/CBA/CBA_demo'
     if name is None:
-        file_list = sorted(os.listdir('./data/video'))
+        file_list = sorted(os.listdir(video_path))
         video_list = []
         for fname in file_list:
             if "mp4" in fname and "647b025243d74e719b36d24a0c19df37_sc99__q1_withbb" not in fname:
@@ -1571,7 +1572,7 @@ def get_video_info(name=None):
             name = name.replace("_withbb", "")
 
 
-        filename = "data/video/{}_events.tsv".format(name)
+        filename = "{}/{}_events.tsv".format(video_path, name)
         events = []
         if op.isfile(filename):
             with open(filename, 'r') as fp:
