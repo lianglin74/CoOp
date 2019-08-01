@@ -1,0 +1,11 @@
+all_test_data:
+- evaluate_method: coco_box
+  test_batch_size: 256
+  test_data: product_SKU110K
+  test_split: test
+  yolo_predict_session_param$test_input_size: 1056
+param:
+  dist_url_tcp_port: 26423
+  force_evaluate: false
+  full_expid: product_SKU110K_darknet19_448_YoloV2Pt2_basemodel1876a_BS128_MaxIter20e_ExtraConv2_AugTrials50_ScaleMin1.2_ScaleMax3.2_MaskSam
+type: pipeline_eval_multi
