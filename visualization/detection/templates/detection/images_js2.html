@@ -424,7 +424,7 @@
         
         //localStorage.setItem('data', JSON.stringify(data));
 
-        if(!localStorage.getItem('data')) {
+        {% comment %} if(!localStorage.getItem('data')) {
             localStorage.setItem('data', JSON.stringify(data));
             for (let v of labelmap){
                 label_list_dic[v] = 1
@@ -455,13 +455,14 @@
                 localStorage.setItem('label_list_dic', JSON.stringify(label_list_dic))
                 localStorage.setItem('data', JSON.stringify(data));
             }
-        }
+        } {% endcomment %}
 
         if(!localStorage.getItem('showlabel')){
             var showlabel = false
         }
         else{
             var showlabel = JSON.parse(localStorage.getItem('showlabel'))
+            
         }
 
         if(!localStorage.getItem('showall')){
@@ -471,6 +472,16 @@
             var showall = JSON.parse(localStorage.getItem('showall'))
         }
 
+        if (showall){
+            for (let v of labelmap){
+                label_list_dic[v] = 1;
+            }
+        }
+        else{
+            for (let v of labelmap){
+                label_list_dic[v] = 0;
+            }
+        }
         //console.log("showall=" + JSON.stringify(showall));
 
         //let black_list = JSON.parse("{{ black_list|escapejs }}");
@@ -625,7 +636,7 @@
                 localStorage.setItem('showall', JSON.stringify(showall));
             }
 
-            localStorage.setItem('label_list_dic', JSON.stringify(label_list_dic));
+            //localStorage.setItem('label_list_dic', JSON.stringify(label_list_dic));
             //console.log(JSON.stringify(label_list_dic))
 
             document.getElementById("showlabel").checked = showlabel;
