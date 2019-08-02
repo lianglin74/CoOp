@@ -878,13 +878,18 @@ def view_image_js(request, data, split, version, label, start_id, imKey=None, mi
     next_link = next_link + '?' + \
         '&'.join(['{}={}'.format(k, kwargs[k]) for k in kwargs])
 
+    labelmap = load_labelmap(data)
+    # print(labelmap)
+
     context = {'all_type_to_rects': json.dumps(all_type_to_rects),
                'target_label': label,
                'all_url': json.dumps(all_url),
                'all_key': json.dumps(all_key),
                'previous_link': previous_link,
                'next_link': next_link,
-               'black_list': json.dumps(black_list)}
+               'black_list': json.dumps(black_list),
+               'labelmap': json.dumps(labelmap),
+               'data': json.dumps(data)}
 
     return render(request, 'detection/images_js2.html', context)
 
@@ -1393,6 +1398,7 @@ def view_image(request):
         min_conf = request.GET.get('min_conf')
         if min_conf != None:
             min_conf = float(min_conf)
+
         populate_dataset_details(data)
 
         if split == 'None':

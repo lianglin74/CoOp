@@ -348,12 +348,11 @@
 
             let row = label_table.insertRow(-1)
             for (let i = 0; i < label_list.length; i++) {
-
                 let label_checkbox = document.createElement('input');
                 label_checkbox.type = "checkbox";
                 label_checkbox.id = label_list[i];
                 label_checkbox.onclick = onClick_abstraction;
-                label_checkbox.checked = i == 0;
+                label_checkbox.checked = label_list_dic[label_list[i]];
 
                 let label = document.createElement('label');
                 label.htmlFor = label_list[i];
@@ -364,30 +363,130 @@
                 cell.appendChild(label);
             }
         }
+
+        function storageAvailable(type) {
+            var storage;
+            try {
+                storage = window[type];
+                var x = '__storage_test__';
+                storage.setItem(x, x);
+                storage.removeItem(x);
+                return true;
+            }
+            catch(e) {
+                return e instanceof DOMException && (
+                    // everything except Firefox
+                    e.code === 22 ||
+                    // Firefox
+                    e.code === 1014 ||
+                    // test name field too, because code might not be present
+                    // everything except Firefox
+                    e.name === 'QuotaExceededError' ||
+                    // Firefox
+                    e.name === 'NS_ERROR_DOM_QUOTA_REACHED') &&
+                    // acknowledge QuotaExceededError only if there's something already stored
+                    (storage && storage.length !== 0);
+            }
+        }
     </script>
     
     <script>
         let all_type_to_rects = JSON.parse("{{ all_type_to_rects|escapejs }}");
         let target_label = '{{ target_label }}'
         let all_url = JSON.parse("{{ all_url|escapejs }}");
+        let labelmap = JSON.parse("{{ labelmap|escapejs }}");
+        let data = JSON.parse("{{ data|escapejs }}");
+
         {% if all_key %}
         let all_key = JSON.parse("{{ all_key |escapejs }}");
         {% else %}
         let all_key = []
         {% endif %}
         
-        //let black_list = JSON.parse("{{ black_list|escapejs }}");
+        if (!storageAvailable('localStorage')) {
+            console.log("Too bad, no localStorage for us")
+        }
+
         let label_list_dic = {};
+        
+        {% comment %} for (let v of labelmap){
+            label_list_dic[v] = 1
+        }
+
+        localStorage.setItem('label_list_dic', JSON.stringify(label_list_dic)) {% endcomment %}
+        let labelmap_dict = {};
+        
+        i=0
+        for (let v of labelmap){
+            labelmap_dict[i] = v;
+            i = i+1; 
+        }
+        
+        //localStorage.setItem('data', JSON.stringify(data));
+
+        if(!localStorage.getItem('data')) {
+            localStorage.setItem('data', JSON.stringify(data));
+            for (let v of labelmap){
+                label_list_dic[v] = 1
+            }
+            localStorage.setItem('label_list_dic', JSON.stringify(label_list_dic))
+        }
+        else{
+            data_name = JSON.parse(localStorage.getItem('data'));
+
+            if (data_name == data){
+                if(!localStorage.getItem('label_list_dic')) {
+                    for (let v of labelmap){
+                        label_list_dic[v] = 1
+                    }
+                    
+                    localStorage.setItem('label_list_dic', JSON.stringify(label_list_dic))
+                }
+                else {
+                    label_list_dic = JSON.parse(localStorage.getItem('label_list_dic'));
+                    console.log("just load");
+                    console.log(JSON.stringify(label_list_dic));
+                }
+            }
+            else{
+                for (let v of labelmap){
+                    label_list_dic[v] = 1;
+                }
+                localStorage.setItem('label_list_dic', JSON.stringify(label_list_dic))
+                localStorage.setItem('data', JSON.stringify(data));
+            }
+        }
+
+        if(!localStorage.getItem('showlabel')){
+            var showlabel = false
+        }
+        else{
+            var showlabel = JSON.parse(localStorage.getItem('showlabel'))
+        }
+
+        if(!localStorage.getItem('showall')){
+            var showall = false
+        }
+        else{
+            var showall = JSON.parse(localStorage.getItem('showall'))
+        }
+
+        //console.log("showall=" + JSON.stringify(showall));
+
+        //let black_list = JSON.parse("{{ black_list|escapejs }}");
+        
         let type_list_dic = {};
+        
+        //console.log(labelmap)
 
         for (let i = 0; i < all_type_to_rects.length; i++) {
             let type_to_rects = all_type_to_rects[i];
             for (let t in type_to_rects) {
                 type_list_dic[t] = 1;
-                let rects = type_to_rects[t];
-                for (let r in rects) {
-                    label_list_dic[rects[r]['class']] = 1;
-                }
+                //let rects = type_to_rects[t];
+                //for (let r in rects) {
+                //    label_list_dic[rects[r]['class']] = 1;
+                //}
             }
         }
 
@@ -408,12 +507,8 @@
             onClick_abstraction()
         };
 
-        function onClick_abstraction() {
-            unchecked_labels = get_unchecked_list('label_table');
-            unchecked_types = get_unchecked_list('type_table');
-            update_images(all_type_to_rects, all_url,
-                unchecked_labels, unchecked_types);
-        }
+
+
     </script>
     <script>
         window.onscroll = function () { myFunction() };
@@ -430,9 +525,9 @@
     </script>
 
     <div id="label_checks">
-        <input type="checkbox" onclick="onClickAllCheckbox()"></input>
+        <input id="showall" type="checkbox" onclick="onClickAllCheckbox()"></input>
         <label>Select/Unselect All</label>
-        <input type="checkbox" onclick="onClickShowlabel()"></input>
+        <input id="showlabel" type="checkbox" onclick="onClickShowlabel()"></input>
         <label>Show/Hide label</label>
         <table id="type_table">
         </table>
@@ -474,32 +569,76 @@
     </center>
     <script>
         function onClickAllCheckbox() {
+            showall = !showall
+
+            localStorage.setItem('showall', JSON.stringify(showall));
+            console.log("showall="+JSON.stringify(showall))
+
             let label_ul = document.getElementById("label_table");
             let inputs = label_ul.getElementsByTagName('input');
-            let is_all_checked = true;
+            //let is_all_checked = true;
+            //for (let i = 0; i < inputs.length; i++) {
+            //    if (!inputs[i].checked) {
+            //        is_all_checked = false;
+            //        break;
+            //    }
+            //}
             for (let i = 0; i < inputs.length; i++) {
-                if (!inputs[i].checked) {
-                    is_all_checked = false;
-                    break;
-                }
-            }
-            for (let i = 0; i < inputs.length; i++) {
-                inputs[i].checked = !is_all_checked;
+                inputs[i].checked = showall;
             }
             onClick_abstraction()
         }
 
-        var showlabel = false        
         function onClickShowlabel(){
             showlabel = !showlabel
+            localStorage.setItem('showlabel', JSON.stringify(showlabel));
+            //console.log("showlabel="+JSON.stringify(showlabel))
             onClick_abstraction()
+        }
+
+        function onClick_abstraction() {
+            
+            unchecked_labels = get_unchecked_list('label_table');
+            unchecked_types = get_unchecked_list('type_table');
+
+            
+            //console.log(labelmap_dict)
+
+            for (let v of labelmap){
+                label_list_dic[v] = 1;
+            }
+            
+            //console.log(JSON.stringify(unchecked_labels));
+
+            for(var l of unchecked_labels){
+                //console.log("l="+l);
+                //console.log(labelmap_dict[Number(l)]);
+                if (l in label_list_dic){
+                    label_list_dic[l] = 0;
+                }
+            }
+
+            //console.log(label_list_dic)
+
+            if(unchecked_labels.length>1){
+                showall = false
+                localStorage.setItem('showall', JSON.stringify(showall));
+            }
+
+            localStorage.setItem('label_list_dic', JSON.stringify(label_list_dic));
+            //console.log(JSON.stringify(label_list_dic))
+
+            document.getElementById("showlabel").checked = showlabel;
+            document.getElementById("showall").checked = showall;
+
+            update_images(all_type_to_rects, all_url, unchecked_labels, unchecked_types);
         }
 
     </script>
 
     <script>
         // Add active class to the current button (highlight it)
-        var header = document.getElementById("myHeader");
+        {% comment %} var header = document.getElementById("myHeader");
         var btns = header.getElementsByClassName("btn");
 
         for (var i = 0; i < btns.length; i++) {
@@ -508,7 +647,7 @@
                 current[0].className = current[0].className.replace(" active", "");
                 this.className += " active";
             });
-        }
+        } {% endcomment %}
 
         // Get the elements with class="column"
         var elements = document.getElementsByClassName("column");

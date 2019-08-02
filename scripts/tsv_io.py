@@ -695,7 +695,8 @@ def get_all_data_info2(name=None):
                     for i, line in enumerate(fp):
                         items = line.split('\t')
                         if len(items) == 2:
-                            aliasDict[int(items[0])] = items[1]
+                            if int(items[0]) not in aliasDict:
+                                aliasDict[int(items[0])] = items[1]
             v = 0
             while True:
                 if not dataset.has(split, 'label', v):
