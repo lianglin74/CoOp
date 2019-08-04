@@ -824,12 +824,11 @@ class PhillyVC(object):
         assert(op.isfile(model_file))
         path_splits = split_all_path(model_file)
         assert(len(path_splits) >= 3 and path_splits[-2] == "snapshot")
-        if self.use_blob_as_input:
-            target_path = op.join(self.get_output_folder_in_blob(),
-                    path_splits[-3], path_splits[-2], path_splits[-1])
-            cloud = self.get_cloud_storage()
-            if not cloud.exists(target_path):
-                cloud.az_upload2(model_file, target_path)
+        target_path = op.join(self.get_output_folder_in_blob(),
+                path_splits[-3], path_splits[-2], path_splits[-1])
+        cloud = self.get_cloud_storage()
+        if not cloud.exists(target_path):
+            cloud.az_upload2(model_file, target_path)
 
     def get_qd_data_rel_path_in_hdfs(self, hdfs_path):
         prefix = '/hdfs/{}/'.format(self.vc)

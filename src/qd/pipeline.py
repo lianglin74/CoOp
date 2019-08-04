@@ -77,7 +77,7 @@ def ensure_upload_data_for_philly_jobs(data, philly_client):
         if op.isdir(TSVDataset(d)._data_root):
             philly_client.upload_qd_data(d)
 
-def ensure_upload_init_model(param, philly_client=None):
+def ensure_upload_init_model(param, philly_client):
     if 'basemodel' not in param:
         return
     basemodel = param['basemodel']
@@ -85,14 +85,7 @@ def ensure_upload_init_model(param, philly_client=None):
         logging.info('No need to upload base model')
         return
     assert(op.isfile(basemodel))
-    if not philly_client:
-        target_path = op.join('jianfw', 'work',
-                basemodel.replace('output/', 'qd_output/'))
-        c = create_cloud_storage('vig')
-        if not c.exists(target_path):
-            c.az_upload2(basemodel, target_path)
-    else:
-        philly_client.upload_qd_model(basemodel)
+    philly_client.upload_qd_model(basemodel)
 
 def aml_func_run(func, param, **submit_param):
     from qd.philly import create_multi_philly_client
