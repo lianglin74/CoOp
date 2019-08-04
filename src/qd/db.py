@@ -68,18 +68,14 @@ class AnnotationDB(object):
 
     def insert_phillyjob(self, **kwargs):
         # use self.add_meta_data
-        if 'create_time' not in kwargs:
-            kwargs['create_time'] = datetime.now()
-        if 'username' not in kwargs:
-            kwargs['username'] = self.username
+        self.add_meta_data(kwargs)
         self._phillyjob.insert_one(kwargs)
 
     def remove_phillyjob(self, **kwargs):
         self._phillyjob.delete_many(kwargs)
 
     def update_phillyjob(self, query, update):
-        if 'create_time' not in update:
-            update['create_time'] = datetime.now()
+        self.add_meta_data(update)
         return self._phillyjob.update_one(query, {'$set': update})
 
     def iter_phillyjob(self, **kwargs):
@@ -384,18 +380,26 @@ class BoundingBoxVerificationDB(object):
 def update_cluster_job_db(all_job_info):
     c = create_annotation_db()
     existing_job_infos = list(c.iter_phillyjob())
-
     existing_job_appID = set([j['appID'] for j in existing_job_infos])
     # we assume the appID is unique across multiple VCs
     assert len(existing_job_appID) == len(existing_job_infos)
+
+    appID_to_record = {j['appID']: j for j in existing_job_infos}
 
     for job_info in all_job_info:
         non_value_keys = [k for k, v in job_info.items() if v is None]
         for k in non_value_keys:
             del job_info[k]
-        if job_info['appID'] in existing_job_appID:
-            c.update_phillyjob(query={'appID': job_info['appID']},
-                    update=job_info)
+        if job_info['appID'] in appID_to_record:
+            record = appID_to_record[job_info['appID']]
+            need_update = False
+            for k, v in job_info.items():
+                if k not in record or record[k] != v:
+                    need_update = True
+                    break
+            if need_update:
+                c.update_phillyjob(query={'appID': job_info['appID']},
+                        update=job_info)
         else:
             c.insert_phillyjob(**job_info)
 

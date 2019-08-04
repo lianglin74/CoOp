@@ -76,6 +76,15 @@ class TestQDCommon(unittest.TestCase):
         self.assertEqual(info['mem_used'], '3.7-4.1')
         self.assertEqual(info['gpu_util'], '90-97')
 
+    def test_attach_gpu_utility_from_log_philly(self):
+        log = r"2019-08-02T02:21:38.361Z: [1,0]<stdout>:2019-08-02 02:21:38,357.357 container-e28-1564705084178-0022-01-000002-0 225 philly_server.py:204    monitor(): [{'mem_used': 0, 'mem_total': 16280, 'gpu_util': 0}, {'mem_used': 0, 'mem_total': 16280, 'gpu_util': 0}, {'mem_used': 0, 'mem_total': 16280, 'gpu_util': 0}, {'mem_used': 0, 'mem_total': 16280, 'gpu_util': 0}]"
+        from qd.qd_common import attach_gpu_utility_from_log
+        info = {'latest_log': log}
+        attach_gpu_utility_from_log([log], info)
+        logging.info(info)
+        self.assertEqual(info['mem_used'], '0.0-0.0')
+        self.assertEqual(info['gpu_util'], '0-0')
+
     def test_dict_remove_path(self):
         from qd.qd_common import dict_remove_path
         d = {'a': {'b': {'c': 'd'}}}

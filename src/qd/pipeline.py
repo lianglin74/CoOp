@@ -290,6 +290,7 @@ def update_parameters(param):
             ('init_model_only', (None, 'Continue')),
             ('MODEL$RESNETS$USE_SE', ('SE', None)),
             ('SOLVER$GAMMA', 'Gamma'),
+            ('SOLVER$WEIGHT_DECAY', 'WD'),
             ]
 
     non_expid_impact_keys = ['data', 'net', 'expid_prefix',
@@ -414,8 +415,6 @@ def pipeline_train_eval_multi(all_test_data, param, **kwargs):
         pip = load_pipeline(**curr_param)
         pip.ensure_predict()
         pip.ensure_evaluate()
-
-    pipeline_monitor_train(param, all_test_data, **kwargs)
 
 def pipeline_monitor_train(param, all_test_data, **kwargs):
     for test_data_info in all_test_data:

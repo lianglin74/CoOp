@@ -1679,6 +1679,11 @@ def dict_has_path(d, p):
         else:
             return True
 
+
+def dict_set_path_if_not_exist(param, k, v):
+    if not dict_has_path(param, k):
+        dict_update_path_value(param, k, v)
+
 def dict_update_path_value(d, p, v):
     ps = p.split('$')
     while True:
@@ -1851,7 +1856,7 @@ def decode_general_cmd(extraParam):
 def print_job_infos(all_job_info):
     all_key = [
             'cluster',
-            'status', 'appID-s', 'elapsedTime',
+            'status', 'appID-s', 'elapsedTime', 'elapsedFinished',
             'retries', 'preempts', 'mem_used', 'gpu_util',
             'speed', 'left']
     keys = ['data', 'net', 'expid']
@@ -1935,8 +1940,8 @@ def attach_philly_caffe_log_if_is(all_log, job_info):
 
 def attach_gpu_utility_from_log(all_log, job_info):
     for log in reversed(all_log):
-        # philly, caffe log
-        pattern = '.*aml_server.py:.*monitor.*\[(.*)\]'
+        # philly, caffe log aml_server or philly_server log
+        pattern = '.*_server.py:.*monitor.*\[(.*)\]'
         result = re.match(pattern, log)
         if result and result.groups():
             all_info = json.loads('[{}]'.format(result.groups()[0].replace('\'', '\"')))

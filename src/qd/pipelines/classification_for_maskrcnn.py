@@ -34,24 +34,24 @@ def frozen_to_batch_norm2d(module):
 class BackboneToPredict(Module):
     def __init__(self, cfg, num_class):
         super(BackboneToPredict, self).__init__()
-        self.backbone = resnet.ResNet(cfg)
-        self.backbone, info = frozen_to_batch_norm2d(self.backbone)
+        self.body = resnet.ResNet(cfg)
+        self.body, info = frozen_to_batch_norm2d(self.body)
         logging.info(pformat(info))
-        for n in self.backbone.stages[:-1]:
-            self.backbone.return_features[n] = False
+        for n in self.body.stages[:-1]:
+            self.body.return_features[n] = False
 
-        assert self.backbone.return_features[
-            self.backbone.stages[-1]]
+        assert self.body.return_features[
+            self.body.stages[-1]]
 
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        for m in list(self.backbone.modules())[::-1]:
+        for m in list(self.body.modules())[::-1]:
             if hasattr(m, 'weight'):
                 feature_size = len(m.weight)
                 break
         self.fc = nn.Linear(feature_size, num_class)
 
     def forward(self, x):
-        x = self.backbone(x)[-1]
+        x = self.body(x)[-1]
         x = self.avgpool(x)
         x = x.reshape(x.size(0), -1)
         x = self.fc(x)

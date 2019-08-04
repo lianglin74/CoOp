@@ -16,12 +16,16 @@ def create_aml_client(**kwargs):
 
 def update_by_run_details(info, details):
     info['start_time'] = details.get('startTimeUtc')
+    info['end_time'] = details.get('endTimeUtc')
     from dateutil.parser import parse
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc)
     if info['start_time'] is not None:
         d= (now - parse(info['start_time'])).total_seconds() / 3600
         info['elapsedTime'] = round(d, 2)
+    if info['end_time'] is not None:
+        d= (now - parse(info['end_time'])).total_seconds() / 3600
+        info['elapsedFinished'] = round(d, 2)
     if len(details['runDefinition']['arguments']) > 0:
         cmd = details['runDefinition']['arguments'][-1]
         info['cmd'] = cmd
@@ -63,10 +67,6 @@ def parse_run_info(run, with_details=True,
             v = None
         info[k] = v
     return info
-
-def print_run_info(run):
-    info = parse_run_info(run)
-    logging.info(pformat(info))
 
 def create_aml_run(experiment, run_id):
     from azureml.core.script_run import ScriptRun
@@ -177,8 +177,10 @@ class AMLClient(object):
                 all_run = [r for r in all_run if r.status == by_status]
 
             def check_with_details(r):
-                return self.with_log and r.status in [self.status_running,
-                        self.status_queued, self.status_failed]
+                valid_status = [self.status_running, self.status_queued]
+                if by_status:
+                    valid_status.append(by_status)
+                return self.with_log and r.status in valid_status
             all_info = [parse_run_info(r, with_details=check_with_details(r),
                 with_log=self.with_log, log_full=False) for r in all_run]
             from qd.qd_common import print_job_infos

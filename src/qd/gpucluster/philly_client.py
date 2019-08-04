@@ -256,6 +256,9 @@ class PhillyVC(object):
 
         # used in query()
         self.query_with_gpu = kwargs.get('with_gpu')
+        # we will no longer use this and will figure out the gpu informatoin
+        # from log since philly_server.py will print nvidia-smi results
+        self.query_with_gpu = False
         self.query_with_log = kwargs.get('with_log')
 
     @property
@@ -320,8 +323,8 @@ class PhillyVC(object):
             philly_upload(random_abs_qd, '{}/code'.format(self.user_name), vc=self.vc,
                     cluster=self.cluster)
 
-    def search_candidates(self, partial_id):
-        all_job_info = self.query_all_job(my_own=False)
+    def search_candidates(self, partial_id, my_own=True):
+        all_job_info = self.query_all_job(my_own=my_own)
         all_job_info = [j for j in all_job_info if
                 j['appID'].endswith(partial_id)]
         return all_job_info
@@ -338,17 +341,21 @@ class PhillyVC(object):
                 self.cluster, application_id)
         self.philly_rest_api(cmd)
 
-    def query_all_job(self, my_own=True):
+    def query_all_job(self, my_own=True, numFinishedJobs=None):
         cmd="{}/api/list?".format(self.get_http_prefix())
         param = ['clusterId={}'.format(self.cluster),
                 'vcId={}'.format(self.vc),
                 ]
         if my_own:
             param.append('userName={}'.format(self.user_name))
+            if numFinishedJobs is None:
+                numFinishedJobs = 250
         else:
             # default is 25. it is for all users if my_own is False, and
             # maybe very small
-            param.append('numFinishedJobs=500')
+            if numFinishedJobs is None:
+                numFinishedJobs = 500
+        param.append('numFinishedJobs={}'.format(numFinishedJobs))
         cmd += '&'.join(param)
         while True:
             result = self.philly_rest_api(cmd)
@@ -726,9 +733,10 @@ class PhillyVC(object):
         if 'WARNING' in result and 'too big for preview' in result:
             # wget https://storage.sc2.philly.selfhost.corp.microsoft.com/input/sys/jobs/application_1544809666047_4657/stdout/1/stdout.txt
             retries = job_info.get('retries') + 1
-            result = url_to_str(
-                    'https://storage.{}.philly.selfhost.corp.microsoft.com/input/sys/jobs/{}/stdout/{}/stdout.txt'.format(
-                self.cluster, job_id, retries))
+            url = 'https://storage.{}.philly.selfhost.corp.microsoft.com/input/sys/jobs/{}/stdout/{}/stdout.txt'.format(
+                self.cluster, job_id, retries)
+            logging.info('get log from {}'.format(url))
+            result = url_to_str(url)
 
         return result
 

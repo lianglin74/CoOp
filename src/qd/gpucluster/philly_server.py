@@ -42,21 +42,34 @@ def unzip(zip_file, target_folder):
     zip_ref = zipfile.ZipFile(zip_file, 'r')
     zip_ref.extractall(path=target_folder)
 
-def cmd_run(cmd, working_directory='./', succeed=True):
+def cmd_run(cmd, working_directory='./', succeed=True,
+        return_output=False):
     e = os.environ.copy()
     e['PYTHONPATH'] = '/app/caffe/python:{}'.format(e.get('PYTHONPATH', ''))
+    # in the maskrcnn, it will download the init model to TORCH_HOME. By
+    # default, it is /root/.torch, which is different among diferent nodes.
+    # However, teh implementation assumes that folder is a share folder. Thus
+    # only rank 0 do the data downloading. Here, we assume the output folder is
+    # shared, which is the case in AML.
+    e['TORCH_HOME'] = './output/torch_home'
+    ensure_directory(e['TORCH_HOME'])
     logging.info('start to cmd run: {}'.format(' '.join(map(str, cmd))))
     for c in cmd:
         logging.info(c)
-    try:
-        p = sp.Popen(cmd, stdin=sp.PIPE,
-                cwd=working_directory,
-                env=e)
-        p.communicate()
-        assert p.returncode == 0
-    except:
-        if succeed:
-            raise
+    if not return_output:
+        try:
+            p = sp.Popen(cmd, stdin=sp.PIPE,
+                    cwd=working_directory,
+                    env=e)
+            p.communicate()
+            if succeed:
+                assert p.returncode == 0
+        except:
+            if succeed:
+                logging.info('raising exception')
+                raise
+    else:
+        return sp.check_output(cmd)
 
 def ensure_directory(path):
     if path == '' or path == '.':
