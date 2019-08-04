@@ -2,6 +2,7 @@
 # Once your extension is built, you can simply import it in Python, using the name you specified in your setup.py script. Just be sure to import torch first, as this will resolve some symbols that the dynamic linker must see
 # https://pytorch.org/tutorials/advanced/cpp_extension.html
 import torch
+from deprecated import deprecated
 import os.path as op
 import logging
 from pprint import pformat
@@ -38,7 +39,11 @@ def get_all_full_expid_by_data(exp):
     pattern_to_test_datas = load_from_yaml_file('./aux_data/exp/pattern_to_full_expids.yaml')
     return make_by_pattern_result(exp, pattern_to_test_datas)
 
+@deprecated('use get_all_related_data_for_gpu_jobs')
 def get_all_related_data_for_philly_jobs(data):
+    return get_all_related_data_for_gpu_jobs(data)
+
+def get_all_related_data_for_gpu_jobs(data):
     all_data = []
     all_data.append(data)
     if data.startswith('Tax') and not data.endswith('_with_bb'):
@@ -48,8 +53,12 @@ def get_all_related_data_for_philly_jobs(data):
     all_data.extend([info['test_data'] for info in all_test_data])
     return all_data
 
+@deprecated('use ensure_upload_data_for_gpu_jobs')
 def ensure_upload_data_for_philly_jobs(data, philly_client):
-    all_data = get_all_related_data_for_philly_jobs(data)
+    return ensure_upload_data_for_gpu_jobs(data, philly_client)
+
+def ensure_upload_data_for_gpu_jobs(data, philly_client):
+    all_data = get_all_related_data_for_gpu_jobs(data)
     for d in all_data:
         dataset = TSVDataset(d)
         if any(dataset.has('train') and not dataset.has('train', 'hw')
@@ -88,13 +97,12 @@ def ensure_upload_init_model(param, philly_client):
     philly_client.upload_qd_model(basemodel)
 
 def aml_func_run(func, param, **submit_param):
-    from qd.philly import create_multi_philly_client
-    client = create_multi_philly_client(**submit_param)
-    philly_client = client.select_client_for_submit()
+    from qd.gpucluster import create_aml_client
+    aml_client = create_aml_client(**submit_param)
     if 'data' in param.get('param', {}):
-        ensure_upload_data_for_philly_jobs(param['param']['data'], philly_client)
+        ensure_upload_data_for_gpu_jobs(param['param']['data'], aml_client)
     if 'basemodel' in param.get('param', {}):
-        ensure_upload_init_model(param['param'], philly_client)
+        ensure_upload_init_model(param['param'], aml_client)
     assert func.__module__ != '__main__', \
             'the executed func should not be in the main module'
     assert 'type' not in param
@@ -110,8 +118,6 @@ def aml_func_run(func, param, **submit_param):
     extra_param = convert_to_command_line(param,
             script=op.relpath(code_file_name))
     logging.info(extra_param)
-    from qd.gpucluster import create_aml_client
-    aml_client = create_aml_client(**submit_param)
     aml_client.submit(extra_param)
 
 def philly_func_run(func, param, **submit_param):
@@ -119,7 +125,7 @@ def philly_func_run(func, param, **submit_param):
     client = create_multi_philly_client(**submit_param)
     philly_client = client.select_client_for_submit()
     if 'data' in param.get('param', {}):
-        ensure_upload_data_for_philly_jobs(param['param']['data'], philly_client)
+        ensure_upload_data_for_gpu_jobs(param['param']['data'], philly_client)
         # TODO: the following only uploads data to blob. implement to upload to
         # hdfs also if philly still supports that
     if 'basemodel' in param.get('param', {}):

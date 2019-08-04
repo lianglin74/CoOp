@@ -208,6 +208,35 @@ class AMLClient(object):
         output_folder = ds.path(self.config_param['output_folder']).as_mount()
         return code_path, data_folder, model_folder, output_folder
 
+    def qd_data_exists(self, fname):
+        return self.cloud_blob.exists(op.join(self.config_param['data_folder'],
+                fname))
+
+    def upload_qd_data(self, d):
+        from qd.tsv_io import TSVDataset
+        data_root = TSVDataset(d)._data_root
+        self.cloud_blob.az_sync(data_root,
+                op.join(self.config_param['data_folder'], d))
+
+    def upload_qd_model(self, model_file):
+        def split_all_path(fpath):
+            path_splits = []
+            dirname, basename = op.split(fpath)
+            while basename:
+                path_splits.append(basename)
+                dirname, basename = op.split(dirname)
+            path_splits.append(dirname)
+            return path_splits[::-1]
+
+        assert(op.isfile(model_file))
+        path_splits = split_all_path(model_file)
+        assert(len(path_splits) >= 3 and path_splits[-2] == "snapshot")
+        target_path = op.join(self.config_param['output_folder'],
+                path_splits[-3], path_splits[-2], path_splits[-1])
+        cloud = self.cloud_blob
+        if not cloud.exists(target_path):
+            cloud.az_upload2(model_file, target_path)
+
     def submit(self, cmd, num_gpu=None):
         code_path, data_folder, model_folder, output_folder = self.get_path_in_datastore()
 
