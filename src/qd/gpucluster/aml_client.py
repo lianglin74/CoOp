@@ -130,6 +130,10 @@ class AMLClient(object):
         self.docker = docker
 
         self.cloud_blob = create_cloud_storage(config_file=azure_blob_config_file)
+        if self.datastore_name is None:
+            self.datastore_name = 'datastore_{}_{}'.format(
+                    self.cloud_blob.account_name,
+                    self.cloud_blob.container_name)
         self.config_param = config_param
         self.with_log = with_log
 
@@ -138,21 +142,6 @@ class AMLClient(object):
         self.ws = ws
         compute_target = ws.compute_targets[self.compute_target]
         self.compute_target = compute_target
-
-        from azureml.core import Datastore
-        try:
-            ds = Datastore.get(ws, self.datastore_name)
-        except:
-            ds = Datastore.register_azure_blob_container(workspace=ws,
-                                                         datastore_name=self.datastore_name,
-                                                         container_name=self.cloud_blob.container_name,
-                                                         account_name=self.cloud_blob.account_name,
-                                                         account_key=self.cloud_blob.account_key)
-
-        self.code_path = ds.path(self.config_param['code_path']).as_mount()
-        self.data_folder = ds.path(self.config_param['data_folder']).as_mount()
-        self.model_folder = ds.path(self.config_param['model_folder']).as_mount()
-        self.output_folder = ds.path(self.config_param['output_folder']).as_mount()
 
         self.use_custom_docker = use_custom_docker
 
@@ -202,12 +191,31 @@ class AMLClient(object):
         self.submit(run_info['cmd'])
         run.cancel()
 
+    def get_path_in_datastore(self):
+        from azureml.core import Datastore
+        try:
+            ds = Datastore.get(self.ws, self.datastore_name)
+        except:
+            ds = Datastore.register_azure_blob_container(workspace=self.ws,
+                                                         datastore_name=self.datastore_name,
+                                                         container_name=self.cloud_blob.container_name,
+                                                         account_name=self.cloud_blob.account_name,
+                                                         account_key=self.cloud_blob.account_key)
+
+        code_path = ds.path(self.config_param['code_path']).as_mount()
+        data_folder = ds.path(self.config_param['data_folder']).as_mount()
+        model_folder = ds.path(self.config_param['model_folder']).as_mount()
+        output_folder = ds.path(self.config_param['output_folder']).as_mount()
+        return code_path, data_folder, model_folder, output_folder
+
     def submit(self, cmd, num_gpu=None):
+        code_path, data_folder, model_folder, output_folder = self.get_path_in_datastore()
+
         script_params = {
-                '--code_path': self.code_path,
-                '--data_folder': self.data_folder,
-                '--model_folder': self.model_folder,
-                '--output_folder': self.output_folder,
+                '--code_path': code_path,
+                '--data_folder': data_folder,
+                '--model_folder': model_folder,
+                '--output_folder': output_folder,
                 '--command': cmd}
 
         from azureml.train.estimator import Estimator
@@ -304,9 +312,12 @@ def execute(task_type, **kwargs):
         else:
             c = create_aml_client(**kwargs)
             c.query()
-    elif task_type in ['f', 'failed']:
+    elif task_type in ['f', 'failed', 'qf']:
         c = create_aml_client(**kwargs)
         c.query(by_status=AMLClient.status_failed)
+    elif task_type in ['qq']:
+        c = create_aml_client(**kwargs)
+        c.query(by_status=AMLClient.status_queued)
     elif task_type == 'init':
         c = create_aml_client(**kwargs)
         c.sync_code('')
@@ -348,9 +359,10 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Philly Interface')
     parser.add_argument('task_type',
             choices=['ssh', 'q', 'query', 'f', 'failed', 'a', 'abort', 'submit',
+                'qf', # query failed jobs
+                'qq', # query queued jobs
                 'init',
-                'sync',
-                'update_config', 'gc', 'blame', 'resubmit',
+                'blame', 'resubmit',
                 's', 'summary', 'i', 'inject'])
     parser.add_argument('-wl', dest='with_log', default=True, action='store_true')
     parser.add_argument('-no-wl', dest='with_log',
