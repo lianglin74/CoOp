@@ -56,6 +56,8 @@ def parse_run_info(run, with_details=True,
             from qd.qd_common import attach_log_parsing_result
             attach_log_parsing_result(info)
 
+    info['data_store'] = list(set([v['dataStoreName'] for k, v in
+        details['runDefinition']['dataReferences'].items()]))
     logging.info(run.get_portal_url())
 
     param_keys = ['data', 'net', 'expid']
