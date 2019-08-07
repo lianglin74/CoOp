@@ -126,39 +126,39 @@ def call_gcloud(imgfile, det_file, key_col=0, img_col=2, detection="object"):
         return
 
     client = vision.ImageAnnotatorClient()
-    all_det = []
     time_elapsed = 0
     num_imgs = 0
-    for idx, cols in enumerate(tsv_io.tsv_reader(imgfile)):
-        imgkey = cols[key_col]
-        num_imgs += 1
-        img = types.Image(content=base64.b64decode(cols[img_col]))
-        try:
-            img_arr = qd_common.img_from_base64(cols[img_col])
-            im_h, im_w, im_c = img_arr.shape
-            tic = time.time()
-            if detection == "object":
-                resp = client.object_localization(image=img).localized_object_annotations
-                res = post_process_gcloud(resp, im_h, im_w)
-            elif detection == "logo":
-                resp = client.logo_detection(image=img).logo_annotations
-                res = post_process_gcloud_logo(resp)
-            elif detection == "tag":
-                resp = client.label_detection(image=img).label_annotations
-                res = post_process_gcloud_tag(resp)
-            else:
-                raise ValueError("Invalid detection type: {}".format(detection))
-            time_elapsed += time.time() - tic
-            print("Processed {}".format(idx+1), end='\r')
-            sys.stdout.flush()
-        except ValueError as e:
-            raise e
-        except Exception as e:
-            logging.error("gcloud failed for image: {}. Message: {}".format(imgkey, str(e)))
-            res = []
+    def gen_rows():
+        for idx, cols in enumerate(tsv_io.tsv_reader(imgfile)):
+            imgkey = cols[key_col]
+            num_imgs += 1
+            img = types.Image(content=base64.b64decode(cols[img_col]))
+            try:
+                img_arr = qd_common.img_from_base64(cols[img_col])
+                im_h, im_w, im_c = img_arr.shape
+                tic = time.time()
+                if detection == "object":
+                    resp = client.object_localization(image=img).localized_object_annotations
+                    res = post_process_gcloud(resp, im_h, im_w)
+                elif detection == "logo":
+                    resp = client.logo_detection(image=img).logo_annotations
+                    res = post_process_gcloud_logo(resp)
+                elif detection == "tag":
+                    resp = client.label_detection(image=img).label_annotations
+                    res = post_process_gcloud_tag(resp)
+                else:
+                    raise ValueError("Invalid detection type: {}".format(detection))
+                time_elapsed += time.time() - tic
+                print("Processed {}".format(idx+1), end='\r')
+                sys.stdout.flush()
+            except ValueError as e:
+                raise e
+            except Exception as e:
+                logging.error("gcloud failed for image: {}. Message: {}".format(imgkey, str(e)))
+                res = []
+            yield imgkey, qd_common.json_dump(res)
 
-        all_det.append([imgkey, json.dumps(res)])
-    tsv_io.tsv_writer(all_det, det_file)
+    tsv_io.tsv_writer(gen_rows(), det_file)
     logging.info("#imgs: {}, avg time: {}s per image".format(num_imgs, time_elapsed/num_imgs))
 
 
@@ -196,3 +196,4 @@ def post_process_gcloud_tag(response):
     for obj in response:
         all_res.append({"mid": obj.mid, "class": obj.description, "conf": obj.score})
     return all_res
+
