@@ -30,6 +30,7 @@ def update_by_run_details(info, details):
         cmd = details['runDefinition']['arguments'][-1]
         info['cmd'] = cmd
         info['cmd_param'] = decode_general_cmd(cmd)
+    info['docker_image'] = details['runDefinition']['environment']['docker']['baseImage']
     info['num_gpu'] = details['runDefinition']['mpi']['processCountPerNode'] * \
             details['runDefinition']['nodeCount']
     info['logFiles'] = details['logFiles']
@@ -131,19 +132,38 @@ class AMLClient(object):
         self.num_gpu = kwargs.get('num_gpu', 4)
         self.docker = docker
 
-        self.cloud_blob = create_cloud_storage(config_file=azure_blob_config_file)
-        if self.datastore_name is None:
-            self.datastore_name = 'datastore_{}_{}'.format(
-                    self.cloud_blob.account_name,
-                    self.cloud_blob.container_name)
-        self.config_param = config_param
+        self.config_param = {p: {'azure_blob_config_file': azure_blob_config_file,
+                                 'path': v,
+                                 'datastore_name': self.datastore_name} if
+            type(v) is str else v for p, v in config_param.items()}
+
+        self.blob_config_to_blob = {blob_config: create_cloud_storage(config_file=blob_config) for
+                blob_config in set(v['azure_blob_config_file'] for v in self.config_param.values())}
+        for p, v in self.config_param.items():
+            if 'storage_type' not in v:
+                v['storage_type'] = 'blob'
+
+        for p, v in self.config_param.items():
+            v['cloud_blob'] = self.blob_config_to_blob[v['azure_blob_config_file']]
+            if 'datastore_name' not in v or v['datastore_name'] is None:
+                if v['storage_type'] == 'blob':
+                    v['datastore_name'] = '{}_{}'.format(
+                            v['cloud_blob'].account_name,
+                            v['cloud_blob'].container_name)
+                else:
+                    assert v['storage_type'] == 'file'
+                    v['datastore_name'] = 'file_{}_{}'.format(
+                            v['cloud_blob'].account_name,
+                            v['file_share'])
+
         self.with_log = with_log
 
         from azureml.core import Workspace
-        ws = Workspace.from_config(self.aml_config)
-        self.ws = ws
-        compute_target = ws.compute_targets[self.compute_target]
-        self.compute_target = compute_target
+        self.ws = Workspace.from_config(self.aml_config)
+        self.compute_target = self.ws.compute_targets[self.compute_target]
+
+        self.attach_data_store()
+        self.attach_mount_point()
 
         self.use_custom_docker = use_custom_docker
 
@@ -193,32 +213,43 @@ class AMLClient(object):
         self.submit(run_info['cmd'])
         run.cancel()
 
-    def get_path_in_datastore(self):
+    def attach_data_store(self):
         from azureml.core import Datastore
-        try:
-            ds = Datastore.get(self.ws, self.datastore_name)
-        except:
-            ds = Datastore.register_azure_blob_container(workspace=self.ws,
-                                                         datastore_name=self.datastore_name,
-                                                         container_name=self.cloud_blob.container_name,
-                                                         account_name=self.cloud_blob.account_name,
-                                                         account_key=self.cloud_blob.account_key)
+        for p, v in self.config_param.items():
+            try:
+                ds = Datastore.get(self.ws, v['datastore_name'])
+            except:
+                cloud_blob = v['cloud_blob']
+                if v['storage_type'] == 'blob':
+                    ds = Datastore.register_azure_blob_container(workspace=self.ws,
+                                                                 datastore_name=v['datastore_name'],
+                                                                 container_name=cloud_blob.container_name,
+                                                                 account_name=cloud_blob.account_name,
+                                                                 account_key=cloud_blob.account_key)
+                else:
+                    assert v['storage_type'] == 'file'
+                    ds = Datastore.register_azure_file_share(workspace=self.ws,
+                            datastore_name=v['datastore_name'],
+                            file_share_name=v['file_share'],
+                            account_name=cloud_blob.account_name,
+                            account_key=cloud_blob.account_key)
+            v['data_store'] = ds
 
-        code_path = ds.path(self.config_param['code_path']).as_mount()
-        data_folder = ds.path(self.config_param['data_folder']).as_mount()
-        model_folder = ds.path(self.config_param['model_folder']).as_mount()
-        output_folder = ds.path(self.config_param['output_folder']).as_mount()
-        return code_path, data_folder, model_folder, output_folder
+    def attach_mount_point(self):
+        for p, v in self.config_param.items():
+            ds = v['data_store']
+            v['mount_point'] = ds.path(v['path']).as_mount()
 
     def qd_data_exists(self, fname):
-        return self.cloud_blob.exists(op.join(self.config_param['data_folder'],
+        return self.config_param['data_folder']['cloud_blob'].exists(
+                op.join(self.config_param['data_folder']['path'],
                 fname))
 
     def upload_qd_data(self, d):
         from qd.tsv_io import TSVDataset
         data_root = TSVDataset(d)._data_root
-        self.cloud_blob.az_sync(data_root,
-                op.join(self.config_param['data_folder'], d))
+        self.config_param['data_folder']['cloud_blob'].az_sync(data_root,
+                op.join(self.config_param['data_folder']['path'], d))
 
     def upload_qd_model(self, model_file):
         def split_all_path(fpath):
@@ -233,21 +264,15 @@ class AMLClient(object):
         assert(op.isfile(model_file))
         path_splits = split_all_path(model_file)
         assert(len(path_splits) >= 3 and path_splits[-2] == "snapshot")
-        target_path = op.join(self.config_param['output_folder'],
+        target_path = op.join(self.config_param['output_folder']['path'],
                 path_splits[-3], path_splits[-2], path_splits[-1])
-        cloud = self.cloud_blob
+        cloud = self.config_param['output_folder']['cloud_blob']
         if not cloud.exists(target_path):
             cloud.az_upload2(model_file, target_path)
 
     def submit(self, cmd, num_gpu=None):
-        code_path, data_folder, model_folder, output_folder = self.get_path_in_datastore()
-
-        script_params = {
-                '--code_path': code_path,
-                '--data_folder': data_folder,
-                '--model_folder': model_folder,
-                '--output_folder': output_folder,
-                '--command': cmd}
+        script_params = {'--' + p: v['mount_point'] for p, v in self.config_param.items()}
+        script_params['--command'] = cmd
 
         from azureml.train.estimator import Estimator
         from azureml.train.dnn import PyTorch
@@ -255,7 +280,7 @@ class AMLClient(object):
         env = azureml.core.runconfig.EnvironmentDefinition()
         env.docker.enabled = True
         env.docker.base_image = self.docker['image']
-        env.docker.shm_size = '16g'
+        env.docker.shm_size = '1024g'
         env.python.interpreter_path = '/opt/conda/bin/python'
         env.python.user_managed_dependencies = True
 
@@ -322,9 +347,9 @@ class AMLClient(object):
         # zip it
         zip_qd(random_abs_qd)
 
-        rel_code_path = self.config_param['code_path']
+        rel_code_path = self.config_param['code_path']['path']
         # upload it
-        self.cloud_blob.az_upload2(random_abs_qd, rel_code_path)
+        self.config_param['code_path']['cloud_blob'].az_upload2(random_abs_qd, rel_code_path)
 
 def inject_to_tensorboard(info):
     log_folder = 'output/tensorboard/aml'
