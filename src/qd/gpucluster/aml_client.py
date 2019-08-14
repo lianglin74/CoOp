@@ -351,6 +351,15 @@ class AMLClient(object):
         # upload it
         self.config_param['code_path']['cloud_blob'].az_upload2(random_abs_qd, rel_code_path)
 
+    def download_latest_qdoutput(self, full_expid):
+        src_path = op.join(self.config_param['output_folder']['path'],
+                full_expid)
+        target_folder = op.join('output', full_expid)
+
+        self.config_param['output_folder']['cloud_blob'].blob_download_qdoutput(
+                src_path,
+                target_folder)
+
 def inject_to_tensorboard(info):
     log_folder = 'output/tensorboard/aml'
     ensure_directory(log_folder)
@@ -387,6 +396,10 @@ def execute(task_type, **kwargs):
         for v in kwargs['remainders']:
             v = v.strip('/')
             c.abort(v)
+    elif task_type in ['download_qdoutput', 'd']:
+        c = create_aml_client(**kwargs)
+        for full_expid in kwargs['remainders']:
+            c.download_latest_qdoutput(full_expid)
     elif task_type == 'blame':
         raise NotImplementedError()
         blame(**kwargs)
@@ -417,6 +430,7 @@ def parse_args():
             choices=['ssh', 'q', 'query', 'f', 'failed', 'a', 'abort', 'submit',
                 'qf', # query failed jobs
                 'qq', # query queued jobs
+                'd', 'download_qdoutput',
                 'init',
                 'blame', 'resubmit',
                 's', 'summary', 'i', 'inject'])

@@ -118,7 +118,8 @@ def update_bn_momentum(model, bn_momentum):
     logging.info(pformat(dict(type_to_count)))
 
 def train(cfg, local_rank, distributed, log_step=20, sync_bn=False,
-        opt_cls_only=False, bn_momentum=0.1, init_model_only=True):
+        opt_cls_only=False, bn_momentum=0.1, init_model_only=True,
+        use_apex_ddp=False):
     logging.info('start to train')
     model = build_detection_model(cfg)
     if sync_bn:
@@ -128,7 +129,12 @@ def train(cfg, local_rank, distributed, log_step=20, sync_bn=False,
             # SyncBatchNorm only works in distributed env. We have not tested
             # the same code path if size == 1,e.g. initialize parallel group
             # also when size = 1
-            norm = torch.nn.SyncBatchNorm
+            if use_apex_ddp:
+                import apex
+                norm = apex.parallel.optimized_sync_batchnorm.SyncBatchNorm
+            else:
+                norm = torch.nn.SyncBatchNorm
+        #norm = torch.nn.BatchNorm2d
         model, convert_info = convert_to_sync_bn(model, norm)
         logging.info(pformat(convert_info))
     if bn_momentum != 0.1:
@@ -162,12 +168,17 @@ def train(cfg, local_rank, distributed, log_step=20, sync_bn=False,
 
     if distributed:
         if not use_hvd:
-            model = torch.nn.parallel.DistributedDataParallel(
-                model, device_ids=[local_rank], output_device=local_rank,
-                # this should be removed if we update BatchNorm stats
-                broadcast_buffers=False,
-                find_unused_parameters=True,
-            )
+            if use_apex_ddp:
+                from apex.parallel import DistributedDataParallel as DDP
+                model = DDP(model)
+            else:
+                from torch.nn.parallel import DistributedDataParallel as DDP
+                model = DDP(
+                    model, device_ids=[local_rank], output_device=local_rank,
+                    # this should be removed if we update BatchNorm stats
+                    broadcast_buffers=False,
+                    find_unused_parameters=True,
+                )
 
     arguments = {}
     arguments["iteration"] = 0
@@ -595,8 +606,7 @@ class MaskRCNNPipeline(ModelPipeline):
             cfg_file = op.join(maskrcnn_root, 'configs', self.net + '.yaml')
         param = load_from_yaml_file(cfg_file)
         from qd.qd_common import dict_update_nested_dict
-        dict_update_nested_dict(self.kwargs,
-                param)
+        dict_update_nested_dict(self.kwargs, param, overwrite=False)
 
         set_if_not_exist(self.kwargs, 'SOLVER', {})
         set_if_not_exist(self.kwargs, 'DATASETS', {})
@@ -692,7 +702,9 @@ class MaskRCNNPipeline(ModelPipeline):
                 sync_bn=self.sync_bn,
                 opt_cls_only=self.opt_cls_only,
                 bn_momentum=self.bn_momentum,
-                init_model_only=self.init_model_only)
+                init_model_only=self.init_model_only,
+                use_apex_ddp=self.use_apex_ddp,
+                )
 
     def append_predict_param(self, cc):
         super(MaskRCNNPipeline, self).append_predict_param(cc)

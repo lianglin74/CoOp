@@ -1625,15 +1625,16 @@ def pass_key_value_if_has(d_from, from_key, d_to, to_key):
     if from_key in d_from:
         d_to[to_key] = d_from[from_key]
 
-def dict_update_nested_dict(a, b):
+def dict_update_nested_dict(a, b, overwrite=True):
     for k, v in viewitems(b):
         if k not in a:
             a[k] = v
         else:
             if isinstance(a[k], dict) and isinstance(v, dict):
-                dict_update_nested_dict(a[k], v)
+                dict_update_nested_dict(a[k], v, overwrite)
             else:
-                a[k] = v
+                if overwrite:
+                    a[k] = v
 
 def dict_ensure_path_key_converted(a):
     for k in list(a.keys()):
@@ -1813,6 +1814,10 @@ def convert_to_command_line(param, script):
     return result
 
 def print_table(a_to_bs, all_key=None):
+    all_line = get_table_print_lines(a_to_bs, all_key)
+    logging.info('\n{}'.format('\n'.join(all_line)))
+
+def get_table_print_lines(a_to_bs, all_key):
     if len(a_to_bs) == 0:
         logging.info('no rows')
         return
@@ -1831,7 +1836,7 @@ def print_table(a_to_bs, all_key=None):
     for a_to_b in a_to_bs:
         line = row_format.format(*[str(a_to_b.get(k, '')) for k in all_key])
         all_line.append(line)
-    logging.info('\n{}'.format('\n'.join(all_line)))
+    return all_line
 
 def is_hvd_initialized():
     try:

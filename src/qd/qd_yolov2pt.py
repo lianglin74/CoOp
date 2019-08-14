@@ -43,7 +43,10 @@ def pyyolov2_aug_to_box_list(labels5, meta):
     result = BoxList(boxes, image_size=(width, height), mode='xyxy')
     # masktsvdataset outputs float32 for the labels. We do not test if int64 or
     # not converting to float works, but float32 works.
-    labels = torch.stack([meta['id_to_label'][l[4]] for l in labels5]).float()
+    if len(labels5) > 0:
+        labels = torch.stack([meta['id_to_label'][l[4]] for l in labels5]).float()
+    else:
+        labels = torch.Tensor([])
     result.add_field('labels', labels)
     return result
 

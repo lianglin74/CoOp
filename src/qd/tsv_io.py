@@ -8,6 +8,8 @@ from qd.qd_common import load_list_file
 from qd.qd_common import generate_lineidx
 from qd.qd_common import copy_file
 from qd.qd_common import worth_create
+from qd.qd_common import hash_sha1
+import six
 import os
 import os.path as op
 import shutil
@@ -66,6 +68,26 @@ def read_to_character(fp, c):
         else:
             result.append(s)
     return ''.join(result)
+
+def acquireLock(lock_f='/tmp/lockfile.LOCK'):
+    ''' acquire exclusive lock file access '''
+    import fcntl
+    locked_file_descriptor = open(lock_f, 'w+')
+    fcntl.lockf(locked_file_descriptor, fcntl.LOCK_EX)
+    return locked_file_descriptor
+
+def releaseLock(locked_file_descriptor):
+    ''' release exclusive lock file access '''
+    locked_file_descriptor.close()
+
+def exclusive_open_to_read(fname):
+    lock_fd = acquireLock(op.join('/tmp', 'lock_{}'.format(hash_sha1(fname))))
+    # under the context of blobfuse, it will download teh whole file. We don't
+    # know if there is any issue if multi-process open the file at the same
+    # time, but it should be no worse if we open it sequentially.
+    fp = open(fname, 'r')
+    releaseLock(lock_fd)
+    return fp
 
 class TSVFile(object):
     # TODO: close the pointer of _fp
@@ -175,12 +197,12 @@ class TSVFile(object):
             return
 
         if self._fp is None:
-            self._fp = open(self.tsv_file, 'r')
+            self._fp = exclusive_open_to_read(self.tsv_file)
             self.pid = os.getpid()
 
         if self.pid != os.getpid():
             logging.info('re-open {} because the process id changed'.format(self.tsv_file))
-            self._fp = open(self.tsv_file, 'r')
+            self._fp = exclusive_open_to_read(self.tsv_file)
             self.pid = os.getpid()
 
 class TSVDataset(object):
@@ -735,7 +757,7 @@ def is_verified_rect(rect):
         assert rect['uhrs_confirm'] > 0
         return True
 
-    if 'conf' in rect:
+    if 'conf' in rect and rect['conf'] < 1:
         return False
 
     if 'merge_from' in rect:

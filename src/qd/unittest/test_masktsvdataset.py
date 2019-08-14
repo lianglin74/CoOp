@@ -29,6 +29,18 @@ class TestMaskTSVDataset(unittest.TestCase):
         key = dataset.get_keys()[999]
         self.assertEqual(key, '366009')
 
+    def test_run_yolo_transform(self):
+        from maskrcnn_benchmark.data.transforms.build import build_transforms
+        from maskrcnn_benchmark.config import cfg
+        cfg.INPUT.USE_FIXED_SIZE_AUGMENTATION = True
+
+        transforms = build_transforms(cfg, is_train=True)
+        dataset = MaskTSVDataset(data='TaxOI5CV1_1_5k_with_bb',
+                split='train',
+                transforms=transforms,
+                remove_images_without_annotations=False,)
+        dataset[2445892]
+
     def test_id_to_img_map(self):
         dataset = MaskTSVDataset(data='coco2017Full', split='train',
                 remove_images_without_annotations=False)

@@ -221,6 +221,7 @@ def except_to_update_bb_loss_type(param):
         return True
 
 def update_parameters(param):
+    dict_ensure_path_key_converted(param)
     default_param = {
             'max_iter': 10000,
             'effective_batch_size': 64}
@@ -290,6 +291,8 @@ def update_parameters(param):
             ('MODEL$RESNETS$USE_SE', ('SE', None)),
             ('SOLVER$GAMMA', 'Gamma'),
             ('SOLVER$WEIGHT_DECAY', 'WD'),
+            ('use_apex_ddp', ('ADDP', None)),
+            ('SOLVER$STEPS', 'S'),
             ]
 
     non_expid_impact_keys = ['data', 'net', 'expid_prefix',
@@ -328,6 +331,7 @@ def update_parameters(param):
                 infos.append('{}{}'.format(k, hash_sha1(param[k])[:5]))
             else:
                 infos.append('{}{}'.format(k, param[k]))
+
     for setting in direct_add_value_keys:
         k, v = setting[:2]
         if dict_has_path(param, k):
@@ -424,16 +428,18 @@ def pipeline_monitor_train(param, all_test_data, **kwargs):
         pip.monitor_train()
 
 def pipeline_eval_multi(param, all_test_data, **kwargs):
-    pip = load_pipeline(**param)
-    if not pip.is_train_finished():
-        logging.info('the model specified by the following is not ready\n{}'.format(
-            pformat(param)))
-        return
     for test_data_info in all_test_data:
         curr_param = copy.deepcopy(param)
         dict_ensure_path_key_converted(test_data_info)
         dict_update_nested_dict(curr_param, test_data_info)
         pip = load_pipeline(**curr_param)
+        # we should check here instead of before for-loop since we can alter
+        # the value of max_iter to just evaluate the intermediate model or take
+        # the intermediate model as the final model
+        if not pip.is_train_finished():
+            logging.info('the model specified by the following is not ready\n{}'.format(
+                pformat(param)))
+            return
         pip.ensure_predict()
         pip.ensure_evaluate()
 

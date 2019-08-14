@@ -577,6 +577,8 @@ class Taxonomy(object):
         return name_to_nodes
 
     def get_name_to_ancestor_names(self):
+        # we can have duplicate names in the structure. one example is
+        # openimage v5 dataset
         name_to_nodes = self.get_name_to_nodes()
         name_to_ancestor_names = {}
         for name, nodes in name_to_nodes.items():

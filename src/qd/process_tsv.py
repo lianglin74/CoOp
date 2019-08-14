@@ -1860,25 +1860,47 @@ def populate_dataset_details(data, check_image_details=False,
     if check_box:
         populate_bbcount(dataset)
 
+def create_label_bbcount(dataset, split, v):
+    class_to_bbcount = defaultdict(int)
+    logging.info('reading {}, {}, {}'.format(split, 'label', v))
+    for key, str_rects in dataset.iter_data(split, 'label',
+        v, progress=True):
+        rects = json.loads(str_rects)
+        for r in rects:
+            if 'rect' in r and not all(x == 0 for x in r['rect']):
+                c = r['class']
+                class_to_bbcount[c] = class_to_bbcount[c] + 1
+    labelmap = [l for l, in dataset.iter_data(split, 'labelmap',
+            v)]
+    dataset.write_data(((l, class_to_bbcount.get(l, 0)) for l in labelmap),
+            split, 'label.bbcount', v)
+
+def create_label_verifiedbbcount(dataset, split, v):
+    class_to_bbcount = defaultdict(int)
+    logging.info('reading {}, {}, {}'.format(split, 'label', v))
+    for key, str_rects in dataset.iter_data(split, 'label',
+        v, progress=True):
+        rects = json.loads(str_rects)
+        for r in rects:
+            if 'rect' in r and \
+                    not all(x == 0 for x in r['rect']) and \
+                    is_verified_rect(r):
+                c = r['class']
+                class_to_bbcount[c] = class_to_bbcount[c] + 1
+    labelmap = [l for l, in dataset.iter_data(split, 'labelmap',
+            v)]
+    dataset.write_data(((l, class_to_bbcount.get(l, 0)) for l in labelmap),
+            split, 'label.verifiedbbcount', v)
+
 def populate_bbcount(dataset):
     for split in ['train', 'trainval', 'test']:
         v = 0
         while True:
             if dataset.has(split, 'label', v):
+                if not dataset.has(split, 'label.verifiedbbcount', v):
+                    create_label_verifiedbbcount(dataset, split, v)
                 if not dataset.has(split, 'label.bbcount', v):
-                    class_to_bbcount = defaultdict(int)
-                    logging.info('reading {}, {}, {}'.format(split, 'label', v))
-                    for key, str_rects in dataset.iter_data(split, 'label',
-                        v, progress=True):
-                        rects = json.loads(str_rects)
-                        for r in rects:
-                            if 'rect' in r and not all(x == 0 for x in r['rect']):
-                                c = r['class']
-                                class_to_bbcount[c] = class_to_bbcount[c] + 1
-                    labelmap = [l for l, in dataset.iter_data(split, 'labelmap',
-                            v)]
-                    dataset.write_data(((l, class_to_bbcount.get(l, 0)) for l in labelmap),
-                            split, 'label.bbcount', v)
+                    create_label_bbcount(dataset, split, v)
                 v = v + 1
             else:
                 break
@@ -2340,7 +2362,8 @@ def visualize_predict(full_expid, predict_file, label, start_id, threshold):
                 [r['class'] for r in rects_pred])
         yield key, im_origin, im_gt_target, im_pred_target, im_gt, im_pred, ap
 
-def visualize_box_no_draw(data, split, version, label, start_id, color_map={}):
+def visualize_box_no_draw(data, split, version, label, start_id, color_map={},
+        min_conf=-1, max_conf=2):
     dataset = TSVDataset(data)
     logging.info('loading inverted label')
     if split is None:
@@ -2387,20 +2410,13 @@ def visualize_box_no_draw(data, split, version, label, start_id, color_map={}):
         origin = np.copy(im)
         rects = try_json_parse(label_str)
         if type(rects) is list:
-            def get_rect_class(rects):
-                all_class = []
-                all_rect = []
-                for rect in rects:
-                    label_class = rect['class']
-                    rect = rect['rect']
-                    all_class.append(label_class)
-                    if not (rect[0] == 0 and rect[1] == 0
-                            and rect[2] == 0 and rect[3] == 0):
-                        all_rect.append(rect)
-                    else:
-                        all_rect.append((0, 0, im.shape[1] - 1, im.shape[0] - 1))
-                return all_rect, all_class
-
+            if label is not None:
+                rects = [r for r in rects if \
+                        r['class'] == label and \
+                        r.get('conf', 1) >= min_conf and \
+                        r.get('conf', 1) <= max_conf or r['class'] != label]
+                if all(r['class'] != label for r in rects):
+                    continue
             yield (key, origin, rects)
         else:
             yield key, origin, [{'class': label_str, 'rect': [0, 0, 0, 0]}]

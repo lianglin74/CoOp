@@ -1187,7 +1187,9 @@ class TorchTrain(object):
         wt.close()
 
     def is_train_finished(self):
-        return op.isfile(self._get_checkpoint_file())
+        last_model = self._get_checkpoint_file()
+        logging.info('checking if {} exists'.format(last_model))
+        return op.isfile(last_model)
 
     def update_acc_iter(self, iter_to_eval):
         if self.mpi_rank == 0:
