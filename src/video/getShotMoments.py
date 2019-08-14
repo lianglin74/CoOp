@@ -9,6 +9,8 @@ from tqdm import tqdm
 import numpy as np
 import math
 import copy
+from video.getEventLabels import getVideoAndEventLabels
+from sklearn.metrics import classification_report,confusion_matrix
 
 
 def findShot(predict_file, frameRate=25.0):
@@ -238,7 +240,7 @@ def findShot(predict_file, frameRate=25.0):
                         if personTime > startTime - padding and personTime < endTime + padding:
                             print("Finding one DUNK shot by angle analysis: ",
                                   (imageCnt/frameRate))
-                            className = "layup/dunk"
+                            className = "dunk/layup"
                         print("Adding result: ", (max(startTime -
                                                       padding, 0.0), endTime + padding, className))
                         pred_results_angle.append(
@@ -343,6 +345,7 @@ def checkResultsOverlap(pred_results):
 
         if (v1[1] > v2[0] + padding):
             print("Found overlap pairs: ", v1, v2)
+            exit()
         else:
             newResults.append(v1)
 
@@ -354,6 +357,7 @@ def checkResultsOverlap(pred_results):
         v2 = pred_results[i]
         if (v1[1] > v2[0] + padding):
             print("Found overlap pairs: ", v1, v2)
+            exit()
         else:
             newResults.append(v2)
 
@@ -389,6 +393,88 @@ def calculateF1(pred_results, true_results):
     print("precision: ", precision)
     print("recall: ", recall)
     print("F1: ", F1)
+
+def getShotStats(pred_results, true_results):
+    #pred_results: [(s1, e1, class1), (s2, e2, class2), ...]
+    #true_results: [(t1, class1), (t2, class2)]
+    lp = len(pred_results)
+    lt = len(true_results)
+    print("pred_results: ", pred_results, lp)
+    print("true_results: ", true_results, lt)
+
+    nonShotLabel = "nonShot"
+    y_pred = []
+    y_true = []
+
+    i = 0
+    j = 0
+    allTimePoints = []
+    
+    while i < lp and j < lt:
+        pRes = pred_results[i]
+        tRes = true_results[j]
+        if tRes[0] < pRes[0]:
+            allTimePoints.append(tRes)
+            y_pred.append( nonShotLabel )
+            y_true.append( tRes[1] )
+            j += 1
+        elif tRes[0] > pRes[1]:
+            allTimePoints.append(pRes)
+            y_pred.append( pRes[2] )
+            y_true.append( nonShotLabel )
+            i += 1
+        else:
+            allTimePoints.append(tRes)            
+            #assert(pRes[2] == tRes[1])
+            y_pred.append( pRes[2] )
+            y_true.append( tRes[1] )
+            i += 1
+            j += 1
+    
+    while i < lp:
+        allTimePoints.append(pRes)
+        y_pred.append( pRes[2] )
+        y_true.append( nonShotLabel )
+        i += 1
+
+    while j < lt:
+        allTimePoints.append(tRes)        
+        y_pred.append( nonShotLabel )
+        y_true.append( tRes[1] )
+        j += 1
+
+    return y_pred, y_true, allTimePoints
+
+def f1Report(y_pred, y_true, printDetails = False, allTimePoints = None):
+    if printDetails:
+        print("allPoints: \n", allTimePoints)
+        print("Prediction: \n", y_pred)
+        print("Truth: \n", y_true)
+        
+    #print(classification_report(y_true, y_pred, target_names = classes, digits = 4))    
+    #print("Confusion matrix:\n%s" % confusion_matrix(y_true, y_pred, labels = classes))
+    f1ReportText = classification_report(y_true, y_pred, digits = 4)
+    cmText = "Confusion matrix:\n%s\n" % confusion_matrix(y_true, y_pred)
+    print(f1ReportText)
+    print(cmText)
+    return f1ReportText + cmText
+
+def test_getShotStats():
+    pred_results = [(13.56, 14.44, 'shot', 'extraCond'), (35.76, 36.04, 'shot', 'extraCond'), (134.28, 135.96, 'shot', 'extraCond'), (157.28, 158.36, 'shot', 'extraCond'), (186.32, 187.16, 'shot', 'extraCond'), (198.24, 200.88, 'shot', 'extraCond'), (208.08, 208.64, 'shot', 'extraCond'), (328.24, 329.48, 'shot', 'extraCond'), (344.0, 344.08, 'shot', 'extraCond'), (344.16, 344.2, 'shot', 'extraCond'), (350.4, 351.32, 'shot', 'extraCond'), (385.6, 386.12, 'shot', 'extraCond'), (386.24, 386.92, 'shot', 'extraCond'), (408.92, 409.04, 'shot', 'extraCond'), (442.36, 445.92, 'shot', 'extraCond'), (478.92, 480.56, 'shot', 'extraCond'), (586.2, 586.96, 'shot', 'extraCond')]
+    true_results = [(13.922896, 'shot'), (36.051405, 'shot'), (55.823736, 'shot'), (120.206053, 'shot'), (151.343382, 'shot'), (158.211654, 'shot'), (186.743713, 'shot'), (328.851485, 'shot'), (344.177011, 'shot'), (350.888363, 'shot'), (386.284587, 'dunk/layup'), (443.872138, 'shot'), (469.697181, 'shot'), (479.717574, 'shot'), (526.101491, 'shot'), (586.654381, 'shot')]
+    true_results = [ (v[0], 'shot') for v in true_results]    
+
+    y_pred, y_true, allTimePoints = getShotStats(pred_results, true_results)
+    f1Report(y_pred, y_true, True, allTimePoints)
+    #expected F1 score:
+    #precision:  0.5882352941176471
+    #recall:  0.625
+    #F1:  0.6060606060606061    
+    
+    #expected confusion matrix output:
+    #Confusion matrix:
+    #[[ 0  7]
+    # [ 6 10]]
 
 
 def intersection(lst1, lst2):
@@ -538,8 +624,8 @@ def getShotAPI(videoFileName, predict_file):
     return pred_results
 
 
-def main():
-    dir = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_demo_v3/tmp/"
+def calculateF1andWriteResults_1():
+    dir = "/mnt/gpu02_raid/data/video/CBA/CBA_demo_v2/"
     labelFiles = "labellist.txt"
 
     labelFileList = read_file_to_list(dir + labelFiles)
@@ -584,7 +670,62 @@ def main():
 
         writeToTSV(predict_file, pred_results)
 
+def calculateF1andWriteRes(dir, odFileList, eventLabelJsonFile):
+    odFileList = read_file_to_list(dir + odFileList)
+    #predict_file = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_chop/TSV/head350_prediction_1551538896210_sc99_01_q1.tsv"
+    #predict_file = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_chop/prediction_1551538896210_sc99_01_q1.tsv"
+
+    overallPred = []
+    overallTrue = []
+    allReports = ""
+
+    for odFileName in odFileList:        
+        predict_file = dir + odFileName
+        videoFileName = odFileName.replace("tsv", "mp4")
+
+        print("----Processing file: ", predict_file)
+        pred_results = findShot(predict_file)
+
+        checkResultsOverlap(pred_results)
+
+        ret, true_results = getVideoAndEventLabels(eventLabelJsonFile, videoFileName)
+        if ret: 
+            allReports += "--Report for file: " + videoFileName + "\n"
+
+            print("----calculate F1 for file: ", predict_file)
+            print("True_results:", true_results)
+
+            y_pred, y_true, _ = getShotStats(pred_results, true_results)
+
+            overallPred.extend(y_pred)
+            overallTrue.extend(y_true)
+
+            allReports += f1Report(y_pred, y_true)
+        else:
+            print("!! cannot find label for video file: ", videoFileName)
+            exit()
+
+        writeToTSV(predict_file, pred_results)
+
+    print("====F1 report for all the data: ")
+    f1Report(overallPred, overallTrue)
+    print(allReports)
+
+def getValidationResults():
+    dir = "/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/validation/extracted/"    
+    odFileList = "odFilelist.txt"
+    eventLabelJsonFile = '/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/test/extracted/label/Project_all.aucvl'
+    calculateF1andWriteRes(dir, odFileList, eventLabelJsonFile)
+
+def getTestingResults():
+    dir = "/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/test/extracted/"    
+    odFileList = "odFilelist.txt"
+    eventLabelJsonFile = '/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/test/extracted/label/Project_all.aucvl'
+    calculateF1andWriteRes(dir, odFileList, eventLabelJsonFile)
 
 if __name__ == '__main__':
-    main()
+    #main()
+    #test_getShotStats()
+    #getValidationResults()
+    getTestingResults()
     # testGetDegreeOfTwoPoints()
