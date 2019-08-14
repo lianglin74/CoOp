@@ -8,13 +8,13 @@ import sys
 
 
 def writeImagesWithLabels(topDir, labelFileName, video_name, startSecond, endSecond = -1, writeImage=0):
-    id2Labels = getID2Labels(topDir + labelFileName)
+    id2Labels = getID2Labels(topDir + "/" + labelFileName)
     print("len(id2Labels)", len(id2Labels))
 
     sepSign = "$"
 
     if endSecond == -1:
-        endSecond = startSecond + 10.0
+        endSecond = startSecond + 100.0
     
     if writeImage:
         directory = topDir + "/frames_" + video_name + "/" + \
@@ -22,11 +22,14 @@ def writeImagesWithLabels(topDir, labelFileName, video_name, startSecond, endSec
         if not os.path.exists(directory):
             os.makedirs(directory)
 
-    cap = cv2.VideoCapture(topDir + video_name)
-
+    cap = cv2.VideoCapture(topDir + "/" + video_name)
     fps = getFPS(cap)
+    totalFrames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    print("Total frame: ", totalFrames)
+    
     startFrame = int(startSecond*fps)
-    endFrame = int(endSecond*fps)
+    endFrame = min(int(endSecond*fps), totalFrames)
+    
     print("StartFrame: ", startFrame)
     print("EndFrame: ", endFrame)
 
@@ -65,14 +68,14 @@ def writeImagesWithLabels(topDir, labelFileName, video_name, startSecond, endSec
 
         cv2.imshow("withBox", frame)
 
-        k = cv2.waitKeyEx(100)
-        if k == 65361:  # left
+        k = cv2.waitKeyEx(0)
+        if k == 65361 or k == 2424832:  # left
             i -= 1
-        elif k == 65363 or k == 32:  # right or space
+        elif k == 65363 or k == 32 or k == 2555904:  # right or space
             i += 1
-        elif k == 27:  # esc
+        elif k == 27 or k == 113:  # esc
             exit()
-        # else:
+        #else:
         #  print("Key is", k)
 
     cap.release()
@@ -215,5 +218,5 @@ if __name__ == '__main__':
         startSecond = float(sys.argv[4]) 
         writeImagesWithLabels(topDir, labelFileName, video_name, startSecond)
     else:
-        print("---Running with internal main routine")
-        main()
+        print("Missing arguments. Usage: python .\labelViewerForVideo.py <dir> <labelFileName> <videoFileName> <startTimeInSecond>")
+        print('Example usage: python .\labelViewerForVideo.py /mnt/gpu02_raid/data/video/NBA/0001 NBA_0001_1.tsv NBA_0001_1.mkv 630')        
