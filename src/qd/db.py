@@ -57,6 +57,7 @@ class AnnotationDB(object):
         self._label = self._qd['qd']['label']
         self._acc = self._qd['qd']['acc']
         self._phillyjob = self._qd['qd']['phillyjob']
+        self._cluster = self._qd['qd']['cluster']
         import getpass
         self.username = getpass.getuser()
 
@@ -65,6 +66,10 @@ class AnnotationDB(object):
             kwargs['create_time'] = datetime.now()
         if 'username' not in kwargs:
             kwargs['username'] = self.username
+
+    def insert_cluster_summary(self, **kwargs):
+        self.add_meta_data(kwargs)
+        self._cluster.insert_one(kwargs)
 
     def insert_phillyjob(self, **kwargs):
         # use self.add_meta_data
@@ -376,6 +381,10 @@ class BoundingBoxVerificationDB(object):
             self.collection.create_index([('rects.0.from', pymongo.ASCENDING)])
             self.collection.create_index([('rect.from', pymongo.ASCENDING)])
         return self.client[self.db_name][self.collection_name]
+
+def inject_cluster_summary(info):
+    c = create_annotation_db()
+    c.insert_cluster_summary(**info)
 
 def update_cluster_job_db(all_job_info):
     c = create_annotation_db()

@@ -1,6 +1,7 @@
 import os.path as op
 from pprint import pformat
 import logging
+import os
 
 from qd.qd_common import load_from_yaml_file, dict_update_nested_dict
 from qd.qd_common import cmd_run
@@ -10,7 +11,8 @@ from qd.cloud_storage import create_cloud_storage
 
 
 def create_aml_client(**kwargs):
-    param = load_from_yaml_file('./aux_data/aml/aml.yaml')
+    path = os.environ.get('AML_CONFIG_PATH', './aux_data/aml/aml.yaml')
+    param = load_from_yaml_file(path)
     dict_update_nested_dict(param, kwargs)
     return AMLClient(**param)
 
@@ -104,6 +106,8 @@ def download_run_logs(run_info, full=True):
 def get_compute_status(compute_target):
     info = {}
     info['running_node_count'] = compute_target.status.node_state_counts.running_node_count
+    info['preparing_node_count'] = compute_target.status.node_state_counts.preparing_node_count
+    info['max_node_count'] = compute_target.scale_settings.maximum_node_count
     return info
 
 class AMLClient(object):
@@ -417,6 +421,10 @@ def execute(task_type, **kwargs):
         info = m.get_compute_status()
         logging.info(pformat(info))
         inject_to_tensorboard(info)
+        from qd.db import inject_cluster_summary
+        info['cluster'] = 'aml'
+        inject_cluster_summary(info)
+
     elif task_type in ['i', 'inject']:
         m = create_aml_client(**kwargs)
         m.inject()
