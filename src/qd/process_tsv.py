@@ -1644,18 +1644,10 @@ def ensure_extract_from_data_source(data, split, t):
             yield label_row[0], str_t
     dataset.write_data(gen_rows(), split, t)
 
-def populate_dataset_details(data, check_image_details=False,
-        splits=None, check_box=False, data_root=None):
-    logging.info(data)
+def populate_dataset_hw(data, splits):
     dataset = TSVDataset(data)
-
-    if not splits:
-        splits = ['trainval', 'train', 'test']
-
-    # populate the height and with
     for split in splits:
-        if dataset.has(split) and not dataset.has(split, 'hw') \
-                and check_image_details:
+        if dataset.has(split) and not dataset.has(split, 'hw'):
             if op.isfile(dataset.get_data(split + 'X')):
                 derive_composite_meta_data(data, split, 'hw')
             else:
@@ -1698,6 +1690,18 @@ def populate_dataset_details(data, check_image_details=False,
                     for r in all_result:
                         x.extend(r)
                     dataset.write_data(x, split, 'hw')
+
+def populate_dataset_details(data, check_image_details=False,
+        splits=None, check_box=False, data_root=None):
+    logging.info(data)
+    dataset = TSVDataset(data)
+
+    if not splits:
+        splits = ['trainval', 'train', 'test']
+
+    # populate the height and with
+    if check_image_details:
+        populate_dataset_hw(dataset, splits)
 
     for split in splits:
         full_tsv = dataset.get_data(split)
