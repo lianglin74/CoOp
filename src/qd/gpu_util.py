@@ -6,11 +6,24 @@ import re
 import logging
 from qd.remote_run import cmd_run, remote_run, collect_process_info
 from qd.qd_common import init_logging
+from qd.qd_common import try_once
+
+
+@try_once
+def try_get_gpu_info():
+    return get_gpu_info()
 
 def get_gpu_info():
     r = cmd_run(['nvidia-smi'], return_output=True)
     ps = parse_gpu_usage(r)
     return ps
+
+@try_once
+def try_get_nvidia_smi_out():
+    return get_nvidia_smi_out()
+
+def get_nvidia_smi_out():
+    return cmd_run(['nvidia-smi'], return_output=True)
 
 def gpu_available(all_resource):
     if all(all(g == -1 for g in gpus) for ssh_info, gpus in all_resource):

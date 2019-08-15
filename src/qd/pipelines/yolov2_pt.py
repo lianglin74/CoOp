@@ -142,13 +142,15 @@ class YoloV2PtPipeline(ModelPipeline):
                 'test': '$'.join([self.test_data, self.test_split]),
                 'output': predict_result_file,
                 'logdir': self.output_folder,
-                'batch_size': 64,
+                'batch_size': self.test_batch_size,
                 'workers': self.workers,
                 'is_caffemodel': self.is_caffemodel_for_predict,
                 'single_class_nms': False,
                 'obj_thresh': 0.01,
                 'thresh': 0.01,
                 'log_interval': 100,
+                'test_max_iter': self.test_max_iter,
+                'device': self.device,
                 }
         is_tree = self.use_treestructure
         param['use_treestructure'] = is_tree

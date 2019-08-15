@@ -718,6 +718,7 @@ class TorchTrain(object):
                 'apply_nms_gt': True,
                 'cudnn_benchmark': False,
                 'use_hvd': False,
+                'device': 'cuda',
                 }
 
         assert 'batch_size' not in kwargs, 'use effective_batch_size'
@@ -1133,6 +1134,13 @@ class TorchTrain(object):
             model_file = self._get_checkpoint_file(iteration=self.max_iter)
         cc = [model_file, self.test_data, self.test_split]
         self.append_predict_param(cc)
+        if self.test_max_iter is not None:
+            # this is used for speed test
+            cc.append('max_iter{}'.format(self.test_max_iter))
+            # we explicitly log the batch size here so that we can make sure it
+            # is 1 or batch processing
+            cc.append('BS{}'.format(self.test_batch_size))
+            cc.append(self.device)
         cc.append('predict')
         cc.append('tsv')
         return '.'.join(cc)
@@ -1146,9 +1154,6 @@ class TorchTrain(object):
     def monitor_train(self):
         self._ensure_initialized()
         assert self.max_epoch == None, 'use iteration'
-        #for e in range(self.max_epoch):
-            #predict_result_file = self.ensure_predict(e + 1)
-            #self.ensure_evaluate(predict_result_file)
         while True:
             self.standarize_intermediate_models()
             need_wait_models = self.pred_eval_intermediate_models()

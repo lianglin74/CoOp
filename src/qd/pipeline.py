@@ -302,7 +302,7 @@ def update_parameters(param):
             'yolo_train_session_param$debug_train',
             'yolo_predict_session_param',
             'evaluate_method', 'debug_train',
-            'full_expid', 'log_step', 'MODEL$DEVICE',
+            'full_expid', 'log_step', 'device',
             'MODEL$ROI_BOX_HEAD$CLASSIFICATION_ACTIVATE',
             'display',
             'apply_nms_gt',

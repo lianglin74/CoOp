@@ -1820,7 +1820,7 @@ def print_table(a_to_bs, all_key=None):
 def get_table_print_lines(a_to_bs, all_key):
     if len(a_to_bs) == 0:
         logging.info('no rows')
-        return
+        return []
     if not all_key:
         all_key = []
         for a_to_b in a_to_bs:
@@ -2010,6 +2010,12 @@ class make_namespace_by_dict(object):
     def clone(self):
         c = copy.deepcopy(self.__dict__)
         return make_namespace_by_dict(c)
+
+@try_once
+def try_get_cpu_info():
+    command = 'cat /proc/cpuinfo'
+    return os.popen(command).read().strip()
+
 
 if __name__ == '__main__':
     init_logging()

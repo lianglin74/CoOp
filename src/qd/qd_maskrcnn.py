@@ -34,9 +34,11 @@ from qd.qd_common import get_mpi_rank, get_mpi_size
 from qd.qd_common import pass_key_value_if_has
 from qd.qd_common import dump_to_yaml_str
 from qd.qd_common import dict_has_path
+from qd.qd_common import write_to_yaml_file
 from qd.tsv_io import TSVDataset
 from qd.tsv_io import tsv_reader, tsv_writer
 from qd.process_tsv import TSVFile, convert_one_label
+from qd.layers import ForwardPassTimeChecker
 from yacs.config import CfgNode
 import os.path as op
 from tqdm import tqdm
@@ -338,10 +340,14 @@ def extract_model_feature_iter(model, data_loader, device, feature_name):
         for img_id, result in zip(image_ids, output):
             yield img_id, result
 
-def compute_on_dataset_iter(model, data_loader, device):
+def compute_on_dataset_iter(model, data_loader, device, test_max_iter=None):
     model.eval()
     cpu_device = torch.device("cpu")
     for i, batch in enumerate(tqdm(data_loader)):
+        if test_max_iter is not None and i >= test_max_iter:
+            # this is used for speed test, where we only would like to run a
+            # few images
+            break
         images, targets, image_ids = batch
         images = images.to(device)
         with torch.no_grad():
@@ -460,11 +466,13 @@ def only_inference_to_tsv(
         logging.info('ignore to run predict')
         return
     else:
+        model = ForwardPassTimeChecker(model)
         if kwargs.get('predict_extract'):
             predictions = extract_model_feature_iter(model, data_loader, device,
                     kwargs['predict_extract'])
         else:
-            predictions = compute_on_dataset_iter(model, data_loader, device)
+            predictions = compute_on_dataset_iter(model, data_loader, device,
+                    test_max_iter=kwargs.get('test_max_iter'))
         ds = data_loader.dataset
         from maskrcnn_benchmark.utils.metric_logger import MetricLogger
         meters = MetricLogger(delimiter="  ")
@@ -493,6 +501,11 @@ def only_inference_to_tsv(
                 "{}: {:.4f} ({:.4f})".format(name, meter.total, meter.median)
             )
         logging.info(';'.join(loss_str))
+        logging.info(str(model.meters))
+        # note, we will not delete this cache file. since it is small, it
+        # should be ok
+        write_to_yaml_file(model.get_time_info(),
+                cache_file + '.speed.yaml')
 
 def test(cfg, model, distributed, predict_files, label_id_to_label,
         **kwargs):
@@ -504,20 +517,6 @@ def test(cfg, model, distributed, predict_files, label_id_to_label,
     data_loaders_val = make_data_loader(cfg, is_train=False, is_distributed=distributed)
     assert len(data_loaders_val) == len(predict_files)
     for dataset_name, data_loader_val, predict_file in zip(dataset_names, data_loaders_val, predict_files):
-        #idx_to_boxlist = only_inference(
-            #model,
-            #data_loader_val,
-            #predict_file,
-            #device=cfg.MODEL.DEVICE,
-            #**kwargs,
-        #)
-        #synchronize()
-
-        #if is_main_process():
-            #write_key_to_boxlist_to_tsv(idx_to_boxlist,
-                    #predict_file, ds=data_loader_val.dataset,
-                    #label_id_to_label=label_id_to_label)
-
         ds = data_loader_val.dataset
         from maskrcnn_benchmark.data.datasets.coco import COCODataset
         from maskrcnn_benchmark.data.datasets import MaskTSVDataset
@@ -542,7 +541,6 @@ def test(cfg, model, distributed, predict_files, label_id_to_label,
             data_loader_val,
             cache_file,
             label_id_to_label,
-            device=cfg.MODEL.DEVICE,
             **kwargs
         )
         synchronize()
@@ -563,7 +561,18 @@ def test(cfg, model, distributed, predict_files, label_id_to_label,
                 ordered_keys = data_loader_val.dataset.get_keys()
                 from qd.tsv_io import reorder_tsv_keys
                 reorder_tsv_keys(predict_file, ordered_keys, predict_file)
+                # during prediction, we also computed the time cost. Here we
+                # merge the time cost
+                speed_cache_files = [c + '.speed.yaml' for c in cache_files]
+                merge_speed_info(speed_cache_files, predict_file + '.speed.yaml')
+                for x in speed_cache_files:
+                    from qd.qd_common import try_delete
+                    try_delete(x)
         synchronize()
+
+def merge_speed_info(speed_yamls, out_yaml):
+    write_to_yaml_file([load_from_yaml_file(y) for y in speed_yamls
+        if op.isfile(y)], out_yaml)
 
 def upgrade_maskrcnn_param(kwargs):
     old_key = 'MODEL$BACKBONE$OUT_CHANNELS'
@@ -613,6 +622,8 @@ class MaskRCNNPipeline(ModelPipeline):
         set_if_not_exist(self.kwargs, 'TEST', {})
         set_if_not_exist(self.kwargs, 'DATALOADER', {})
         set_if_not_exist(self.kwargs, 'MODEL', {})
+        assert 'DEVICE' not in self.kwargs['MODEL']
+        self.kwargs['MODEL']['DEVICE'] = self.device
         set_if_not_exist(self.kwargs['MODEL'], 'ROI_BOX_HEAD', {})
 
         self.kwargs['SOLVER']['IMS_PER_BATCH'] = int(self.effective_batch_size)
@@ -763,5 +774,4 @@ class MaskRCNNPipeline(ModelPipeline):
         label_id_to_label = {i + extra: l for i, l in enumerate(labelmap)}
         test(cfg, model, self.distributed, [predict_result_file],
                 label_id_to_label, **self.kwargs)
-
 
