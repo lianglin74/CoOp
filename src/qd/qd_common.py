@@ -34,6 +34,7 @@ import argparse
 import subprocess as sp
 from datetime import datetime
 from future.utils import viewitems
+from ete3 import Tree
 try:
     # py3
     from urllib.request import urlopen, Request
@@ -2016,6 +2017,64 @@ def try_get_cpu_info():
     command = 'cat /proc/cpuinfo'
     return os.popen(command).read().strip()
 
+# ---------------------------------------------------- pytorch speed analysis
+def create_speed_node(info):
+    node = Tree()
+    node.add_features(**info)
+    return node
+
+def speed_tree_insert(root, node):
+    while True:
+        need_merge_nodes = [c for c in root.children
+                if is_child_parent(c.name, node.name)]
+        if len(need_merge_nodes) > 0:
+            for x in need_merge_nodes:
+                x.detach()
+            for x in need_merge_nodes:
+                node.add_child(x)
+            root.add_child(node)
+            return
+        go_deeper_nodes = [c for c in root.children if
+                is_child_parent(node.name, c.name)]
+        if len(go_deeper_nodes) == 0:
+            root.add_child(node)
+            return
+        else:
+            assert len(go_deeper_nodes) == 1
+            root = go_deeper_nodes[0]
+
+def is_child_parent(c, p):
+    if p == '':
+        return True
+    return c.startswith(p + '.')
+
+def speed_trees_insert(roots, info):
+    node = create_speed_node(info)
+    # we assume the name are not equal
+    need_merge_nodes = [r for r in roots
+            if is_child_parent(r.name, info['name'])]
+    if len(need_merge_nodes) > 0:
+        for x in need_merge_nodes:
+            node.add_child(x)
+            roots.remove(x)
+        roots.append(node)
+        return
+    need_insert_roots = [r for r in roots
+            if is_child_parent(info['name'], r.name)]
+    if len(need_insert_roots) == 0:
+        roots.append(node)
+    elif len(need_insert_roots) == 1:
+        speed_tree_insert(need_insert_roots[0], node)
+    else:
+        raise Exception()
+
+def build_speed_tree(component_speeds):
+    roots = []
+    for c in component_speeds:
+        speed_trees_insert(roots, c)
+    return roots
+
+# ---------------------------------------------------------------------
 
 if __name__ == '__main__':
     init_logging()
