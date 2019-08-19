@@ -56,7 +56,8 @@ def findShot(predict_file, frameRate=25.0):
     eventStart = False
     #eventEnd = False
     angleBallToRim = 270/180.0*math.pi
-    padding = 1.25
+    #padding = 1.25
+    padding = 1.75
 
     startTime = -1
     endTime = -1
@@ -409,6 +410,8 @@ def getShotStats(pred_results, true_results):
     i = 0
     j = 0
     allTimePoints = []
+
+    tolerance = 2.0
     
     while i < lp and j < lt:
         pRes = pred_results[i]
@@ -418,7 +421,7 @@ def getShotStats(pred_results, true_results):
             y_pred.append( nonShotLabel )
             y_true.append( tRes[1] )
             j += 1
-        elif tRes[0] > pRes[1]:
+        elif tRes[0] > pRes[1] + tolerance:
             allTimePoints.append(pRes)
             y_pred.append( pRes[2] )
             y_true.append( nonShotLabel )
