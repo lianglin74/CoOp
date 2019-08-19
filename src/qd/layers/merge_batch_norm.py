@@ -63,8 +63,8 @@ def merge_bn_into_conv(model):
                 invstd = scale / torch.Tensor.sqrt(var + eps)
 
                 if module.bias is None:
-                    bias = torch.zeros([out_channel], device=scale.device)
-                    module.register_parameter('bias', Parameter(bias))
+                    m_bias = torch.zeros([out_channel], device=scale.device)
+                    module.register_parameter('bias', Parameter(m_bias))
                 old_b = module.bias.data.clone().detach()
 
                 module.weight.data = old_w * invstd.view(out_channel, 1, 1, 1)

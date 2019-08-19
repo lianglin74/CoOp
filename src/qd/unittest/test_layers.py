@@ -16,42 +16,74 @@ class TestLayers(unittest.TestCase):
             s2 = t2.shape
             for i, j in zip(s1, s2):
                 self.assertEqual(i, j)
-            self.assertAlmostEqual((t1 - t2).abs().mean().item(), 0, delta=1e-5)
+            base = t1.abs().mean().item()
+            if base != 0:
+                self.assertAlmostEqual((t1 - t2).abs().mean().item() / base, 0, delta=1e-5)
+            else:
+                self.assertAlmostEqual((t1 - t2).abs().mean().item(), 0, delta=1e-5)
+            #print(t1.abs().mean())
+            #print(t2.abs().mean())
 
-        def compare_models(input, model1, model2):
-            model1.eval()
+        def compare_models(input, model):
+            model.eval()
             tic = time.time()
             with torch.no_grad():
-                res1 = model1(input)
-            time1 = time.time() - tic
+                out1 = model(input)
+            cost1 = time.time() - tic
+            new_model = MergeBatchNorm(model)
+            new_model.eval()
             tic = time.time()
-            model2.eval()
             with torch.no_grad():
-                res2 = model2(input)
-            time2 = time.time() - tic
-            compare_tensors(res1, res2)
-            logging.info("Time cost for models: {} v.s. {}".format(time1, time2))
+                out2 = new_model(input)
+            cost2 = time.time() - tic
+            compare_tensors(out1, out2)
+            return cost1, cost2
 
+        num_replica = 50
         from qd.layers import MergeBatchNorm
-        model = torch.nn.Sequential(
-            torch.nn.Conv2d(2, 4, (3,3), bias=True),
-            torch.nn.BatchNorm2d(4))
-        input = torch.randn(1, 2, 5, 5)
-        compare_models(input, model, MergeBatchNorm(model))
+        total_cost1, total_cost2 = 0, 0
+        for i in range(num_replica):
+            model = torch.nn.Sequential(
+                torch.nn.Conv2d(2, 4, (3,3), bias=True),
+                torch.nn.BatchNorm2d(4))
+            input = torch.randn(1, 2, 5, 5)
+            cost1, cost2 = compare_models(input, model)
+            total_cost1 += cost1
+            total_cost2 += cost2
+        total_cost1 /= float(num_replica)
+        total_cost2 /= float(num_replica)
+        logging.info("Time cost: {} v.s. {}".format(total_cost1,
+                        total_cost2))
 
         import torchvision
-        model = torchvision.models.resnet50(pretrained=True)
-        input = torch.randn(1, 3, 224, 224)
-        compare_models(input, model, MergeBatchNorm(model))
+        total_cost1, total_cost2 = 0, 0
+        for i in range(num_replica):
+            model = torchvision.models.resnet50(pretrained=True)
+            input = torch.randn(1, 3, 224, 224)
+            cost1, cost2 = compare_models(input, model)
+            total_cost1 += cost1
+            total_cost2 += cost2
+        total_cost1 /= float(num_replica)
+        total_cost2 /= float(num_replica)
+        logging.info("Time cost: {} v.s. {}".format(total_cost1,
+                        total_cost2))
 
         from mtorch.caffetorch import Scale
-        model = torch.nn.Sequential(
-            torch.nn.Conv2d(2, 4, (3,3), bias=False),
-            torch.nn.BatchNorm2d(4, affine=False),
-            Scale(4),
-            )
-        input = torch.randn(1, 2, 5, 5)
-        compare_models(input, model, MergeBatchNorm(model))
+        total_cost1, total_cost2 = 0, 0
+        for i in range(num_replica):
+            model = torch.nn.Sequential(
+                torch.nn.Conv2d(2, 4, (3,3), bias=False),
+                torch.nn.BatchNorm2d(4, affine=False),
+                Scale(4),
+                )
+            input = torch.randn(1, 2, 5, 5)
+            cost1, cost2 = compare_models(input, model)
+            total_cost1 += cost1
+            total_cost2 += cost2
+        total_cost1 /= float(num_replica)
+        total_cost2 /= float(num_replica)
+        logging.info("Time cost: {} v.s. {}".format(total_cost1,
+                        total_cost2))
 
 
 if __name__ == '__main__':
