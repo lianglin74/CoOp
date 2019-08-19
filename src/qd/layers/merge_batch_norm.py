@@ -32,7 +32,7 @@ def merge_bn_into_conv(model):
     num_leaf_modules = len(leaf_module_list)
     m_idx = 0
     while m_idx < num_leaf_modules:
-        module = leaf_module_list[m_idx]
+        _, module = leaf_module_list[m_idx]
         if isinstance(module, torch.nn.Conv2d) and m_idx + 1 < num_leaf_modules:
             next_layer_name, next_layer = leaf_module_list[m_idx + 1]
             old_w = module.weight.data.clone().detach()
@@ -53,7 +53,7 @@ def merge_bn_into_conv(model):
                         scale_layer_name, scale_layer = leaf_module_list[m_idx
                                 + 2]
                         scale = scale_layer.weight.data.clone().detach()
-                        bias = scale_layer.bias.data.clone.detach()
+                        bias = scale_layer.bias.data.clone().detach()
                         assert scale_layer_name not in to_be_absorbed
                         to_be_absorbed.add(scale_layer_name)
                         m_idx += 1
@@ -63,8 +63,8 @@ def merge_bn_into_conv(model):
                 invstd = scale / torch.Tensor.sqrt(var + eps)
 
                 if module.bias is None:
-                    module.register_parameter('bias',
-                            Parameter(torch.zeros([out_channel])))
+                    bias = torch.zeros([out_channel], device=scale.device)
+                    module.register_parameter('bias', Parameter(bias))
                 old_b = module.bias.data.clone().detach()
 
                 module.weight.data = old_w * invstd.view(out_channel, 1, 1, 1)
