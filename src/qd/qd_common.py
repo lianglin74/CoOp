@@ -2076,6 +2076,11 @@ def build_speed_tree(component_speeds):
 
 # ---------------------------------------------------------------------
 
+def dict_add(d, k, v):
+    if k not in d:
+        d[k] = v
+    else:
+        d[k] += v
 if __name__ == '__main__':
     init_logging()
     kwargs = parse_general_args()
