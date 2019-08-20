@@ -5444,6 +5444,10 @@ def inject_accuracy_one(full_expid):
         '*.predict.tsv')))
 
     all_report = glob.glob(op.join('output', full_expid, 'snapshot', '*.report'))
+    all_report.extend(glob.glob(op.join('output', full_expid, 'snapshot',
+        '*.BS1.cuda.predict.tsv.speed.yaml')))
+    all_report.extend(glob.glob(op.join('output', full_expid, 'snapshot',
+        '*.BS1.cpu.predict.tsv.speed.yaml')))
     for report_file in all_report:
         try:
             predict_file = find_predict_file(report_file, all_predict)
@@ -5457,12 +5461,12 @@ def inject_accuracy_one(full_expid):
         except:
             continue
         info = {'full_expid': full_expid,
-                'predict_file': op.basename(predict_file),
                 'report_file': op.basename(report_file),
                 'test_data': test_data,
                 'test_split': test_split,
                 'test_version': test_version,
                 }
+        predict_file = op.basename(predict_file)
         if 'coco_box' in report_file:
             acc = load_from_yaml_file(report_file)
         elif '.neg_aware_gmap.' in report_file:
@@ -5476,6 +5480,10 @@ def inject_accuracy_one(full_expid):
             acc = {key: acc['map']}
         elif '.top1.' in report_file:
             acc = load_from_yaml_file(report_file)
+        elif report_file.endswith('predict.tsv.speed.yaml'):
+            acc = load_from_yaml_file(report_file)['meters'][-1]
+            assert acc['name'] == ''
+            del acc['name']
         else:
             map_json_file = report_file + '.map.json'
             if op.isfile(map_json_file):
@@ -5488,6 +5496,7 @@ def inject_accuracy_one(full_expid):
                             acc[k] = x[k1][k2][k3]
             else:
                 continue
+        info['predict_file'] = predict_file
         for k in list(acc.keys()):
             curr = copy.deepcopy(info)
             curr['metric_name'] = k
@@ -5513,18 +5522,19 @@ def find_predict_file(report_file, all_predict):
             assert not found
             found = True
             result = p
-        if p.endswith('.predict'):
-            ps = p[: -len('.predict')]
-        elif p.endswith('.predict.tsv'):
+        if p.endswith('.predict.tsv'):
             ps = p[: -len('.predict.tsv')]
+        elif p.endswith('.predict'):
+            ps = p[: -len('.predict')]
         else:
             continue
         if report_file.startswith(ps):
             rs = report_file[len(ps):]
-            eval_keys = ['predict', 'coco_box', 'neg_aware_gmap', 'top1',
-                    'noNMSGt', 'noNMSDet', 'noExpandDet']
+            logging.info(rs)
+            eval_keys = ['predict', 'tsv', 'coco_box', 'neg_aware_gmap', 'top1',
+                    'noNMSGt', 'noNMSDet', 'noExpandDet', 'speed']
             p0 = ''.join(['(\.{})?'.format(k) for k in eval_keys])
-            pattern = '{}(\.v[0-9]*)?\.report'.format(p0)
+            pattern = '{}(\.v[0-9]*)?\.(report|yaml)'.format(p0)
             if re.match(pattern, rs):
                 assert not found
                 found = True

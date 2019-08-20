@@ -466,6 +466,9 @@ def only_inference_to_tsv(
         logging.info('ignore to run predict')
         return
     else:
+        if kwargs.get('test_mergebn'):
+            from qd.layers import MergeBatchNorm
+            model = MergeBatchNorm(model)
         model = ForwardPassTimeChecker(model)
         if kwargs.get('predict_extract'):
             predictions = extract_model_feature_iter(model, data_loader, device,
@@ -504,8 +507,11 @@ def only_inference_to_tsv(
         logging.info(str(model.meters))
         # note, we will not delete this cache file. since it is small, it
         # should be ok
-        write_to_yaml_file(model.get_time_info(),
-                cache_file + '.speed.yaml')
+        speed_yaml = cache_file + '.speed.yaml'
+        write_to_yaml_file(model.get_time_info(), speed_yaml)
+        from qd.qd_common import create_vis_net_file
+        create_vis_net_file(speed_yaml,
+                op.splitext(speed_yaml)[0] + '.vis.txt')
 
 def test(cfg, model, distributed, predict_files, label_id_to_label,
         **kwargs):
@@ -568,7 +574,15 @@ def test(cfg, model, distributed, predict_files, label_id_to_label,
                 for x in speed_cache_files:
                     from qd.qd_common import try_delete
                     try_delete(x)
+                vis_files = [op.splitext(c)[0] + '.vis.txt' for c in speed_cache_files]
+                merge_speed_vis(vis_files,
+                        op.splitext(merge_speed_info)[0] + '.vis.txt')
+
         synchronize()
+
+def merge_speed_vis(vis_files, out_file):
+    from qd.qd_common import ensure_copy_file
+    ensure_copy_file(vis_files[0], out_file)
 
 def merge_speed_info(speed_yamls, out_yaml):
     write_to_yaml_file([load_from_yaml_file(y) for y in speed_yamls
@@ -611,6 +625,9 @@ class MaskRCNNPipeline(ModelPipeline):
         elif 'dconv_' in self.net:
             cfg_file = op.join(maskrcnn_root, 'configs', 'dcn',
                     self.net + '.yaml')
+        elif self.net.endswith('_gn'):
+            cfg_file = op.join(maskrcnn_root, 'configs', 'gn_baselines',
+                    self.net + '.yaml')
         else:
             cfg_file = op.join(maskrcnn_root, 'configs', self.net + '.yaml')
         param = load_from_yaml_file(cfg_file)
@@ -622,7 +639,8 @@ class MaskRCNNPipeline(ModelPipeline):
         set_if_not_exist(self.kwargs, 'TEST', {})
         set_if_not_exist(self.kwargs, 'DATALOADER', {})
         set_if_not_exist(self.kwargs, 'MODEL', {})
-        assert 'DEVICE' not in self.kwargs['MODEL']
+        if 'DEVICE' in self.kwargs['MODEL'] and 'device' not in self.kwargs:
+            self.kwargs['device'] = self.kwargs['MODEL']['DEVICE']
         self.kwargs['MODEL']['DEVICE'] = self.device
         set_if_not_exist(self.kwargs['MODEL'], 'ROI_BOX_HEAD', {})
 

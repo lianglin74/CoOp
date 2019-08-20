@@ -260,6 +260,7 @@ class PhillyVC(object):
         # from log since philly_server.py will print nvidia-smi results
         self.query_with_gpu = False
         self.query_with_log = kwargs.get('with_log')
+        self.azure_blob_config_file = kwargs.get('azure_blob_config_file')
 
     @property
     def use_blob_as_input(self):
@@ -392,7 +393,8 @@ class PhillyVC(object):
         if not self.use_blob_as_input:
             self.upload_file(self.src_config_path, self.dest_config_folder)
         else:
-            c = create_cloud_storage('vig')
+            c = create_cloud_storage(
+                    config_file=self.azure_blob_config_file)
             c.az_upload2(self.src_config_path,
                     op.join(self.dest_config_folder,
                         op.basename(self.src_config_path)))
@@ -563,13 +565,13 @@ class PhillyVC(object):
             data["OneProcessPerContainer"] = False
             data["DynamicContainerSize"] = False
 
-        blob_account  = 'vig'
-        cloud_blob = create_cloud_storage(blob_account)
+        cloud_blob = create_cloud_storage(
+                config_file=self.azure_blob_config_file)
         blob_container = cloud_blob.container_name
         blob_key = cloud_blob.account_key
 
         data['volumes'] = {'blob': {'type': 'blobfuseVolume',
-            'storageAccount': blob_account,
+            'storageAccount': cloud_blob.account_name,
             'containerName': blob_container,
             'path': self.blob_mount_point,
             "options": [
@@ -581,7 +583,7 @@ class PhillyVC(object):
                 "--file-cache-timeout-in-seconds=1000000",
                 ]
             }}
-        data['credentials'] = {'storageAccounts': {blob_account: {
+        data['credentials'] = {'storageAccounts': {cloud_blob.account_name: {
             '_comments': 'redentials for accessing the storage account.',
             'key': blob_key,}}}
 

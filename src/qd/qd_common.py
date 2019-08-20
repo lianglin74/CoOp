@@ -2074,6 +2074,26 @@ def build_speed_tree(component_speeds):
         speed_trees_insert(roots, c)
     return roots
 
+def get_vis_str(component_speeds):
+    roots = build_speed_tree(component_speeds)
+    assert len(roots) == 1
+    root = roots[0]
+    for n in root.iter_search_nodes():
+        n.global_avg_in_ms = round(1000. * n.global_avg, 1)
+    for n in root.iter_search_nodes():
+        s = sum([c.global_avg for c in n.children])
+        n.unique_in_ms = round(1000. * (n.global_avg - s), 1)
+    return root.get_ascii(attributes=
+        ['name', 'global_avg_in_ms', 'unique_in_ms'])
+
+def create_vis_net_file(speed_yaml, vis_txt):
+    info = load_from_yaml_file(speed_yaml)
+    if type(info) is list:
+        info = info[0]
+    assert type(info) is dict
+    component_speeds = info['meters']
+    write_to_file(get_vis_str(component_speeds), vis_txt)
+
 # ---------------------------------------------------------------------
 
 def dict_add(d, k, v):

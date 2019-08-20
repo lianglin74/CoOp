@@ -1,7 +1,11 @@
 import torch
 import apex
+try:
+    from apex.parallel.optimized_sync_batchnorm import SyncBatchNorm as ApexSyncBN
+except:
+    from apex.parallel.sync_batchnorm import SyncBatchNorm as ApexSyncBN
 
-class ReshapeApexSyncBatchNorm(apex.parallel.optimized_sync_batchnorm.SyncBatchNorm):
+class ReshapeApexSyncBatchNorm(ApexSyncBN):
     def __init__(self, *args, **kwargs):
         super(ReshapeApexSyncBatchNorm, self).__init__(*args, **kwargs)
 

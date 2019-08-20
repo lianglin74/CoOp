@@ -77,16 +77,21 @@ def get_root_all_full_expid(full_expid_prefix, all_blob_name):
             all_blob_name if b.startswith(root))
     return root, all_full_expid
 
-def blob_download_all_qdoutput(prefix, c=None):
+def blob_download_all_qdoutput(prefix, c=None, out_folder='output',
+        latest_only=True):
+    # e.g. prefix = jianfw/work/qd_output/TaxVehicleV1_1_with_bb_e2e_faster_rcnn_R_50_FPN_1x_M_BS8_MaxIter20e_LR0.01
+    # out_folder = 'output'
     if c is None:
-        c = create_cloud_storage('vig')
+        c = 'vig'
+    c = create_cloud_storage(c)
     all_blob_name = list(c.list_blob_names(prefix))
     root, all_full_expid = get_root_all_full_expid(prefix, all_blob_name)
     for full_expid in all_full_expid:
         logging.info(full_expid)
         src_path = op.join(root, full_expid)
-        target_folder = op.join('output', full_expid)
-        c.blob_download_qdoutput(src_path, target_folder)
+        target_folder = op.join(out_folder, full_expid)
+        c.blob_download_qdoutput(src_path, target_folder,
+                latest_only=latest_only)
 
 def get_leaf_names(all_fname):
     # build the tree first
@@ -259,7 +264,7 @@ class CloudStorage(object):
         return self.block_blob_service.exists(
                 self.container_name, path)
 
-    def blob_download_qdoutput(self, src_path, target_folder):
+    def blob_download_qdoutput(self, src_path, target_folder, latest_only=True):
         def is_in_snapshot(b):
             return op.basename(op.dirname(b)) == 'snapshot'
         all_blob_name = list(self.list_blob_names(src_path))
@@ -277,7 +282,7 @@ class CloudStorage(object):
         need_download_blobs = []
         need_download_blobs.extend(not_in_snapshot_blobs)
         iters = [parse_iteration(f) for f in in_snapshot_blobs]
-        if len(iters) > 0:
+        if len(iters) > 0 and latest_only:
             max_iters = max(iters)
             need_download_blobs.extend([f for f, i in zip(in_snapshot_blobs, iters) if i ==
                     max_iters])

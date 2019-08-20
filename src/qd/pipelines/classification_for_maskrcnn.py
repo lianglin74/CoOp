@@ -34,6 +34,9 @@ def frozen_to_batch_norm2d(module):
 class BackboneToPredict(Module):
     def __init__(self, cfg, num_class):
         super(BackboneToPredict, self).__init__()
+
+        assert cfg.MODEL.BACKBONE.FREEZE_CONV_BODY_AT == 0
+
         self.body = resnet.ResNet(cfg)
         self.body, info = frozen_to_batch_norm2d(self.body)
         logging.info(pformat(info))
@@ -48,6 +51,8 @@ class BackboneToPredict(Module):
             if hasattr(m, 'weight'):
                 feature_size = len(m.weight)
                 break
+        # in torchvision's resnet model, there is no initialization for fc.
+        # Here, we do the same and not initialize it.
         self.fc = nn.Linear(feature_size, num_class)
 
     def forward(self, x):

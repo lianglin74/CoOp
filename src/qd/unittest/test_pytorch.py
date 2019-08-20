@@ -35,6 +35,18 @@ class TestQDPyTorch(unittest.TestCase):
 
         self.parity_check_resnet(config_file, net)
 
+    def test_x101_in_maskrcnn(self):
+        config_file = './src/maskrcnn-benchmark/configs/e2e_faster_rcnn_X_101_32x8d_FPN_1x_tbase.yaml'
+        net = 'resnext101_32x8d'
+
+        self.parity_check_resnet(config_file, net)
+
+    def test_r152_in_maskrcnn(self):
+        config_file = './src/maskrcnn-benchmark/configs/e2e_faster_rcnn_R_152_FPN_1x_tb.yaml'
+        net = 'resnet152'
+
+        self.parity_check_resnet(config_file, net)
+
     def parity_check_resnet(self, config_file, net):
         from qd.qd_pytorch import get_data_normalize
         import torchvision.transforms as transforms
@@ -57,6 +69,8 @@ class TestQDPyTorch(unittest.TestCase):
         from torchvision.models.resnet import model_urls
         model = models.__dict__[net](pretrained=True)
         model.eval()
+        model = model.double()
+        net_input = net_input.double()
         net_output = model(net_input)
         net_output = F.softmax(net_output, dim=1)
         logging.info(net_output.max())
@@ -79,7 +93,7 @@ class TestQDPyTorch(unittest.TestCase):
         from maskrcnn_benchmark.modeling.detector import build_detection_model
         mask_model = build_detection_model(cfg)
         mask_model.eval()
-        mask_net_input = mask_net_input[None, :]
+        mask_net_input = mask_net_input[None, :].double()
         import torch.nn as nn
         avgpool = nn.AdaptiveAvgPool2d((1, 1))
 
@@ -89,10 +103,10 @@ class TestQDPyTorch(unittest.TestCase):
         checkpointer.load(cfg.MODEL.WEIGHT,
                 model_only=True)
 
-        #outputs = mask_model.backbone.body(mask_net_input)
-        outputs = mask_model.backbone.body(net_input)
+        outputs = mask_model.backbone.body.double()(mask_net_input)
         diff = (mask_net_input - net_input).abs().sum()
-        s = (mask_net_input).abs().sum()
+        s = mask_net_input.abs().sum()
+        logging.info('input diff = {}'.format(diff / s))
         self.assertLess(diff / s, 0.01)
         x = outputs[-1]
         x = avgpool(x)

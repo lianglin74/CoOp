@@ -156,6 +156,8 @@ class YoloV2PtPipeline(ModelPipeline):
         param['use_treestructure'] = is_tree
         if is_tree:
             param['tree'] = dataset.get_tree_file()
+        if self.test_mergebn:
+            param['test_mergebn'] = self.test_mergebn
 
         if self.yolo_predict_session_param is not None:
             param.update(self.yolo_predict_session_param)

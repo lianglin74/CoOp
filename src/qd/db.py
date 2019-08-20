@@ -86,6 +86,9 @@ class AnnotationDB(object):
     def iter_phillyjob(self, **kwargs):
         return self._phillyjob.find(**kwargs)
 
+    def iter_general(self, table_name):
+        return self._qd['qd'][table_name].find().sort('create_time', -1)
+
     # acc related
     def insert_acc(self, **kwargs):
         self.add_meta_data(kwargs)

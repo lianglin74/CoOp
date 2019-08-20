@@ -719,6 +719,7 @@ class TorchTrain(object):
                 'cudnn_benchmark': False,
                 'use_hvd': False,
                 'device': 'cuda',
+                'test_mergebn': False,
                 }
 
         assert 'batch_size' not in kwargs, 'use effective_batch_size'
@@ -1136,6 +1137,8 @@ class TorchTrain(object):
         self.append_predict_param(cc)
         if self.test_max_iter is not None:
             # this is used for speed test
+            if self.test_mergebn:
+                cc.append('mergebn')
             cc.append('max_iter{}'.format(self.test_max_iter))
             # we explicitly log the batch size here so that we can make sure it
             # is 1 or batch processing
