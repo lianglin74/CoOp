@@ -268,7 +268,7 @@ class PhillyVC(object):
                 self.blob_mount_point)
 
     def get_cloud_storage(self):
-        return create_cloud_storage('vig')
+        return create_cloud_storage(config_file=self.azure_blob_config_file)
 
     def get_data_folder_in_blob(self):
         assert self.config_param['data_folder'].startswith(self.blob_mount_point)
