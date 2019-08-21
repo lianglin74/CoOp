@@ -1617,7 +1617,7 @@ def int_rect(rect, enlarge_factor=1.0, im_h=None, im_w=None):
         new_w = np.clip(new_w, 0, im_w - new_x)
         new_h = np.clip(new_h, 0, im_h - new_y)
 
-    return [new_x, new_y, new_x + new_w, new_y + new_h]
+    return list(map(int, [new_x, new_y, new_x + new_w, new_y + new_h]))
 
 def is_valid_rect(rect):
     return len(rect) == 4 and rect[0] < rect[2] and rect[1] < rect[3]
