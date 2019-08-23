@@ -9,7 +9,7 @@ from tqdm import tqdm
 import numpy as np
 import math
 import copy
-from video.getEventLabels import getVideoAndEventLabels
+from video.getEventLabels import getVideoAndEventLabels, labelConverter
 from sklearn.metrics import classification_report,confusion_matrix
 
 
@@ -245,7 +245,7 @@ def findShot(predict_file, frameRate=25.0):
                         print("Adding result: ", (max(startTime -
                                                       padding, 0.0), endTime + padding, className))
                         pred_results_angle.append(
-                            (max(startTime - padding, 0.0), endTime + padding, className))
+                            (max(startTime - padding, 0.0), endTime + padding, className, iouTime))
                         eventStart = False
                         timeSinceEventStart = 0
                     else:  # not a shot
@@ -404,6 +404,7 @@ def getShotStats(pred_results, true_results):
     print("true_results: ", true_results, lt)
 
     nonShotLabel = "nonShot"
+    shotLabel = "shot"
     y_pred = []
     y_true = []
 
@@ -412,6 +413,8 @@ def getShotStats(pred_results, true_results):
     allTimePoints = []
 
     tolerance = 2.0
+    correctLabel = False
+    treatingDunkAsShot = True
     
     while i < lp and j < lt:
         pRes = pred_results[i]
@@ -419,31 +422,35 @@ def getShotStats(pred_results, true_results):
         if tRes[0] < pRes[0]:
             allTimePoints.append(tRes)
             y_pred.append( nonShotLabel )
-            y_true.append( tRes[1] )
+            y_true.append( shotLabel if treatingDunkAsShot else tRes[1] )
             j += 1
         elif tRes[0] > pRes[1] + tolerance:
             allTimePoints.append(pRes)
-            y_pred.append( pRes[2] )
+            y_pred.append(  shotLabel if treatingDunkAsShot else pRes[2] )
             y_true.append( nonShotLabel )
             i += 1
         else:
             allTimePoints.append(tRes)            
             #assert(pRes[2] == tRes[1])
-            y_pred.append( pRes[2] )
-            y_true.append( tRes[1] )
+            y_pred.append(  shotLabel if treatingDunkAsShot else pRes[2] )
+            y_true.append(  shotLabel if treatingDunkAsShot else tRes[1] )
+
+            if correctLabel:
+                print("predict, label: ", pRes[3], tRes[0])
+
             i += 1
             j += 1
     
     while i < lp:
         allTimePoints.append(pRes)
-        y_pred.append( pRes[2] )
+        y_pred.append( shotLabel if treatingDunkAsShot else pRes[2] )
         y_true.append( nonShotLabel )
         i += 1
 
     while j < lt:
         allTimePoints.append(tRes)        
         y_pred.append( nonShotLabel )
-        y_true.append( tRes[1] )
+        y_true.append( shotLabel if treatingDunkAsShot else tRes[1] )
         j += 1
 
     return y_pred, y_true, allTimePoints
@@ -673,7 +680,21 @@ def calculateF1andWriteResults_1():
 
         writeToTSV(predict_file, pred_results)
 
-def calculateF1andWriteRes(dir, odFileList, eventLabelJsonFile):
+def getEventLabelsFromText(labelFile):
+    listOfEvents = read_file_to_list(labelFile)
+    
+    labels = []
+    l = int(len(listOfEvents) / 2) 
+    for i in range(l):
+        labels.append( (float(listOfEvents[i * 2 + 1]), labelConverter(listOfEvents[i * 2])))
+            
+    return labels
+
+def test_getEventLabelsFromText():
+    labelFile = '/mnt/gpu02_raid/data/video/CBA/CBA_demo_v3/shotDunkLabels/CBA2.GTevents.txt'
+    print(getEventLabelsFromText(labelFile))
+
+def calculateF1andWriteRes(dir, odFileList, eventLabelJsonFile, textLabels = False, textLabelFolder = None):
     odFileList = read_file_to_list(dir + odFileList)
     #predict_file = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_chop/TSV/head350_prediction_1551538896210_sc99_01_q1.tsv"
     #predict_file = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_chop/prediction_1551538896210_sc99_01_q1.tsv"
@@ -690,8 +711,12 @@ def calculateF1andWriteRes(dir, odFileList, eventLabelJsonFile):
         pred_results = findShot(predict_file)
 
         checkResultsOverlap(pred_results)
-
-        ret, true_results = getVideoAndEventLabels(eventLabelJsonFile, videoFileName)
+        
+        ret = True
+        if textLabels:
+            true_results = getEventLabelsFromText(textLabelFolder + odFileName.replace('tsv', 'GTevents.txt'))
+        else:
+            ret, true_results = getVideoAndEventLabels(eventLabelJsonFile, videoFileName)
         if ret: 
             allReports += "--Report for file: " + videoFileName + "\n"
 
@@ -726,9 +751,17 @@ def getTestingResults():
     eventLabelJsonFile = '/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/test/extracted/label/Project_all.aucvl'
     calculateF1andWriteRes(dir, odFileList, eventLabelJsonFile)
 
+def getMiguTestingResults():
+    dir = "/mnt/gpu02_raid/data/video/CBA/CBA_demo_v3/"
+    odFileList = "odFilelist.txt"
+    textFileFolder = '/mnt/gpu02_raid/data/video/CBA/CBA_demo_v3/shotDunkLabels/'
+    calculateF1andWriteRes(dir, odFileList, '', textLabels = True, textLabelFolder = textFileFolder)
+
 if __name__ == '__main__':
     #main()
     #test_getShotStats()
     #getValidationResults()
-    getTestingResults()
+    #getTestingResults()
     # testGetDegreeOfTwoPoints()
+    #test_getEventLabelsFromText()
+    getMiguTestingResults()
