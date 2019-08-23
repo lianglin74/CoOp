@@ -12,13 +12,45 @@ import torch.utils.data.distributed
 from torch.utils.data.dataloader import default_collate
 
 from ..lib.dataset import CropClassTSVDatasetYaml, TSVSplitImageBoxCrop
+from ..lib.transformer import ResizeImageWithPadding, ConvertBGR2RGB
 
-class ConvertBGR2RGB(object):
-    def __call__(self, src_bgr_image):
-        src_B, src_G, src_R = src_bgr_image.getchannel('R'), src_bgr_image.getchannel('G'), src_bgr_image.getchannel('B')
-        rgb_image = Image.merge('RGB', [src_R, src_G, src_B])
-
-        return rgb_image
+def make_data_loader(dataset, stage, distributed, batch_size, max_iter=None,
+            shuffle=True, start_iter=0, num_workers=0):
+    if distributed:
+        from maskrcnn_benchmark.data import samplers
+        sampler = samplers.DistributedSampler(dataset,
+                shuffle=shuffle,
+                length_divisible=batch_size)
+    else:
+        if shuffle:
+            sampler = torch.utils.data.sampler.RandomSampler(
+                    dataset)
+        else:
+            sampler = torch.utils.data.sampler.SequentialSampler(dataset)
+    if stage == 'train':
+        batch_sampler = torch.utils.data.sampler.BatchSampler(
+            sampler, batch_size, drop_last=False
+        )
+        from maskrcnn_benchmark.data import samplers
+        batch_sampler = samplers.IterationBasedBatchSampler(
+            batch_sampler, max_iter, start_iter
+        )
+        loader = torch.utils.data.DataLoader(
+            dataset,
+            num_workers=num_workers,
+            pin_memory=True,
+            batch_sampler=batch_sampler,
+            )
+    else:
+        loader = torch.utils.data.DataLoader(
+            dataset,
+            sampler=sampler,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            pin_memory=True,
+            )
+    return loader
+>>>>>>> Stashed changes
 
 def get_train_data_loader(args, mpi_size):
     train_dataset = _get_dataset("train", args)
@@ -146,6 +178,89 @@ def _get_dataset(phase, args):
     #         img, label = dataset[idx]
     #         save_image(img, os.path.join(imgdir, "{}_{}.jpg".format(label[0], idx)))
     return dataset
+
+def get_transform(stage, data_aug=0, test_data_aug=0):
+    rgb_normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                     std=[0.229, 0.224, 0.225])
+    crop_size = 224
+    target_size = 256
+
+    if stage == "train":
+        if data_aug == 0:
+            transform = transforms.Compose([
+                        transforms.ToPILImage(),
+                        transforms.RandomResizedCrop(crop_size, scale=(0.25,1), ratio=(2./3., 3./2.)),
+                        transforms.ColorJitter(brightness=0.5, contrast=0, saturation=0.5, hue=0.1),
+                        transforms.ToTensor(),
+                        rgb_normalize,
+                    ])
+        elif data_aug == 1:
+            transform = transforms.Compose([
+                        transforms.ToPILImage(),
+                        transforms.RandomResizedCrop(crop_size, scale=(0.7,1),
+                            ratio=(0.5, 1.5)),
+                        transforms.ColorJitter(brightness=0.3, contrast=0.2, saturation=0.1, hue=0.1),
+                        transforms.ToTensor(),
+                        rgb_normalize,
+                    ])
+        elif data_aug == 2:
+            transform = transforms.Compose([
+                        transforms.ToPILImage(),
+                        transforms.RandomAffine(30),
+                        transforms.RandomResizedCrop(crop_size, scale=(0.7,1),
+                            ratio=(0.5, 1.5)),
+                        transforms.ColorJitter(brightness=0.3, contrast=0.2, saturation=0.1, hue=0.1),
+                        transforms.ToTensor(),
+                        rgb_normalize,
+                    ])
+        elif data_aug == 3:
+            transform = transforms.Compose([
+                        transforms.ToPILImage(),
+                        transforms.RandomResizedCrop(crop_size, scale=(0.7,1),
+                            ratio=(0.5, 1.5)),
+                        #transforms.ColorJitter(brightness=0.3, contrast=0.2, saturation=0.1, hue=0.1),
+                        transforms.ToTensor(),
+                        rgb_normalize,
+                    ])
+        elif data_aug == 4:
+            transform = transforms.Compose([
+                        transforms.ToPILImage(),
+                        transforms.RandomResizedCrop(crop_size, scale=(0.7,1),
+                            ratio=(0.5, 1.5)),
+                        transforms.ColorJitter(brightness=1, contrast=1,
+                            saturation=1, hue=0.5),
+                        transforms.ToTensor(),
+                        rgb_normalize,
+                    ])
+        else:
+            raise ValueError('cannot recognize data aug: {}'.format(data_aug))
+    else:
+        assert stage == "test"
+        if test_data_aug == 0:
+            transform = transforms.Compose([
+                        transforms.ToPILImage(),
+                        transforms.Resize(target_size),
+                        transforms.CenterCrop(crop_size),
+                        transforms.ToTensor(),
+                        rgb_normalize,
+                    ])
+        elif test_data_aug == 1:
+            transform = transforms.Compose([
+                        transforms.ToPILImage(),
+                        ResizeImageWithPadding(crop_size, padding_value=0),
+                        transforms.ToTensor(),
+                        rgb_normalize,
+                    ])
+        elif test_data_aug == 2:
+            transform = transforms.Compose([
+                        transforms.ToPILImage(),
+                        ResizeImageWithPadding(crop_size, padding_value=255),
+                        transforms.ToTensor(),
+                        rgb_normalize,
+                    ])
+        else:
+            raise ValueError('cannot recognize test data aug: {}'.format(test_data_aug))
+    return transform
 
 def get_pt_transform(phase, args):
     rgb_normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],

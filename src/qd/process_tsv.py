@@ -1701,7 +1701,7 @@ def populate_dataset_details(data, check_image_details=False,
 
     # populate the height and with
     if check_image_details:
-        populate_dataset_hw(dataset, splits)
+        populate_dataset_hw(data, splits)
 
     for split in splits:
         full_tsv = dataset.get_data(split)
