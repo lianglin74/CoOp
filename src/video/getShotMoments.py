@@ -413,8 +413,9 @@ def getShotStats(pred_results, true_results):
     allTimePoints = []
 
     tolerance = 2.0
-    correctLabel = False
-    treatingDunkAsShot = True
+    correctLabel = True
+    treatingDunkAsShot = False
+    labelCorrectionDict = {}
     
     while i < lp and j < lt:
         pRes = pred_results[i]
@@ -437,6 +438,10 @@ def getShotStats(pred_results, true_results):
 
             if correctLabel:
                 print("predict, label: ", pRes[3], tRes[0])
+                if (abs(tRes[0] - pRes[3]) > 2.5):
+                    print("Label Correction failed! label, iouTime", tRes[0], pRes[3])
+                else:
+                    labelCorrectionDict[tRes[0]] = pRes[3]
 
             i += 1
             j += 1
@@ -453,7 +458,7 @@ def getShotStats(pred_results, true_results):
         y_true.append( shotLabel if treatingDunkAsShot else tRes[1] )
         j += 1
 
-    return y_pred, y_true, allTimePoints
+    return y_pred, y_true, allTimePoints, labelCorrectionDict
 
 def f1Report(y_pred, y_true, printDetails = False, allTimePoints = None):
     if printDetails:
@@ -474,7 +479,7 @@ def test_getShotStats():
     true_results = [(13.922896, 'shot'), (36.051405, 'shot'), (55.823736, 'shot'), (120.206053, 'shot'), (151.343382, 'shot'), (158.211654, 'shot'), (186.743713, 'shot'), (328.851485, 'shot'), (344.177011, 'shot'), (350.888363, 'shot'), (386.284587, 'dunk/layup'), (443.872138, 'shot'), (469.697181, 'shot'), (479.717574, 'shot'), (526.101491, 'shot'), (586.654381, 'shot')]
     true_results = [ (v[0], 'shot') for v in true_results]    
 
-    y_pred, y_true, allTimePoints = getShotStats(pred_results, true_results)
+    y_pred, y_true, allTimePoints, _ = getShotStats(pred_results, true_results)
     f1Report(y_pred, y_true, True, allTimePoints)
     #expected F1 score:
     #precision:  0.5882352941176471
@@ -703,6 +708,8 @@ def calculateF1andWriteRes(dir, odFileList, eventLabelJsonFile, textLabels = Fal
     overallTrue = []
     allReports = ""
 
+    allCorrectLabels = {}
+
     for odFileName in odFileList:        
         predict_file = dir + odFileName
         videoFileName = odFileName.replace("tsv", "mp4")
@@ -723,7 +730,9 @@ def calculateF1andWriteRes(dir, odFileList, eventLabelJsonFile, textLabels = Fal
             print("----calculate F1 for file: ", predict_file)
             print("True_results:", true_results)
 
-            y_pred, y_true, _ = getShotStats(pred_results, true_results)
+            y_pred, y_true, _, correctLabelsDict = getShotStats(pred_results, true_results)
+
+            allCorrectLabels[videoFileName] = correctLabelsDict
 
             overallPred.extend(y_pred)
             overallTrue.extend(y_true)
@@ -738,6 +747,7 @@ def calculateF1andWriteRes(dir, odFileList, eventLabelJsonFile, textLabels = Fal
     print("====F1 report for all the data: ")
     f1Report(overallPred, overallTrue)
     print(allReports)
+    print(allCorrectLabels)
 
 def getValidationResults():
     dir = "/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/validation/extracted/"    
@@ -761,7 +771,7 @@ if __name__ == '__main__':
     #main()
     #test_getShotStats()
     #getValidationResults()
-    #getTestingResults()
+    getTestingResults()
     # testGetDegreeOfTwoPoints()
     #test_getEventLabelsFromText()
-    getMiguTestingResults()
+    #getMiguTestingResults()
