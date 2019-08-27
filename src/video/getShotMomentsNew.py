@@ -5,7 +5,8 @@ from qd.process_tsv import onebb_in_list_of_bb
 from qd.tsv_io import tsv_reader, tsv_writer
 from qd.qd_common import calculate_iou
 
-from video.getShotMoments import 
+from video.getShotMoments import f1Report,getEventLabelsFromText
+from video.getEventLabels import getVideoAndEventLabels, labelConverter
 
 from tqdm import tqdm
 import numpy as np
@@ -13,14 +14,18 @@ import math
 import copy
 import os.path
 
-
+def setDebug(frame): 
+    return frame > 2975 and frame < 3025
+            
 class Trajectory(object):
     def __init__(self, frameRate, debug):
         # parameter
+        self.highRecall = True
         self.iouLowThresh = 0.01
-        self.iouHighThresh = 0.60
+        self.iouHighThresh = 0.55
         self.angleRimToBallThresh = 45.0
         self.ballAboveRimThresh = 0.0
+        self.eventPadding = 1.0
 
         self.iouTime = -1
         self.frameRate = frameRate
@@ -33,11 +38,18 @@ class Trajectory(object):
         self.frameTraj.append(frame)
         # calculate IOU
         if objectExists(ballRects) and objectExists(rimRects):
-            iou = maxIouOnebb_in_list_of_bb(ballRects[0], rimRects)
+            iou = maxIOAOnebb_in_list_of_bb(ballRects[0], rimRects)
         else:
             iou = 0.0
 
         self.iouTraj.append(iou)
+
+        self.debug = setDebug(frame)
+
+        if self.debug:
+            print("Frame, iou, ballRects, rimRects: ", frame, iou, ballRects, rimRects)
+
+        return iou
 
     def analyze(self):
         # filtering wrong object detection
@@ -55,19 +67,31 @@ class Trajectory(object):
         maxIouIndex, maxIouValue = maxIndexVal(self.iouTraj)
         self.iouTime = float(self.frameTraj[maxIouIndex]) / self.frameRate
 
+        # add padding time
+        # case WrongBasketball_1:
+        endTime = max(endTime, self.iouTime + self.eventPadding)
+
+        # to avoid small period (not good for demo show), adjust the starting time
+        startTime = min(startTime, self.iouTime - self.eventPadding)
+        startTime = max(0, startTime)
+
         if maxIouValue > self.iouHighThresh:
             shot = True
             reason = 'highIou'
         elif maxIouValue > self.iouLowThresh:
             # check the necessary condition of shot: ball is lower than rim and within a cone
             if self.necessaryCondition(maxIouIndex):
-                if self.extraConditions(maxIouIndex):
+                if self.highRecall:                
                     shot = True
-                    reason = 'extraCond'
+                    reason = 'HighRecall'
+                else:
+                    if self.extraConditions(maxIouIndex):
+                        shot = True
+                        reason = 'extraCond'
 
-        return shot, startTime, endTime, eventType, reason
+        return shot, startTime, endTime, eventType, self.iouTime, reason
 
-    def necessaryCondition(self, maxIouIndex):
+    def extraCondition(self, maxIouIndex):
         l = len(self.ballTraj)
 
         ballIndex = self.findFirstBallPositionLowerThanRim(maxIouIndex)
@@ -84,7 +108,7 @@ class Trajectory(object):
             else:
                 return False
 
-    def extraConditions(self, maxIouIndex):
+    def necessaryCondition(self, maxIouIndex):
         return True
 
     def findFirstBallPositionLowerThanRim(self, maxIouIndex):
@@ -111,6 +135,34 @@ class Trajectory(object):
         else:
             return False
 
+    def predictBallRects(self, debug=0):
+        prevBallObjs = self.ballTraj
+        l = len(prevBallObjs)
+        if l < 2 or not objectExists(prevBallObjs[l-1]) or not objectExists(prevBallObjs[l-2]):
+            return []
+
+        widthOfBall = getWidthOfObject(prevBallObjs[l-1][0])
+        heightOfBall = getHeightOfObject(prevBallObjs[l-1][0])
+        if debug:
+            print('widthOfBall: ', widthOfBall)
+            print('heightOfBall: ', heightOfBall)
+
+        x1, y1 = getCenterOfObject(prevBallObjs[l-2][0])
+        x2, y2 = getCenterOfObject(prevBallObjs[l-1][0])
+
+        x = 2 * x2 - x1
+        y = 2 * y2 - y1
+
+        dummyBallObj = copy.deepcopy(prevBallObjs[l-1][0])
+        dummyBallObj['rect'][0] = x - (widthOfBall + 1.0) / 2
+        dummyBallObj['rect'][1] = y - (heightOfBall + 1.0) / 2
+        dummyBallObj['rect'][2] = x + (widthOfBall + 1.0) / 2
+        dummyBallObj['rect'][3] = y + (heightOfBall + 1.0) / 2
+
+        if debug:
+            print('dummyBallObj: ', dummyBallObj)
+
+        return [dummyBallObj]
 
 def maxIndexVal(values):
     max_index, max_value = max(enumerate(values), key=lambda p: p[1])
@@ -136,7 +188,7 @@ class EventDetector(object):
             exit()
 
         #self.eventResults = []
-        self.debug = True
+        self.debug = False
         self.imageCnt = 0
 
         self.frameRate = getFrameRate(videoFile)
@@ -159,8 +211,7 @@ class EventDetector(object):
         for row in tqdm(tsv_reader(self.odTSVFile)):
             self.imageCnt += 1
 
-            if (self.imageCnt > 642 and self.imageCnt < 692):
-                self.debug = True
+            self.debug = setDebug(self.imageCnt)
 
             if self.debug:
                 print("image: ", self.imageCnt)
@@ -176,6 +227,12 @@ class EventDetector(object):
             # Add missing rim or backboard always
             rimRects, backboardRects = self.updateRimBackboardRects(
                 rimRects, backboardRects, prevRects)
+
+            # Add missing ball: for case: BallNotDetected_1:
+            if not objectExists(ballRects):
+                #print("Before adding ball rects:", ballRects)
+                ballRects = trajectory.predictBallRects()
+                #print("After adding ball rects:", ballRects)
 
             # Get the rim closest to ball
             rimRects = self.getClosestRimRects(ballRects, rimRects)
@@ -204,16 +261,16 @@ class EventDetector(object):
             #   Analyze the trajectory.
             #   Add the results if a shot is found.
             if eventStarted:
-                trajectory.add(ballRects, rimRects, self.imageCnt)
-
+                iou = trajectory.add(ballRects, rimRects, self.imageCnt)
+                
                 eventEnded = self.checkWhetherEventEnded(ballRects, rimRects)
                 if (eventEnded):
                     eventStarted = False
-                    shot, startTime, endTime, eventType, reason = trajectory.analyze()
+                    shot, startTime, endTime, eventType, iotTime, reason = trajectory.analyze()
                     if shot:
                         # update results
                         eventResults.append(
-                            (startTime, endTime, eventType, reason))
+                            (startTime, endTime, eventType, iotTime, reason))
                     # else: #doing nothing
                     trajectory.clear()
                 # else: #event going on, doing nothing
@@ -321,33 +378,26 @@ def objectExists(objRectList):
     return len(objRectList) > 0
 
 
-def predictBallRects(prevBallObjs, debug=0):
-    l = len(prevBallObjs)
-    if l < 2:
-        return None
+# Given two rectangles, rect0 is smaller. Check the ratio of intersection of rect0 and rect1 to area of rect0
+def calculateIOA(rect0, rect1):
+    '''
+    x0, y1, x2, y3
+    '''
+    w = min(rect0[2], rect1[2]) - max(rect0[0], rect1[0])
+    if w < 0:
+        return 0
+    h = min(rect0[3], rect1[3]) - max(rect0[1], rect1[1])
+    if h < 0:
+        return 0
+    intersection = w * h
+    
+    #a1 = (rect1[2] - rect1[0]) * (rect1[3] - rect1[1])
+    a0 = (rect0[2] - rect0[0]) * (rect0[3] - rect0[1])
 
-    widthOfBall = getWidthOfObject(prevBallObjs[l-1])
-    heightOfBall = getHeightOfObject(prevBallObjs[l-1])
-    if debug:
-        print('widthOfBall: ', widthOfBall)
-        print('heightOfBall: ', heightOfBall)
-
-    x1, y1 = getCenterOfObject(prevBallObjs[l-2])
-    x2, y2 = getCenterOfObject(prevBallObjs[l-1])
-
-    x = 2 * x2 - x1
-    y = 2 * y2 - y1
-
-    dummyBallObj = copy.deepcopy(prevBallObjs[l-1])
-    dummyBallObj['rect'][0] = x - (widthOfBall + 1.0) / 2
-    dummyBallObj['rect'][1] = y - (heightOfBall + 1.0) / 2
-    dummyBallObj['rect'][2] = x + (widthOfBall + 1.0) / 2
-    dummyBallObj['rect'][3] = y + (heightOfBall + 1.0) / 2
-
-    if debug:
-        print('dummyBallObj: ', dummyBallObj)
-
-    return dummyBallObj
+    # a0 is not zero
+    assert (a0);
+    
+    return intersection / a0
 
 
 def getPersonHoldingBall_loose(rimRect, ballRect, rects, debug):
@@ -402,6 +452,7 @@ def checkResultsOverlap(pred_results):
 
         if (v1[1] > v2[0] + padding):
             print("Found overlap pairs: ", v1, v2)
+            exit()
         else:
             newResults.append(v1)
 
@@ -413,6 +464,7 @@ def checkResultsOverlap(pred_results):
         v2 = pred_results[i]
         if (v1[1] > v2[0] + padding):
             print("Found overlap pairs: ", v1, v2)
+            exit()
         else:
             newResults.append(v2)
 
@@ -504,6 +556,10 @@ def getDistanceOfTwoPoints(p1, p2):
 def maxIouOnebb_in_list_of_bb(bb, bbs):
     return max([calculate_iou(b['rect'], bb['rect']) for b in bbs])
 
+# bb is supposed smaller than b in bbs. 
+def maxIOAOnebb_in_list_of_bb(bb, bbs):
+    return max([calculateIOA(bb['rect'], b['rect']) for b in bbs])
+
 # from p1 pointing to p2. Good to use
 
 
@@ -593,14 +649,78 @@ def read_file_to_list(file_name):
     return res_lists
 
 
-def getShotAPI(videoFileName, predict_file):
+''' def getShotAPI(videoFileName, predict_file):
     frameRate = getFrameRate(videoFileName)
     pred_results = findShot(predict_file, frameRate)
 
     writeToTSV(predict_file, pred_results)
 
-    return pred_results
+    return pred_results '''
 
+def getShotStats(pred_results, true_results):
+    #pred_results: [(s1, e1, class1), (s2, e2, class2), ...]
+    #true_results: [(t1, class1), (t2, class2)]
+    lp = len(pred_results)
+    lt = len(true_results)
+    print("pred_results: ", pred_results, lp)
+    print("true_results: ", true_results, lt)
+
+    nonShotLabel = "nonShot"
+    shotLabel = "shot"
+    y_pred = []
+    y_true = []
+
+    i = 0
+    j = 0
+    allTimePoints = []
+
+    tolerance = 0.5
+    correctLabel = False
+    treatingDunkAsShot = True
+    labelCorrectionDict = {}
+    
+    while i < lp and j < lt:
+        pRes = pred_results[i]
+        tRes = true_results[j]
+        if tRes[0] < pRes[0]:
+            allTimePoints.append(tRes)
+            y_pred.append( nonShotLabel )
+            y_true.append( shotLabel if treatingDunkAsShot else tRes[1] )
+            j += 1
+        elif tRes[0] > pRes[1] + tolerance:
+            allTimePoints.append(pRes)
+            y_pred.append(  shotLabel if treatingDunkAsShot else pRes[2] )
+            y_true.append( nonShotLabel )
+            i += 1
+        else:
+            allTimePoints.append(tRes)            
+            #assert(pRes[2] == tRes[1])
+            y_pred.append(  shotLabel if treatingDunkAsShot else pRes[2] )
+            y_true.append(  shotLabel if treatingDunkAsShot else tRes[1] )
+
+            if correctLabel:
+                print("predict, label: ", pRes[3], tRes[0])
+                if (abs(tRes[0] - pRes[3]) > 2.5):
+                    print("Label Correction failed! label, iouTime", tRes[0], pRes[3])
+                else:
+                    labelCorrectionDict[tRes[0]] = pRes[3]
+
+            i += 1
+            j += 1
+    
+    while i < lp:
+        allTimePoints.append(pRes)
+        y_pred.append( shotLabel if treatingDunkAsShot else pRes[2] )
+        y_true.append( nonShotLabel )
+        i += 1
+
+    while j < lt:
+        allTimePoints.append(tRes)        
+        y_pred.append( nonShotLabel )
+        y_true.append( shotLabel if treatingDunkAsShot else tRes[1] )
+        j += 1
+
+    return y_pred, y_true, allTimePoints, labelCorrectionDict
 
 def main():
     dir = "/mnt/gpu02_raid/data/video/CBA/CBA_demo_v2/"
@@ -654,7 +774,84 @@ def main():
 
         writeToTSV(predict_file, pred_results)
 
+def calculateF1andWriteRes(dir, odFileList, eventLabelJsonFile, textLabels = False, textLabelFolder = None):
+    odFileList = read_file_to_list(dir + odFileList)
+    #predict_file = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_chop/TSV/head350_prediction_1551538896210_sc99_01_q1.tsv"
+    #predict_file = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_chop/prediction_1551538896210_sc99_01_q1.tsv"
+
+    overallPred = []
+    overallTrue = []
+    allReports = ""
+
+    allCorrectLabels = {}
+
+    for odFileName in odFileList:        
+        predict_file = dir + odFileName
+        videoFileName = odFileName.replace("tsv", "mp4")
+
+        print("----Processing file: ", predict_file)
+        eventDetector = EventDetector(predict_file, dir + videoFileName)
+        pred_results = eventDetector.findEvent()
+        #pred_results = findShot(predict_file)
+
+        checkResultsOverlap(pred_results)
+        
+        ret = True
+        if textLabels:
+            true_results = getEventLabelsFromText(textLabelFolder + odFileName.replace('tsv', 'GTevents.txt'))
+        else:
+            ret, true_results = getVideoAndEventLabels(eventLabelJsonFile, videoFileName)
+        if ret: 
+            allReports += "--Report for file: " + videoFileName + "\n"
+
+            print("----calculate F1 for file: ", predict_file)            
+            #print("True_results:", true_results)
+
+            y_pred, y_true, _, correctLabelsDict = getShotStats(pred_results, true_results)
+
+            allCorrectLabels[videoFileName] = correctLabelsDict
+
+            overallPred.extend(y_pred)
+            overallTrue.extend(y_true)
+
+            allReports += f1Report(y_pred, y_true)
+        else:
+            print("!! cannot find label for video file: ", videoFileName)
+            exit()
+
+        # write events
+        writeToTSV(predict_file, pred_results)
+        #writeToTSV(predict_file, true_results, True)
+
+    print("====F1 report for all the data: ")
+    f1Report(overallPred, overallTrue)
+    print(allReports)
+    print(allCorrectLabels)
+
+def getValidationResults():
+    dir = "/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/validation/extracted/"    
+    odFileList = "odFilelist.txt"
+    eventLabelJsonFile = '/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/test/extracted/label/Project_all_corrected_manual.aucvl'
+    calculateF1andWriteRes(dir, odFileList, eventLabelJsonFile)
+
+def getTestingResults():
+    dir = "/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/test/extracted/"    
+    odFileList = "odFilelist.txt"
+    eventLabelJsonFile = '/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/test/extracted/label/Project_all_corrected_manual.aucvl'
+    calculateF1andWriteRes(dir, odFileList, eventLabelJsonFile)
+
+def getMiguTestingResults():
+    dir = "/mnt/gpu02_raid/data/video/CBA/CBA_demo_v3/"
+    odFileList = "odFilelist.txt"
+    textFileFolder = '/mnt/gpu02_raid/data/video/CBA/CBA_demo_v3/shotDunkLabels/'
+    calculateF1andWriteRes(dir, odFileList, '', textLabels = True, textLabelFolder = textFileFolder)
+
 
 if __name__ == '__main__':
-    main()
-    # test_getAngleOfTwoPoints()
+    #main()
+    #test_getShotStats()
+    getValidationResults()
+    #getTestingResults()
+    # testGetDegreeOfTwoPoints()
+    #test_getEventLabelsFromText()
+    #getMiguTestingResults()
