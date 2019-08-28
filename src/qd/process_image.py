@@ -215,15 +215,6 @@ def load_image(file_name):
 
 def show_image(im):
     show_images([im], 1, 1)
-    #name = 'image'
-    ##cv2.namedWindow(name, cv2.WINDOW_NORMAL)
-    #cv2.namedWindow("image", cv2.WND_PROP_FULLSCREEN)
-    #cv2.setWindowProperty("image",cv2.WND_PROP_FULLSCREEN,1)
-    #cv2.imshow(name, im)
-    #cv2.waitKey(0)
-    #cv2.destroyAllWindows()
-    #for i in range(1, 5):
-        #cv2.waitKey(1)
 
 def show_images(all_image, num_rows, num_cols):
     plt.figure(1)

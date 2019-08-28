@@ -100,6 +100,65 @@ def is_negative_uhrs_verified(r):
     y, n = uhrs.get('1', 0), uhrs.get('2', 0)
     return n > y
 
+def find_float_tolorance_unequal(d1, d2):
+    # return a list of string. Each string means a path where the value is
+    # different
+    from past.builtins import basestring
+    if all(isinstance(x, basestring) for x in [d1, d2]) or \
+            all(type(x) is bool for x in [d1, d2]):
+        if d1 != d2:
+            return []
+        else:
+            return ['0']
+    if type(d1) in [int, float] and type(d2) in [int, float]:
+        equal = abs(d1 - d2) <= 0.00001 * abs(d1)
+        if equal:
+            return []
+        else:
+            return ['0']
+    if type(d1) != type(d2):
+        return ['0']
+    if type(d1) in [dict, OrderedDict]:
+        if len(d1) != len(d2):
+            return ['0']
+        path_d1 = dict_get_all_path(d1, with_type=True)
+        result = []
+        for p in path_d1:
+            v1 = dict_get_path_value(d1, p, with_type=True)
+            if not dict_has_path(d2, p, with_type=True):
+                result.append(p)
+            else:
+                v2 = dict_get_path_value(d2, p, with_type=True)
+                curr_result = find_float_tolorance_unequal(v1, v2)
+                for r in curr_result:
+                    result.append(p + '$' + r)
+        return result
+    elif type(d1) in [tuple, list]:
+        if len(d1) != len(d2):
+            return ['-1']
+        result = []
+        for i, (x1, x2) in enumerate(zip(d1, d2)):
+            curr_result = find_float_tolorance_unequal(x1, x2)
+            for r in curr_result:
+                result.append('{}${}'.format(i, r))
+        return result
+    else:
+        import torch
+        if type(d1) is torch.Tensor:
+            diff = (d1 - d2).abs().sum()
+            s = d1.abs().sum()
+            if float(s) < 1e-5:
+                equal = diff < 1e-5
+            else:
+                equal = float(diff / s) < 1e-5
+            if equal:
+                return []
+            else:
+                import ipdb;ipdb.set_trace(context=15)
+                return ['0']
+        else:
+            raise Exception('unknown type')
+
 def float_tolorance_equal(d1, d2):
     from past.builtins import basestring
     if isinstance(d1, basestring) and isinstance(d2, basestring):
@@ -108,7 +167,7 @@ def float_tolorance_equal(d1, d2):
         return abs(d1 - d2) <= 0.00001 * abs(d1)
     if type(d1) != type(d2):
         return False
-    if type(d1) is dict:
+    if type(d1) in [dict, OrderedDict]:
         if len(d1) != len(d2):
             return False
         for k in d1:
@@ -126,7 +185,16 @@ def float_tolorance_equal(d1, d2):
                 return False
         return True
     else:
-        raise Exception('unknown type')
+        import torch
+        if type(d1) is torch.Tensor:
+            diff = (d1 - d2).abs().sum()
+            s = d1.abs().sum()
+            if s < 1e-5:
+                return diff < 1e-5
+            else:
+                return diff / s < 1e-5
+        else:
+            raise Exception('unknown type')
 
 def case_incensitive_overlap(all_terms):
     all_lower_to_term = [{t.lower(): t for t in terms} for terms in all_terms]
@@ -608,13 +676,21 @@ def get_mpi_local_size():
     return int(os.environ.get('OMPI_COMM_WORLD_LOCAL_SIZE', '1'))
 
 def load_class_ap(full_expid, predict_file):
+    # the normal map
     report_file = op.splitext(predict_file)[0] + '.report'
     fname = op.join('output', full_expid, 'snapshot', report_file +
             '.class_ap.json')
     if op.isfile(fname):
         return json.loads(read_to_buffer(fname))
-    else:
-        return None
+
+    glob_pattern = op.splitext(predict_file)[0] + '.neg_aware_gmap*report'
+    fnames = glob.glob(op.join('output', full_expid, 'snapshot',
+        glob_pattern))
+    if len(fnames) > 0 and op.isfile(fnames[0]):
+        fname = fnames[0]
+        result = load_from_yaml_file(fname)
+        return {'overall': {'0.5': {'class_ap': result['class_ap']}}}
+
 
 def calculate_ap_by_true_list(corrects, total):
     precision = (1. * np.cumsum(corrects)) / np.arange(1, 1 + len(corrects))
@@ -1384,6 +1460,7 @@ def update_kernel_active(net, kernel_active, kernel_active_skip):
 
 def plot_to_file(xs, ys, file_name, **kwargs):
     fig = plt.figure()
+    semilogy = kwargs.get('semilogy')
     if all(isinstance(x, str) for x in xs):
         xs2 = range(len(xs))
         #plt.xticks(xs2, xs, rotation=15, ha='right')
@@ -1391,9 +1468,15 @@ def plot_to_file(xs, ys, file_name, **kwargs):
         xs = xs2
     if type(ys) is dict:
         for key in ys:
-            plt.plot(xs, ys[key], '-o')
+            if semilogy:
+                plt.semilogy(xs, ys[key], '-o')
+            else:
+                plt.plot(xs, ys[key], '-o')
     else:
-        plt.plot(xs, ys, '-o')
+        if semilogy:
+            plt.semilogy(xs, ys, '-o')
+        else:
+            plt.plot(xs, ys, '-o')
     plt.grid()
     if 'ylim' in kwargs:
         plt.ylim(kwargs['ylim'])
@@ -1656,25 +1739,41 @@ def dict_ensure_path_key_converted(a):
             if isinstance(v, dict):
                 dict_ensure_path_key_converted(v)
 
-def dict_get_all_path(d):
+def dict_get_all_path(d, with_type=False):
     all_path = []
     for k, v in viewitems(d):
+        if with_type:
+            if type(k) is str:
+                k = 's' + k
+            elif type(k) is int:
+                k = 'i' + str(k)
+            else:
+                raise NotImplementedError
         if not isinstance(v, dict):
             all_path.append(k)
         else:
-            all_sub_path = dict_get_all_path(v)
+            all_sub_path = dict_get_all_path(v, with_type)
             all_path.extend([k + '$' + p for p in all_sub_path])
     return all_path
 
-def dict_has_path(d, p):
+def dict_parse_key(k, with_type):
+    if with_type:
+        if k[0] == 'i':
+            return int(k[1:])
+        else:
+            return k[1:]
+    return k
+
+def dict_has_path(d, p, with_type=False):
     ps = p.split('$')
     cur_dict = d
     while True:
         if len(ps) > 0:
             if not isinstance(cur_dict, dict):
                 return False
-            if ps[0] in cur_dict:
-                cur_dict = cur_dict[ps[0]]
+            k = dict_parse_key(ps[0], with_type)
+            if k in cur_dict:
+                cur_dict = cur_dict[k]
                 ps = ps[1:]
             else:
                 return False
@@ -1719,12 +1818,13 @@ def dict_remove_path(d, p):
             cur_dict = cur_dict[ps[0]]
             ps = ps[1:]
 
-def dict_get_path_value(d, p):
+def dict_get_path_value(d, p, with_type=False):
     ps = p.split('$')
     cur_dict = d
     while True:
         if len(ps) > 0:
-            cur_dict = cur_dict[ps[0]]
+            k = dict_parse_key(ps[0], with_type)
+            cur_dict = cur_dict[k]
             ps = ps[1:]
         else:
             return cur_dict
@@ -2101,6 +2201,53 @@ def dict_add(d, k, v):
         d[k] = v
     else:
         d[k] += v
+
+def calc_mean(x):
+    return sum(x) / len(x)
+
+def compare_gmap_evals(all_eval_file,
+        label_to_testcount=None,
+        output_prefix='out'):
+    result = ['\n']
+    all_result = [load_from_yaml_file(f) for f in all_eval_file]
+    all_cat2map = [result['class_ap'] for result in all_result]
+
+    cats = list(all_cat2map[0].keys())
+    gains = [all_cat2map[1][c] - all_cat2map[0][c] for c in cats]
+
+    all_info = [{'name': c, 'acc_gain': g} for c, g in zip(cats, gains)]
+    all_info = sorted(all_info, key=lambda x: x['acc_gain'])
+
+    all_map = [sum(cat2map.values()) / len(cat2map) for cat2map in all_cat2map]
+    result.append('all map = {}'.format(', '.join(
+        map(lambda x: str(round(x, 3)), all_map))))
+
+    if label_to_testcount is not None:
+        all_valid_map = [calc_mean([ap for cat, ap in cat2map.items() if
+            label_to_testcount.get(cat, 0) >
+                50]) for cat2map in all_cat2map]
+        result.append('all valid map = {}'.format(', '.join(
+            map(lambda x: str(round(x, 3)), all_valid_map))))
+
+    max_aps = [max([cat2map[c] for cat2map in all_cat2map]) for c in cats]
+    max_map = sum(max_aps) / len(max_aps)
+    result.append('max map = {:.3f}'.format(max_map))
+
+    for info in all_info:
+        for k in info:
+            if type(info[k]) is float:
+                info[k] = round(info[k], 2)
+    result.extend(get_table_print_lines(all_info[:5] + all_info[-6:], ['name',
+        'acc_gain',
+        ]))
+
+    all_acc_gain = [info['acc_gain'] for info in all_info]
+    plot_to_file(list(range(len(all_acc_gain))),
+            all_acc_gain,
+            output_prefix + '.png')
+
+    logging.info('\n'.join(result))
+
 if __name__ == '__main__':
     init_logging()
     kwargs = parse_general_args()

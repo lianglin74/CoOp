@@ -5481,8 +5481,10 @@ def inject_accuracy_one(full_expid):
         elif '.top1.' in report_file:
             acc = load_from_yaml_file(report_file)
         elif report_file.endswith('predict.tsv.speed.yaml'):
-            acc = load_from_yaml_file(report_file)['meters'][-1]
-            assert acc['name'] == ''
+            all_meter = load_from_yaml_file(report_file)['meters']
+            all_meter = [m for m in all_meter if m['name'] == '']
+            assert len(all_meter) == 1
+            acc = all_meter[0]
             del acc['name']
         else:
             map_json_file = report_file + '.map.json'

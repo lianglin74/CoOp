@@ -418,6 +418,110 @@ def ensure_build_taxonomy_oi5c(data):
         else:
             build_taxonomy_from_single_source(source_data,
                     source_split, source_version, min_image_per_label, out_data)
+    elif data in ['TaxOI5CV1_4_5k_with_bb']:
+        source_data = 'OpenImageV5C'
+        source_split = 'train'
+        source_version = 10
+        min_image_per_label = 5000
+        out_data = data
+        out_dataset = TSVDataset(out_data)
+        if op.isdir(out_dataset._data_root):
+            logging.info('ignore to build since {} exists'.format(
+                out_dataset._data_root))
+        else:
+            build_taxonomy_from_single_source(source_data,
+                    source_split, source_version, min_image_per_label, out_data)
+    elif data in ['TaxOI5CV1_18_5k_with_bb']:
+        source_data = 'OpenImageV5C'
+        source_split = 'train'
+        source_version = 18
+        min_image_per_label = 5000
+        out_data = data
+        out_dataset = TSVDataset(out_data)
+        if op.isdir(out_dataset._data_root):
+            logging.info('ignore to build since {} exists'.format(
+                out_dataset._data_root))
+        else:
+            build_taxonomy_from_single_source(source_data,
+                    source_split, source_version, min_image_per_label, out_data)
+    elif data in ['TaxOI5CV1_19_5k_with_bb']:
+        source_data = 'OpenImageV5C'
+        source_split = 'train'
+        source_version = 19
+        min_image_per_label = 5000
+        out_data = data
+        out_dataset = TSVDataset(out_data)
+        if op.isdir(out_dataset._data_root):
+            logging.info('ignore to build since {} exists'.format(
+                out_dataset._data_root))
+        else:
+            build_taxonomy_from_single_source(source_data,
+                    source_split, source_version, min_image_per_label, out_data)
+    elif data in ['TaxOI5CV1_20_5k_with_bb']:
+        source_data = 'OpenImageV5C'
+        source_split = 'train'
+        source_version = 20
+        min_image_per_label = 5000
+        out_data = data
+        out_dataset = TSVDataset(out_data)
+        if op.isdir(out_dataset._data_root):
+            logging.info('ignore to build since {} exists'.format(
+                out_dataset._data_root))
+        else:
+            build_taxonomy_from_single_source(source_data,
+                    source_split, source_version, min_image_per_label, out_data)
+    elif data in ['TaxOI5CV1_21_5k_with_bb']:
+        source_data = 'OpenImageV5C'
+        source_split = 'train'
+        source_version = 21
+        min_image_per_label = 5000
+        out_data = data
+        out_dataset = TSVDataset(out_data)
+        if op.isdir(out_dataset._data_root):
+            logging.info('ignore to build since {} exists'.format(
+                out_dataset._data_root))
+        else:
+            build_taxonomy_from_single_source(source_data,
+                    source_split, source_version, min_image_per_label, out_data)
+    elif data in ['TaxOI5CV1_22_5k_with_bb']:
+        source_data = 'OpenImageV5C'
+        source_split = 'train'
+        source_version = 22
+        min_image_per_label = 5000
+        out_data = data
+        out_dataset = TSVDataset(out_data)
+        if op.isdir(out_dataset._data_root):
+            logging.info('ignore to build since {} exists'.format(
+                out_dataset._data_root))
+        else:
+            build_taxonomy_from_single_source(source_data,
+                    source_split, source_version, min_image_per_label, out_data)
+    elif data in ['TaxOI5CV1_Tightness_5k']:
+        source_data = 'OpenImageV5C'
+        source_split = 'train'
+        source_version = 23
+        min_image_per_label = 5000
+        out_data = data
+        out_dataset = TSVDataset(out_data)
+        if op.isdir(out_dataset._data_root):
+            logging.info('ignore to build since {} exists'.format(
+                out_dataset._data_root))
+        else:
+            build_taxonomy_from_single_source(source_data,
+                    source_split, source_version, min_image_per_label, out_data)
+    elif data in ['TaxOI5CV1_Clean24_5k']:
+        source_data = 'OpenImageV5C'
+        source_split = 'train'
+        source_version = 24
+        min_image_per_label = 5000
+        out_data = data
+        out_dataset = TSVDataset(out_data)
+        if op.isdir(out_dataset._data_root):
+            logging.info('ignore to build since {} exists'.format(
+                out_dataset._data_root))
+        else:
+            build_taxonomy_from_single_source(source_data,
+                    source_split, source_version, min_image_per_label, out_data)
     else:
         raise ValueError('unknown {}'.format(data))
 

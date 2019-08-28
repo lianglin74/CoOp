@@ -193,6 +193,8 @@ matplotlib.use(\'Agg\')
 if __name__ == '__main__':
     from {} import {}
     import yaml
+    from qd.qd_common import init_logging
+    init_logging()
     param = yaml.load(open(\'{}\', \'r\').read())
     {}(**param)
     '''.format(func_module, func.__name__, param_target_file,

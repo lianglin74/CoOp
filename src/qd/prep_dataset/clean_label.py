@@ -44,7 +44,7 @@ class TruncateInRange(object):
         return param
 
 class MergeColocate(object):
-    def __init__(self, iou_th=0.9):
+    def __init__(self, iou_th=0.85):
         self.iou_th = iou_th
 
     def __call__(self, param, info):
@@ -53,8 +53,8 @@ class MergeColocate(object):
         for r in origin_rects:
             all_iou = [calculate_iou(r['rect'], rects[0]['rect']) for rects in
                     all_rects]
-            all_same_rects = [rects for iou, rects in zip(all_iou, all_rects) if iou >
-                self.iou_th]
+            all_same_rects = [rects for iou, rects in zip(all_iou, all_rects)
+                if iou > self.iou_th]
             if len(all_same_rects) == 0:
                 all_rects.append([r])
             else:
@@ -85,7 +85,7 @@ class MergeColocate(object):
             for r in to_remove:
                 rects.remove(r)
 
-        param['rects'] = [r for r in rects for rects in all_rects]
+        param['rects'] = [r for rects in all_rects for r in rects]
         dict_add(info, 'merge_colocate_checked', len(origin_rects))
         dict_add(info, 'merge_colocate_merged', len(origin_rects) -
             len(param['rects']))
@@ -115,6 +115,29 @@ class CleanerCompose(object):
             c(param, info)
 
 def clean_label(data, split, version):
+    cleaner = CleanerCompose([
+        RemoveSmall(),
+        TruncateInRange(),
+        MergeColocate(),
+        #RemoveDuplicate(),
+        ])
+    process_label(data, split, version, cleaner)
+
+class ReplaceIsGroupOfByTightness(object):
+    def __call__(self, param, info):
+        rects = param['rects']
+        for r in rects:
+            is_group_of = r['IsGroupOf']
+            assert is_group_of in [0, 1, -1]
+            if is_group_of == 0:
+                r['tightness'] = 1
+            else:
+                r['tightness'] = 0
+        dict_add(info, 'replace_is_group_of_total', len(rects))
+        dict_add(info, 'replace_is_group_of_num_yes', sum(r['tightness'] for r in rects))
+
+def process_label(data, split, version, cleaner):
+    assert isinstance(cleaner, CleanerCompose), 'we use its components to save debug info'
     dataset = TSVDataset(data)
     version = version
     if version == -1:
@@ -123,12 +146,6 @@ def clean_label(data, split, version):
     hw_iter = dataset.iter_data(split, t='hw')
     num_rows = dataset.num_rows(split)
     info = {}
-    cleaner = CleanerCompose([
-        RemoveSmall(),
-        TruncateInRange(),
-        MergeColocate(),
-        #RemoveDuplicate(),
-        ])
     def gen_rows():
         for i, (label_row, hw_row) in tqdm(enumerate(zip(label_iter, hw_iter)),
                 total=num_rows):

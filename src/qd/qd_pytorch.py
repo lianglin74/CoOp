@@ -415,6 +415,7 @@ class IBCEWithLogitsNegLoss(nn.Module):
         self.display = 100
         self.ignore_hard_neg_th = ignore_hard_neg_th
         self.ignore_hard_pos_th = ignore_hard_pos_th
+        self.eps = 1e-5
 
     def forward(self, feature, target):
         debug_info = ''
@@ -506,8 +507,7 @@ class IBCEWithLogitsNegLoss(nn.Module):
         self.num_called += 1
 
         if weight_sum == 0:
-            return torch.tensor(0, device=feature.device, dtype=feature.dtype,
-                    requires_grad=True)
+            loss = torch.tensor(0, device=feature.device, dtype=feature.dtype, requires_grad=True)
             # Do not use the following, since .backward may give the error of
             # element 0 of tensors does not require grad and does not have a
             # grad_fn
@@ -515,8 +515,8 @@ class IBCEWithLogitsNegLoss(nn.Module):
         else:
             criterion = nn.BCEWithLogitsLoss(weight, reduction='sum')
             loss = criterion(feature, target)
-            loss = torch.sum(loss) / weight_sum
-            return loss
+            loss = torch.sum(loss) / (weight_sum + self.eps)
+        return loss
 
 def mean_remove(x):
     assert x.dim() == 2
@@ -683,6 +683,25 @@ def get_acc_for_plot(eval_file):
         return load_from_yaml_file(eval_file)
     else:
         raise NotImplementedError()
+
+def calc_neg_aware_gmap(data, split, predict_file,
+        apply_nms_det=False, expand_label_det=False, apply_nms_gt=False):
+    from qd.evaluate.evaluate_openimages_google import evaluate
+    dataset = TSVDataset(data)
+    truths = dataset.get_data(split, 'label')
+    imagelabel_truths = dataset.get_data(split, 'imagelabel')
+    assert op.isfile(truths), truths
+    assert op.isfile(imagelabel_truths)
+    result = evaluate(truths, imagelabel_truths, predict_file,
+            json_hierarchy_file=op.join(dataset._data_root, 'hierarchy.json'),
+            apply_nms_det=apply_nms_det,
+            expand_label_det=expand_label_det,
+            expand_label_gt=True,
+            apply_nms_gt=apply_nms_gt,
+            )
+    from qd.qd_common import convert_to_yaml_friendly
+    result = convert_to_yaml_friendly(result)
+    return result
 
 class TorchTrain(object):
     def __init__(self, **kwargs):
