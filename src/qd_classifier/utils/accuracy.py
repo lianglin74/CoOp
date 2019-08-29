@@ -1,6 +1,6 @@
 import torch
-from ..utils.averagemeter import AverageMeter
-
+#from ..utils.averagemeter import AverageMeter
+from maskrcnn_benchmark.utils.metric_logger import MetricLogger
 
 class Accuracy(object):
     """ base class for accuracy calculation
@@ -22,7 +22,8 @@ class SingleLabelAccuracy(Accuracy):
     """
     def __init__(self, topk=(1,)):
         self.topk = topk
-        self.topk_acc = [AverageMeter() for _ in topk]
+        #self.topk_acc = [AverageMeter() for _ in topk]
+        self.topk_acc = MetricLogger(delimiter=' ')
 
     def calc(self, output, target):
         """Computes the precision@k for the specified values of k"""
@@ -37,15 +38,18 @@ class SingleLabelAccuracy(Accuracy):
             for i,k in enumerate(self.topk):
                 correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
                 acc = correct_k.mul_(100.0 / batch_size).item()
-                self.topk_acc[i].update(acc, output.size(0))
+                #self.topk_acc[i].update(acc, output.size(0))
+                self.topk_acc.update(**{'Prec@{}'.format(k): acc})
 
     def prec(self):
-        return self.topk_acc[0].avg
+        #return self.topk_acc[0].avg
+        return self.topk_acc.meters['Prec@1'].global_avg
 
     def result_str(self):
-        acc_str = ['Prec@{k} {acc.val:.3f} ({acc.avg:.3f})'.format(k=self.topk[i], acc=self.topk_acc[i]) \
-                    for i in range(len(self.topk))]
-        return '\t'.join(acc_str)
+        #acc_str = ['Prec@{k} {acc.val:.3f} ({acc.avg:.3f})'.format(k=self.topk[i], acc=self.topk_acc[i]) \
+                    #for i in range(len(self.topk))]
+        #return '\t'.join(acc_str)
+        return str(self.topk_acc)
 
 
 class MultiLabelAccuracy(Accuracy):
@@ -89,5 +93,5 @@ def get_accuracy_calculator(multi_label=False):
     if multi_label:
         acc = MultiLabelAccuracy()
     else:
-        acc = SingleLabelAccuracy(topk=(1, 5))
+        acc = SingleLabelAccuracy(topk=(1, ))
     return acc
