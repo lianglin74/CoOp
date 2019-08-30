@@ -15,7 +15,9 @@ import copy
 import os.path
 
 def setDebug(frame): 
-    return frame > 2975 and frame < 3025
+    #return False
+    #return frame > 2367 and frame <2387
+    return frame > 5957 and frame < 5999
             
 class Trajectory(object):
     def __init__(self, frameRate, debug):
@@ -26,6 +28,9 @@ class Trajectory(object):
         self.angleRimToBallThresh = 45.0
         self.ballAboveRimThresh = 0.0
         self.eventPadding = 1.0
+
+        # To solve the problem in case: Case "RimNotGood_1"
+        self.enlargeRatio = 1.5
 
         self.iouTime = -1
         self.frameRate = frameRate
@@ -38,7 +43,7 @@ class Trajectory(object):
         self.frameTraj.append(frame)
         # calculate IOU
         if objectExists(ballRects) and objectExists(rimRects):
-            iou = maxIOAOnebb_in_list_of_bb(ballRects[0], rimRects)
+            iou = maxIOAOnebb_in_list_of_bb(ballRects[0], rimRects, self.enlargeRatio)
         else:
             iou = 0.0
 
@@ -195,7 +200,10 @@ class EventDetector(object):
 
         # ---- Parameters ----
         self.basketBallConfThresh = 0.5
-        self.rimConfThresh = 0.2
+        self.rimConfThresh = 0.1
+          #Case "WrongBasketball_2": needs rimConfThresh to be below 0.19. 
+          #Case "RimNotGood_1": prefer rimConfThresh to be above 0.35
+
         self.backboardConfThresh = 0.1
         # When to start or end an event
         self.distanceBallToRimThresh = 3
@@ -204,18 +212,20 @@ class EventDetector(object):
     def findEvent(self):
         # Initialize
         eventStarted = False
+        endTime = -1
+        
         trajectory = Trajectory(self.frameRate, self.debug)
         prevRects = {"ball": [], "rim": [], "backboard": []}
         eventResults = []
 
         for row in tqdm(tsv_reader(self.odTSVFile)):
-            self.imageCnt += 1
-
+            curTime = self.imageCnt / self.frameRate
+            
             self.debug = setDebug(self.imageCnt)
 
             if self.debug:
                 print("image: ", self.imageCnt)
-                print("second: ", self.imageCnt / self.frameRate)
+                print("second: ", curTime)
 
             #key = row[0]
             rects = json.loads(row[1])
@@ -260,11 +270,15 @@ class EventDetector(object):
             #   If eventStarted and distance > thresh for two or three frames (), then an event found.
             #   Analyze the trajectory.
             #   Add the results if a shot is found.
-            if eventStarted:
+
+            if eventStarted:                
                 iou = trajectory.add(ballRects, rimRects, self.imageCnt)
                 
                 eventEnded = self.checkWhetherEventEnded(ballRects, rimRects)
                 if (eventEnded):
+                    if self.debug:
+                        print("Event ended!")
+                        
                     eventStarted = False
                     shot, startTime, endTime, eventType, iotTime, reason = trajectory.analyze()
                     if shot:
@@ -275,8 +289,11 @@ class EventDetector(object):
                     trajectory.clear()
                 # else: #event going on, doing nothing
             else:
-                eventStarted = self.checkWhetherEventStarted(
-                    ballRects, rimRects)
+                eventStarted = self.checkWhetherEventStarted(endTime, curTime, ballRects, rimRects)
+                if self.debug and eventStarted:
+                        print("Event started!")
+
+            self.imageCnt += 1
 
         return eventResults
 
@@ -314,7 +331,12 @@ class EventDetector(object):
         else:
             return None
 
-    def checkWhetherEventStarted(self, ballRects, rimRects):
+    def checkWhetherEventStarted(self, endTime, curTime, ballRects, rimRects):
+        # To prevent wrong detection of ball and then start another event too early. 
+        # Case "WrongBasketball_2". 
+        if (curTime < endTime):
+            return False; 
+
         ballToRimDistance = self.getDistanceBalltoRim(ballRects, rimRects)
         widthRim = self.getWidthOfRim(rimRects)
 
@@ -353,10 +375,11 @@ class EventDetector(object):
             elif r['class'] == 'backboard':
                 if r['conf'] >= self.backboardConfThresh:
                     backboardRects.append(r)
-                    if self.debug and not objectExists(rimRects):
-                        print("[Warning] image ",  self.imageCnt,
-                              ": backboard found, but no rim")
+                    
             i += 1
+
+        if self.debug and objectExists(backboardRects) and not objectExists(rimRects):
+            print("[Warning] image ",  self.imageCnt, ": backboard found, but no rim")
 
         # get the ball with highest confidence score
         if maxBasketBallRectIndex != -1:
@@ -378,11 +401,27 @@ def objectExists(objRectList):
     return len(objRectList) > 0
 
 
+def enlargeRect(rect0, enlargeRatio):
+    widthOfBall = getWidthOfRect(rect0) * enlargeRatio
+    heightOfBall = getHeightOfRect(rect0) * enlargeRatio
+
+    x, y = getCenterOfRect(rect0)
+    
+    rect0[0] = x - (widthOfBall ) / 2
+    rect0[1] = y - (heightOfBall ) / 2
+    rect0[2] = x + (widthOfBall ) / 2
+    rect0[3] = y + (heightOfBall ) / 2
+
+    return rect0
+
 # Given two rectangles, rect0 is smaller. Check the ratio of intersection of rect0 and rect1 to area of rect0
-def calculateIOA(rect0, rect1):
+def calculateIOA(rect0, rect1, enlargeRatio = 1.0):
     '''
     x0, y1, x2, y3
     '''
+    if enlargeRatio > 1.0:
+        rect0 = enlargeRect(rect0, enlargeRatio)
+
     w = min(rect0[2], rect1[2]) - max(rect0[0], rect1[0])
     if w < 0:
         return 0
@@ -442,7 +481,7 @@ def toDegree(angle):
 
 def checkResultsOverlap(pred_results):
     l = len(pred_results)
-    padding = 2
+    padding = 1
     i = 1
 
     newResults = []
@@ -452,7 +491,7 @@ def checkResultsOverlap(pred_results):
 
         if (v1[1] > v2[0] + padding):
             print("Found overlap pairs: ", v1, v2)
-            exit()
+            #exit()
         else:
             newResults.append(v1)
 
@@ -464,7 +503,7 @@ def checkResultsOverlap(pred_results):
         v2 = pred_results[i]
         if (v1[1] > v2[0] + padding):
             print("Found overlap pairs: ", v1, v2)
-            exit()
+            #exit()
         else:
             newResults.append(v2)
 
@@ -486,7 +525,7 @@ def calculateF1(pred_results, true_results):
         value for value in pred_results if not findPairInValueList(value, true_results)]
     print("FlasePositve: ", falsePositiveList)
     falseNegativeList = [
-        value for value in true_results if not findValueInPairList(value,  pred_results)]
+        value for value in true_results if not findValueInPairList(value[0],  pred_results)]
     print("falseNegative: ", falseNegativeList)
 
     precision = len(truePositiveList) / (len(truePositiveList) +
@@ -507,7 +546,7 @@ def intersection(lst1, lst2):
 
 
 def findPairInValueList(pair, true_results):
-    return any([v >= pair[0] and v <= pair[1] for v in true_results])
+    return any([v[0] >= pair[0] and v[0] <= pair[1] for v in true_results])
 
 
 def findValueInPairList(v, pred_results):
@@ -531,13 +570,17 @@ def getHeightOfObject(bb):
 
     return y2 - y1
 
+def getWidthOfRect(rect):
+    x1 = rect[0]
+    x2 = rect[2]
+
+    return x2 - x1
 
 def getHeightOfRect(rect):
     y1 = rect[1]
     y2 = rect[3]
 
     return y2 - y1
-
 
 def getCenterOfObject(bb):
     x1 = bb['rect'][0]
@@ -548,6 +591,14 @@ def getCenterOfObject(bb):
     yc = y1 + (y2 - y1) / 2.0
     return (xc, yc)
 
+def getCenterOfRect(rect):
+    x1 = rect[0]
+    y1 = rect[1]
+    x2 = rect[2]
+    y2 = rect[3]
+    xc = x1 + (x2 - x1) / 2.0
+    yc = y1 + (y2 - y1) / 2.0
+    return (xc, yc)
 
 def getDistanceOfTwoPoints(p1, p2):
     return np.linalg.norm(np.array(p1) - np.array(p2))
@@ -557,8 +608,8 @@ def maxIouOnebb_in_list_of_bb(bb, bbs):
     return max([calculate_iou(b['rect'], bb['rect']) for b in bbs])
 
 # bb is supposed smaller than b in bbs. 
-def maxIOAOnebb_in_list_of_bb(bb, bbs):
-    return max([calculateIOA(bb['rect'], b['rect']) for b in bbs])
+def maxIOAOnebb_in_list_of_bb(bb, bbs, enlargeRatio = 1.0):
+    return max([calculateIOA(bb['rect'], b['rect'], enlargeRatio) for b in bbs])
 
 # from p1 pointing to p2. Good to use
 
@@ -806,6 +857,7 @@ def calculateF1andWriteRes(dir, odFileList, eventLabelJsonFile, textLabels = Fal
 
             print("----calculate F1 for file: ", predict_file)            
             #print("True_results:", true_results)
+            calculateF1(pred_results, true_results)
 
             y_pred, y_true, _, correctLabelsDict = getShotStats(pred_results, true_results)
 
@@ -850,8 +902,8 @@ def getMiguTestingResults():
 if __name__ == '__main__':
     #main()
     #test_getShotStats()
-    getValidationResults()
-    #getTestingResults()
+    #getValidationResults()
+    getTestingResults()
     # testGetDegreeOfTwoPoints()
     #test_getEventLabelsFromText()
     #getMiguTestingResults()
