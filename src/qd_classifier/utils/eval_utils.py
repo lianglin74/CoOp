@@ -26,3 +26,4 @@ def calculate_confusion_matrix(tag_pred_file, outfile):
 
     pred_correct_rates = sorted(pred_correct_rates, key = lambda t: t[0])
     tsv_writer(pred_correct_rates, outfile)
+

@@ -89,6 +89,7 @@ def do_train(
             arguments['images'] = images
             arguments['targets'] = targets
             checkpointer.save("NaN_context_{}".format(get_rank()), **arguments)
+            print(losses)
             raise RuntimeError('NaN encountered!')
 
         # reduce losses over all GPUs for logging purposes
