@@ -133,10 +133,13 @@ def main(args):
     if isinstance(args, dict):
         args = argparse.Namespace()
     elif isinstance(args, list) or isinstance(args, str):
+        parser = get_parser()
         args = parser.parse_args(args)
 
     # Data loading code
-    test_dataloader = get_testdata_loader(args)
+    from qd.qd_common import get_mpi_size
+    assert get_mpi_size() == 1
+    test_dataloader = get_testdata_loader(args, get_mpi_size())
 
     # Load model and labelmap
     model, labelmap = load_from_checkpoint(args.model)
@@ -145,16 +148,16 @@ def main(args):
 
     return _predict(model, args.output, test_dataloader, labelmap, evaluate=args.evaluate)
 
-if __name__ == '__main__':
+def get_parser():
     parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
     # necessary inputs
     parser.add_argument('test_data', help='path to dataset yaml config')
     parser.add_argument('--model', default='', type=str, metavar='PATH',
                         help='path to latest checkpoint (default: none)')
-    parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
+    parser.add_argument('-j', '--num_workers', default=4, type=int, metavar='N',
                         help='number of data loading workers (default: 4)')
-    parser.add_argument('-b', '--batch-size', default=256, type=int,
-                        metavar='N', help='mini-batch size (default: 256)')
+    parser.add_argument('-b', '--effective_batch_size', default=256, type=int,
+                        metavar='N', help='effective batch size (default: 256)')
     parser.add_argument('-k', '--topk', default=10, type=int,
                         metavar='K', help='top k result (default: 10)')
     parser.add_argument('--output', default='', type=str, metavar='PATH',
@@ -169,6 +172,9 @@ if __name__ == '__main__':
                         help='calculate top k accuracy')
     parser.add_argument('--cache_policy', default=None, type=str,
                             help='use cache policy in TSVFile ')
+    return parser
 
+if __name__ == '__main__':
+    parser = get_parser()
     args = parser.parse_args()
     main(args)

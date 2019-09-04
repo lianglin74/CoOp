@@ -28,6 +28,7 @@ from qd.qd_common import ensure_copy_file, write_to_file
 from qd.process_tsv import populate_dataset_details
 from qd.tsv_io import TSVDataset, TSVFile, tsv_reader, tsv_writer, reorder_tsv_keys, rm_tsv
 from qd import tsv_io
+from qd_classifier.utils.prep_data import ensure_populate_dataset_crop_index
 
 class CropTaggingWrapper(object):
     def __init__(self, det_expid, tag_expid, tag_snap_id="snapshot", tag_model_id="model_best.pth.tar", labelmap=None):
@@ -41,7 +42,7 @@ class CropTaggingWrapper(object):
         ensure_directory(self.eval_dir)
         ensure_directory(os.path.dirname(self.tag_model_path))
 
-        self.num_workers = 24
+        self.num_workers = 4
 
     def predict_on_known_class(self, dataset_name, split, version=-1,
                 region_source=constants.PRED_REGION, conf_from=constants.CONF_OBJ_TAG,
@@ -211,7 +212,7 @@ class CropTaggingWrapper(object):
             "--model", self.tag_model_path,
             "--output", outpath,
             "--topk", str(max_k),
-            "--workers", str(self.num_workers),
+            "--num_workers", str(self.num_workers),
             '--enlarge_bbox', str(enlarge_bbox)
         ]
         pred.main(args)
@@ -449,7 +450,13 @@ def parse_tagging_predict(infile, outfile, nms_type=None, bg_skip=1,
         bbox["class"] = label_conf_pairs[0][0]
         # use classification score * obj as conf score
         if conf_from == constants.CONF_OBJ_TAG:
-            bbox["conf"] = float(label_conf_pairs[0][1]) * bbox["obj"]
+            if 'obj' in bbox:
+                obj = bbox['obj']
+            elif 'conf' in bbox:
+                obj = bbox['conf']
+            else:
+                obj = 1.0
+            bbox["conf"] = float(label_conf_pairs[0][1]) * obj
         elif conf_from == constants.CONF_TAG:
             bbox["conf"] = float(label_conf_pairs[0][1])
         elif conf_from == constants.CONF_OBJ:

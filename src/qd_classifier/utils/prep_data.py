@@ -6,7 +6,7 @@ import os.path as op
 import random
 
 from qd.tsv_io import TSVDataset, tsv_writer, TSVFile
-from qd.process_tsv import populate_dataset_details
+from qd.process_tsv import populate_dataset_details, populate_dataset_hw
 
 def ensure_populate_dataset_crop_index(data, split, version, num_min_samples=0):
     from qd.qd_common import int_rect
@@ -15,7 +15,7 @@ def ensure_populate_dataset_crop_index(data, split, version, num_min_samples=0):
     outfile = dataset.get_data(split, t='crop.index', version=version)
     if op.isfile(outfile):
         return
-
+    populate_dataset_hw(data, [split])
     hw_iter = dataset.iter_data(split, t='hw')
     label_iter = dataset.iter_data(split, t='label', version=version)
     label_to_indices = collections.defaultdict(list)

@@ -183,9 +183,12 @@ class AMLClient(object):
         run = create_aml_run(self.experiment, run_id)
         run.cancel()
 
-    def query(self, run_id=None, by_status=None):
+    def query(self, run_id=None, by_status=None, max_runs=None):
         if run_id is None:
+            # all_run is ordered by created time, latest first
             all_run = list(self.experiment.get_runs())
+            if max_runs:
+                all_run = all_run[: min(max_runs, len(all_run))]
             if by_status:
                 assert by_status in [self.status_failed, self.status_queued,
                         self.status_running], "Unknown status: {}".format(by_status)
@@ -380,7 +383,7 @@ def execute(task_type, **kwargs):
             c.query(run_id=kwargs['remainders'][0])
         else:
             c = create_aml_client(**kwargs)
-            c.query()
+            c.query(max_runs=kwargs.get('max', None))
     elif task_type in ['f', 'failed', 'qf']:
         c = create_aml_client(**kwargs)
         c.query(by_status=AMLClient.status_failed)
@@ -445,10 +448,11 @@ def parse_args():
     parser.add_argument('-wl', dest='with_log', default=True, action='store_true')
     parser.add_argument('-no-wl', dest='with_log',
             action='store_false')
+    parser.add_argument('-c', '--cluster', default=argparse.SUPPRESS, type=str)
     parser.add_argument('-p', '--param', help='parameter string, yaml format',
             type=str)
-    parser.add_argument('-c', '--cluster', default=argparse.SUPPRESS, type=str)
     parser.add_argument('-n', '--num_gpu', default=argparse.SUPPRESS, type=int)
+    parser.add_argument('--max', default=None, type=int)
     #parser.add_argument('-wg', '--with_gpu', default=True, action='store_true')
     parser.add_argument('-no-wg', '--with_gpu', default=True, action='store_false')
     #parser.add_argument('-m', '--with_meta', default=True, action='store_true')
