@@ -197,12 +197,12 @@ class TSVFile(object):
             return
 
         if self._fp is None:
-            self._fp = exclusive_open_to_read(self.tsv_file)
+            self._fp = open(self.tsv_file)
             self.pid = os.getpid()
 
         if self.pid != os.getpid():
             logging.info('re-open {} because the process id changed'.format(self.tsv_file))
-            self._fp = exclusive_open_to_read(self.tsv_file)
+            self._fp = open(self.tsv_file)
             self.pid = os.getpid()
 
 class TSVDataset(object):
