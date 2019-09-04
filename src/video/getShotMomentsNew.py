@@ -15,9 +15,9 @@ import copy
 import os.path
 
 def setDebug(frame): 
-    #return False
+    return False
     #return frame > 2367 and frame <2387
-    return frame > 5957 and frame < 5999
+    #return frame > 5957 and frame < 5999
             
 class Trajectory(object):
     def __init__(self, frameRate, debug):
@@ -902,8 +902,8 @@ def getMiguTestingResults():
 if __name__ == '__main__':
     #main()
     #test_getShotStats()
-    #getValidationResults()
-    getTestingResults()
+    getValidationResults()
+    #getTestingResults()
     # testGetDegreeOfTwoPoints()
     #test_getEventLabelsFromText()
     #getMiguTestingResults()
