@@ -7,6 +7,7 @@ from qd.qd_common import img_from_base64, generate_lineidx, load_from_yaml_file,
 from qd.qd_pytorch import TSVSplitProperty
 
 import base64
+import copy
 from collections import OrderedDict, defaultdict
 import json
 import logging
@@ -20,7 +21,7 @@ import yaml
 
 class TSVSplitImageBoxCrop(Dataset):
     def __init__(self, data, split, version, transform=None,
-            cache_policy=None, labelmap=None, for_test=False, enlarge_bbox=1.0):
+            cache_policy=None, labelmap=None, infer_only=False, enlarge_bbox=1.0):
         self._image_tsv = TSVSplitProperty(data, split, t=None, cache_policy=cache_policy)
         self._label_tsv = TSVSplitProperty(data, split, t='label', version=version, cache_policy=cache_policy)
         self._crop_index_tsv = TSVSplitProperty(data, split, t='crop.index', version=version, cache_policy=cache_policy)
@@ -36,7 +37,7 @@ class TSVSplitImageBoxCrop(Dataset):
         self.label_to_idx = {l: i for i, l in enumerate(labelmap)}
 
         self.transform = transform
-        self.for_test = for_test
+        self.infer_only = infer_only
         self.enlarge_bbox = enlarge_bbox
         self._label_counts = None
 
@@ -51,7 +52,7 @@ class TSVSplitImageBoxCrop(Dataset):
         if self.transform is not None:
             cropped_img = self.transform(cropped_img)
 
-        if self.for_test:
+        if self.infer_only:
             return cropped_img, (key, json_dump(bbox))
         else:
             # NOTE: currenly only support single label
@@ -82,7 +83,7 @@ class TSVSplitImageBoxCrop(Dataset):
 
     @property
     def label_counts(self):
-        assert not self.for_test
+        assert not self.infer_only
         if self._label_counts is None:
             self._label_counts = np.zeros(len(self.label_to_idx))
             for index in range(len(self._crop_index_tsv)):
@@ -100,6 +101,45 @@ class TSVSplitImageBoxCrop(Dataset):
         bbox = json.loads(str_rects)[bbox_idx]
         return self.label_to_idx[bbox["class"]]
 
+
+class MaskTSVSplitImageBoxCrop(TSVSplitImageBoxCrop):
+    def __getitem__(self, index):
+        img_idx, bbox_idx = self._crop_index_tsv[index]
+        img_idx, bbox_idx = int(img_idx), int(bbox_idx)
+        key, _, str_img = self._image_tsv[img_idx]
+        key1, str_rects = self._label_tsv[img_idx]
+        assert key == key1
+        bbox = json.loads(str_rects)[bbox_idx]
+
+        cropped_img = self._crop_image(str_img, bbox["rect"])
+        # convert BGR to RGB
+        cropped_img = cropped_img[:, :, ::-1]
+        if self.transform is not None:
+            cropped_img = self.transform(cropped_img)
+
+        if self.infer_only:
+            # for inference, only the region is used
+            label_idx = self.label_to_idx.get(bbox['class'], -1)
+        else:
+            label_idx = self.label_to_idx[bbox["class"]]
+        label = torch.from_numpy(np.array(label_idx, dtype=np.int))
+
+        return cropped_img, label, self._get_full_key(key, bbox)
+
+    def get_keys(self):
+        all_key = []
+        for index in range(len(self)):
+            img_idx, bbox_idx = self._crop_index_tsv[index]
+            img_idx, bbox_idx = int(img_idx), int(bbox_idx)
+            key, str_rects = self._label_tsv[img_idx]
+            bbox = json.loads(str_rects)[bbox_idx]
+            all_key.append(self._get_full_key(key, bbox))
+        return all_key
+
+    def _get_full_key(self, img_key, bbox):
+        full_key = copy.deepcopy(bbox)
+        full_key['key'] = img_key
+        return json_dump(full_key)
 
 class CropClassTSVDataset(Dataset):
     def __init__(self, tsvfile, labelmap, labelfile=None,

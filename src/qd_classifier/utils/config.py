@@ -3,7 +3,7 @@ from yacs.config import CfgNode as CN
 _C = CN()
 
 # necessary inputs
-_C.FULL_EXPID = ""
+_C.full_expid = ""
 _C.arch = "resnet18"
 _C.data = ""
 _C.output_dir = "./output"
@@ -22,7 +22,7 @@ _C.random_seed = 6
 # epoch, batch
 _C.epochs = 120
 _C.effective_batch_size = 256
-_C.num_workers = 16
+_C.num_workers = 4
 
 # resume
 _C.start_epoch = 0
@@ -50,6 +50,7 @@ _C.bn_no_weight_decay = True
 _C.balance_class = False
 _C.balance_sampler = False
 _C.ccs_loss_param = 2.0
+_C.label_smoothing = False
 
 _C.finetune = False
 _C.fixfeature = False

@@ -32,13 +32,13 @@ from qd_classifier.utils.save_model import load_model_state_dict, load_from_chec
 from qd_classifier.scripts.pred import _predict, _evaluate
 
 from qd.qd_common import get_mpi_local_rank, get_mpi_local_size, get_mpi_rank, get_mpi_size, ensure_directory, ensure_remove_dir
-from qd.qd_common import zip_qd, worth_create
+from qd.qd_common import zip_qd, worth_create, load_from_yaml_file
 from qd.tsv_io import tsv_writer
 
 class ClassifierPipeline(object):
     def __init__(self, config):
         self.model_prefix = "model_epoch"
-        self.output_folder = op.join(config.output_dir, config.FULL_EXPID)
+        self.output_folder = op.join(config.output_dir, config.full_expid)
 
         self.config = config
 
@@ -184,7 +184,7 @@ class ClassifierPipeline(object):
         evaluate_file = self._get_evaluate_file(predict_file)
 
         eval_dict = _evaluate(predict_file, predict_file + ".det.tsv", evaluate_file)
-        return eval_dict
+        return evaluate_file
 
     def monitor_train(self):
         self._ensure_initialized()
@@ -193,21 +193,14 @@ class ClassifierPipeline(object):
             model_file = self._get_checkpoint_file(epoch=step)
             if op.isfile(model_file):
                 predict_file = self.ensure_predict(model_file=model_file)
-                eval_dict = self.ensure_evaluate(predict_file=predict_file)
-                all_step_eval.append([step, eval_dict])
+                evaluate_file = self.ensure_evaluate(predict_file=predict_file)
+                all_step_eval.append([step, load_from_yaml_file(evaluate_file)])
 
         if self.is_master:
             tensorboard_folder = op.join(self.output_folder, 'tensorboard_data')
             ensure_remove_dir(tensorboard_folder)
-            # writer = SummaryWriter(log_dir=tensorboard_folder)
             tag_prefix = self.config.test_data
-            # for step, eval_dict in all_step_eval:
-            #     for k in eval_dict:
-            #         writer.add_scalar(tag='{}_{}'.format(tag_prefix, k),
-            #             scalar_value=eval_dict[k],
-            #             global_step=step)
-            # writer.close()
-            header = ["step"] + [k for k in eval_dict]
+            header = ["step"] + [k for k in all_step_eval[0][1]]
             summary = []
             for step, eval_dict in all_step_eval:
                 summary.append([step] + [eval_dict[k] for k in header[1:]])
@@ -374,7 +367,7 @@ def main():
     cfg = create_config(args)
     pip = ClassifierPipeline(cfg)
     pip.ensure_train()
-    # pip.monitor_train()
+    pip.monitor_train()
 
 if __name__ == '__main__':
     main()

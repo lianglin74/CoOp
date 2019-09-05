@@ -50,7 +50,6 @@ def make_data_loader(dataset, stage, distributed, batch_size, max_iter=None,
             pin_memory=True,
             )
     return loader
->>>>>>> Stashed changes
 
 def get_train_data_loader(args, mpi_size):
     train_dataset = _get_dataset("train", args)
@@ -166,7 +165,7 @@ def _get_dataset(phase, args):
     else:
         dataset_name, split, version = data.rsplit('.', 2)
         dataset = TSVSplitImageBoxCrop(dataset_name, split, int(version), transform=transform,
-            cache_policy=cache_policy, labelmap=None, for_test=(phase == "test"), enlarge_bbox=args.enlarge_bbox)
+            cache_policy=cache_policy, labelmap=None, infer_only=(phase == "test"), enlarge_bbox=args.enlarge_bbox)
 
     # DEBUG
     # if args.debug:

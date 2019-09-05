@@ -19,6 +19,7 @@ import torchvision.models as models
 from qd.deteval import deteval_iter
 from qd.tsv_io import tsv_reader, tsv_writer
 from qd.qd_common import json_dump, read_to_buffer
+from qd.qd_common import write_to_yaml_file
 from qd_classifier.utils.data import get_testdata_loader
 from qd_classifier.utils.averagemeter import AverageMeter
 from qd_classifier.utils.accuracy import get_accuracy_calculator
@@ -120,11 +121,12 @@ def _evaluate(tag_pred_file, dets_file, report_file, top_k=(1, 5)):
     if len(correct_counts) > 1:
         for i in range(1, len(correct_counts)):
             correct_counts[i] += correct_counts[i-1]
-    eval_dict = {"top_{}_acc".format(k): float(correct_counts[i-1])/num_samples for k in top_k}
+    eval_dict = {"top_{}_acc".format(k): float(correct_counts[k-1])/num_samples for k in top_k}
 
-    deteval_iter(truth_iter=[[k, json.dumps(v)] for k, v in gt_dict.items()], dets=dets_file, report_file=report_file, force_evaluate=True)
-    eval_res = json.loads(read_to_buffer(report_file))
-    eval_dict["mAP"] = eval_res["overall"][str(0.5)]["map"]
+    # deteval_iter(truth_iter=[[k, json.dumps(v)] for k, v in gt_dict.items()], dets=dets_file, report_file=report_file, force_evaluate=True)
+    # eval_res = json.loads(read_to_buffer(report_file))
+    # eval_dict["mAP"] = eval_res["overall"][str(0.5)]["map"]
+    write_to_yaml_file(eval_dict, report_file)
 
     return eval_dict
 

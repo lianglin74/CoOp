@@ -2,7 +2,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.models as models
+from torchvision.models.resnet import model_urls
 import numpy as np
+
+from ..utils.accuracy import get_accuracy_calculator
+
+import logging
 
 class ResNetFeatureExtract(nn.Module):
     def __init__(self, model):
@@ -140,6 +145,7 @@ class ModelCCSLoss(nn.Module):
         loss_dict = dict()
         if self.ccs_loss_param > 0:
             output, feature = all_outputs[0], all_outputs[1]
+            # NOTE: use detach() to not calculate grad w.r.t. weight in ccs_loss
             weight = self.module.fc.weight
             ccs_loss = self.ccs_loss_layer(feature, weight, target)
 

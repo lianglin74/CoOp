@@ -12,7 +12,6 @@ from ..utils.accuracy import get_accuracy_calculator
 from ..utils.averagemeter import AverageMeter
 from ..lib import layers
 
-
 def get_criterion(multi_label=False, multi_label_negative_sample_weights_file=None, class_weights=None):
     if multi_label:
         if multi_label_negative_sample_weights_file == None:
@@ -168,20 +167,26 @@ def train_epoch(args, train_loader, model, criterion, optimizer, epoch, accuracy
         # compute output
         all_outputs = model(input)
 
+        loss_dict = {}
         if ccs_loss_param > 0:
             output, feature = all_outputs[0], all_outputs[1]
-            orig_loss = criterion(output, target)
             # NOTE: use detach() to not calculate grad w.r.t. weight in ccs_loss
             weight = model.module.fc.weight
             ccs_loss = ccs_loss_layer(feature, weight, target)
-            orig_losses.update(orig_loss.item(), input.size(0))
+            loss_dict['ccs'] = ccs_loss_param*ccs_loss
             ccs_losses.update(ccs_loss.item(), input.size(0))
-
-            loss = orig_loss + ccs_loss_param*ccs_loss
         else:
             output = all_outputs
+
+        if args.label_smoothing:
+            orig_loss = layers.cal_smooth_softmax_cross_entropy_loss(output, target)
+            loss_dict['label_smooth'] = orig_loss
+        else:
             orig_loss = criterion(output, target)
-            loss = orig_loss
+            loss_dict['criterion'] = orig_loss
+        orig_losses.update(orig_loss.item(), input.size(0))
+
+        loss = sum(loss_dict.values())
 
         # measure accuracy and record loss
         accuracy.calc(output, target)

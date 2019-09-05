@@ -1,9 +1,11 @@
 import json
 import collections
+import os.path as op
 
 from qd.tsv_io import tsv_reader, tsv_writer
 
-def calculate_confusion_matrix(tag_pred_file, outfile):
+def calculate_confusion_matrix(tag_pred_file):
+    outfile = op.splitext(tag_pred_file)[0] + '.confusion.report'
     gt2preds = collections.defaultdict(list)
     for parts in tsv_reader(tag_pred_file):
         #gt_label = json.loads(parts[1])["class"]
@@ -26,4 +28,18 @@ def calculate_confusion_matrix(tag_pred_file, outfile):
 
     pred_correct_rates = sorted(pred_correct_rates, key = lambda t: t[0])
     tsv_writer(pred_correct_rates, outfile)
+    return outfile
+
+def compare_confusion_matrix(confusion_reports):
+    label2accs = collections.defaultdict(list)
+    for i, report in enumerate(confusion_reports):
+        for parts in tsv_reader(report):
+            label = parts[1]
+            acc = float(parts[0])
+            if i > 0:
+                assert(label in label2accs)
+            label2accs[label].append(acc)
+    label_accs = [[k] + v for k, v in label2accs.items()]
+    label_accs = sorted(label_accs, key=lambda t: t[1])
+    return label_accs
 

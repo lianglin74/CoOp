@@ -72,9 +72,6 @@ def do_train(
         iteration = iteration + 1
         arguments["iteration"] = iteration
 
-        if scheduler:
-            scheduler.step()
-
         images = images.to(device)
         if isinstance(targets, torch.Tensor):
             targets = targets.to(device)
@@ -117,6 +114,8 @@ def do_train(
                 assert False
                 losses.backward()
         optimizer.step()
+        # in pytorch >= 1.1, do scheduler.step() after optimizer.step()
+        scheduler.step()
 
         batch_time = time.time() - end
         end = time.time()
