@@ -1,0 +1,23 @@
+all_test_data:
+- test_data: imagenet2012
+  test_split: test
+param:
+  MODEL:
+    BACKBONE:
+      FREEZE_CONV_BODY_AT: 0
+    RESNETS:
+      USE_SE: true
+  base_lr: 0.8
+  basemodel: ''
+  data: imagenet2012
+  dataset_type: single
+  dist_url_tcp_port: 29385
+  effective_batch_size: 2048
+  evaluate_method: top1
+  expid: CM_basemodel_BS2048_MaxIter120e_LR0.8_single_StepLR30e_Freeze0_SE
+  expid_prefix: CM
+  max_iter: 120e
+  net: e2e_faster_rcnn_R_34_FPN_fast
+  pipeline_type: classification_for_mask
+  step_lr: 30e
+type: pipeline_train_eval_multi
