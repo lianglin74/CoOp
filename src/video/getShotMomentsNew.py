@@ -35,7 +35,7 @@ class Trajectory(object):
         # To solve the problem in case: Case "RimNotGood_1"
         self.enlargeRatio = 1.5
 
-        self.iouTime = -1
+        self.ioaTime = -1
         self.frameRate = frameRate
         self.debug = debug
         self.clear()
@@ -73,14 +73,14 @@ class Trajectory(object):
 
         # check iou
         maxIouIndex, maxIouValue = maxIndexVal(self.iouTraj)
-        self.iouTime = float(self.frameTraj[maxIouIndex]) / self.frameRate
+        self.ioaTime = float(self.frameTraj[maxIouIndex]) / self.frameRate
 
         # add padding time
         # case WrongBasketball_1:
-        endTime = max(endTime, self.iouTime + self.eventPadding)
+        endTime = max(endTime, self.ioaTime + self.eventPadding)
 
         # to avoid small period (not good for demo show), adjust the starting time
-        startTime = min(startTime, self.iouTime - self.eventPadding)
+        startTime = min(startTime, self.ioaTime - self.eventPadding)
         startTime = max(0, startTime)
 
         if maxIouValue > self.iouHighThresh:
@@ -97,7 +97,7 @@ class Trajectory(object):
                         shot = True
                         reason = 'extraCond'
 
-        return shot, endTime, eventType, self.iouTime, reason
+        return shot, endTime, eventType, self.ioaTime, reason
 
     def extraCondition(self, maxIouIndex):
         l = len(self.ballTraj)
@@ -133,7 +133,7 @@ class Trajectory(object):
         self.rimTraj = []
         self.iouTraj = []
         self.frameTraj = []
-        self.iouTime = -1.0
+        self.ioaTime = -1.0
 
     def ballAboveRim(self, ballRects, rimRects):
         if objectExists(ballRects) and objectExists(rimRects):
@@ -293,11 +293,11 @@ class EventDetector(object):
                         print("Event ended!")
                         
                     eventStarted = False
-                    shot, endTime, eventType, iotTime, reason = trajectory.analyze()
+                    shot, endTime, eventType, ioaTime, reason = trajectory.analyze()
                     if shot:
                         # update results
                         eventResults.append(
-                            (startTime, endTime, eventType, iotTime, reason))
+                            (startTime, endTime, eventType, ioaTime, reason))
                     # else: #doing nothing
                     trajectory.clear()
                 # else: #event going on, doing nothing
@@ -784,7 +784,7 @@ def getShotStats(pred_results, true_results):
             if correctLabel:
                 print("predict, label: ", pRes[3], tRes[0])
                 if (abs(tRes[0] - pRes[3]) > 2.5):
-                    print("Label Correction failed! label, iouTime", tRes[0], pRes[3])
+                    print("Label Correction failed! label, ioaTime", tRes[0], pRes[3])
                 else:
                     labelCorrectionDict[tRes[0]] = pRes[3]
 
