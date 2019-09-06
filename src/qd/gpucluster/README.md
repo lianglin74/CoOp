@@ -139,6 +139,14 @@
    ```
 
 4. How to submit the job
+   The first step is to upload the code to azure blob by running teh following
+   command
+   ```bash
+   a init
+   ```
+   Whenever you want your new code change took effect, you should run the above
+   command.
+   To execute a command in AML, run teh following:
    ```bash
    a submit cmd
    ```
