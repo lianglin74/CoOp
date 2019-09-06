@@ -1,9 +1,8 @@
 import math
 import random
 import sys
-from video.getShotMoments import getShotAPI, getFrameRate
+from video.getShotMoments import getShotAPI, getFrameRate, getEventLabelsFromText
 from video.generateTSVFromVideo import generateTSVByFrameList, getBaseFileName
-
 
 # get n random numbers in [lower, upper]
 def getNRandomNumber(lower, upper, n):    
@@ -23,6 +22,7 @@ def getNRandomNumber(lower, upper, n):
     
     return numSet
 
+# using prediction file, and for each video, #total frames is given by "totalFrames" (default to 200)
 def randomGetFrameListFromVideoAroundEvents(folderName, videoFile, predictionLabelFile, totalFrames = 200):
     fullVideoFileName = folderName + "/"  + videoFile
     fullPredictionLabelFile = folderName + "/" + predictionLabelFile
@@ -49,6 +49,42 @@ def randomGetFrameListFromVideoAroundEvents(folderName, videoFile, predictionLab
     frameListSorted.sort()
     return frameListSorted
 
+# Number of events: 
+# CBA1: 44; # CBA2: 29;  400/69 = 6. 69*6=
+# NBA1: 16; # NBA2: 70; 400/86= 5. 
+def randomGetFrameListFromVideoAroundEvents_testing(folderName, videoFile, numFramesPerEvent = 6):
+    fullVideoFileName = folderName + "/"  + videoFile
+
+    textLabelFileFolder = '/mnt/gpu02_raid/data/video/CBA/CBA_demo_v3/shotDunkLabels/'
+    gtLabelFile = textLabelFileFolder + videoFile.replace('mp4', 'GTevents.txt')
+
+    fps = getFrameRate(fullVideoFileName)
+    
+    true_results = getEventLabelsFromText(gtLabelFile)
+    
+    numEvents =len(true_results)
+
+    if numEvents == 0:
+        print("No events found. Doing nothing")
+        return []
+
+    allFrameSet = set()
+
+    padding = 1.0
+
+    for event in true_results:
+        roughShotTime = event[0]
+        startTime = max(0, roughShotTime - padding)
+        endTime = roughShotTime
+        startFrame = int(startTime * fps) 
+        endFrame = int(endTime * fps) + 1
+        frameSet = getNRandomNumber(startFrame, endFrame, numFramesPerEvent)
+        allFrameSet |= frameSet
+
+    frameListSorted = [v for v in allFrameSet]
+    frameListSorted.sort()
+    return frameListSorted
+
 def test_randomGetFrameListFromVideoAroundEvents():
     folderName = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_selected_training/"
     videoFile = "5102222619_5004703696_92.mp4"
@@ -67,6 +103,7 @@ def test_writeFramesAroundEvents():
 
     writeFramesAroundEvents(folderName, videoFile, predictionLabelFile, totalFrames = 200)
 
+# 5 videos from 25 CBA vidoes used for training 
 def writeFramesAroundEventsVideoList():
     folderName = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_selected_training/"
     videoFileList = [ '1552055654344_sc99_01.mp4', '1552491820703_sc99_01.mp4', '1552498131120_sc99_01.mp4', '1552495094773_sc99_01.mp4', '5102222619_5004703696_92.mp4' ]
@@ -74,6 +111,16 @@ def writeFramesAroundEventsVideoList():
     for videoFileName in videoFileList:
         predictionLabelFile =  getBaseFileName(videoFileName) + '.tsv'
         frameList = randomGetFrameListFromVideoAroundEvents(folderName, videoFileName, predictionLabelFile)
+        generateTSVByFrameList(folderName, videoFileName, frameList)
+
+# 4 videos from Migu testing: 2 CBA, 2 NBA. 
+def writeFramesAroundEventsVideoList_testing():
+    folderName = "/mnt/gpu02_raid/data/video/CBA/CBA_demo_v3/"
+    videoFileList = [ 'CBA1.mp4', 'CBA2.mp4', 'NBA1.mp4', 'NBA2.mp4' ]
+
+    for videoFileName in videoFileList:
+        predictionLabelFile =  getBaseFileName(videoFileName) + '.tsv'
+        frameList = randomGetFrameListFromVideoAroundEvents_testing(folderName, videoFileName, numFramesPerEvent = (6 if 'CBA' in videoFileName else 5)) 
         generateTSVByFrameList(folderName, videoFileName, frameList)
 
 if __name__ == '__main__':
@@ -84,4 +131,5 @@ if __name__ == '__main__':
         totalFrames = sys.argv[4]
         writeFramesAroundEvents(folderName, videoFile, predictionLabelFile, totalFrames)
     else:
-        writeFramesAroundEventsVideoList()
+        #writeFramesAroundEventsVideoList()
+        writeFramesAroundEventsVideoList_testing()

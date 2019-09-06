@@ -16,8 +16,8 @@ def getVideoAndEventLabels(jsonFile, videoFileName):
     return ret, labelList
 
 def labelConverter(label):
-    if "dunk" in label or "layup" in label:
-        return "dunk/layup"    
+    if "dunk" in label:
+        return "dunk"
     else:
         return "shot"
 

@@ -45,9 +45,9 @@ def showImagesWithLabels(topDir, labelFileName, tsvFileName):
         #  print(labels)
         #  print(skipRects(labels))
         if skipSmallRects:        
-          frame = drawLabel(frame, skipRects(labels), skipPersons = 0)
+          frame = drawLabel(frame, skipRects(labels), skipPersons = 0, filterPersons = 0)
         else:
-          frame = drawLabel(frame, labels)
+          frame = drawLabel(frame, labels, skipPersons = 0, filterPersons = 0)
         text = "Line: " + str(i + 1) + "; id: " + v1[0]
         frame = cv2.putText(frame, text, (int(0), int(60)),
                             cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 3)
@@ -73,7 +73,8 @@ def main():
 
     #labelFileName = "1551538896210_sc99_01_q1.tsv"
     #labelFileName = "temp.tsv"
-    labelFileName = "CBA1_people.tsv"
+    #labelFileName = "CBA1_people.tsv"
+    labelFileName = "CBA1_player_for_vendor.tsv"
 
     
     showImagesWithLabels(topDir, labelFileName,
@@ -89,5 +90,5 @@ if __name__ == '__main__':
         showImagesWithLabels(topDir, labelFileName, tsvFileName)
     else:
         main()
-        print("Missing arguments. Usage: python .\labelViewerForVideo.py <dir> <labelFileName> <videoFileName> <startTimeInSecond>")
-        print('Example usage: python .\labelViewerForVideo.py /mnt/gpu02_raid/data/video/NBA/0001 NBA_0001_1.tsv NBA_0001_1.mkv 630')        
+        print("Missing arguments. Usage: python .\labelViewerForVideo.py <dir> <labelFileName> <tsvImageName> ")
+        print('Example usage: python .\labelViewerForVideo.py /mnt/gpu02_raid/data/video/NBA/0001 NBA_0001_label.tsv NBA_0001_1.tsv')

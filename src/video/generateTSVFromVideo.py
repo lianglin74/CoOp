@@ -156,6 +156,31 @@ def generateTSVByFrameList(folderName, videoFileName, frameList):
     print("endTime: ", endTime)
     print("Total used time: ", endTime - startTime)
 
+def saveFramesByFrameList(folderName, videoFileName, frameList, returnFrames = 0):
+    sepSign = '$'
+    cap = cv2.VideoCapture(folderName + '/' + videoFileName)
+    imageList = []
+    
+    for frameIndex in frameList:
+        imageId = videoFileName + sepSign + str(frameIndex)
+    
+        # set frame pos
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frameIndex)
+        # read frame
+        ret, frame = cap.read()
+        if not ret:
+            print("Error")
+            exit()
+
+        if returnFrames:
+            imageList.append(frame)
+        else:
+            cv2.imwrite(imageId +'.jpg', frame)
+
+    cap.release()
+    if returnFrames:
+        return imageList
+
 def genTSVForCBA():
     folderName = "CBA"
     videoListFileName = folderName + '/' + 'CBAlist.txt'

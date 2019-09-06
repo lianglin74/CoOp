@@ -241,7 +241,7 @@ def findShot(predict_file, frameRate=25.0):
                         if personTime > startTime - padding and personTime < endTime + padding:
                             print("Finding one DUNK shot by angle analysis: ",
                                   (imageCnt/frameRate))
-                            className = "dunk/layup"
+                            className = "dunk"
                         print("Adding result: ", (max(startTime -
                                                       padding, 0.0), endTime + padding, className))
                         pred_results_angle.append(
@@ -412,8 +412,8 @@ def getShotStats(pred_results, true_results):
     j = 0
     allTimePoints = []
 
-    tolerance = 2.0
-    correctLabel = True
+    tolerance = 0.5
+    correctLabel = False
     treatingDunkAsShot = False
     labelCorrectionDict = {}
     
@@ -596,21 +596,21 @@ def getFrameRate(video_name):
     return fps
 
 
-def writeToTSV(labelFile, pred_results):
+def writeToTSV(labelFile, pred_results, timePoint = False):
     fileName = labelFile.replace(".tsv", "_events.tsv")
     videoFileName = labelFile.replace(".tsv", ".mp4")
     id = 0
     #className = "shot"
-    padding = 0
+    padding = 1.0 if timePoint else 0 
     dictList = []
     for v in pred_results:
         id += 1
         value = {}
 
         value['id'] = id
-        value['start'] = v[0] - padding
-        value['end'] = v[1] + padding
-        value['class'] = v[2]
+        value['start'] = v[0] - padding if timePoint else  v[0] - padding
+        value['end'] = v[0] + padding if timePoint else v[1] + padding
+        value['class'] = v[1] if timePoint else v[2]
         dictList.append(value)
 
     print('json format results:')
@@ -727,8 +727,8 @@ def calculateF1andWriteRes(dir, odFileList, eventLabelJsonFile, textLabels = Fal
         if ret: 
             allReports += "--Report for file: " + videoFileName + "\n"
 
-            print("----calculate F1 for file: ", predict_file)
-            print("True_results:", true_results)
+            print("----calculate F1 for file: ", predict_file)            
+            #print("True_results:", true_results)
 
             y_pred, y_true, _, correctLabelsDict = getShotStats(pred_results, true_results)
 
@@ -742,23 +742,30 @@ def calculateF1andWriteRes(dir, odFileList, eventLabelJsonFile, textLabels = Fal
             print("!! cannot find label for video file: ", videoFileName)
             exit()
 
-        writeToTSV(predict_file, pred_results)
+        # write events
+        groundTruthEvents = False
+        if groundTruthEvents:
+            writeToTSV(predict_file, true_results, True)
+        else:
+            writeToTSV(predict_file, pred_results)
 
     print("====F1 report for all the data: ")
     f1Report(overallPred, overallTrue)
     print(allReports)
     print(allCorrectLabels)
 
-def getValidationResults():
-    dir = "/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/validation/extracted/"    
+dgx02=True
+
+def getValidationResults():    
+    dir = "/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/validation/extracted/" if dgx02 else "/raid/data/video/CBA/CBA_5_test_videos/validation/extracted/"
     odFileList = "odFilelist.txt"
-    eventLabelJsonFile = '/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/test/extracted/label/Project_all.aucvl'
+    eventLabelJsonFile = '/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/test/extracted/label/Project_all_corrected_manual.aucvl'
     calculateF1andWriteRes(dir, odFileList, eventLabelJsonFile)
 
 def getTestingResults():
-    dir = "/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/test/extracted/"    
+    dir = "/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/test/extracted/"  if dgx02 else "/raid/data/video/CBA/CBA_5_test_videos/test/extracted/"
     odFileList = "odFilelist.txt"
-    eventLabelJsonFile = '/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/test/extracted/label/Project_all.aucvl'
+    eventLabelJsonFile = '/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/test/extracted/label/Project_all_corrected_manual.aucvl'
     calculateF1andWriteRes(dir, odFileList, eventLabelJsonFile)
 
 def getMiguTestingResults():
