@@ -15,20 +15,23 @@ import copy
 import os.path
 
 def setDebug(frame): 
-    return False
-    #return frame > 2367 and frame <2387
+    #return False
+    return frame > 2370 and frame <2387
     #return frame > 5957 and frame < 5999
             
 class Trajectory(object):
     def __init__(self, frameRate, debug):
-        # parameter
+        # Important parameters to tune:
         self.highRecall = True
         self.iouLowThresh = 0.01
         self.iouHighThresh = 0.55
+        self.shotDetectWindow = 2.0
+
         self.angleRimToBallThresh = 45.0
         self.ballAboveRimThresh = 0.0
         self.eventPadding = 1.0
 
+        
         # To solve the problem in case: Case "RimNotGood_1"
         self.enlargeRatio = 1.5
 
@@ -94,7 +97,7 @@ class Trajectory(object):
                         shot = True
                         reason = 'extraCond'
 
-        return shot, startTime, endTime, eventType, self.iouTime, reason
+        return shot, endTime, eventType, self.iouTime, reason
 
     def extraCondition(self, maxIouIndex):
         l = len(self.ballTraj)
@@ -212,6 +215,7 @@ class EventDetector(object):
     def findEvent(self):
         # Initialize
         eventStarted = False
+        startTime = 0
         endTime = -1
         
         trajectory = Trajectory(self.frameRate, self.debug)
@@ -271,16 +275,22 @@ class EventDetector(object):
             #   Analyze the trajectory.
             #   Add the results if a shot is found.
 
-            if eventStarted:                
+            if not eventStarted:                
+                eventStarted = self.checkWhetherEventStarted(endTime, curTime, ballRects, rimRects)
+                if eventStarted:
+                    startTime = curTime
+                    if self.debug:
+                        print("Event started!")
+            else:
                 iou = trajectory.add(ballRects, rimRects, self.imageCnt)
                 
-                eventEnded = self.checkWhetherEventEnded(ballRects, rimRects)
+                eventEnded = self.checkWhetherEventEnded(ballRects, rimRects, curTime, startTime, trajectory.shotDetectWindow)
                 if (eventEnded):
                     if self.debug:
                         print("Event ended!")
                         
                     eventStarted = False
-                    shot, startTime, endTime, eventType, iotTime, reason = trajectory.analyze()
+                    shot, endTime, eventType, iotTime, reason = trajectory.analyze()
                     if shot:
                         # update results
                         eventResults.append(
@@ -288,11 +298,8 @@ class EventDetector(object):
                     # else: #doing nothing
                     trajectory.clear()
                 # else: #event going on, doing nothing
-            else:
-                eventStarted = self.checkWhetherEventStarted(endTime, curTime, ballRects, rimRects)
-                if self.debug and eventStarted:
-                        print("Event started!")
 
+                
             self.imageCnt += 1
 
         return eventResults
@@ -346,7 +353,12 @@ class EventDetector(object):
             return False
 
     #
-    def checkWhetherEventEnded(self, ballRects, rimRects):
+    def checkWhetherEventEnded(self, ballRects, rimRects, curTime, startTime, shotDetectWindow):
+        # To handle the false case where event ends earlier because of false ball detection
+        # Example: case "WrongBallDetected_3"
+        if curTime < startTime + shotDetectWindow:
+            return False
+
         ballToRimDistance = self.getDistanceBalltoRim(ballRects, rimRects)
         widthRim = self.getWidthOfRim(rimRects)
 
