@@ -15,8 +15,8 @@ import copy
 import os.path
 
 def setDebug(frame): 
-    #return False
-    return frame > 2370 and frame <2387
+    return False
+    #return frame > 2370 and frame <2387
     #return frame > 5957 and frame < 5999
             
 class Trajectory(object):
@@ -248,8 +248,11 @@ class EventDetector(object):
                 ballRects = trajectory.predictBallRects()
                 #print("After adding ball rects:", ballRects)
 
-            # Get the rim closest to ball
-            rimRects = self.getClosestRimRects(ballRects, rimRects)
+            # Get the ball, rim pair with smallest distance if there are multiple balls or rims
+            ballRects, rimRects = self.getClosestBallRimPair(ballRects, rimRects)
+
+            assert(len(ballRects) <= 1)
+            assert(len(rimRects) <= 1)
 
             #if self.debug:
             #    print("ballRects: ", ballRects)
@@ -304,17 +307,18 @@ class EventDetector(object):
 
         return eventResults
 
-    def getClosestRimRects(self, ballRects, rimRects):
-        if objectExists(ballRects) and objectExists(rimRects):            
-            ballCenter = getCenterOfObject(ballRects[0])
-            listOfBallToRimsDistance = [getDistanceOfTwoPoints(
-                ballCenter, getCenterOfObject(b)) for b in rimRects]
-            indexOfClosestRim, _ = minIndexVal(listOfBallToRimsDistance)
-            rectClosestRim = rimRects[indexOfClosestRim]
-
-            return [rectClosestRim]
-        else:
-            return rimRects
+    def getClosestBallRimPair(self, ballRects, rimRects):
+        cntBall = len(ballRects)
+        cntRim = len(rimRects)        
+        if cntBall >= 1 and cntRim >= 1:
+            ballRect, rimRect = getClosestRects(ballRects, rimRects)
+            return [ballRect], [rimRect]
+        elif cntBall >= 1 and cntRim < 1:
+            return [getRectWithHighestConfScore(ballRects)], rimRects
+        elif cntBall < 1 and cntRim >= 1:
+            return ballRects, [getRectWithHighestConfScore(rimRects)]
+        else: # cntBall < 1 and cntRim < 1
+            return ballRects, rimRects
 
     def getWidthOfRim(self, rimRects):
         rimExists = objectExists(rimRects)
@@ -372,30 +376,19 @@ class EventDetector(object):
         rimRects = []        
         backboardRects = []
 
-        maxBasketBallConf = self.basketBallConfThresh
-        maxBasketBallRectIndex = -1
-
-        i = 0
         for r in rects:
             if r['class'] == 'basketball':
-                if r['conf'] >= maxBasketBallConf:
-                    maxBasketBallConf = r['conf']
-                    maxBasketBallRectIndex = i
+                if r['conf'] >= self.basketBallConfThresh:
+                    ballRects.append(r)
             elif r['class'] == 'basketball rim':
                 if r['conf'] >= self.rimConfThresh:
                     rimRects.append(r)
             elif r['class'] == 'backboard':
                 if r['conf'] >= self.backboardConfThresh:
                     backboardRects.append(r)
-                    
-            i += 1
-
+        
         if self.debug and objectExists(backboardRects) and not objectExists(rimRects):
             print("[Warning] image ",  self.imageCnt, ": backboard found, but no rim")
-
-        # get the ball with highest confidence score
-        if maxBasketBallRectIndex != -1:
-            ballRects.append(rects[maxBasketBallRectIndex])
 
         return ballRects, rimRects, backboardRects
 
@@ -425,6 +418,28 @@ def enlargeRect(rect0, enlargeRatio):
     rect0[3] = y + (heightOfBall ) / 2
 
     return rect0
+
+def getRectWithHighestConfScore(rects):
+    return max(rects, key = lambda rect: rect['conf'])
+
+def test_getRectWithHighestConfScore():
+    rects = [{'rect': [90, 90, 110, 110], 'class': 'basketball', 'conf': 0.7321000099182129, 'obj': 0.7321000099182129}, 
+            {'rect': [190, 190, 210, 210], 'class': 'basketball', 'conf': 0.85, 'obj': 0.7321000099182129}]
+    print(getRectWithHighestConfScore(rects))
+
+def getClosestRects(ballRects, rimRects):
+    distanceList = [ [i, j, getTwoRectCenterDistance(ballRect, rimRect)] for i, ballRect in enumerate(ballRects) for j, rimRect in enumerate(rimRects)]
+    minEle = min(distanceList, key = lambda ele : ele[2])
+    return ballRects[minEle[0]], rimRects[minEle[1]]
+
+def test_getClosestRects():
+    ballRects = [{'rect': [90, 90, 110, 110], 'class': 'basketball', 'conf': 0.7321000099182129, 'obj': 0.7321000099182129}, 
+        {'rect': [190, 190, 210, 210], 'class': 'basketball', 'conf': 0.65, 'obj': 0.7321000099182129}]
+        #center: 100, 100; 200, 200
+    rimRects = [{'rect': [30, 30, 70, 70], 'class': 'basketball rim', 'conf': 0.7321000099182129, 'obj': 0.7321000099182129}, 
+        {'rect': [160, 160, 200, 200], 'class': 'basketball', 'conf': 0.65, 'obj': 0.7321000099182129}]
+        #center: 50, 50; 180, 180
+    print(getClosestRects(ballRects, rimRects))
 
 # Given two rectangles, rect0 is smaller. Check the ratio of intersection of rect0 and rect1 to area of rect0
 def calculateIOA(rect0, rect1, enlargeRatio = 1.0):
@@ -602,6 +617,11 @@ def getCenterOfObject(bb):
     xc = x1 + (x2 - x1) / 2.0
     yc = y1 + (y2 - y1) / 2.0
     return (xc, yc)
+
+def getTwoRectCenterDistance(ballRect, rimRect):
+    ballCenter = getCenterOfObject(ballRect)
+    rimCenter =  getCenterOfObject(rimRect)
+    return getDistanceOfTwoPoints(ballCenter, rimCenter)
 
 def getCenterOfRect(rect):
     x1 = rect[0]
@@ -919,3 +939,5 @@ if __name__ == '__main__':
     # testGetDegreeOfTwoPoints()
     #test_getEventLabelsFromText()
     #getMiguTestingResults()
+    #test_getClosestRects()
+    #test_getRectWithHighestConfScore()
