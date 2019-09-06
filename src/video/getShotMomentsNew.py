@@ -25,7 +25,8 @@ class Trajectory(object):
         self.highRecall = True
         self.iouLowThresh = 0.01
         self.iouHighThresh = 0.55
-        self.shotDetectWindow = 2.0
+        self.shotDetectWindow = 2.0 #at least >=2.0
+        self.wideEventWindow = True
 
         self.angleRimToBallThresh = 45.0
         self.ballAboveRimThresh = 0.0
@@ -77,10 +78,17 @@ class Trajectory(object):
 
         # add padding time
         # case WrongBasketball_1:
-        endTime = max(endTime, self.ioaTime + self.eventPadding)
+        if self.wideEventWindow: 
+            endTime = max(endTime, self.ioaTime + self.eventPadding)
+        else:
+            endTime = min(endTime, self.ioaTime + self.eventPadding)
 
         # to avoid small period (not good for demo show), adjust the starting time
-        startTime = min(startTime, self.ioaTime - self.eventPadding)
+        if self.wideEventWindow:
+            startTime = min(startTime, self.ioaTime - self.eventPadding)
+        else:
+            startTime = max(startTime, self.ioaTime - self.eventPadding)
+            
         startTime = max(0, startTime)
 
         if maxIouValue > self.iouHighThresh:
@@ -97,7 +105,7 @@ class Trajectory(object):
                         shot = True
                         reason = 'extraCond'
 
-        return shot, endTime, eventType, self.ioaTime, reason
+        return shot, startTime, endTime, eventType, self.ioaTime, reason
 
     def extraCondition(self, maxIouIndex):
         l = len(self.ballTraj)
@@ -216,7 +224,7 @@ class EventDetector(object):
         # Initialize
         eventStarted = False
         startTime = 0
-        endTime = -1
+        endTimeRes = -1
         
         trajectory = Trajectory(self.frameRate, self.debug)
         prevRects = {"ball": [], "rim": [], "backboard": []}
@@ -279,7 +287,7 @@ class EventDetector(object):
             #   Add the results if a shot is found.
 
             if not eventStarted:                
-                eventStarted = self.checkWhetherEventStarted(endTime, curTime, ballRects, rimRects)
+                eventStarted = self.checkWhetherEventStarted(endTimeRes, curTime, ballRects, rimRects)
                 if eventStarted:
                     startTime = curTime
                     if self.debug:
@@ -293,11 +301,11 @@ class EventDetector(object):
                         print("Event ended!")
                         
                     eventStarted = False
-                    shot, endTime, eventType, ioaTime, reason = trajectory.analyze()
+                    shot, startTimeRes, endTimeRes, eventType, ioaTime, reason = trajectory.analyze()
                     if shot:
                         # update results
                         eventResults.append(
-                            (startTime, endTime, eventType, ioaTime, reason))
+                            (startTimeRes, endTimeRes, eventType, ioaTime, reason))
                     # else: #doing nothing
                     trajectory.clear()
                 # else: #event going on, doing nothing
