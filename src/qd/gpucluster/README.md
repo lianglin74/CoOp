@@ -81,7 +81,7 @@
 
 5. Set an alias
    ```bash
-   set a='ipython --pdb src/qd/gpucluster/aml_client.py -- '
+   alias a='ipython --pdb src/qd/gpucluster/aml_client.py -- '
    ```
 
 ### Job Management
