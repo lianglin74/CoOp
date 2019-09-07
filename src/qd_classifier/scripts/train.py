@@ -188,15 +188,15 @@ class ClassifierPipeline(object):
 
     def monitor_train(self):
         self._ensure_initialized()
-        all_step_eval = []
-        for step in range(self.config.epochs + 1):
-            model_file = self._get_checkpoint_file(epoch=step)
-            if op.isfile(model_file):
-                predict_file = self.ensure_predict(model_file=model_file)
-                evaluate_file = self.ensure_evaluate(predict_file=predict_file)
-                all_step_eval.append([step, load_from_yaml_file(evaluate_file)])
-
         if self.is_master:
+            all_step_eval = []
+            for step in range(self.config.epochs + 1):
+                model_file = self._get_checkpoint_file(epoch=step)
+                if op.isfile(model_file):
+                    predict_file = self.ensure_predict(model_file=model_file)
+                    evaluate_file = self.ensure_evaluate(predict_file=predict_file)
+                    all_step_eval.append([step, load_from_yaml_file(evaluate_file)])
+
             tensorboard_folder = op.join(self.output_folder, 'tensorboard_data')
             ensure_remove_dir(tensorboard_folder)
             tag_prefix = self.config.test_data
