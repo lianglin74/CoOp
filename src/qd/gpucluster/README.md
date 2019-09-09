@@ -189,4 +189,125 @@
 
 
 ## Philly
+### Installation
+1. Download and install the source code
+   ```bash
+   git clone git@ssh.dev.azure.com:v3/visionbio/quickdetection/quickdetection
+   cd src
+   python setup.py build develop
+   ```
+   Note
+   - you don't have to use the option of `--recursive` to download all
+   submodules. 
+   - Recommended to build it with develop option so that you can
+   modify the code and there is no need to re-compile it. 
+   - If you are using system-level python, please use the option of `--user` 
+   in setup command so that the lib won't contaminate the system lib
+   - This is the same as AML tool.
+
+2. Create the configuration file of `aux_data/configs/multi_philly_vc.yaml`,
+   which tells the cluster names we have.
+   ```
+    clusters:
+        - wu1
+        - sc2
+   ```
+   If you just want to focus on sc2, then remove `-wu1`. The VC name is
+   hard-coded as `input` since there is no need to change it in our group.
+
+3. Create the configuration file of `aux_data/configs/philly_vc.yaml`. The
+   following is an example.
+   ```
+    vc: input
+    cluster: wu1
+    #cluster: sc2
+    user_name: jianfw
+    password: null
+    blob_mount_point: /blob
+    azure_blob_config_file: ./aux_data/configs/vigeastblob_account.yaml
+    multi_process: true
+    config_param:
+        # please make sure each path starts with blob_mount_point
+        #code_path: /hdfs/input/jianfw/code/quickdetection.zip
+        code_path: /blob/jianfw/code/quickdetection.zip
+        data_folder: /blob/jianfw/data/qd_data
+        #data_folder: /hdfs/input/jianfw/data/qd_data
+        model_folder: /blob/jianfw/work/qd_models
+        output_folder: /blob/jianfw/work/qd_output
+    docker:
+        image: philly/jobs/test/vig-qd-env
+        tag: py36ptnight
+   ```
+   - `vc`: this is the name of virtual cluster. In our group, it is input
+   - `cluster`: wu1 or sc2. This value will be overwritten by the config file of
+   `multi_philly_vc.yaml`
+   - `user_name`: the credential information for philly job submission
+   - `password`: if it is null, it will try to get the password from the env
+   variable of `PHILLY_PASSWORD`. It is suggested to set the password in the
+   env variable.
+   - `azure_blob_config_file`: the config file for azure blob account, whose
+   format is the same as AML's
+   - `multi_process`: if it is true, it wil launch the script multiple times
+   (the number of GPU times) and give each process different environement
+   variables so that you know which GPU to use.
+   - `config_param`: tells where to find the code, data, output folder. If you
+   want to use hdfs system to keep your data, specify the path started with
+   /hdfs.
+
+5. Set an alias
+   ```bash
+   alis p='ipython --pdb src/qd/gpucluster/philly_client.py -- '
+   ```
+
+### Job Management
+1. How to query the job status
+   ```shell
+   p query _6873
+   p q _6873
+   ```
+   The last word is the suffix of the job id. You can specify full name or
+   partial name. One sample output is
+   ```
+   ...
+   2019-09-09 15:45:13,577.577 qd_common.py:406    cmd_run(): finished the cmd run
+   2019-09-09 15:45:13,579.579 philly_client.py:661 track_job_once(): satus = Running
+   2019-09-09 15:45:13,579.579 philly_client.py:663 track_job_once(): ssh -tt jianfw@sshproxy.sc2.philly.selfhost.corp.microsoft.com -p 2200 ssh -tt -o StrictHostKeyChecking=no jianfw@10.0.0.71 -p 2234 -i /var/storage/shared/input/sys/jobs/application_1564705084178_6873/.ssh/id_rsa
+   2019-09-09 15:45:13,580.580 philly_client.py:666 track_job_once(): https://philly/#/job/sc2/input/1564705084178_6873
+   ```
+
+2. How to abort the job
+   ```
+   p abort _6873
+   ```
+
+3. How to resubmit the job
+   ```
+   p resubmit _6873
+   ```
+4. How to submit a job
+   1. Do initialization first by
+      ```shell
+      a init
+      ```
+      which will compress the code in the current folder to a zip file and
+      upload it to the cloud as specified in `philly_vc.yaml`.
+   2. submit the job
+      1. How to submit a job for SSH
+         ```shell
+         p submit ssh
+         ```
+         By default, it applies 4 GPU. If you want more, run
+         ```shell
+         p -n 8 submit ssh
+         ```
+         Note, `-n 8` should be placed before `submit`
+      2. How to run `nvidia-smi`
+         ```shell
+         p submit nvidia-smi
+         ```
+      4. How to run `python scripts/train.py`
+         ```shell
+         p submit python scripts/train.py
+         ```
+
 
