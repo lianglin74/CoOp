@@ -123,19 +123,23 @@ def philly_mkdir(dest_dir, vc, cluster):
     sub_cmd = ['-mkdir', dest_dir]
     philly_run(sub_cmd, vc, cluster)
 
-def upload_through_blob(src_dir, dest_dir, vc, cluster, **kwargs):
+def upload_through_blob(src_dir, dest_dir, vc, cluster,
+        c=None,
+        **kwargs):
     assert (len(dest_dir) > 0 and \
             dest_dir[0] != '/' and \
             dest_dir[0] != '\\')
     if dest_dir[-1] != '/':
         dest_dir = dest_dir + '/'
-    account = 'vig'
-    dest_url = op.join('https://{}.blob.core.windows.net/data',
-            account,
-            dest_dir,
-            op.basename(src_dir))
 
-    c = create_cloud_storage(account)
+    if c is None:
+        account = 'vig'
+        dest_url = op.join('https://{}.blob.core.windows.net/data',
+                account,
+                dest_dir,
+                op.basename(src_dir))
+
+        c = create_cloud_storage(account)
     if op.isfile(src_dir):
         # it seems like az_sync does not support file -> file though it claims
         # it supports
@@ -150,6 +154,7 @@ def upload_through_blob(src_dir, dest_dir, vc, cluster, **kwargs):
         philly_run(sub_cmd, vc, cluster, extra_env=env)
 
 def philly_upload_dir(src_dir, dest_dir, vc='input', cluster='philly-prod-cy4',
+        c=None,
         blob=True, **kwargs):
     philly_mkdir(dest_dir, vc, cluster)
     t = infer_type(vc, cluster)
@@ -171,7 +176,7 @@ def philly_upload_dir(src_dir, dest_dir, vc='input', cluster='philly-prod-cy4',
                 op.basename(src_dir))))
             retry_agent(cmd_run, cmd, env={'PHILLY_VC': vc})
         else:
-            upload_through_blob(src_dir, dest_dir, vc, cluster, **kwargs)
+            upload_through_blob(src_dir, dest_dir, vc, cluster, c=c, **kwargs)
     elif t == 'ap':
         cmd = []
         cmd.append('./philly-fs')
@@ -315,11 +320,12 @@ class PhillyVC(object):
                 assert self.config_param['code_path'].startswith(self.blob_mount_point)
                 rel_code_path = self.config_param['code_path'][
                         len(self.blob_mount_point): ]
-                blob_upload(random_abs_qd, rel_code_path)
+                blob_upload(random_abs_qd, rel_code_path,
+                        c=self.get_cloud_storage())
             else:
                 philly_upload_dir(random_abs_qd, '{}/code'.format(self.user_name),
                         vc=self.vc,
-                        cluster=self.cluster, blob=True, copy_to_hdfs=copy_to_hdfs)
+                        cluster=self.cluster, c=self.get_cloud_storage(), blob=True, copy_to_hdfs=copy_to_hdfs)
         else:
             philly_upload(random_abs_qd, '{}/code'.format(self.user_name), vc=self.vc,
                     cluster=self.cluster)
@@ -570,19 +576,23 @@ class PhillyVC(object):
         blob_container = cloud_blob.container_name
         blob_key = cloud_blob.account_key
 
-        data['volumes'] = {'blob': {'type': 'blobfuseVolume',
-            'storageAccount': cloud_blob.account_name,
-            'containerName': blob_container,
-            'path': self.blob_mount_point,
-            "options": [
-                "-o", "attr_timeout=240",
-                "-o", "entry_timeout=240",
-                "-o", "negative_timeout=120",
-                "--log-level=LOG_WARNING",
-                "-o", "allow_other",
-                "--file-cache-timeout-in-seconds=1000000",
-                ]
-            }}
+        data['volumes'] = {
+                'blob': {
+                            'type': 'blobfuseVolume',
+                            'storageAccount': cloud_blob.account_name,
+                            'containerName': blob_container,
+                            'path': self.blob_mount_point,
+                            "options":
+                            [
+                                "-o", "attr_timeout=240",
+                                "-o", "entry_timeout=240",
+                                "-o", "negative_timeout=120",
+                                "--log-level=LOG_WARNING",
+                                "-o", "allow_other",
+                                "--file-cache-timeout-in-seconds=1000000",
+                            ]
+                        }
+                }
         data['credentials'] = {'storageAccounts': {cloud_blob.account_name: {
             '_comments': 'redentials for accessing the storage account.',
             'key': blob_key,}}}
@@ -763,9 +773,10 @@ class PhillyVC(object):
         return result
 
     def upload_file(self, file_from, file_target, blob=False):
+        c = self.get_cloud_storage()
         if self.cluster in ['sc2', 'wu1']:
             philly_upload_dir(file_from, file_target, self.vc,
-                    self.cluster, blob=blob)
+                    self.cluster, c=c, blob=blob)
         else:
             philly_upload(file_from, file_target, self.vc, self.cluster)
 
