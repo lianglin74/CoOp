@@ -27,18 +27,21 @@ class Trajectory(object):
         self.iouHighThresh = 0.55
         self.shotDetectWindow = 2.0 #at least >=2.0
         self.wideEventWindow = True
-
         self.angleRimToBallThresh = 45.0
         self.ballAboveRimThresh = 0.0
         self.eventPadding = 1.0
-
         
         # To solve the problem in case: Case "RimNotGood_1"
         self.enlargeRatio = 1.5
 
+        # for debugging purpose
+        self.printMissingBallFrames = True
+        self.debug = debug
+
+        # initialization
         self.ioaTime = -1
         self.frameRate = frameRate
-        self.debug = debug
+        
         self.clear()
 
     def add(self, ballRects, rimRects, frame):
@@ -104,6 +107,13 @@ class Trajectory(object):
                     if self.extraConditions(maxIouIndex):
                         shot = True
                         reason = 'extraCond'
+
+        # output the frames of the first missing ball
+        if self.printMissingBallFrames and shot:
+            for i, ballRects in enumerate(self.ballTraj):
+                if i > 0 and objectExists(ballRects) and objectExists(self.ballTraj[i  - 1]) and ballRects[0]['conf'] == self.ballTraj[i  - 1][0]['conf']:
+                    print("Missing ball at frame: ", self.frameTraj[i], "Time: ", self.frameTraj[i]/self.frameRate, "Previous frame: rect: ", self.ballTraj[i  - 1][0]['rect'], 'conf: ', ballRects[0]['conf'])
+                    break
 
         return shot, startTime, endTime, eventType, self.ioaTime, reason
 
