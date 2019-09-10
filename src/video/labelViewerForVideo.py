@@ -108,7 +108,7 @@ def showFramesWithLabels(topDir, labelFileName, video_name, startSecond, endSeco
         #  print(labels)
         #  print(skipRects(labels))
 
-        frame = drawLabel(frame, skipRects(labels), skipPersons = 0, filterPersons = 0)
+        frame = drawLabel(frame, skipRects(labels), skipPersons = 1, filterPersons = 0)
         text = "Frame: " + str(i) + "; second: " + str(i / fps)
         frame = cv2.putText(frame, text, (int(0), int(60)),
                             cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 3)

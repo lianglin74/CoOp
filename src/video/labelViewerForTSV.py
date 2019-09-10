@@ -45,9 +45,9 @@ def showImagesWithLabels(topDir, labelFileName, tsvFileName):
         #  print(labels)
         #  print(skipRects(labels))
         if skipSmallRects:        
-          frame = drawLabel(frame, skipRects(labels), skipPersons = 0, filterPersons = 0)
+          frame = drawLabel(frame, skipRects(labels), skipPersons = 0, filterPersons = 1)
         else:
-          frame = drawLabel(frame, labels, skipPersons = 0, filterPersons = 0)
+          frame = drawLabel(frame, labels, skipPersons = 0, filterPersons = 1)
         text = "Line: " + str(i + 1) + "; id: " + v1[0]
         frame = cv2.putText(frame, text, (int(0), int(60)),
                             cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 3)
