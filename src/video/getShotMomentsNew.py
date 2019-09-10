@@ -20,7 +20,7 @@ def setDebug(frame):
     #return frame > 5957 and frame < 5999
             
 class Trajectory(object):
-    def __init__(self, frameRate, debug):
+    def __init__(self, frameRate, debug, videoFile):
         # Important parameters to tune:
         self.highRecall = True
         self.iouLowThresh = 0.01
@@ -41,6 +41,7 @@ class Trajectory(object):
         # initialization
         self.ioaTime = -1
         self.frameRate = frameRate
+        self.videoFile = videoFile
         
         self.clear()
 
@@ -110,12 +111,19 @@ class Trajectory(object):
 
         # output the frames of the first missing ball
         if self.printMissingBallFrames and shot:
-            for i, ballRects in enumerate(self.ballTraj):
-                if i > 0 and objectExists(ballRects) and objectExists(self.ballTraj[i  - 1]) and ballRects[0]['conf'] == self.ballTraj[i  - 1][0]['conf']:
-                    print("Missing ball at frame: ", self.frameTraj[i], "Time: ", self.frameTraj[i]/self.frameRate, "Previous frame: rect: ", self.ballTraj[i  - 1][0]['rect'], 'conf: ', ballRects[0]['conf'])
-                    break
+            self.writeMissingBallFrames()
 
         return shot, startTime, endTime, eventType, self.ioaTime, reason
+
+    def writeMissingBallFrames(self):
+        fileName = self.videoFile.replace(".mp4", "-missingBallFrames.txt")
+        with open(fileName, 'a') as f:
+            for i, ballRects in enumerate(self.ballTraj):
+                if i > 0 and objectExists(ballRects) and objectExists(self.ballTraj[i  - 1]) and ballRects[0]['conf'] == self.ballTraj[i  - 1][0]['conf']:
+                    f.write(str(self.frameTraj[i]) + "\t" + str(self.ballTraj[i  - 1][0]['rect']) + "\n")
+                    f.close()
+                    print("Missing ball at frame: ", self.frameTraj[i], "Time: ", self.frameTraj[i]/self.frameRate, "Previous frame: rect: ", self.ballTraj[i  - 1][0]['rect'], 'conf: ', ballRects[0]['conf'])
+                    return
 
     def extraCondition(self, maxIouIndex):
         l = len(self.ballTraj)
@@ -236,7 +244,7 @@ class EventDetector(object):
         startTime = 0
         endTimeRes = -1
         
-        trajectory = Trajectory(self.frameRate, self.debug)
+        trajectory = Trajectory(self.frameRate, self.debug, self.videoFile)
         prevRects = {"ball": [], "rim": [], "backboard": []}
         eventResults = []
 
