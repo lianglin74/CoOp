@@ -1120,7 +1120,8 @@ def submit_without_sync(cmd, **kwargs):
         all_extra_param.append(cmd)
 
     logging.info(all_extra_param)
-    p = create_philly_client(**kwargs)
+    p = create_multi_philly_client(**kwargs)
+    p = p.select_client_for_submit()
     if kwargs.get('real_submit', True):
         list(map(lambda extra_param: p.submit_without_sync(extra_param),
                 all_extra_param))

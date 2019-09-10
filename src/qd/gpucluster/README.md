@@ -284,7 +284,13 @@
    ```
    p resubmit _6873
    ```
-4. How to submit a job
+
+4. How to ssh into an exsiting job
+   ```shell
+   p ssh application_1562349962206_12410
+   ```
+
+5. How to submit a job
    1. Do initialization first by
       ```shell
       a init
