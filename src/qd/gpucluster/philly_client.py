@@ -750,6 +750,10 @@ class PhillyVC(object):
             logging.info('get log from {}'.format(url))
             result = url_to_str(url)
 
+        from qd.qd_common import write_to_file
+        write_to_file(result,
+                op.join('assets', job_info['appID'], 'log.txt'))
+
         return result
 
     def philly_job_status(self, job_id):
