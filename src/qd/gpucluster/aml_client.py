@@ -11,7 +11,11 @@ from qd.cloud_storage import create_cloud_storage
 
 
 def create_aml_client(**kwargs):
-    path = os.environ.get('AML_CONFIG_PATH', './aux_data/aml/aml.yaml')
+    if 'cluster' in kwargs:
+        cluster = kwargs['cluster']
+        path = op.join('aux_data', 'aml', '{}.yaml'.format(cluster))
+    else:
+        path = os.environ.get('AML_CONFIG_PATH', './aux_data/aml/aml.yaml')
     param = load_from_yaml_file(path)
     dict_update_nested_dict(param, kwargs)
     return AMLClient(**param)
@@ -51,10 +55,12 @@ def parse_run_info(run, with_details=True,
     if with_log:
         all_log = download_run_logs(info, full=log_full)
         info['all_log_path'] = all_log
-        if len(all_log) > 0:
+        master_logs = [l for l in all_log if l.endswith('70_driver_log_0.txt')]
+        if len(master_logs) > 0:
             logging.info('parsing the log for {}'.format(info['appID']))
+            info['master_log'] = master_logs[0]
             info['latest_log'] = cmd_run(['tail', '-n', '100',
-                all_log[0]],
+                info['master_log']],
                 return_output=True)
             from qd.qd_common import attach_log_parsing_result
             attach_log_parsing_result(info)
@@ -92,8 +98,9 @@ def download_run_logs(run_info, full=True):
     if 'logFiles' not in run_info:
         return []
     all_log_file = []
+    log_folder = os.environ.get('AML_LOG_FOLDER', 'assets')
     for k, v in run_info['logFiles'].items():
-        target_file = op.join('assets', run_info['appID'], k)
+        target_file = op.join(log_folder, run_info['appID'], k)
         from qd.qd_common import url_to_file_by_wget
         from qd.qd_common import url_to_file_by_curl
         if full:
@@ -120,6 +127,7 @@ class AMLClient(object):
             with_log=True,
             **kwargs):
         self.kwargs = kwargs
+        self.use_cli_auth = kwargs.get('use_cli_auth', False)
         self.aml_config = aml_config
         self.compute_target = compute_target
         # do not change the datastore_name unless the storage account
@@ -163,7 +171,12 @@ class AMLClient(object):
         self.with_log = with_log
 
         from azureml.core import Workspace
-        self.ws = Workspace.from_config(self.aml_config)
+        if self.use_cli_auth:
+            from azureml.core.authentication import AzureCliAuthentication
+            cli_auth = AzureCliAuthentication()
+            self.ws = Workspace.from_config(self.aml_config, auth=cli_auth)
+        else:
+            self.ws = Workspace.from_config(self.aml_config)
         self.compute_target = self.ws.compute_targets[self.compute_target]
 
         self.attach_data_store()
@@ -210,8 +223,8 @@ class AMLClient(object):
                     with_details=True,
                     with_log=self.with_log,
                     log_full=True)
-            if 'all_log_path' in info and len(info['all_log_path']) > 0:
-                cmd_run(['tail', '-n', '100', info['all_log_path'][0]])
+            if 'master_log' in info:
+                cmd_run(['tail', '-n', '100', info['master_log']])
             logging.info(pformat(info))
 
     def resubmit(self, partial_id):
@@ -257,6 +270,29 @@ class AMLClient(object):
         data_root = TSVDataset(d)._data_root
         self.config_param['data_folder']['cloud_blob'].az_sync(data_root,
                 op.join(self.config_param['data_folder']['path'], d))
+
+    def sync_full_expid_from_local(self, full_expid):
+        cloud = self.config_param['output_folder']['cloud_blob']
+        local_folder = op.join('output', full_expid)
+        remote_folder = op.join(self.config_param['output_folder']['path'],
+                    full_expid)
+        cloud.az_sync(local_folder, remote_folder)
+
+    def sync_full_expid_from_local_by_exist(self, full_expid):
+        cloud = self.config_param['output_folder']['cloud_blob']
+        local_folder = op.join('output', full_expid)
+        remote_folder = op.join(self.config_param['output_folder']['path'],
+                    full_expid)
+        for d, dirs, files in os.walk(local_folder):
+            for f in files:
+                local_file = op.join(d, f)
+                assert local_file.startswith(local_folder)
+                fname = local_file[len(local_folder):]
+                if fname.startswith('/'):
+                    fname = fname[1:]
+                remote_file = op.join(remote_folder, fname)
+                if not cloud.exists(remote_file):
+                    cloud.az_upload2(local_file, remote_file)
 
     def upload_qd_model(self, model_file):
         def split_all_path(fpath):
@@ -349,6 +385,8 @@ class AMLClient(object):
         random_qd = 'quickdetection{}'.format(random_id)
         import os.path as op
         random_abs_qd = op.join('/tmp', '{}.zip'.format(random_qd))
+        if op.isfile(random_abs_qd):
+            os.remove(random_abs_qd)
         logging.info('{}'.format(random_qd))
         from qd.qd_common import zip_qd
         # zip it
