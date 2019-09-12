@@ -79,7 +79,7 @@ def findShot(predict_file, frameRate=25.0):
         imageCnt += 1
 
         # if (imageCnt > 9645 and imageCnt < 9650):
-        if (imageCnt > 279 and imageCnt < 329):
+        if (imageCnt > 8200 and imageCnt < 8218):
             debug = 0
 
         if debug:
@@ -326,6 +326,12 @@ def getPersonHoldingBall(rimRect, ballRect, rects, debug):
             if calculate_iou(personRect, ballRect) > ballPersonIouThresh and calculate_iou(personRect, rimRect) > rimPersonIouThresh \
                     and isAbove((personRect[0], personRect[1]), (rimRect[2], rimRect[3])) \
                     and getHeightOfRect(personRect) > 2.0 * getHeightOfRect(rimRect):
+                
+                if debug:
+                    print("preson rect:", r)
+                    print("Rim rect: ", rimRect)
+                    print("iouWithBall: ", calculate_iou(personRect, ballRect))
+                    print("iouWithPerson", calculate_iou(personRect, rimRect))
                 return True
     return False
 
@@ -777,8 +783,8 @@ def getMiguTestingResults():
 if __name__ == '__main__':
     #main()
     #test_getShotStats()
-    #getValidationResults()
-    getTestingResults()
+    getValidationResults()
+    #getTestingResults()
     # testGetDegreeOfTwoPoints()
     #test_getEventLabelsFromText()
     #getMiguTestingResults()
