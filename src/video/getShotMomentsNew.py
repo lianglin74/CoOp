@@ -30,12 +30,16 @@ class Trajectory(object):
         self.angleRimToBallThresh = 45.0
         self.ballAboveRimThresh = 0.0
         self.eventPadding = 1.0
+        # for dunk
+        self.rimPersonIoaThresh = 0.05
+        self.personHeightToRimRatio = 2.0
+        self.dunkTimeWindow = 0.25
         
         # To solve the problem in case: Case "RimNotGood_1"
         self.enlargeRatio = 1.5
 
         # for debugging purpose
-        self.printMissingBallFrames = True
+        self.printMissingBallFrames = False
         self.debug = debug
 
         # initialization
@@ -45,11 +49,12 @@ class Trajectory(object):
         
         self.clear()
 
-    def add(self, ballRects, rimRects, frame):
+    def add(self, ballRects, rimRects, personRects, frame):
         self.ballTraj.append(ballRects)
         self.rimTraj.append(rimRects)
+        self.personTraj.append(personRects)
         self.frameTraj.append(frame)
-        # calculate IOU
+        # calculate IOA between ball and rim (for shot detection)
         if objectExists(ballRects) and objectExists(rimRects):
             iou = maxIOAOnebb_in_list_of_bb(ballRects[0], rimRects, self.enlargeRatio)
         else:
@@ -63,6 +68,19 @@ class Trajectory(object):
             print("Frame, iou, ballRects, rimRects: ", frame, iou, ballRects, rimRects)
 
         return iou
+
+    def getDunkFrame(self):
+        #dunkFrameList = []
+        for rimRects, personRects, frame in zip(self.rimTraj, self.personTraj, self.frameTraj):
+            if objectExists(rimRects) and objectExists(personRects):
+                personRect = personRects[0]['rect']
+                rimRect = rimRects[0]['rect']
+                if getHeightOfRect(personRect) > self.personHeightToRimRatio * getHeightOfRect(rimRect) \
+                  and isAbove((personRect[0], personRect[1]), (rimRect[0], rimRect[1])) \
+                  and calculateIOA(rimRect, personRect) > self.rimPersonIoaThresh:                    
+                    return True, frame
+        
+        return False, 0
 
     def analyze(self):
         # filtering wrong object detection
@@ -108,6 +126,14 @@ class Trajectory(object):
                     if self.extraConditions(maxIouIndex):
                         shot = True
                         reason = 'extraCond'
+
+        # get the most likely dunk person (for dunk detection)
+        ret, dunkFrame = self.getDunkFrame()
+        if ret:
+            dunkTime = dunkFrame / self.frameRate
+            print("Finding a possible dunk at frame: ", dunkFrame, "; time: ", dunkTime)            
+            if abs(dunkTime - self.ioaTime) < self.dunkTimeWindow:
+                eventType = "dunk"
 
         # output the frames of the first missing ball
         if self.printMissingBallFrames and shot:
@@ -157,6 +183,7 @@ class Trajectory(object):
     def clear(self):
         self.ballTraj = []
         self.rimTraj = []
+        self.personTraj = []
         self.iouTraj = []
         self.frameTraj = []
         self.ioaTime = -1.0
@@ -211,6 +238,21 @@ def minIndexVal(values):
 class EventDetector(object):
     # Initializer / Instance attributes
     def __init__(self, odTSVFile, videoFile):
+        # ---- Parameters ----
+        self.basketBallConfThresh = 0.5
+        self.rimConfThresh = 0.1
+          #Case "WrongBasketball_2": needs rimConfThresh to be below 0.19. 
+          #Case "RimNotGood_1": prefer rimConfThresh to be above 0.35
+
+        self.backboardConfThresh = 0.1
+        # When to start or end an event
+        self.distanceBallToRimThresh = 3
+
+        # for dunk: 
+        self.ballPersonIouThresh = 0.2
+        self.personThresh = 0.2
+
+        # initialize
         self.odTSVFile = odTSVFile
         self.videoFile = videoFile
 
@@ -226,16 +268,6 @@ class EventDetector(object):
         self.imageCnt = 0
 
         self.frameRate = getFrameRate(videoFile)
-
-        # ---- Parameters ----
-        self.basketBallConfThresh = 0.5
-        self.rimConfThresh = 0.1
-          #Case "WrongBasketball_2": needs rimConfThresh to be below 0.19. 
-          #Case "RimNotGood_1": prefer rimConfThresh to be above 0.35
-
-        self.backboardConfThresh = 0.1
-        # When to start or end an event
-        self.distanceBallToRimThresh = 3
 
     # instance method
     def findEvent(self):
@@ -280,15 +312,10 @@ class EventDetector(object):
             assert(len(ballRects) <= 1)
             assert(len(rimRects) <= 1)
 
-            #if self.debug:
-            #    print("ballRects: ", ballRects)
-            #    print("rimRects: ", rimRects)
-
             # ignore wrongly preditcted balls
 
-            # Add missing ball if necessary
-            # if eventStarted:
-            #    rimBB, ballBB, backBoardBB = updateBallRects(rimBB, ballBB, backboardBB, trajectory)
+            # get the persons holding ball
+            personRects = self.getPersonHoldingBall(ballRects, rects, debug = self.debug)
 
             # Store the prev rects
             prevRects["ball"] = ballRects
@@ -311,7 +338,7 @@ class EventDetector(object):
                     if self.debug:
                         print("Event started!")
             else:
-                iou = trajectory.add(ballRects, rimRects, self.imageCnt)
+                iou = trajectory.add(ballRects, rimRects, personRects, self.imageCnt)
                 
                 eventEnded = self.checkWhetherEventEnded(ballRects, rimRects, curTime, startTime, trajectory.shotDetectWindow)
                 if (eventEnded):
@@ -427,10 +454,29 @@ class EventDetector(object):
     def checkRimBackBoardCorrespondence(self):
         pass
 
+    def getPersonHoldingBall(self, ballRects, rects, debug = 0):
+        if not objectExists(ballRects):
+            return []
+
+        #sort objects by area
+        rects.sort(key = lambda instance: areaOfRect(instance['rect']), reverse = True)
+
+        for r in rects:
+            if r['class'] == 'person':
+                if r['conf'] < self.personThresh:
+                    continue
+
+                personRect = r['rect']
+
+                if calculateIOA(ballRects[0]['rect'], personRect) > self.ballPersonIouThresh:
+                    return [r]
+        return []
 
 def objectExists(objRectList):
     return len(objRectList) > 0
 
+def areaOfRect(rect):
+    return (rect[2] - rect[0]) * (rect[3] - rect[1])
 
 def enlargeRect(rect0, enlargeRatio):
     widthOfBall = getWidthOfRect(rect0) * enlargeRatio
@@ -492,40 +538,26 @@ def calculateIOA(rect0, rect1, enlargeRatio = 1.0):
     return intersection / a0
 
 
-def getPersonHoldingBall_loose(rimRect, ballRect, rects, debug):
+def getPersonHoldingBallOverlapWithRim(rimRect, ballRect, rects, debug = 0):
     ballPersonIouThresh = 0
     rimPersonIouThresh = 0
+    personThresh = 0.2
 
-    if debug:
-        print("Rects:", rects)
+    #sort objects by area
+    rects.sort(key = lambda instance: areaOfRect(instance['rect']), reverse = True)
 
     for r in rects:
         if r['class'] == 'person':
-            personRect = r['rect']
-            if debug:
-                print("preson rect:", personRect)
-                print("iouWithBall: ", calculate_iou(personRect, ballRect))
-                print("iouWithPerson", calculate_iou(personRect, rimRect))
+            if r['conf'] < personThresh:
+                continue
 
-            if calculate_iou(personRect, ballRect) > ballPersonIouThresh and calculate_iou(personRect, rimRect) > rimPersonIouThresh:
-                return True
-
-    return False
-
-
-def getPersonHoldingBall(rimRect, ballRect, rects, debug):
-    ballPersonIouThresh = 0
-    rimPersonIouThresh = 0
-
-    for r in rects:
-        if r['class'] == 'person':
             personRect = r['rect']
 
-            if calculate_iou(personRect, ballRect) > ballPersonIouThresh and calculate_iou(personRect, rimRect) > rimPersonIouThresh \
-                    and isAbove((personRect[0], personRect[1]), (rimRect[2], rimRect[3])) \
-                    and getHeightOfRect(personRect) > 2.0 * getHeightOfRect(rimRect):
-                return True
-    return False
+            if getHeightOfRect(personRect) > 2.0 * getHeightOfRect(rimRect) \
+                  and isAbove((personRect[0], personRect[1]), (rimRect[0], rimRect[1])) \
+                  and calculate_iou(personRect, ballRect) > ballPersonIouThresh and calculate_iou(personRect, rimRect) > rimPersonIouThresh:                    
+                return [r]
+    return []
 
 
 def toDegree(angle):
@@ -785,7 +817,7 @@ def getShotStats(pred_results, true_results):
 
     tolerance = 0.5
     correctLabel = False
-    treatingDunkAsShot = True
+    treatingDunkAsShot = False
     labelCorrectionDict = {}
     
     while i < lp and j < lt:
