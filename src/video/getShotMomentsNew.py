@@ -825,19 +825,19 @@ def getShotStats(pred_results, true_results):
         tRes = true_results[j]
         if tRes[0] < pRes[0]:
             allTimePoints.append(tRes)
-            y_pred.append( nonShotLabel )
-            y_true.append( shotLabel if treatingDunkAsShot else tRes[1] )
+            y_pred.append( (nonShotLabel, None) )
+            y_true.append( (shotLabel if treatingDunkAsShot else tRes[1], tRes) )
             j += 1
         elif tRes[0] > pRes[1] + tolerance:
             allTimePoints.append(pRes)
-            y_pred.append(  shotLabel if treatingDunkAsShot else pRes[2] )
-            y_true.append( nonShotLabel )
+            y_pred.append( (shotLabel if treatingDunkAsShot else pRes[2], pRes) )
+            y_true.append( (nonShotLabel, None) )
             i += 1
         else:
-            allTimePoints.append(tRes)            
+            allTimePoints.append(tRes)
             #assert(pRes[2] == tRes[1])
-            y_pred.append(  shotLabel if treatingDunkAsShot else pRes[2] )
-            y_true.append(  shotLabel if treatingDunkAsShot else tRes[1] )
+            y_pred.append( (shotLabel if treatingDunkAsShot else pRes[2], pRes) )
+            y_true.append( (shotLabel if treatingDunkAsShot else tRes[1], tRes) )
 
             if correctLabel:
                 print("predict, label: ", pRes[3], tRes[0])
@@ -850,19 +850,71 @@ def getShotStats(pred_results, true_results):
             j += 1
     
     while i < lp:
+        pRes = pred_results[i]
         allTimePoints.append(pRes)
-        y_pred.append( shotLabel if treatingDunkAsShot else pRes[2] )
-        y_true.append( nonShotLabel )
+        y_pred.append( (shotLabel if treatingDunkAsShot else pRes[2], pRes) )
+        y_true.append( (nonShotLabel, None) )
         i += 1
 
     while j < lt:
+        tRes = true_results[j]
         allTimePoints.append(tRes)        
-        y_pred.append( nonShotLabel )
-        y_true.append( shotLabel if treatingDunkAsShot else tRes[1] )
+        y_pred.append( (nonShotLabel, None) )
+        y_true.append( (shotLabel if treatingDunkAsShot else tRes[1], tRes) )
         j += 1
 
     return y_pred, y_true, allTimePoints, labelCorrectionDict
 
+def confusionMatrixReport(y_pred, y_pred_pointer, y_true, y_true_pointer):
+    # Reference: https://stackoverflow.com/questions/2148543/how-to-write-a-confusion-matrix-in-python
+    '''Computes a confusion matrix using numpy for two np.arrays
+    true and pred.
+
+    Results are identical (and similar in computation time) to:
+        "from sklearn.metrics import confusion_matrix"
+
+    However, this function avoids the dependency on sklearn.'''
+    classes = np.unique(y_true).tolist()
+
+    true = [ classes.index(v) for v in y_true]
+    pred = [ classes.index(v) for v in y_pred]
+
+    K = len(classes) # Number of classes 
+    result = np.zeros((K, K))
+    
+    cfMatrix = np.zeros((K, K)).tolist()
+    for i in range(K):
+        for j in range(K):
+            cfMatrix[i][j] = []
+
+    for i in range(len(y_true)):
+        result[true[i]][pred[i]] += 1
+        cfMatrix[true[i]][pred[i]].append((y_true_pointer[i], y_pred_pointer[i]))
+
+    # print the count:
+    print("Detailed confusion matrix: ")
+    print("Classes: ", classes)
+    #print("y_predict: ", y_pred)
+    #print("y_true: ", y_true)
+    #print("y_predict_pointer: ", y_pred_pointer)
+    #print("y_true_pointer: ", y_true_pointer)
+    print(result)
+    #print(cfMatrix)
+    print("\n----Wrong predictions:")
+    for i in range(K):
+        for j in range(K):
+            if i != j and len(cfMatrix[i][j]) > 0:
+                print("--", i, j, ": predict ", classes[i], " as ", classes[j], ": ", len(cfMatrix[i][j]), ";  ".join(str(x) for x in cfMatrix[i][j]))
+    
+    print("\n----Correct predictions:")
+    for i in range(K):
+        for j in range(K):
+            if i == j:
+                print("--", i, j, ": predict ", classes[i], " as ", classes[j], ": ", len(cfMatrix[i][j]), ";  ".join(str(x) for x in cfMatrix[i][j]))
+
+    print("\n")
+    return cfMatrix
+    
 def main():
     dir = "/mnt/gpu02_raid/data/video/CBA/CBA_demo_v2/"
     labelFiles = "labellist.txt"
@@ -947,9 +999,14 @@ def calculateF1andWriteRes(dir, odFileList, eventLabelJsonFile, textLabels = Fal
 
             print("----calculate F1 for file: ", predict_file)            
             #print("True_results:", true_results)
-            calculateF1(pred_results, true_results)
+            #calculateF1(pred_results, true_results)
 
-            y_pred, y_true, _, correctLabelsDict = getShotStats(pred_results, true_results)
+            y_pred_combo, y_true_combo, _, correctLabelsDict = getShotStats(pred_results, true_results)
+
+            y_pred, y_pred_pointer = zip(*y_pred_combo)
+            y_true, y_true_pointer = zip(*y_true_combo)
+
+            confusionMatrixReport(y_pred, y_pred_pointer, y_true, y_true_pointer)
 
             allCorrectLabels[videoFileName] = correctLabelsDict
 
