@@ -93,7 +93,8 @@ def showFramesWithLabels(topDir, labelFileName, video_name, startSecond, endSeco
     while i <= endFrame:
         # read frame
         # set initial frame  #set frame pos
-        frame = cacheFrames[i - startFrameIndex]
+        orgFrame = cacheFrames[i - startFrameIndex]
+        orgImageId = video_name + sepSign + str(i)
 
         imageId = video_name + sepSign + str(i if labelIndexStartingFromZero else i + 1)
         #imageJPG = cv2.imencode('.jpg',frame)[1]
@@ -108,7 +109,7 @@ def showFramesWithLabels(topDir, labelFileName, video_name, startSecond, endSeco
         #  print(labels)
         #  print(skipRects(labels))
 
-        frame = drawLabel(frame, skipRects(labels), skipPersons = 1, filterPersons = 0)
+        frame = drawLabel(orgFrame, skipRects(labels), skipPersons = 0, filterPersons = 1)
         text = "Frame: " + str(i) + "; second: " + str(i / fps)
         frame = cv2.putText(frame, text, (int(0), int(60)),
                             cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 3)
@@ -127,6 +128,10 @@ def showFramesWithLabels(topDir, labelFileName, video_name, startSecond, endSeco
             i += 1
         elif k == 27 or k == 113:  # q or esc
             exit()
+        elif k == 115: #"s" for saving image
+            #cv2.imwrite(topDir + imageId + '.jpg', frame)
+            cv2.imwrite(topDir + orgImageId + '.jpg', orgFrame)
+            
         #else:
         #  print("Key is", k)
 
@@ -160,7 +165,7 @@ def areaOfRect(rect):
 
 def drawLabel(image, labels, skipPersons = 1, filterPersons = 1):    
     showLabel = True
-    confidenceThreshold = 0.7
+    confidenceThreshold = 0.4
     playersThreshold = 12
 
     # matlab RGB to opencv BRG
