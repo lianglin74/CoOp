@@ -17,8 +17,8 @@ import os.path
 def setDebug(frame): 
     return False
     #return frame > 2370 and frame <2387
-    #return frame > 9640 and frame < 9660
-            
+    #return frame > 300 and frame < 525
+
 class Trajectory(object):
     def __init__(self, frameRate, debug, videoFile):
         # Important parameters to tune:
@@ -26,6 +26,7 @@ class Trajectory(object):
         self.iouLowThresh = 0.01
         self.iouHighThresh = 0.55
         self.shotDetectWindow = 2.0 #at least >=2.0
+        self.largestEventWindow = 4.0
         self.wideEventWindow = True
         self.angleRimToBallThresh = 45.0
         self.ballAboveRimThresh = 0.0
@@ -112,6 +113,11 @@ class Trajectory(object):
             startTime = max(startTime, self.ioaTime - self.eventPadding)
             
         startTime = max(0, startTime)
+
+        # Eliminate wrongly extra big window
+        if endTime - startTime > self.largestEventWindow:
+            endTime = min(endTime, self.ioaTime + self.largestEventWindow / 2.0)
+            startTime = startTime = max(startTime, self.ioaTime - self.largestEventWindow / 2.0)
 
         if maxIouValue > self.iouHighThresh:
             shot = True
@@ -411,6 +417,10 @@ class EventDetector(object):
 
     #
     def checkWhetherEventEnded(self, ballRects, rimRects, curTime, startTime, shotDetectWindow):
+        if self.debug:
+            print("CurTime ", curTime)
+            print("startTime", startTime)
+            
         # To handle the false case where event ends earlier because of false ball detection
         # Example: case "WrongBallDetected_3"
         if curTime < startTime + shotDetectWindow:
@@ -418,6 +428,10 @@ class EventDetector(object):
 
         ballToRimDistance = self.getDistanceBalltoRim(ballRects, rimRects)
         widthRim = self.getWidthOfRim(rimRects)
+
+        if self.debug:
+            print("ball Rim Distance: ", ballToRimDistance)
+            print("Width of rim", widthRim)
 
         if ballToRimDistance is not None and widthRim is not None and ballToRimDistance > self.distanceBallToRimThresh * widthRim:
             return True
@@ -876,7 +890,7 @@ def confusionMatrixReport(y_pred, y_pred_pointer, y_true, y_true_pointer):
         "from sklearn.metrics import confusion_matrix"
 
     However, this function avoids the dependency on sklearn.'''
-    classes = np.unique(y_true).tolist()
+    classes = np.unique(y_true + y_pred).tolist()
 
     true = [ classes.index(v) for v in y_true]
     pred = [ classes.index(v) for v in y_pred]
