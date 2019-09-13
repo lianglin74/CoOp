@@ -17,7 +17,7 @@ import os.path
 def setDebug(frame): 
     return False
     #return frame > 2370 and frame <2387
-    #return frame > 5957 and frame < 5999
+    #return frame > 9640 and frame < 9660
             
 class Trajectory(object):
     def __init__(self, frameRate, debug, videoFile):
@@ -469,6 +469,8 @@ class EventDetector(object):
                 personRect = r['rect']
 
                 if calculateIOA(ballRects[0]['rect'], personRect) > self.ballPersonIouThresh:
+                    if debug:                 
+                        print("Frame:", self.imageCnt, "; Finding a person holding ball:", r)
                     return [r]
         return []
 
@@ -898,6 +900,7 @@ def confusionMatrixReport(y_pred, y_pred_pointer, y_true, y_true_pointer):
     #print("y_true: ", y_true)
     #print("y_predict_pointer: ", y_pred_pointer)
     #print("y_true_pointer: ", y_true_pointer)
+    print("Every row is for true result, while every column is for the prediction")
     print(result)
     #print(cfMatrix)
     print("\n----Wrong predictions:")
