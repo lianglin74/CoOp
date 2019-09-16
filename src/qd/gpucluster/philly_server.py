@@ -7,6 +7,7 @@ import subprocess as sp
 import os.path as op
 import base64
 import yaml
+from pprint import pformat
 
 def load_list_file(fname):
     with open(fname, 'r') as fp:
@@ -234,6 +235,7 @@ def run_in_philly():
     dict_param = load_from_yaml_str(base64.b64decode(extra_param))
 
     logging.info('start')
+    logging.info(pformat(dict_param))
 
     for k in os.environ:
         logging.info('{} = {}'.format(k, os.environ[k]))
