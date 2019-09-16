@@ -204,7 +204,40 @@ def case_incensitive_overlap(all_terms):
     return [[lower_to_term[l] for l in anchor]
         for lower_to_term in all_lower_to_term]
 
+def compile_by_docker(src_zip, docker_image, dest_zip):
+    # compile the qd zip file and generate another one by compiling. so that
+    # there is no need to compile it again.
+    src_fname = op.basename(src_zip)
+    src_folder = op.dirname(src_zip)
+
+    docker_src_folder = '/tmpwork'
+    docker_src_zip = op.join(docker_src_folder, src_fname)
+    docker_out_src_fname = src_fname + '.out.zip'
+    docker_out_zip = op.join(docker_src_folder, docker_out_src_fname)
+    out_zip = op.join(src_folder, docker_out_src_fname)
+    docker_compile_folder = '/tmpcompile'
+    cmd = ['docker', 'run',
+            '-v', '{}:{}'.format(src_folder, docker_src_folder),
+            docker_image,
+            ]
+    cmd.append('/bin/bash')
+    cmd.append('-c')
+    compile_cmd = [
+            'mkdir -p {}'.format(docker_compile_folder),
+            'cd {}'.format(docker_compile_folder),
+            'unzip {}'.format(docker_src_zip),
+            'bash compile.aml.sh',
+            'zip -yrv x.zip *',
+            'cp x.zip {}'.format(docker_out_zip),
+            'chmod a+rw {}'.format(docker_out_zip),
+            ]
+    cmd.append(' && '.join(compile_cmd))
+    cmd_run(cmd)
+    ensure_directory(op.dirname(dest_zip))
+    copy_file(out_zip, dest_zip)
+
 def zip_qd(out_zip):
+    ensure_directory(op.dirname(out_zip))
     cmd = ['zip',
             '-yrv',
             out_zip,
@@ -236,9 +269,9 @@ def zip_qd(out_zip):
             '-x',
             '\*src/CCSCaffe/examples/\*',
             '-x',
-            '\*aux_data/yolo9k/\*',
+            'aux_data/yolo9k/\*',
             '-x',
-            '\*visualization\*',
+            'visualization\*',
             '-x',
             '\*.build_release\*',
             '-x',

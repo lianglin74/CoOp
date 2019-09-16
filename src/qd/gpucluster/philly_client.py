@@ -304,14 +304,25 @@ class PhillyVC(object):
 
         return result
 
-    def sync_code(self, random_id):
+    def sync_code(self, random_id, compile_in_docker=False):
         self.random_id = random_id
 
         random_qd = 'quickdetection{}'.format(random_id)
         random_abs_qd = op.join('/tmp', '{}.zip'.format(random_qd))
         logging.info('{}'.format(random_qd))
         from qd.qd_common import zip_qd
+        if op.isfile(random_abs_qd):
+            os.remove(random_abs_qd)
         zip_qd(random_abs_qd)
+
+        if compile_in_docker:
+            from qd.qd_common import compile_by_docker
+            docker_image_path = 'phillyregistry.azurecr.io/{}:{}'.format(
+                    self.docker['image'],
+                    self.docker['tag'])
+            compile_by_docker(random_abs_qd, docker_image_path,
+                    random_abs_qd)
+
         copy_to_hdfs = not self.use_blob_as_input
         if infer_type(self.vc, self.cluster) == 'azure':
             if self.use_blob_as_input:
@@ -432,6 +443,8 @@ class PhillyVC(object):
             self.attach_gpu_utility([j for j in all_job_info if j['status'] ==
                     'Running'])
         self.attach_meta(all_job_info)
+        for job_info in all_job_info:
+            self.attach_portal_url(job_info)
         if self.query_with_log:
             for job_info in all_job_info:
                 if job_info['status'] != self.status_running:
@@ -449,7 +462,7 @@ class PhillyVC(object):
             job_info['meta'] = meta
 
         # we want to access these 3 fields if it has
-        keys = ['data', 'net', 'expid']
+        keys = ['data', 'net', 'expid', 'full_expid']
         for job_info in all_job_info:
             for k in keys:
                 job_info[k] = job_info['meta'].get('param',
@@ -660,11 +673,17 @@ class PhillyVC(object):
         logging.info('satus = {}'.format(status['status']))
         ssh_command = self.get_ssh_command(status)
         logging.info(ssh_command)
-        url = 'https://philly/#/job/{}/{}/{}'.format(self.cluster,
-                self.vc, job_id[len('application_'): ])
+        self.attach_portal_url(app_info)
+        url = app_info['portal_url']
         logging.info(url)
 
         return status
+
+    def attach_portal_url(self, app_info):
+        job_id = app_info['appID']
+        url = 'https://philly/#/job/{}/{}/{}'.format(self.cluster,
+                self.vc, job_id[len('application_'): ])
+        app_info['portal_url'] = url
 
     def get_ssh_command_ap(self, status):
         if 'appID' not in status:
@@ -744,15 +763,18 @@ class PhillyVC(object):
 
         if 'WARNING' in result and 'too big for preview' in result:
             # wget https://storage.sc2.philly.selfhost.corp.microsoft.com/input/sys/jobs/application_1544809666047_4657/stdout/1/stdout.txt
-            retries = job_info.get('retries') + 1
+            if job_info['status'] == self.status_queued:
+                retries = job_info.get('retries')
+            else:
+                retries = job_info.get('retries') + 1
             url = 'https://storage.{}.philly.selfhost.corp.microsoft.com/input/sys/jobs/{}/stdout/{}/stdout.txt'.format(
                 self.cluster, job_id, retries)
             logging.info('get log from {}'.format(url))
             result = url_to_str(url)
-
-        from qd.qd_common import write_to_file
-        write_to_file(result,
-                op.join('assets', job_info['appID'], 'log.txt'))
+        if result is not None:
+            from qd.qd_common import write_to_file
+            write_to_file(result,
+                    op.join('assets', job_info['appID'], 'log.txt'))
 
         return result
 
@@ -1190,6 +1212,7 @@ def parse_args():
     parser.add_argument('task_type',
             choices=['ssh', 'q', 'query', 'a', 'abort', 'submit', 'sync',
                 'update_config', 'gc', 'blame', 'init', 'resubmit',
+                'initc',
                 'summary', 'i', 'inject'])
     parser.add_argument('-wl', '--with_log', default=False, action='store_true')
     parser.add_argument('-p', '--param', help='parameter string, yaml format',
@@ -1284,11 +1307,13 @@ def execute(task_type, **kwargs):
     elif task_type == 'update_config':
         p = create_philly_client(**kwargs)
         p.update_config()
-    elif task_type == 'init':
+    elif task_type in ['init', 'initc']:
         ensure_init_config_files()
         p = create_philly_client(**kwargs)
         p.update_config()
         p.sync_code('')
+        if task_type == 'initc':
+            p.sync_code('', compile_in_docker=True)
     elif task_type == 'resubmit':
         partial_ids = kwargs['remainders']
         del kwargs['remainders']

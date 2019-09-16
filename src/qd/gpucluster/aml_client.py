@@ -14,8 +14,17 @@ def create_aml_client(**kwargs):
     if 'cluster' in kwargs:
         cluster = kwargs['cluster']
         path = op.join('aux_data', 'aml', '{}.yaml'.format(cluster))
+        last_config = './aux_data/aml/aml.yaml'
+        if not op.exists(last_config) or op.islink(last_config):
+            from qd.qd_common import try_delete
+            try_delete(last_config)
+            # next time, we don't have to specify teh parameter of cluster
+            # since this one will be the default one.
+            os.symlink(op.relpath(path, op.dirname(last_config)),
+                    last_config)
     else:
         path = os.environ.get('AML_CONFIG_PATH', './aux_data/aml/aml.yaml')
+        kwargs['cluster'] = op.splitext(op.basename(op.abspath(path)))[0]
     param = load_from_yaml_file(path)
     dict_update_nested_dict(param, kwargs)
     return AMLClient(**param)
@@ -47,7 +56,7 @@ def parse_run_info(run, with_details=True,
     info['status'] = run.status
     info['appID'] = run.id
     info['appID-s'] = run.id[-5:]
-    info['cluster'] = 'aml'
+    info['portal_url'] = run.get_portal_url()
     if not with_details:
         return info
     details = run.get_details()
@@ -67,9 +76,9 @@ def parse_run_info(run, with_details=True,
 
     info['data_store'] = list(set([v['dataStoreName'] for k, v in
         details['runDefinition']['dataReferences'].items()]))
-    logging.info(run.get_portal_url())
+    logging.info(info['portal_url'])
 
-    param_keys = ['data', 'net', 'expid']
+    param_keys = ['data', 'net', 'expid', 'full_expid']
     for k in param_keys:
         from qd.qd_common import dict_has_path
         if dict_has_path(info, 'cmd_param$param${}'.format(k)):
@@ -127,6 +136,7 @@ class AMLClient(object):
             with_log=True,
             **kwargs):
         self.kwargs = kwargs
+        self.cluster = kwargs.get('cluster', 'aml')
         self.use_cli_auth = kwargs.get('use_cli_auth', False)
         self.aml_config = aml_config
         self.compute_target = compute_target
@@ -141,6 +151,7 @@ class AMLClient(object):
             self.experiment_name = get_user_name()
         else:
             self.experiment_name = kwargs['experiment_name']
+        self.gpu_set_by_client = ('num_gpu' in kwargs)
         self.num_gpu = kwargs.get('num_gpu', 4)
         self.docker = docker
 
@@ -214,6 +225,9 @@ class AMLClient(object):
                 return self.with_log and r.status in valid_status
             all_info = [parse_run_info(r, with_details=check_with_details(r),
                 with_log=self.with_log, log_full=False) for r in all_run]
+            for info in all_info:
+                # used for injecting to db
+                info['cluster'] = self.cluster
             from qd.qd_common import print_job_infos
             print_job_infos(all_info)
             return all_info
@@ -226,11 +240,16 @@ class AMLClient(object):
             if 'master_log' in info:
                 cmd_run(['tail', '-n', '100', info['master_log']])
             logging.info(pformat(info))
+            return [info]
 
     def resubmit(self, partial_id):
         run = create_aml_run(self.experiment, partial_id)
         run_info = parse_run_info(run)
-        self.submit(run_info['cmd'])
+        if not self.gpu_set_by_client:
+            num_gpu = run_info['num_gpu']
+        else:
+            num_gpu = self.num_gpu
+        self.submit(run_info['cmd'], num_gpu=num_gpu)
         run.cancel()
 
     def attach_data_store(self):
@@ -373,24 +392,31 @@ class AMLClient(object):
         r = self.experiment.submit(estimator10)
         logging.info('job id = {}, cmd = \n{}'.format(r.id, cmd))
 
-    def inject(self):
-        all_info = self.query()
+    def inject(self, run_id=None):
+        all_info = self.query(run_id)
         from qd.db import update_cluster_job_db
         for info in all_info:
             if 'logFiles' in info:
                 del info['logFiles']
         update_cluster_job_db(all_info)
 
-    def sync_code(self, random_id):
+    def sync_code(self, random_id, compile_in_docker=False):
         random_qd = 'quickdetection{}'.format(random_id)
         import os.path as op
-        random_abs_qd = op.join('/tmp', '{}.zip'.format(random_qd))
+        from qd.qd_common import get_user_name
+        random_abs_qd = op.join('/tmp', get_user_name(),
+                '{}.zip'.format(random_qd))
         if op.isfile(random_abs_qd):
             os.remove(random_abs_qd)
         logging.info('{}'.format(random_qd))
         from qd.qd_common import zip_qd
         # zip it
         zip_qd(random_abs_qd)
+
+        if compile_in_docker:
+            from qd.qd_common import compile_by_docker
+            compile_by_docker(random_abs_qd, self.docker['image'],
+                    random_abs_qd)
 
         rel_code_path = self.config_param['code_path']['path']
         # upload it
@@ -428,9 +454,14 @@ def execute(task_type, **kwargs):
     elif task_type in ['qq']:
         c = create_aml_client(**kwargs)
         c.query(by_status=AMLClient.status_queued)
-    elif task_type == 'init':
+    elif task_type in ['init', 'initc']:
         c = create_aml_client(**kwargs)
         c.sync_code('')
+        if task_type=='initc':
+            # in this case, we first upload the raw code to unblock the job
+            # submission. then we upload the compiled version to reduce the
+            # overhead in aml running
+            c.sync_code('', compile_in_docker=True)
     elif task_type == 'submit':
         c = create_aml_client(**kwargs)
         params = kwargs['remainders']
@@ -465,10 +496,14 @@ def execute(task_type, **kwargs):
         from qd.db import inject_cluster_summary
         info['cluster'] = 'aml'
         inject_cluster_summary(info)
-
     elif task_type in ['i', 'inject']:
+        run_ids = kwargs.get('remainders', [])
         m = create_aml_client(**kwargs)
-        m.inject()
+        if len(run_ids) == 0:
+            m.inject()
+        else:
+            for run_id in run_ids:
+                m.inject(run_id)
     else:
         assert 'Unknown {}'.format(task_type)
 
@@ -481,6 +516,7 @@ def parse_args():
                 'qq', # query queued jobs
                 'd', 'download_qdoutput',
                 'init',
+                'initc', # init with compile
                 'blame', 'resubmit',
                 's', 'summary', 'i', 'inject'])
     parser.add_argument('-wl', dest='with_log', default=True, action='store_true')
