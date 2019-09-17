@@ -12,7 +12,7 @@ from tqdm import tqdm
 import numpy as np
 import math
 import copy
-import os.path
+import os
 
 def setDebug(frame): 
     return False
@@ -185,6 +185,27 @@ class Trajectory(object):
                 return i
             i += 1
         return -1
+    
+    def findLastBallPositionLowerThanRim(self, maxIouIndex):
+        l = len(self.ballTraj)
+        i = l - 1
+        pos = i
+        while i > 0:
+            if objectExists(self.ballTraj[i]) and objectExists(self.rimTraj[i]) and not self.ballAboveRim(self.ballTraj[i], self.rimTraj[i]):
+                pos = i
+            else:
+                break
+            i -= 1
+        return -1
+
+    def guessAllBallPositions(self):
+        # find first iou and last iou index
+        ioaIndices = [ i for i, ioa in enumerate(self.iouTraj) if ioa > self.iouLowThresh ]
+        
+
+    def filterWrongBallDetection(self):
+        # Using idea similar to median filtering
+        pass;
 
     def clear(self):
         self.ballTraj = []
@@ -772,30 +793,57 @@ def getFrameRate(video_name):
     return fps
 
 
-def writeToTSV(labelFile, pred_results):
+def writeToTSV(labelFile, results, timePoint = False):
     fileName = labelFile.replace(".tsv", "_events.tsv")
     videoFileName = labelFile.replace(".tsv", ".mp4")
-    id = 0
-    #className = "shot"
-    padding = 0
-    dictList = []
-    for v in pred_results:
-        id += 1
-        value = {}
-
-        value['id'] = id
-        value['start'] = v[0] - padding
-        value['end'] = v[1] + padding
-        value['class'] = v[2]
-        dictList.append(value)
-
-    print('json format results:')
-    print(dictList)
+    
+    dictList = buildEventLists(results, timePoint, rounding = True)
 
     f = open(fileName, 'w')
     f.write(videoFileName + '\t' + json.dumps(dictList) + '\n')
     f.close()
 
+def buildEventLists(results, timePoint, rounding = False):
+    id = 0
+    #className = "shot"
+    frontPadding = 1.2 if timePoint else 0 
+    endPadding = 0.8 if timePoint else 0
+    dictList = []
+    for v in results:
+        id += 1
+        value = {}
+
+        value['id'] = id
+        value['start'] = v[0] - frontPadding if timePoint else  v[0] - frontPadding
+        value['end'] = v[0] + endPadding if timePoint else v[1] + endPadding
+        if rounding:
+            value['start'] = int(value['start'])
+            value['end'] = math.ceil(value['end'])
+        value['class'] = v[1] if timePoint else v[2]
+        dictList.append(value)
+
+    print('json format results:')
+    print(dictList)
+    return dictList
+
+def writeTrainingLabelsForAutoML(labelFile, results, timePoint = True, falseRes = False):
+    if falseRes: 
+        fileName = labelFile.replace(".tsv", "_autoML_falseRes.csv")
+    else:
+        fileName = labelFile.replace(".tsv", "_autoML.csv")
+
+    videoFileName = labelFile.replace(".tsv", ".mp4")
+
+    dictList = buildEventLists(results, timePoint)
+
+    f = open(fileName, 'w')
+    prefix = "gs://yaoguang-central-storage/shotDunk/tmp/"
+    for value in dictList:
+        if falseRes:
+            f.write(','.join([prefix + os.path.basename(videoFileName), "None_of_the_above",  str(value['start']), str(value['end'])]) + "\n")
+        else:
+            f.write(','.join([prefix + os.path.basename(videoFileName), value['class'],  str(value['start']), str(value['end'])]) + "\n")
+    f.close()
 
 def read_file_to_list(file_name):
     res_lists = []
@@ -931,7 +979,27 @@ def confusionMatrixReport(y_pred, y_pred_pointer, y_true, y_true_pointer):
 
     print("\n")
     return cfMatrix
-    
+
+def getFalsePositiveRes(y_pred_combo, y_true_combo):
+    return [ (pred[1][3], "fakeShot") for true, pred in zip(y_true_combo, y_pred_combo) if true[0] == 'nonShot']
+
+def getNegativeRes(allTimePoints):
+    eventLength = 2.0
+    padding = 2.0
+
+    negativeRes = []
+    tpList = [ v[0] if len(v) == 2 else v[3] for v in allTimePoints]
+
+    l = len(tpList)
+    i = 1
+    while i < l:
+        gap = (tpList[i - 1], tpList[i])
+        if gap > 2 * eventLength + padding:
+            negativeRes.append(((tpList[i - 1] + tpList[i])/2.0, "None_of_the_above"))
+        i += 1
+
+    return negativeRes
+
 def main():
     dir = "/mnt/gpu02_raid/data/video/CBA/CBA_demo_v2/"
     labelFiles = "labellist.txt"
@@ -985,6 +1053,9 @@ def main():
         writeToTSV(predict_file, pred_results)
 
 def calculateF1andWriteRes(dir, odFileList, eventLabelJsonFile, textLabels = False, textLabelFolder = None):
+    # Used to write labels for GL autoML training
+    writeAutoMLLabel = True
+
     odFileList = read_file_to_list(dir + odFileList)
     #predict_file = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_chop/TSV/head350_prediction_1551538896210_sc99_01_q1.tsv"
     #predict_file = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_chop/prediction_1551538896210_sc99_01_q1.tsv"
@@ -1018,13 +1089,20 @@ def calculateF1andWriteRes(dir, odFileList, eventLabelJsonFile, textLabels = Fal
             #print("True_results:", true_results)
             #calculateF1(pred_results, true_results)
 
-            y_pred_combo, y_true_combo, _, correctLabelsDict = getShotStats(pred_results, true_results)
+            y_pred_combo, y_true_combo, allTimePoints, correctLabelsDict = getShotStats(pred_results, true_results)
+            #print(y_pred_combo)
+            #print(y_true_combo)
 
             y_pred, y_pred_pointer = zip(*y_pred_combo)
             y_true, y_true_pointer = zip(*y_true_combo)
 
             confusionMatrixReport(y_pred, y_pred_pointer, y_true, y_true_pointer)
 
+            if writeAutoMLLabel: 
+                falsePositiveRes = getFalsePositiveRes(y_pred_combo, y_true_combo)                
+                #print("False Positive Results: ", falsePositiveRes)
+                negativeRes = getNegativeRes(allTimePoints)
+            
             allCorrectLabels[videoFileName] = correctLabelsDict
 
             overallPred.extend(y_pred)
@@ -1038,6 +1116,10 @@ def calculateF1andWriteRes(dir, odFileList, eventLabelJsonFile, textLabels = Fal
         # write events
         writeToTSV(predict_file, pred_results)
         #writeToTSV(predict_file, true_results, True)
+        if writeAutoMLLabel:
+            #writeTrainingLabelsForAutoML(predict_file, true_results, timePoint = True)
+            writeTrainingLabelsForAutoML(predict_file, falsePositiveRes, timePoint = True, suffix = "fakeShot")
+            writeTrainingLabelsForAutoML(predict_file, negativeRes, timePoint = True, suffix = "nonShot")
 
     print("====F1 report for all the data: ")
     f1Report(overallPred, overallTrue)
@@ -1064,12 +1146,13 @@ def getMiguTestingResults():
 
 
 if __name__ == '__main__':
+    #getValidationResults()
+    getTestingResults()
+    #getMiguTestingResults()
+    
     #main()
     #test_getShotStats()
-    getValidationResults()
-    #getTestingResults()
     # testGetDegreeOfTwoPoints()
-    #test_getEventLabelsFromText()
-    #getMiguTestingResults()
+    #test_getEventLabelsFromText()    
     #test_getClosestRects()
     #test_getRectWithHighestConfScore()
