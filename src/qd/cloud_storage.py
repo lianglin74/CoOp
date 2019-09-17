@@ -62,8 +62,9 @@ def get_to_copy_file_for_qdoutput(src_path, dest_path):
         to_copy.append((f, op.join(dest_snapshot, op.basename(f))))
     return to_copy
 
-def blob_upload(src, dst):
-    c = create_cloud_storage('vig')
+def blob_upload(src, dst, c=None):
+    if c is None:
+        c = create_cloud_storage('vig')
     c.az_upload2(src, dst)
 
 def get_root_all_full_expid(full_expid_prefix, all_blob_name):
@@ -286,6 +287,8 @@ class CloudStorage(object):
             max_iters = max(iters)
             need_download_blobs.extend([f for f, i in zip(in_snapshot_blobs, iters) if i ==
                     max_iters])
+        need_download_blobs.extend([f for f, i in zip(in_snapshot_blobs, iters) if
+                i == -2])
         to_remove = []
         for i, b1 in enumerate(need_download_blobs):
             for b2 in need_download_blobs:
@@ -298,6 +301,7 @@ class CloudStorage(object):
             target_f = f.replace(src_path, target_folder)
             if not op.isfile(target_f):
                 if len(f) > 0:
+                    logging.info('download {} to {}'.format(f, target_f))
                     self.download_to_path(f, target_f)
 
 if __name__ == '__main__':

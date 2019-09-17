@@ -21,6 +21,16 @@ class DummyLayer(torch.nn.Module):
         return input
 
 
+def is_mergable_batch_norm(m):
+    mergable_bns = [torch.nn.BatchNorm2d]
+    try:
+        import maskrcnn_benchmark
+        mergable_bns.append(maskrcnn_benchmark.layers.batch_norm.FrozenBatchNorm2d)
+    except:
+        import logging
+        logging.info('seems like maskrcnn is not installed')
+    return any(isinstance(m, bn) for bn in mergable_bns)
+
 def merge_bn_into_conv(model):
     '''
     Merge conv-bn layers into one conv with bias
@@ -38,7 +48,7 @@ def merge_bn_into_conv(model):
             old_w = module.weight.data.clone().detach()
             out_channel = old_w.shape[0]
 
-            if isinstance(next_layer, torch.nn.BatchNorm2d):
+            if is_mergable_batch_norm(next_layer):
                 mean = next_layer.running_mean
                 var = next_layer.running_var
                 eps = next_layer.eps

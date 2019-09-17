@@ -1144,6 +1144,23 @@ def check_best_iou(biases, gt_w, gt_h, n):
             best_n = i
     assert best_n == n
 
+def calculate_iou1(rect0, rect1):
+    '''
+    x0, y1, x2, y3
+    '''
+    w = min(rect0[2], rect1[2]) - max(rect0[0], rect1[0]) + 1
+    if w < 0:
+        return 0
+    h = min(rect0[3], rect1[3]) - max(rect0[1], rect1[1]) + 1
+    if h < 0:
+        return 0
+    i = w * h
+    a1 = (rect1[2] - rect1[0] + 1) * (rect1[3] - rect1[1] + 1)
+    a0 = (rect0[2] - rect0[0] + 1) * (rect0[3] - rect0[1] + 1)
+    if a0 == 0 and a1 == 0 and i == 0:
+        return 1.
+    return 1. * i / (a0 + a1 - i)
+
 def calculate_iou(rect0, rect1):
     '''
     x0, y1, x2, y3
@@ -2055,15 +2072,12 @@ def attach_aml_maskrcnn_log_if_is(all_log, job_info):
         if result and result.groups():
             log_time, left, speed = result.groups()
             job_info['speed'] = speed
-            from datetime import datetime
-            now = datetime.now()
             from dateutil.parser import parse
             log_time = parse(log_time)
             job_info['log_time'] = log_time
             # log_time here is UTC. convert it to local time
-            delay = (now - log_time).total_seconds() + 7 * 3600.
             d, h = parse_eta_in_hours(left)
-            job_info['left'] = '{}-{:.1f}h({:.1f}s)'.format(d, h, delay)
+            job_info['left'] = '{}-{:.1f}h'.format(d, h)
             return True
     return False
 
@@ -2261,6 +2275,7 @@ def compare_gmap_evals(all_eval_file,
                 50]) for cat2map in all_cat2map]
         result.append('all valid map = {}'.format(', '.join(
             map(lambda x: str(round(x, 3)), all_valid_map))))
+        valid_cats = set([l for l, c in label_to_testcount.items() if c > 50])
 
     max_aps = [max([cat2map[c] for cat2map in all_cat2map]) for c in cats]
     max_map = sum(max_aps) / len(max_aps)
@@ -2273,13 +2288,63 @@ def compare_gmap_evals(all_eval_file,
     result.extend(get_table_print_lines(all_info[:5] + all_info[-6:], ['name',
         'acc_gain',
         ]))
+    if label_to_testcount is not None:
+        result.append('valid cats only:')
+        all_valid_info = [i for i in all_info if i['name'] in valid_cats]
+        result.extend(get_table_print_lines(all_valid_info[:5] + all_valid_info[-6:],
+            ['name', 'acc_gain',
+            ]))
 
     all_acc_gain = [info['acc_gain'] for info in all_info]
+    logging.info('\n'.join(result))
+
     plot_to_file(list(range(len(all_acc_gain))),
             all_acc_gain,
             output_prefix + '.png')
 
-    logging.info('\n'.join(result))
+def merge_class_names_by_location_id(anno):
+    if any('location_id' in a for a in anno):
+        assert all('location_id' in a for a in anno)
+        location_id_rect = [(a['location_id'], a) for a in anno]
+        from qd.qd_common import list_to_dict
+        location_id_to_rects = list_to_dict(location_id_rect, 0)
+        merged_anno = []
+        for _, rects in location_id_to_rects.items():
+            r = copy.deepcopy(rects[0])
+            r['class'] = [r['class']]
+            r['class'].extend((rects[i]['class'] for i in range(1,
+                len(rects))))
+            merged_anno.append(r)
+        return merged_anno
+    else:
+        assert all('location_id' not in a for a in anno)
+        for a in anno:
+            a['class'] = [a['class']]
+        return anno
+
+def softnms_c(rects, **kwargs):
+    from fast_rcnn.nms_wrapper import soft_nms
+    nms_input = np.zeros((len(rects), 5), dtype=np.float32)
+    for i, r in enumerate(rects):
+        nms_input[i, 0:4] = r['rect']
+        nms_input[i, -1] = r['conf']
+    nms_out = soft_nms(nms_input, **kwargs)
+    return [{'rect': x[:4], 'conf': x[-1]} for x in nms_out]
+
+def softnms(rects, th=0.5):
+    rects = copy.deepcopy(rects)
+    result = []
+    while len(rects) > 0:
+        max_idx = max(range(len(rects)), key=lambda i:
+                rects[i]['conf'])
+        max_det = rects[max_idx]
+        result.append(max_det)
+        rects.remove(max_det)
+        for j in range(len(rects)):
+            j_rect = rects[j]
+            ij_iou = calculate_iou1(max_det['rect'], j_rect['rect'])
+            rects[j]['conf'] *= math.exp(-ij_iou * ij_iou / th)
+    return result
 
 if __name__ == '__main__':
     init_logging()

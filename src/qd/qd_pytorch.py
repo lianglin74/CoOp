@@ -52,6 +52,27 @@ import re
 import glob
 import torch.nn.functional as F
 
+
+def load_scheduler_state(scheduler, state):
+    for k, v in state.items():
+        if k in scheduler.__dict__:
+            curr = scheduler.__dict__[k]
+            from qd.qd_common import float_tolorance_equal
+            # if the parameter is about the old scheduling, we ignore it. We
+            # prefer the current scheduling parameters, except the last_epoch
+            # or some other states which relies on the iteration.
+            if k in ['milestones', 'warmup_factor', 'warmup_iters', 'warmup_method',
+                'base_lrs', 'gamma'] or float_tolorance_equal(curr, v):
+                continue
+            elif k in ['last_epoch', '_step_count']:
+                logging.info('updating {} from {} to {}'.format(k,
+                    curr, v))
+                scheduler.__dict__[k] = v
+            else:
+                raise NotImplementedError('unknown {}'.format(k))
+        else:
+            scheduler.__dict__[k] = v
+
 def synchronize():
     """
     copied from maskrcnn_benchmark.utils.comm
@@ -183,7 +204,7 @@ class TSVSplitProperty(Dataset):
             list_file = dataset.get_data(splitX, t)
             seq_file = dataset.get_shuffle_file(split)
             self.tsv = CompositeTSVFile(list_file, seq_file, cache_policy)
-            assert version == 0
+            assert version in [0, None]
 
     def __getitem__(self, index):
         row = self.tsv[index]
@@ -198,21 +219,10 @@ class TSVSplit(Dataset):
     read the hw property
     '''
     def __init__(self, data, split, version=0, cache_policy=None):
-        dataset = TSVDataset(data)
-        if op.isfile(dataset.get_data(split)):
-            self.tsv = TSVFile(dataset.get_data(split),
-                    cache_policy)
-            self.label_tsv = TSVFile(dataset.get_data(split, 'label',
-                version=version), cache_policy)
-        else:
-            splitX = split + 'X'
-            list_file = dataset.get_data(splitX)
-            seq_file = dataset.get_shuffle_file(split)
-            self.tsv = CompositeTSVFile(list_file, seq_file, cache_policy)
-            list_file = dataset.get_data(splitX, 'label')
-            self.label_tsv = CompositeTSVFile(list_file, seq_file,
-                    cache_policy)
-            assert version == 0
+        self.tsv = TSVSplitProperty(data, split, t=None, version=version,
+                cache_policy=cache_policy)
+        self.label_tsv = TSVSplitProperty(data, split, t='label',
+                version=version, cache_policy=cache_policy)
 
     def __getitem__(self, index):
         _, __, str_image = self.tsv[index]
@@ -223,7 +233,6 @@ class TSVSplit(Dataset):
         return len(self.tsv)
 
 class TSVSplitImage(TSVSplit):
-    # prefer to use TSVSplitProperty
     def __init__(self, data, split, version, transform=None,
             cache_policy=None, labelmap=None):
         super(TSVSplitImage, self).__init__(data, split, version,
@@ -261,10 +270,30 @@ class TSVSplitImage(TSVSplit):
             idx = int(col)
         except:
             info = json.loads(col)
-            assert len(info) == 1
             idx = self.label_to_idx[info[0]['class']]
         label = torch.from_numpy(np.array(idx, dtype=np.int))
         return label
+
+class TSVSplitCropImage(TSVSplitImage):
+    def __getitem__(self, index):
+        key, str_label, str_im = super(TSVSplitImage, self).__getitem__(index)
+        img = img_from_base64(str_im)
+        rects = json.loads(str_label)
+        assert len(rects) == 1, (key, len(rects))
+        rect = rects[0]
+        x0, y0, x1, y1 = map(int, rect['rect'])
+        h, w = img.shape[:2]
+        y0 = max(0, min(y0, h))
+        y1 = max(0, min(y1, h))
+        x1 = max(0, min(x1, w))
+        x0 = max(0, min(x0, w))
+        assert y1 > y0 and x1 > x0, key
+        img = img[y0:y1, x0:x1, :]
+        str_label = rect['class']
+        if self.transform is not None:
+            img = self.transform(img)
+        label = self.label_to_idx[rect['class']]
+        return img, label, key
 
 class TSVSplitImageMultiLabel(TSVSplitImage):
     def __init__(self, data, split, version, transform=None,
@@ -358,27 +387,39 @@ class AverageMeter(object):
         self.count += n
         self.avg = self.sum / self.count
 
-def get_test_transform():
+class BGR2RGB(object):
+    def __call__(self, im):
+        return im[:, :, [2, 1, 0]]
+
+def get_test_transform(bgr2rgb=False):
     normalize = get_data_normalize()
-    return transforms.Compose([
+    all_trans = []
+    if bgr2rgb:
+        all_trans.append(BGR2RGB())
+    all_trans.extend([
             transforms.ToPILImage(),
             transforms.Resize(256),
             transforms.CenterCrop(224),
             transforms.ToTensor(),
             normalize,
             ])
+    return transforms.Compose(all_trans)
 
-def get_train_transform():
+def get_train_transform(bgr2rgb=False):
     normalize = get_data_normalize()
     totensor = transforms.ToTensor()
     color_jitter = transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4)
-    data_augmentation = transforms.Compose([
+    all_trans = []
+    if bgr2rgb:
+        all_trans.append(BGR2RGB())
+    all_trans.extend([
         transforms.ToPILImage(),
         transforms.RandomResizedCrop(224),
         color_jitter,
         transforms.RandomHorizontalFlip(),
         totensor,
-        normalize, ])
+        normalize,])
+    data_augmentation = transforms.Compose(all_trans)
     return data_augmentation
 
 def get_data_normalize():
@@ -417,7 +458,11 @@ class IBCEWithLogitsNegLoss(nn.Module):
         self.ignore_hard_pos_th = ignore_hard_pos_th
         self.eps = 1e-5
 
-    def forward(self, feature, target):
+    def forward(self, feature, target, weight=None, reduce=True):
+        # currently, we do not support to customize teh weight. This field is
+        # only used for mmdetection, where teh weight is used.
+        # meanwhile, we only support reduce=True here
+        assert reduce
         debug_info = ''
         print_debug = (self.num_called % self.display) == 0
 
@@ -739,6 +784,7 @@ class TorchTrain(object):
                 'use_hvd': False,
                 'device': 'cuda',
                 'test_mergebn': False,
+                'bgr2rgb': False, # this should be True, but set it False for back compatibility
                 }
 
         assert 'batch_size' not in kwargs, 'use effective_batch_size'
@@ -781,14 +827,18 @@ class TorchTrain(object):
         # adapt the batch size based on the mpi_size
         self.is_master = self.mpi_rank == 0
 
-        assert (self.effective_batch_size % self.mpi_size) == 0, (self.effective_batch_size, self.mpi_size)
-        self.batch_size = self.effective_batch_size // self.mpi_size
-
         assert (self.test_batch_size % self.mpi_size) == 0, self.test_batch_size
         self.test_batch_size = self.test_batch_size // self.mpi_size
         self.train_dataset = TSVDataset(self.data)
 
         self.initialized = False
+
+    @property
+    def batch_size(self):
+        # do not run assert in __init__ because we may just want to run
+        # inference and ignore the training
+        assert (self.effective_batch_size % self.mpi_size) == 0, (self.effective_batch_size, self.mpi_size)
+        return self.effective_batch_size // self.mpi_size
 
     def get_labelmap(self):
         if not self.labelmap:
@@ -860,14 +910,22 @@ class TorchTrain(object):
         self._initialized = True
 
     def _get_dataset(self, data, split, stage, labelmap):
+        if not self.bgr2rgb:
+            logging.warn('normally bgr2rgb should be true.')
         if stage == 'train':
-            transform = get_train_transform()
+            transform = get_train_transform(self.bgr2rgb)
         else:
             assert stage == 'test'
-            transform = get_test_transform()
+            transform = get_test_transform(self.bgr2rgb)
 
         if self.dataset_type == 'single':
             return TSVSplitImage(data, split,
+                    version=0,
+                    transform=transform,
+                    labelmap=labelmap,
+                    cache_policy=self.cache_policy)
+        if self.dataset_type == 'crop':
+            return TSVSplitCropImage(data, split,
                     version=0,
                     transform=transform,
                     labelmap=labelmap,
@@ -887,7 +945,7 @@ class TorchTrain(object):
             raise ValueError('unknown {}'.format(self.dataset_type))
 
     def _get_criterion(self):
-        if self.dataset_type == 'single':
+        if self.dataset_type in ['single', 'crop']:
             criterion = nn.CrossEntropyLoss().cuda()
         elif self.dataset_type == 'multi_hot':
             if self.loss_type == 'BCEWithLogitsLoss':
@@ -1452,7 +1510,6 @@ class TorchTrain(object):
                         version=self.test_version),
                     predict_file,
                     report_file=evaluate_file,
-                    ovthresh=self.ovthresh,
                     **self.kwargs)
         elif self.evaluate_method == 'coco_box':
             from qd.cocoeval import convert_gt_to_cocoformat

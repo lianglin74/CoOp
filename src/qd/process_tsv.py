@@ -1691,6 +1691,14 @@ def populate_dataset_hw(data, splits):
                         x.extend(r)
                     dataset.write_data(x, split, 'hw')
 
+def ensure_label_extract(data, splits):
+    dataset = TSVDataset(data)
+    for split in splits:
+        full_tsv = dataset.get_data(split)
+        label_tsv = dataset.get_data(split, 'label')
+        if not op.isfile(label_tsv) and op.isfile(full_tsv):
+            extract_label(full_tsv, label_tsv)
+
 def populate_dataset_details(data, check_image_details=False,
         splits=None, check_box=False, data_root=None):
     logging.info(data)
@@ -1703,11 +1711,7 @@ def populate_dataset_details(data, check_image_details=False,
     if check_image_details:
         populate_dataset_hw(data, splits)
 
-    for split in splits:
-        full_tsv = dataset.get_data(split)
-        label_tsv = dataset.get_data(split, 'label')
-        if not op.isfile(label_tsv) and op.isfile(full_tsv):
-            extract_label(full_tsv, label_tsv)
+    ensure_label_extract(data, splits)
 
     for split in splits:
         tsv_file = dataset.get_data(split)

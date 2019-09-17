@@ -80,11 +80,26 @@ def multi_gpu_test(model, data_loader, labelmap, pred_file):
             reorder_tsv_keys(pred_file, ordered_keys, pred_file)
     synchronize()
 
+def set_dict_or_list_of_dict(d, k, v):
+    if isinstance(d, dict):
+        from qd.qd_common import dict_update_path_value
+        dict_update_path_value(d, k, v)
+    elif isinstance(d, list):
+        for x in d:
+            set_dict_or_list_of_dict(x, k, v)
+    else:
+        raise NotImplementedError()
+
 class MMDetPipeline(ModelPipeline):
     def __init__(self, **kwargs):
         super(MMDetPipeline, self).__init__(**kwargs)
 
-        self._default.update({'workers': 4})
+        self._default.update({
+            'workers': 4,
+            'ignore_filter_img': False,
+            'multi_hot_label': False,
+            'classification_loss_type': 'CE',
+            })
 
         mmdet_root = op.join('src', 'mmdetection')
 
@@ -105,6 +120,8 @@ class MMDetPipeline(ModelPipeline):
         cfg._cfg_dict['data']['train']['data'] = self.data
         cfg._cfg_dict['data']['train']['split'] = 'train'
         cfg._cfg_dict['data']['train']['version'] = self.train_version
+        cfg._cfg_dict['data']['train']['ignore_filter_img'] = self.ignore_filter_img
+        cfg._cfg_dict['data']['train']['multi_hot_label'] = self.multi_hot_label
 
         cfg._cfg_dict['data']['test']['type'] = 'MMTSVDataset'
         cfg._cfg_dict['data']['test']['data'] = self.test_data
@@ -117,8 +134,32 @@ class MMDetPipeline(ModelPipeline):
 
         cfg._cfg_dict['max_iter'] = self.parse_iter(self.max_iter)
 
+        self.labelmap = TSVDataset(self.data).load_labelmap()
+        # in the cascade scenario, the field of bbox_head is a list of dict;
+        # while for the normal one, it is a dictionary
+        if self.has_background_output():
+            set_dict_or_list_of_dict(cfg._cfg_dict['model']['bbox_head'],
+                    'num_classes', len(self.labelmap) + 1)
+        else:
+            set_dict_or_list_of_dict(cfg._cfg_dict['model']['bbox_head'],
+                    'num_classes', len(self.labelmap))
+        set_dict_or_list_of_dict(cfg._cfg_dict['model']['bbox_head'],
+                'classification_loss_type', self.classification_loss_type)
+
         self.cfg = cfg
 
+    def has_background_output(self):
+        # we should always use self.kwargs rather than cfg. cfg is only used by
+        # mask-rcnn lib, we only set it instead of read
+        p = self.kwargs.get('classification_loss_type', 'CE')
+        if p in ['BCE'] or \
+                any(p.startswith(x) for x in ['IBCE']):
+            return False
+        elif p in ['CE', 'MCEB']:
+            # 0 is background
+            return True
+        else:
+            raise NotImplementedError()
     def train(self):
         ensure_directory(self.output_folder)
         ensure_directory(op.join(self.output_folder, 'snapshot'))
@@ -187,16 +228,9 @@ class MMDetPipeline(ModelPipeline):
                                        dist=self.distributed,
                                        shuffle=False)
 
-        # build the model and load checkpoint
         model = build_detector(cfg.model, train_cfg=None, test_cfg=cfg.test_cfg)
         dataset = TSVDataset(self.data)
         labelmap = dataset.load_labelmap()
-
-        #debug = True
-        #if debug:
-            #model_file = \
-                #'./src/mmdetection/checkpoint/faster_rcnn_r50_fpn_1x_20181010-3d1b3351.pth'
-            #labelmap = [c.replace('_', ' ') for c in CocoDataset.CLASSES]
 
         load_checkpoint(model, model_file, map_location='cpu')
 

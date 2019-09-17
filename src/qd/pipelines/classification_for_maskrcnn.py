@@ -6,7 +6,6 @@ from qd.qd_maskrcnn import MaskRCNNPipeline
 from torch.nn import Module
 from maskrcnn_benchmark.config import cfg
 from torch import nn
-from maskrcnn_benchmark.modeling.backbone import resnet
 import maskrcnn_benchmark
 import torch
 
@@ -37,14 +36,13 @@ class BackboneToPredict(Module):
 
         assert cfg.MODEL.BACKBONE.FREEZE_CONV_BODY_AT == 0
 
-        self.body = resnet.ResNet(cfg)
+        from maskrcnn_benchmark.modeling.backbone import build_backbone
+        backbone = build_backbone(cfg)
+        self.body = backbone.body
+
         self.body, info = frozen_to_batch_norm2d(self.body)
         logging.info(pformat(info))
-        for n in self.body.stages[:-1]:
-            self.body.return_features[n] = False
 
-        assert self.body.return_features[
-            self.body.stages[-1]]
 
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         for m in list(self.body.modules())[::-1]:

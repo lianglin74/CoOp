@@ -59,6 +59,9 @@ def ensure_upload_data_for_philly_jobs(data, philly_client):
 
 def ensure_upload_data_for_gpu_jobs(data, philly_client):
     all_data = get_all_related_data_for_gpu_jobs(data)
+    ensure_upload_all_data(all_data, philly_client)
+
+def ensure_upload_all_data(all_data, philly_client):
     for d in all_data:
         dataset = TSVDataset(d)
         if any(dataset.has('train') and not dataset.has('train', 'hw')
@@ -96,13 +99,25 @@ def ensure_upload_init_model(param, philly_client):
     assert(op.isfile(basemodel))
     philly_client.upload_qd_model(basemodel)
 
+def ensure_upload_trained_model(param, aml_client):
+    if 'full_expid' in param:
+        full_expid = param['full_expid']
+        aml_client.sync_full_expid_from_local_by_exist(full_expid)
+
 def aml_func_run(func, param, **submit_param):
     from qd.gpucluster import create_aml_client
     aml_client = create_aml_client(**submit_param)
     if 'data' in param.get('param', {}):
-        ensure_upload_data_for_gpu_jobs(param['param']['data'], aml_client)
+        from qd.pipeline import get_all_related_data_for_gpu_jobs
+        data = param['param']['data']
+        all_data = get_all_related_data_for_gpu_jobs(data)
+        if 'all_test_data' in param:
+            all_data.extend([test_data_info['test_data'] for test_data_info in
+                param['all_test_data']])
+        ensure_upload_all_data(all_data, aml_client)
     if 'basemodel' in param.get('param', {}):
         ensure_upload_init_model(param['param'], aml_client)
+    ensure_upload_trained_model(param['param'], aml_client)
     assert func.__module__ != '__main__', \
             'the executed func should not be in the main module'
     assert 'type' not in param
@@ -170,11 +185,14 @@ def except_to_update_for_dtype(param):
     return param.get('DTYPE', 'float32') == 'float32'
 
 def except_to_update_classification_loss(param):
-    if not dict_has_path(param, 'MODEL$ROI_BOX_HEAD$CLASSIFICATION_LOSS'):
-        return True
-    else:
+    if dict_has_path(param, 'MODEL$ROI_BOX_HEAD$CLASSIFICATION_LOSS'):
         return dict_get_path_value(param,
                 'MODEL$ROI_BOX_HEAD$CLASSIFICATION_LOSS') == 'CE'
+    elif 'classification_loss_type' in param:
+        return param['classification_loss_type'] == 'CE'
+    else:
+        return True
+
 
 def except_to_update_random_scale_min(param):
     if dict_has_path(param, 'INPUT$FIXED_SIZE_AUG$RANDOM_SCALE_MIN'):
@@ -263,6 +281,8 @@ def update_parameters(param):
                 except_to_update_fixed_jitter),
             ('MODEL$ROI_BOX_HEAD$CLASSIFICATION_LOSS', '',
                 except_to_update_classification_loss),
+            ('classification_loss_type', '',
+                except_to_update_classification_loss),
             ('min_size_range32', 'Min'),
             ('with_dcn', ('DCN', None)),
             ('opt_cls_only', ('ClsOnly', None)),
@@ -273,12 +293,14 @@ def update_parameters(param):
             ('use_treestructure', ('Tree', None)),
             ('MODEL$USE_TREESTRUCTURE', ('Tree', None)),
             ('MaskTSVDataset$multi_hot_label', ('MultiHot', None)),
+            ('multi_hot_label', ('MultiHot', None)),
             ('DATALOADER$ASPECT_RATIO_GROUPING', [None, 'NoARG']),
             ('INPUT$USE_FIXED_SIZE_AUGMENTATION', ['FSize', None]),
             ('dataset_type', ''),
             ('step_lr', 'StepLR'),
             ('MODEL$RPN$USE_BN', ('RpnBN', None)),
             ('MODEL$ROI_BOX_HEAD$USE_GN', ('HeadGN', None)),
+            ('MODEL$FPN$USE_BN', ('FPNBN', None)),
             ('sync_bn', ('SyncBN', None)),
             ('SOLVER$LR_POLICY', 'LRP', except_to_update_lr_policy),
             ('SOLVER$WARMUP_ITERS', 'Warm'),
@@ -293,11 +315,19 @@ def update_parameters(param):
             ('SOLVER$WEIGHT_DECAY', 'WD'),
             ('use_apex_ddp', ('ADDP', None)),
             ('SOLVER$STEPS', 'S'),
+            ('exclude_convert_gn', ('NoSyncGN', None)),
+            ('ignore_filter_img', ('NoFilter', None)),
+            ('pretrained', ('Pretrained', None)),
+            ('bgr2rgb', ('RGB', None)),
+            ('MODEL$FPN$INTERPOLATE_MODE', 'Inp'),
+            ('use_ddp', (None, 'NoneDDP')),
+            ('data_partition', 'P', lambda x: x['data_partition'] == 1),
             ]
 
     non_expid_impact_keys = ['data', 'net', 'expid_prefix',
             'test_data', 'test_split', 'test_version',
             'dist_url_tcp_port', 'workers', 'force_train',
+            'num_workers',
             'pipeline_type', 'test_batch_size',
             'yolo_train_session_param$debug_train',
             'yolo_predict_session_param',
@@ -311,6 +341,9 @@ def update_parameters(param):
             'SOLVER$CHECKPOINT_PERIOD',
             'yolo_train_session_param$display',
             'INPUT$MIN_SIZE_TEST',
+            'ovthresh',
+            'MODEL$ROI_HEADS$NMS_POLICY$TYPE',
+            'images_per_gpu',
             ]
 
     if param['pipeline_type'] == 'MaskRCNNPipeline':
@@ -382,7 +415,7 @@ def create_pipeline(kwargs):
         from qd.qd_maskrcnn import MaskRCNNPipeline
         return MaskRCNNPipeline(**kwargs)
     elif pipeline_type == 'MMDetPipeline':
-        from qd.qd_mmdetection import MMDetPipeline
+        from qd.pipelines.qd_mmdetection import MMDetPipeline
         return MMDetPipeline(**kwargs)
     elif pipeline_type == 'classification':
         from qd.qd_pytorch import TorchTrain
@@ -426,6 +459,20 @@ def pipeline_monitor_train(param, all_test_data, **kwargs):
         dict_update_nested_dict(curr_param, test_data_info)
         pip = load_pipeline(**curr_param)
         pip.monitor_train()
+
+def pipeline_continuous_train(param, all_test_data, **kwargs):
+    init_logging()
+    curr_param = copy.deepcopy(param)
+    pip = load_pipeline(**curr_param)
+    pip.ensure_train()
+
+    for test_data_info in all_test_data:
+        curr_param = copy.deepcopy(param)
+        dict_ensure_path_key_converted(test_data_info)
+        dict_update_nested_dict(curr_param, test_data_info)
+        pip = load_pipeline(**curr_param)
+        pip.ensure_predict()
+        pip.ensure_evaluate()
 
 def pipeline_eval_multi(param, all_test_data, **kwargs):
     for test_data_info in all_test_data:

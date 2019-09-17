@@ -7,6 +7,7 @@ from qd.evaluate.oid_hierarchical_labels_expansion_tsv import expand_labels
 import numpy as np
 import argparse
 import time
+import logging
 
 
 def load_truths(tsv_file, imagelabel_tsv_file, shuf_file=None):
@@ -276,8 +277,8 @@ def evaluate(truths, imagelabel_truths, dets, shuf_file=None, expand_label_gt=Fa
         else:
             new_file = op.splitext(truths)[0] + '.expanded.nms.tsv'
             new_imagelevel_truths = op.splitext(imagelabel_truths)[0] + '.expanded.nms.tsv'
-        print('expanding labels for ground-truth file and save to: ' + new_file)
         if not (op.isfile(new_file) and op.isfile(new_imagelevel_truths)):
+            logging.info('expanding labels for ground-truth file and save to: ' + new_file)
             expand_labels(truths, imagelabel_truths, json_hierarchy_file,
                     new_file, new_imagelevel_truths, True, apply_nms_gt)
         truths = new_file
@@ -289,8 +290,8 @@ def evaluate(truths, imagelabel_truths, dets, shuf_file=None, expand_label_gt=Fa
             new_file = op.splitext(dets)[0] + '.expanded.tsv'
         else:
             new_file = op.splitext(dets)[0] + '.expanded.nms.tsv'
-        print('expanding labels for detection file and save to: ' + new_file)
         if not op.isfile(new_file):
+            logging.info('expanding labels for detection file and save to: ' + new_file)
             expand_labels(dets, None, json_hierarchy_file, new_file,
                     None, False, apply_nms_det)
         dets = new_file
@@ -312,7 +313,7 @@ def evaluate(truths, imagelabel_truths, dets, shuf_file=None, expand_label_gt=Fa
             ap = 0.0 # there are cases when num_gt = 0 and there are false positives.
         class_ap[label] = ap
         class_num_gt[label] = num_gt
-        print(label, ap)
+        logging.info('{} = {}'.format(label, ap))
 
     mean_ap = sum([class_ap[cls] for cls in class_ap]) / len(truths_dict)
     total_gt = sum([class_num_gt[cls] for cls in class_num_gt])

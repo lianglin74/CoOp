@@ -18,6 +18,16 @@ def clone(x):
             type(x)))
         return x
 
+def sumarize_data_by_float(x):
+    if isinstance(x, torch.Tensor):
+        return float(x.abs().sum())
+    elif isinstance(x, list):
+        return sum([sumarize_data_by_float(sub) for sub in x])
+    elif isinstance(x, tuple):
+        return sum([sumarize_data_by_float(sub) for sub in x])
+    else:
+        return 0
+
 def sumarize_data(x):
     info = []
     if isinstance(x, torch.Tensor):
@@ -47,8 +57,8 @@ class ForwardPassFeatureCache(torch.nn.Module):
         self.module_to_input = OrderedDict()
 
         def forward_hooker(m, i, o):
-            self.module_to_output[m] = clone(o)
-            self.module_to_input[m] = clone(i)
+            self.module_to_input[m] = sumarize_data_by_float(i)
+            self.module_to_output[m] = sumarize_data_by_float(o)
 
         self.model.register_forward_hook(forward_hooker)
         for _, m in self.model.named_modules():
@@ -68,8 +78,7 @@ class ForwardPassFeatureCache(torch.nn.Module):
                 logging.info('module not exist')
                 continue
             name = self.module_to_name[module]
-            summary = sumarize_data(out)
-            logging.info('name = {}; summary = {}'.format(name, summary))
+            logging.info('name = {}; summary = {}'.format(name, out))
 
 def create_forward_pass_feature_cache(m):
     return ForwardPassFeatureCache(m)

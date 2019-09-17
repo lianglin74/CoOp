@@ -81,7 +81,10 @@ def releaseLock(locked_file_descriptor):
     locked_file_descriptor.close()
 
 def exclusive_open_to_read(fname):
-    lock_fd = acquireLock(op.join('/tmp', 'lock_{}'.format(hash_sha1(fname))))
+    from qd.qd_common import get_user_name
+    user_name = get_user_name()
+    lock_fd = acquireLock(op.join('/tmp',
+        '{}_lock_{}'.format(user_name, hash_sha1(fname))))
     # under the context of blobfuse, it will download teh whole file. We don't
     # know if there is any issue if multi-process open the file at the same
     # time, but it should be no worse if we open it sequentially.
@@ -197,12 +200,12 @@ class TSVFile(object):
             return
 
         if self._fp is None:
-            self._fp = open(self.tsv_file)
+            self._fp = exclusive_open_to_read(self.tsv_file)
             self.pid = os.getpid()
 
         if self.pid != os.getpid():
             logging.info('re-open {} because the process id changed'.format(self.tsv_file))
-            self._fp = open(self.tsv_file)
+            self._fp = exclusive_open_to_read(self.tsv_file)
             self.pid = os.getpid()
 
 class TSVDataset(object):

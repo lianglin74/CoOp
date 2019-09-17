@@ -59,6 +59,7 @@ class AnnotationDB(object):
         self._phillyjob = self._qd['qd']['phillyjob']
         self._cluster = self._qd['qd']['cluster']
         import getpass
+        self._judge = self._qd['qd']['judge']
         self.username = getpass.getuser()
 
     def add_meta_data(self, kwargs):
@@ -66,6 +67,10 @@ class AnnotationDB(object):
             kwargs['create_time'] = datetime.now()
         if 'username' not in kwargs:
             kwargs['username'] = self.username
+
+    def insert_judge(self, **kwargs):
+        self.add_meta_data(kwargs)
+        self._judge.insert_one(kwargs)
 
     def insert_cluster_summary(self, **kwargs):
         self.add_meta_data(kwargs)
@@ -79,12 +84,21 @@ class AnnotationDB(object):
     def remove_phillyjob(self, **kwargs):
         self._phillyjob.delete_many(kwargs)
 
+    def update_one(self, doc_name, query, update):
+        return self._qd['qd'][doc_name].update_one(query, update)
+
+    def update_many(self, doc_name, query, update):
+        return self._qd['qd'][doc_name].update_many(query, update)
+
     def update_phillyjob(self, query, update):
         self.add_meta_data(update)
         return self._phillyjob.update_one(query, {'$set': update})
 
+    def iter_judge(self, **kwargs):
+        return self._judge.find(kwargs)
+
     def iter_phillyjob(self, **kwargs):
-        return self._phillyjob.find(**kwargs)
+        return self._phillyjob.find(kwargs)
 
     def iter_general(self, table_name):
         return self._qd['qd'][table_name].find().sort('create_time', -1)
@@ -143,6 +157,9 @@ class AnnotationDB(object):
 
     def drop_ground_truth_index(self):
         self._gt.drop_indexes()
+
+    def build_job_index(self):
+        self._phillyjob.create_index([('create_time', 1)])
 
     def build_ground_truth_index(self):
         self._gt.create_index([('data', 1),
@@ -406,8 +423,15 @@ def update_cluster_job_db(all_job_info):
             record = appID_to_record[job_info['appID']]
             need_update = False
             for k, v in job_info.items():
+                if k in ['elapsedTime', 'elapsedFinished']:
+                    continue
+                if k == 'data_store':
+                    v = sorted(v)
+                    record[k] = sorted(v)
                 if k not in record or record[k] != v:
                     need_update = True
+                    logging.info('update because {} need to be changed from {}'
+                            ' to {}')
                     break
             if need_update:
                 c.update_phillyjob(query={'appID': job_info['appID']},

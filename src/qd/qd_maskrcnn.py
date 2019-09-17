@@ -11,7 +11,6 @@ from maskrcnn_benchmark.config import cfg
 from maskrcnn_benchmark.data import make_data_loader
 from maskrcnn_benchmark.solver import make_lr_scheduler
 from maskrcnn_benchmark.solver import make_optimizer
-from maskrcnn_benchmark.engine.inference import compute_on_dataset
 from maskrcnn_benchmark.engine.trainer import do_train
 from maskrcnn_benchmark.modeling.detector import build_detection_model
 from maskrcnn_benchmark.utils.checkpoint import DetectronCheckpointer
@@ -34,6 +33,7 @@ from qd.qd_common import get_mpi_rank, get_mpi_size
 from qd.qd_common import pass_key_value_if_has
 from qd.qd_common import dump_to_yaml_str
 from qd.qd_common import dict_has_path
+from qd.qd_common import dict_get_path_value, dict_update_path_value
 from qd.qd_common import write_to_yaml_file
 from qd.tsv_io import TSVDataset
 from qd.tsv_io import tsv_reader, tsv_writer
@@ -67,7 +67,7 @@ def merge_dict_to_cfg(dict_param, cfg):
 
 from qd.layers import ensure_shape_bn_layer
 
-def convert_to_sync_bn(module, norm=torch.nn.SyncBatchNorm,
+def convert_to_sync_bn(module, norm=torch.nn.SyncBatchNorm, exclude_gn=False,
         is_pre_linear=False):
     module_output = module
     info = {'num_convert_bn': 0, 'num_convert_gn': 0}
@@ -78,11 +78,11 @@ def convert_to_sync_bn(module, norm=torch.nn.SyncBatchNorm,
                 is_pre_linear)
         module_output.weight.data = module.weight.data.clone().detach()
         module_output.bias.data = module.bias.data.clone().detach()
-
+        assert module.eps == 1e-5
         module_output.running_mean = module.running_mean
         module_output.running_var = module.running_var
         info['num_convert_bn'] += 1
-    elif isinstance(module, torch.nn.GroupNorm):
+    elif isinstance(module, torch.nn.GroupNorm) and not exclude_gn:
         # gn has no running mean and running var
         module_output = ensure_shape_bn_layer(norm, module.bias.size(),
                 is_pre_linear)
@@ -92,7 +92,7 @@ def convert_to_sync_bn(module, norm=torch.nn.SyncBatchNorm,
     # if the previous is a linear layer, we will not convert it to BN
     is_pre_linear = False
     for name, child in module.named_children():
-        child, child_info = convert_to_sync_bn(child, norm, is_pre_linear)
+        child, child_info = convert_to_sync_bn(child, norm, exclude_gn, is_pre_linear)
         module_output.add_module(name, child)
         for k, v in child_info.items():
             info[k] += v
@@ -119,9 +119,24 @@ def update_bn_momentum(model, bn_momentum):
             type_to_count[module.__class__.__name__] += 1
     logging.info(pformat(dict(type_to_count)))
 
+def sync_model(model):
+    module_states = list(model.state_dict().values())
+    if len(module_states) > 0:
+        # copied from https://github.com/pytorch/pytorch/blob/168c0797c45c1a26b0612c8496fe4ad112aeabfd/torch/nn/parallel/distributed.py
+        import torch.distributed as dist
+        from torch.distributed.distributed_c10d import _get_default_group
+        process_group = _get_default_group()
+        dist._dist_broadcast_coalesced(process_group,
+                module_states, 250 * 1024 * 1024, False)
+
 def train(cfg, local_rank, distributed, log_step=20, sync_bn=False,
+        exclude_convert_gn=False,
         opt_cls_only=False, bn_momentum=0.1, init_model_only=True,
-        use_apex_ddp=False):
+        use_apex_ddp=False,
+        data_partition=1,
+        use_ddp=True,
+        ):
+
     logging.info('start to train')
     model = build_detection_model(cfg)
     if sync_bn:
@@ -137,7 +152,8 @@ def train(cfg, local_rank, distributed, log_step=20, sync_bn=False,
             else:
                 norm = torch.nn.SyncBatchNorm
         #norm = torch.nn.BatchNorm2d
-        model, convert_info = convert_to_sync_bn(model, norm)
+        model, convert_info = convert_to_sync_bn(model, norm,
+                exclude_convert_gn)
         logging.info(pformat(convert_info))
     if bn_momentum != 0.1:
         update_bn_momentum(model, bn_momentum)
@@ -174,13 +190,20 @@ def train(cfg, local_rank, distributed, log_step=20, sync_bn=False,
                 from apex.parallel import DistributedDataParallel as DDP
                 model = DDP(model)
             else:
-                from torch.nn.parallel import DistributedDataParallel as DDP
-                model = DDP(
-                    model, device_ids=[local_rank], output_device=local_rank,
-                    # this should be removed if we update BatchNorm stats
-                    broadcast_buffers=False,
-                    find_unused_parameters=True,
-                )
+                if use_ddp:
+                    logging.info('using ddp for parallel')
+                    from torch.nn.parallel import DistributedDataParallel as DDP
+                    model = DDP(
+                        model, device_ids=[local_rank], output_device=local_rank,
+                        # this should be removed if we update BatchNorm stats
+                        broadcast_buffers=False,
+                        find_unused_parameters=True,
+                    )
+                else:
+                    logging.info('start to sync model')
+                    # sync parameters among gpus
+                    sync_model(model)
+                    logging.info('finished to sync model')
 
     arguments = {}
     arguments["iteration"] = 0
@@ -225,7 +248,9 @@ def train(cfg, local_rank, distributed, log_step=20, sync_bn=False,
         device,
         checkpoint_period,
         arguments,
-        log_step=log_step
+        log_step=log_step,
+        data_partition=data_partition,
+        explicit_average_grad=not use_ddp,
     )
 
     return model
@@ -570,13 +595,14 @@ def test(cfg, model, distributed, predict_files, label_id_to_label,
                 # during prediction, we also computed the time cost. Here we
                 # merge the time cost
                 speed_cache_files = [c + '.speed.yaml' for c in cache_files]
-                merge_speed_info(speed_cache_files, predict_file + '.speed.yaml')
+                speed_yaml = predict_file + '.speed.yaml'
+                merge_speed_info(speed_cache_files, speed_yaml)
                 for x in speed_cache_files:
                     from qd.qd_common import try_delete
                     try_delete(x)
                 vis_files = [op.splitext(c)[0] + '.vis.txt' for c in speed_cache_files]
                 merge_speed_vis(vis_files,
-                        op.splitext(merge_speed_info)[0] + '.vis.txt')
+                        op.splitext(speed_yaml)[0] + '.vis.txt')
 
         synchronize()
 
@@ -591,7 +617,6 @@ def merge_speed_info(speed_yamls, out_yaml):
 def upgrade_maskrcnn_param(kwargs):
     old_key = 'MODEL$BACKBONE$OUT_CHANNELS'
     if dict_has_path(kwargs, old_key):
-        from qd.qd_common import dict_get_path_value, dict_update_path_value
         origin = dict_get_path_value(kwargs, old_key)
         new_key = 'MODEL$RESNETS$BACKBONE_OUT_CHANNELS'
         if not dict_has_path(kwargs, new_key):
@@ -607,7 +632,7 @@ class MaskRCNNPipeline(ModelPipeline):
         super(MaskRCNNPipeline, self).__init__(**kwargs)
 
         self._default.update({
-            'workers': 4,
+            'num_workers': 4,
             'log_step': 20,
             'apply_nms_gt': True,
             'apply_nms_det': True,
@@ -616,6 +641,10 @@ class MaskRCNNPipeline(ModelPipeline):
             # for the inital model, whether we want to load the lr scheduler and
             # optimer
             'init_model_only': True,
+            'sync_bn': False,
+            'exclude_convert_gn': False,
+            'data_partition': 1,
+            'use_ddp': True,
             })
 
         maskrcnn_root = op.join('src', 'maskrcnn-benchmark')
@@ -631,6 +660,7 @@ class MaskRCNNPipeline(ModelPipeline):
         else:
             cfg_file = op.join(maskrcnn_root, 'configs', self.net + '.yaml')
         param = load_from_yaml_file(cfg_file)
+        self.default_net_param = copy.deepcopy(param)
         from qd.qd_common import dict_update_nested_dict
         dict_update_nested_dict(self.kwargs, param, overwrite=False)
 
@@ -647,22 +677,28 @@ class MaskRCNNPipeline(ModelPipeline):
         self.kwargs['SOLVER']['IMS_PER_BATCH'] = int(self.effective_batch_size)
         self.kwargs['SOLVER']['MAX_ITER'] = self.parse_iter(self.max_iter)
         train_arg = {'data': self.data,
-                'split': 'train'}
+                'split': 'train',
+                'bgr2rgb': self.bgr2rgb}
+        logging.info('bgr2rgb = {}; Should be true unless on purpose'.format(self.bgr2rgb))
         if self.MaskTSVDataset is not None:
             train_arg.update(self.MaskTSVDataset)
+            assert 'bgr2rgb' not in self.MaskTSVDataset or \
+                    self.MaskTSVDataset['bgr2rgb'] == self.bgr2rgb
         self.kwargs['DATASETS']['TRAIN'] = ('${}'.format(
             dump_to_yaml_str(train_arg).decode()),)
         test_arg = {'data': self.test_data,
-                'split': self.test_split,
-                'version': self.test_version,
-                'remove_images_without_annotations': False}
+                    'split': self.test_split,
+                    'version': self.test_version,
+                    'remove_images_without_annotations': False,
+                    'bgr2rgb': self.bgr2rgb,
+                    }
         self.kwargs['DATASETS']['TEST'] = ('${}'.format(
             dump_to_yaml_str(test_arg).decode()),)
         self.kwargs['OUTPUT_DIR'] = op.join('output', self.full_expid, 'snapshot')
         # the test_batch_size is the size for each rank. We call the mask-rcnn
         # API, which should be the batch size for all rank
         self.kwargs['TEST']['IMS_PER_BATCH'] = self.test_batch_size * self.mpi_size
-        self.kwargs['DATALOADER']['NUM_WORKERS'] = self.workers
+        self.kwargs['DATALOADER']['NUM_WORKERS'] = self.num_workers
         self.labelmap = TSVDataset(self.data).load_labelmap()
         if not self.has_background_output():
             self.kwargs['MODEL']['ROI_BOX_HEAD']['NUM_CLASSES'] = len(self.labelmap)
@@ -727,24 +763,52 @@ class MaskRCNNPipeline(ModelPipeline):
         torch_home = os.path.expanduser(os.getenv("TORCH_HOME", "~/.torch"))
         model_dir = os.getenv("TORCH_MODEL_ZOO", os.path.join(torch_home, "models"))
         ensure_directory(model_dir)
+        if self.data_partition > 1:
+            if self.use_ddp:
+                logging.info('set use_ddp=False sine data_partition > 1')
+            self.use_ddp = False
         train(cfg, self.mpi_local_rank, self.distributed, self.log_step,
                 sync_bn=self.sync_bn,
+                exclude_convert_gn=self.exclude_convert_gn,
                 opt_cls_only=self.opt_cls_only,
                 bn_momentum=self.bn_momentum,
                 init_model_only=self.init_model_only,
                 use_apex_ddp=self.use_apex_ddp,
+                data_partition=self.data_partition,
+                use_ddp=self.use_ddp,
                 )
 
     def append_predict_param(self, cc):
         super(MaskRCNNPipeline, self).append_predict_param(cc)
-        if cfg.MODEL.RPN.POST_NMS_TOP_N_TEST != 1000:
+        default_post_nms_top_n_test = (dict_get_path_value(self.default_net_param,
+            'MODEL$RPN$POST_NMS_TOP_N_TEST') if dict_has_path(self.default_net_param,
+                'MODEL$RPN$POST_NMS_TOP_N_TEST') else 1000)
+        if cfg.MODEL.RPN.POST_NMS_TOP_N_TEST != default_post_nms_top_n_test:
             cc.append('RPN.PostNMSTop{}'.format(cfg.MODEL.RPN.POST_NMS_TOP_N_TEST))
+        default_pre_nms_top_n_test = (dict_get_path_value(self.default_net_param,
+            'MODEL$RPN$PRE_NMS_TOP_N_TEST') if dict_has_path(self.default_net_param,
+                'MODEL$RPN$PRE_NMS_TOP_N_TEST') else 6000)
+        if cfg.MODEL.RPN.PRE_NMS_TOP_N_TEST != default_pre_nms_top_n_test:
+            cc.append('RPN.PreNMSTop{}'.format(cfg.MODEL.RPN.PRE_NMS_TOP_N_TEST))
         if cfg.MODEL.ROI_BOX_HEAD.CLASSIFICATION_ACTIVATE != 'softmax':
             cc.append('{}'.format(cfg.MODEL.ROI_BOX_HEAD.CLASSIFICATION_ACTIVATE))
         if self.predict_threshold is not None:
             cc.append('th{}'.format(self.predict_threshold))
         if cfg.INPUT.MIN_SIZE_TEST != 800:
             cc.append('testInputSize{}'.format(cfg.INPUT.MIN_SIZE_TEST))
+        if cfg.MODEL.ROI_HEADS.NMS != 0.5:
+            cc.append('roidNMS{}'.format(cfg.MODEL.ROI_HEADS.NMS))
+        if cfg.MODEL.ROI_HEADS.DETECTIONS_PER_IMG != 100:
+            cc.append('roidDets{}'.format(cfg.MODEL.ROI_HEADS.DETECTIONS_PER_IMG))
+        if cfg.MODEL.ROI_HEADS.SCORE_THRESH != 0.05:
+            cc.append('roidth{}'.format(cfg.MODEL.ROI_HEADS.SCORE_THRESH))
+        if cfg.MODEL.RPN.NMS_THRESH != 0.7:
+            cc.append('rpnNMS{}'.format(cfg.MODEL.RPN.NMS_THRESH))
+        if cfg.MODEL.ROI_HEADS.NMS_POLICY.TYPE != 'nms':
+            cc.append(cfg.MODEL.ROI_HEADS.NMS_POLICY.TYPE)
+        if cfg.MODEL.ROI_HEADS.NMS_POLICY.THRESH != 0.5:
+            cc.append('roinmspolicy{}'.format(cfg.MODEL.ROI_HEADS.NMS_POLICY.THRESH))
+
 
     def get_old_check_point_file(self, curr):
         return op.join(self.output_folder, 'snapshot',
@@ -779,7 +843,7 @@ class MaskRCNNPipeline(ModelPipeline):
         if self.sync_bn:
             # need to convert to BN
             model, convert_info = convert_to_sync_bn(model,
-                    torch.nn.BatchNorm2d)
+                    torch.nn.BatchNorm2d, self.exclude_convert_gn)
             logging.info(pformat(convert_info))
         model.to(cfg.MODEL.DEVICE)
         checkpointer = DetectronCheckpointer(cfg, model,

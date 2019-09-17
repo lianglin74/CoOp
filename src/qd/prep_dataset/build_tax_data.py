@@ -522,6 +522,21 @@ def ensure_build_taxonomy_oi5c(data):
         else:
             build_taxonomy_from_single_source(source_data,
                     source_split, source_version, min_image_per_label, out_data)
+    elif data in ['TaxOI5CV1_Tight25_5k']:
+        source_data = 'OpenImageV5C'
+        source_split = 'train'
+        source_version = 25
+        min_image_per_label = 5000
+        out_data = data
+        out_dataset = TSVDataset(out_data)
+        if op.isdir(out_dataset._data_root):
+            logging.info('ignore to build since {} exists'.format(
+                out_dataset._data_root))
+        else:
+            build_taxonomy_from_single_source(source_data,
+                    source_split, source_version, min_image_per_label, out_data)
+    elif data in ['TaxOI5CV2_0_Man.Woman']:
+        assert op.isfile(TSVDataset(data).get_labelmap_file())
     else:
         raise ValueError('unknown {}'.format(data))
 

@@ -226,6 +226,8 @@ class MaskClassificationPipeline(ModelPipeline):
 
     def predict_output_to_tsv_row(self, output, keys):
         topk = 50
+        if output.shape[1] < topk:
+            topk = output.shape[1]
         labelmap = self.get_labelmap()
         all_tops, all_top_indexes = output.topk(topk, dim=1,
                 largest=True, sorted=False)

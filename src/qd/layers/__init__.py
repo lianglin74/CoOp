@@ -1,3 +1,5 @@
 from .reshape_batch_norm import ensure_shape_bn_layer
 from .forward_pass_time_checker import ForwardPassTimeChecker
 from .merge_batch_norm import MergeBatchNorm
+from .forward_pass_memory_checker import ForwardPassMemoryChecker
+from .forward_pass_feature_cache import ForwardPassFeatureCache
