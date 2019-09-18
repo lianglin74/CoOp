@@ -158,6 +158,7 @@ def wrap_all(code_zip, code_root,
     cmd_run(['ifconfig'])
     cmd_run(['df', '-h'])
     cmd_run(['ls', '/dev'])
+    cmd_run(['blobfuse', '-v'])
 
     if get_mpi_rank() == 0:
         p = launch_monitoring_process()
