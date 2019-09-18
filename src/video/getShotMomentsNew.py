@@ -815,6 +815,9 @@ def buildEventLists(results, timePoint, rounding = False):
 
         value['id'] = id
         value['start'] = v[0] - frontPadding if timePoint else  v[0] - frontPadding
+        if (value['start'] < 0):
+            value['start'] = 0
+
         value['end'] = v[0] + endPadding if timePoint else v[1] + endPadding
         if rounding:
             value['start'] = int(value['start'])
@@ -826,9 +829,9 @@ def buildEventLists(results, timePoint, rounding = False):
     print(dictList)
     return dictList
 
-def writeTrainingLabelsForAutoML(labelFile, results, timePoint = True, falseRes = False):
-    if falseRes: 
-        fileName = labelFile.replace(".tsv", "_autoML_falseRes.csv")
+def writeTrainingLabelsForAutoML(labelFile, results, timePoint = True, suffix = None):
+    if suffix is not None: 
+        fileName = labelFile.replace(".tsv", "_autoML_" + suffix + ".csv")
     else:
         fileName = labelFile.replace(".tsv", "_autoML.csv")
 
@@ -839,10 +842,7 @@ def writeTrainingLabelsForAutoML(labelFile, results, timePoint = True, falseRes 
     f = open(fileName, 'w')
     prefix = "gs://yaoguang-central-storage/shotDunk/tmp/"
     for value in dictList:
-        if falseRes:
-            f.write(','.join([prefix + os.path.basename(videoFileName), "None_of_the_above",  str(value['start']), str(value['end'])]) + "\n")
-        else:
-            f.write(','.join([prefix + os.path.basename(videoFileName), value['class'],  str(value['start']), str(value['end'])]) + "\n")
+        f.write(','.join([prefix + os.path.basename(videoFileName), value['class'], '%.3f' % value['start'], '%.3f' % value['end']]) + "\n")
     f.close()
 
 def read_file_to_list(file_name):
@@ -990,10 +990,11 @@ def getNegativeRes(allTimePoints):
     negativeRes = []
     tpList = [ v[0] if len(v) == 2 else v[3] for v in allTimePoints]
 
+
     l = len(tpList)
     i = 1
     while i < l:
-        gap = (tpList[i - 1], tpList[i])
+        gap = (tpList[i] - tpList[i - 1])
         if gap > 2 * eventLength + padding:
             negativeRes.append(((tpList[i - 1] + tpList[i])/2.0, "None_of_the_above"))
         i += 1
@@ -1117,7 +1118,7 @@ def calculateF1andWriteRes(dir, odFileList, eventLabelJsonFile, textLabels = Fal
         writeToTSV(predict_file, pred_results)
         #writeToTSV(predict_file, true_results, True)
         if writeAutoMLLabel:
-            #writeTrainingLabelsForAutoML(predict_file, true_results, timePoint = True)
+            writeTrainingLabelsForAutoML(predict_file, true_results, timePoint = True)
             writeTrainingLabelsForAutoML(predict_file, falsePositiveRes, timePoint = True, suffix = "fakeShot")
             writeTrainingLabelsForAutoML(predict_file, negativeRes, timePoint = True, suffix = "nonShot")
 
@@ -1146,9 +1147,9 @@ def getMiguTestingResults():
 
 
 if __name__ == '__main__':
-    #getValidationResults()
-    getTestingResults()
-    #getMiguTestingResults()
+    getValidationResults()
+    #getTestingResults()
+    getMiguTestingResults()
     
     #main()
     #test_getShotStats()
