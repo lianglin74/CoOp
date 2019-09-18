@@ -315,7 +315,10 @@ def evaluate(truths, imagelabel_truths, dets, shuf_file=None, expand_label_gt=Fa
         class_num_gt[label] = num_gt
         logging.info('{} = {}'.format(label, ap))
 
-    mean_ap = sum([class_ap[cls] for cls in class_ap]) / len(truths_dict)
+    if len(truths_dict) == 0:
+        mean_ap = 0
+    else:
+        mean_ap = sum([class_ap[cls] for cls in class_ap]) / len(truths_dict)
     total_gt = sum([class_num_gt[cls] for cls in class_num_gt])
 
     return {'class_ap': class_ap,
