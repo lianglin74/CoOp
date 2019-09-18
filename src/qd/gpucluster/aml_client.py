@@ -439,6 +439,22 @@ def inject_to_tensorboard(info):
     for k, v in info.items():
         wt.add_scalar(tag=k, scalar_value=v)
 
+def detect_aml_error_message(app_id):
+    folder = op.join('./assets', app_id, 'azureml-logs')
+    import glob
+    from qd.qd_common import read_to_buffer
+    for log_file in glob.glob(op.join(folder, '70_driver_log*')):
+        all_line = read_to_buffer(log_file).decode().split('\n')
+        for i, line in enumerate(all_line):
+            if 'Error' in line and \
+                'TrackUserError:context_managers.TrackUserError' not in line and \
+                'WARNING: Retrying' not in line:
+                #start = max(0, i - 10)
+                start = max(0, i)
+                end = min(i + 1, len(all_line))
+                logging.info(log_file)
+                logging.info('\n'.join(all_line[start: end]))
+
 def execute(task_type, **kwargs):
     if task_type in ['q', 'query']:
         if len(kwargs.get('remainders', [])) > 0:
@@ -504,6 +520,8 @@ def execute(task_type, **kwargs):
         else:
             for run_id in run_ids:
                 m.inject(run_id)
+    elif task_type in ['parse']:
+        detect_aml_error_message(kwargs.get('remainders')[0])
     else:
         assert 'Unknown {}'.format(task_type)
 
@@ -515,6 +533,7 @@ def parse_args():
                 'qf', # query failed jobs
                 'qq', # query queued jobs
                 'd', 'download_qdoutput',
+                'parse',
                 'init',
                 'initc', # init with compile
                 'blame', 'resubmit',

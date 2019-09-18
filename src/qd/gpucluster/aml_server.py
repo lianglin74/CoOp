@@ -49,6 +49,7 @@ def cmd_run(cmd, working_directory='./', succeed=False,
                     env=e)
             p.communicate()
             if succeed:
+                logging.info('return code = {}'.format(p.returncode))
                 assert p.returncode == 0
         except:
             if succeed:
