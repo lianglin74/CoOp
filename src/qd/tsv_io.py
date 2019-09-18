@@ -14,6 +14,7 @@ import os
 import os.path as op
 import shutil
 import re
+from qd.qd_common import exclusive_open_to_read
 try:
     from itertools import izip as zip
 except ImportError:
@@ -68,29 +69,6 @@ def read_to_character(fp, c):
         else:
             result.append(s)
     return ''.join(result)
-
-def acquireLock(lock_f='/tmp/lockfile.LOCK'):
-    ''' acquire exclusive lock file access '''
-    import fcntl
-    locked_file_descriptor = open(lock_f, 'w+')
-    fcntl.lockf(locked_file_descriptor, fcntl.LOCK_EX)
-    return locked_file_descriptor
-
-def releaseLock(locked_file_descriptor):
-    ''' release exclusive lock file access '''
-    locked_file_descriptor.close()
-
-def exclusive_open_to_read(fname):
-    from qd.qd_common import get_user_name
-    user_name = get_user_name()
-    lock_fd = acquireLock(op.join('/tmp',
-        '{}_lock_{}'.format(user_name, hash_sha1(fname))))
-    # under the context of blobfuse, it will download teh whole file. We don't
-    # know if there is any issue if multi-process open the file at the same
-    # time, but it should be no worse if we open it sequentially.
-    fp = open(fname, 'r')
-    releaseLock(lock_fd)
-    return fp
 
 class TSVFile(object):
     # TODO: close the pointer of _fp

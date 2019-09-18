@@ -537,6 +537,35 @@ def ensure_build_taxonomy_oi5c(data):
                     source_split, source_version, min_image_per_label, out_data)
     elif data in ['TaxOI5CV2_0_Man.Woman']:
         assert op.isfile(TSVDataset(data).get_labelmap_file())
+    elif data in ['TaxOI5CV31_26_20k']:
+        source_data = 'OpenImageV5C'
+        source_split = 'train'
+        source_version = 26
+        min_image_per_label = 20000
+        out_data = data
+        out_dataset = TSVDataset(out_data)
+        if op.isdir(out_dataset._data_root):
+            logging.info('ignore to build since {} exists'.format(
+                out_dataset._data_root))
+        else:
+            build_taxonomy_from_single_source(source_data,
+                    source_split, source_version, min_image_per_label, out_data)
+    elif data in ['TaxOI5CV31_26_50k']:
+        source_data = 'OpenImageV5C'
+        source_split = 'train'
+        source_version = 26
+        min_image_per_label = 50000
+        out_data = data
+        out_dataset = TSVDataset(out_data)
+        if op.isdir(out_dataset._data_root):
+            logging.info('ignore to build since {} exists'.format(
+                out_dataset._data_root))
+        else:
+            build_taxonomy_from_single_source(source_data,
+                    source_split, source_version, min_image_per_label, out_data)
+            from qd.qd_common import copy_file
+            copy_file('./data/OpenImageV5C31/labelmap.txt',
+                    out_dataset.get_labelmap_file())
     else:
         raise ValueError('unknown {}'.format(data))
 

@@ -428,10 +428,12 @@ def update_cluster_job_db(all_job_info):
                 if k == 'data_store':
                     v = sorted(v)
                     record[k] = sorted(v)
-                if k not in record or record[k] != v:
+                from qd.qd_common import float_tolorance_equal
+                if k not in record or not float_tolorance_equal(record[k], v,
+                        check_order=False):
                     need_update = True
                     logging.info('update because {} need to be changed from {}'
-                            ' to {}')
+                            ' to {}'.format(k, record.get(k), v))
                     break
             if need_update:
                 c.update_phillyjob(query={'appID': job_info['appID']},

@@ -716,6 +716,7 @@ class PhillyVC(object):
             logging.info('appID not in status: {}'.format(pformat(status)))
             return
         port = None
+        status['detail'] = sorted(status['detail'], key=lambda x: pformat(x))
         for d in status['detail']:
             if not d['isMaster']:
                 port = d['port']

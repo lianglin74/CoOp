@@ -159,13 +159,15 @@ def find_float_tolorance_unequal(d1, d2):
         else:
             raise Exception('unknown type')
 
-def float_tolorance_equal(d1, d2):
+def float_tolorance_equal(d1, d2, check_order=True):
     from past.builtins import basestring
     if isinstance(d1, basestring) and isinstance(d2, basestring):
         return d1 == d2
     if type(d1) in [int, float] and type(d2) in [int, float]:
         return abs(d1 - d2) <= 0.00001 * abs(d1)
-    if type(d1) != type(d2):
+    if type(d1) != type(d2) and \
+            (not (type(d1) in [tuple, list] and
+                type(d2) in [tuple, list])):
         return False
     if type(d1) in [dict, OrderedDict]:
         if len(d1) != len(d2):
@@ -180,10 +182,22 @@ def float_tolorance_equal(d1, d2):
     elif type(d1) in [tuple, list]:
         if len(d1) != len(d2):
             return False
+        if not check_order:
+            d1 = sorted(d1, key=lambda x: pformat(x))
+            d2 = sorted(d2, key=lambda x: pformat(x))
         for x1, x2 in zip(d1, d2):
-            if not float_tolorance_equal(x1, x2):
+            if not float_tolorance_equal(x1, x2, check_order):
                 return False
         return True
+    elif type(d1) is bool:
+        return d1 == d2
+    elif d1 is None:
+        return d1 == d2
+    elif type(d1) is datetime:
+        if d1.tzinfo != d2.tzinfo:
+            return d1.replace(tzinfo=d2.tzinfo) == d2
+        else:
+            return d1 == d2
     else:
         import torch
         if type(d1) is torch.Tensor:
@@ -2345,6 +2359,30 @@ def softnms(rects, th=0.5):
             ij_iou = calculate_iou1(max_det['rect'], j_rect['rect'])
             rects[j]['conf'] *= math.exp(-ij_iou * ij_iou / th)
     return result
+
+def acquireLock(lock_f='/tmp/lockfile.LOCK'):
+    ''' acquire exclusive lock file access '''
+    import fcntl
+    locked_file_descriptor = open(lock_f, 'w+')
+    fcntl.lockf(locked_file_descriptor, fcntl.LOCK_EX)
+    return locked_file_descriptor
+
+def releaseLock(locked_file_descriptor):
+    ''' release exclusive lock file access '''
+    locked_file_descriptor.close()
+
+def exclusive_open_to_read(fname):
+    from qd.qd_common import get_user_name
+    user_name = get_user_name()
+    lock_fd = acquireLock(op.join('/tmp',
+        '{}_lock_{}'.format(user_name, hash_sha1(fname))))
+    # under the context of blobfuse, it will download teh whole file. We don't
+    # know if there is any issue if multi-process open the file at the same
+    # time, but it should be no worse if we open it sequentially.
+    fp = open(fname, 'r')
+    releaseLock(lock_fd)
+    return fp
+
 
 if __name__ == '__main__':
     init_logging()

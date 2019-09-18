@@ -24,7 +24,7 @@ def create_aml_client(**kwargs):
                     last_config)
     else:
         path = os.environ.get('AML_CONFIG_PATH', './aux_data/aml/aml.yaml')
-        kwargs['cluster'] = op.splitext(op.basename(op.abspath(path)))[0]
+        kwargs['cluster'] = op.splitext(op.basename(op.realpath(path)))[0]
     param = load_from_yaml_file(path)
     dict_update_nested_dict(param, kwargs)
     return AMLClient(**param)
