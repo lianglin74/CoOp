@@ -358,7 +358,7 @@ def update_parameters(param):
     # we need to update expid so that the model folder contains the critical
     # param information
     infos = []
-    need_hash_sha_params = ['basemodel']
+    need_hash_sha_params = ['basemodel', 'lock_up_to']
     for k in need_hash_sha_params:
         if k in param:
             if len(param[k]) > 5:

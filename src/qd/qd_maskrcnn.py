@@ -129,12 +129,29 @@ def sync_model(model):
         dist._dist_broadcast_coalesced(process_group,
                 module_states, 250 * 1024 * 1024, False)
 
+def lock_model_param_up_to(model, lock_up_to):
+    ignore = 0
+    found = False
+    for name, param in model.named_parameters():
+        if not found:
+            logging.info('lock {}'.format(name))
+            param.requires_grad = False
+            ignore += 1
+        else:
+            logging.info('not lock {}'.format(name))
+        if name == lock_up_to:
+            found = True
+    assert found
+    assert ignore > 0, 'some bug?'
+    logging.info('fix {} params'.format(ignore))
+
 def train(cfg, local_rank, distributed, log_step=20, sync_bn=False,
         exclude_convert_gn=False,
         opt_cls_only=False, bn_momentum=0.1, init_model_only=True,
         use_apex_ddp=False,
         data_partition=1,
         use_ddp=True,
+        lock_up_to=None,
         ):
 
     logging.info('start to train')
@@ -159,6 +176,8 @@ def train(cfg, local_rank, distributed, log_step=20, sync_bn=False,
         update_bn_momentum(model, bn_momentum)
     if opt_cls_only:
         lock_except_classifier(model)
+    if lock_up_to:
+        lock_model_param_up_to(model, lock_up_to)
     logging.info(model)
     device = torch.device(cfg.MODEL.DEVICE)
     model.to(device)
@@ -776,6 +795,7 @@ class MaskRCNNPipeline(ModelPipeline):
                 use_apex_ddp=self.use_apex_ddp,
                 data_partition=self.data_partition,
                 use_ddp=self.use_ddp,
+                lock_up_to=self.lock_up_to,
                 )
 
     def append_predict_param(self, cc):
