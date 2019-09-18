@@ -830,17 +830,45 @@ def buildEventLists(results, timePoint, rounding = False):
     return dictList
 
 def writeTrainingLabelsForAutoML(labelFile, results, timePoint = True, suffix = None):
-    if suffix is not None: 
+    ''' if suffix is not None: 
         fileName = labelFile.replace(".tsv", "_autoML_" + suffix + ".csv")
     else:
-        fileName = labelFile.replace(".tsv", "_autoML.csv")
+        fileName = labelFile.replace(".tsv", "_autoML.csv") '''
 
     videoFileName = labelFile.replace(".tsv", ".mp4")
 
+    videoFileBase = os.path.basename(videoFileName)
+    videoFilePath = os.path.dirname(videoFileName)
+
+    if "data/video/CBA/CBA_demo_v3" in videoFilePath:
+        prefix = "gs://yaoguang-central-storage/shotDunk/"
+        videoFileNamePrefix = videoFileBase[:-4]
+    elif "data/video/CBA/CBA_5_test_videos/test/extracted" in videoFilePath:
+        prefix = "gs://yaoguang-central-storage/shotDunk/test/"
+        videoFileNamePrefix = videoFileBase[:-7]
+    else:        
+        prefix = "gs://yaoguang-central-storage/shotDunk/tmp/"
+        videoFileNamePrefix = videoFileBase[:-7]
+    
+    testList = ['647b025243d74e719b36d24a0c19df37_sc99', # 39 shot, 1 dunk; 
+        'CBA1' #33 shots, 11 dunks;
+        'NBA1' #16 shots, 0 dunk
+        ]
+    # vadalition: 10 dunk; test: 8 dunk; 
+    
+    if videoFileNamePrefix in testList:
+        fileName = "/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/shotDetectionAutoML/autoGen/test.csv"
+    else:
+        fileName = "/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/shotDetectionAutoML/autoGen/train.csv"
+
+    print("----writing to:", fileName)
+    print("prefix: ", prefix)
+    print("events: ", results)
+
     dictList = buildEventLists(results, timePoint)
 
-    f = open(fileName, 'w')
-    prefix = "gs://yaoguang-central-storage/shotDunk/tmp/"
+    f = open(fileName, 'a')
+    
     for value in dictList:
         f.write(','.join([prefix + os.path.basename(videoFileName), value['class'], '%.3f' % value['start'], '%.3f' % value['end']]) + "\n")
     f.close()
@@ -905,7 +933,7 @@ def getShotStats(pred_results, true_results):
 
             if correctLabel:
                 print("predict, label: ", pRes[3], tRes[0])
-                if (abs(tRes[0] - pRes[3]) > 2.5):
+                if (abs(tRes[0] - pRes[3]) > tolerance):
                     print("Label Correction failed! label, ioaTime", tRes[0], pRes[3])
                 else:
                     labelCorrectionDict[tRes[0]] = pRes[3]
@@ -980,8 +1008,26 @@ def confusionMatrixReport(y_pred, y_pred_pointer, y_true, y_true_pointer):
     print("\n")
     return cfMatrix
 
-def getFalsePositiveRes(y_pred_combo, y_true_combo):
-    return [ (pred[1][3], "fakeShot") for true, pred in zip(y_true_combo, y_pred_combo) if true[0] == 'nonShot']
+def getFalsePositiveRes(allTimePoints):
+    eventLength = 2.0
+    padding = 1.0
+
+    falsePositiveRes = []
+    l = len(allTimePoints)
+    prevTimePoint = -10.0
+    for i,v in enumerate(allTimePoints):
+        nextTimePoint = 3600*1000.0      
+        if len(v) > 2:
+            if i < l - 1:
+                next = allTimePoints[i + 1]
+                nextTimePoint = next[0] if len(next) == 2 else next[3]
+            if v[3] - prevTimePoint > eventLength + padding and nextTimePoint - v[3] > eventLength + padding:
+                falsePositiveRes.append((v[3], 'None_of_the_above'))
+                prevTimePoint = v[3]
+        else:
+            prevTimePoint = v[0]
+    
+    return falsePositiveRes
 
 def getNegativeRes(allTimePoints):
     eventLength = 2.0
@@ -1100,7 +1146,7 @@ def calculateF1andWriteRes(dir, odFileList, eventLabelJsonFile, textLabels = Fal
             confusionMatrixReport(y_pred, y_pred_pointer, y_true, y_true_pointer)
 
             if writeAutoMLLabel: 
-                falsePositiveRes = getFalsePositiveRes(y_pred_combo, y_true_combo)                
+                falsePositiveRes = getFalsePositiveRes(allTimePoints)
                 #print("False Positive Results: ", falsePositiveRes)
                 negativeRes = getNegativeRes(allTimePoints)
             
@@ -1148,7 +1194,7 @@ def getMiguTestingResults():
 
 if __name__ == '__main__':
     getValidationResults()
-    #getTestingResults()
+    getTestingResults()
     getMiguTestingResults()
     
     #main()
