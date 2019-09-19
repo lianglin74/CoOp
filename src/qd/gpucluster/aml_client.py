@@ -134,6 +134,7 @@ class AMLClient(object):
             datastore_name, aml_config, use_custom_docker,
             compute_target, source_directory, entry_script,
             with_log=True,
+            env=None,
             **kwargs):
         self.kwargs = kwargs
         self.cluster = kwargs.get('cluster', 'aml')
@@ -197,6 +198,7 @@ class AMLClient(object):
 
         from azureml.core import Experiment
         self.experiment = Experiment(self.ws, name=self.experiment_name)
+        self.env = {} if env is None else env
 
     def get_compute_status(self):
         compute_status = get_compute_status(self.compute_target)
@@ -348,6 +350,10 @@ class AMLClient(object):
 
         env.environment_variables['NCCL_TREE_THRESHOLD'] = '0'
         env.environment_variables['NCCL_LL_THRESHOLD'] = '0'
+
+        for k, v in self.env.items():
+            assert type(v) is str
+        env.environment_variables.update(self.env)
 
         #env.environment_variables['NCCL_IB_DISABLE'] = '0'
         #env.environment_variables['NCCL_SOCKET_IFNAME'] = 'eth0'
