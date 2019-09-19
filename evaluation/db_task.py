@@ -129,7 +129,10 @@ def is_uhrs_consensus_correct(uhrs_res):
 if __name__ == "__main__":
     from qd.qd_common import init_logging
     init_logging()
-    gt_dataset_name = "coco_tag"
+    #gt_dataset_name = "coco_tag"
+    #gt_split = "train"
+    #pred_file = [MODIFY_PATH_HERE]
+    gt_dataset_name = "uhrs_verify_tag_openimage"
     gt_split = "train"
     pred_file = [MODIFY_PATH_HERE]
     collection_name = "uhrs_tag_verification"

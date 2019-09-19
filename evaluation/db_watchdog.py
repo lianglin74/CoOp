@@ -56,7 +56,7 @@ class TagVerificationConfig():
     num_hp_per_hit = 2
     max_hits_per_file = 2000
     num_judgment = 4
-    max_tasks_running = 5
+    max_tasks_running = 100
 
 def get_working_dir(db_name, collection_name):
     dirpath = op.join(tempfile.gettempdir(), "{}_{}".format(db_name, collection_name))
