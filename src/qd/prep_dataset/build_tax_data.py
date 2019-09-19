@@ -566,6 +566,15 @@ def ensure_build_taxonomy_oi5c(data):
             from qd.qd_common import copy_file
             copy_file('./data/OpenImageV5C31/labelmap.txt',
                     out_dataset.get_labelmap_file())
+    elif data in ['TaxOI5CV1_1_5k_27']:
+        target_folder = './data/TaxOI5CV1_1_5k_27'
+        if op.isdir(target_folder):
+            return
+        ensure_copy_folder('./data/TaxOI5CV1_1_5k_with_bb',
+                target_folder)
+        from qd.qd_common import write_to_file
+        write_to_file('./data/OpenImageV5C/train.label.v27.tsv',
+                op.join(target_folder, 'trainX.label.tsv'))
     else:
         raise ValueError('unknown {}'.format(data))
 

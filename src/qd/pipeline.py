@@ -432,6 +432,7 @@ def create_pipeline(kwargs):
 
 def load_pipeline(**kwargs):
     from qd.qd_pytorch import load_latest_parameters
+    kwargs = copy.deepcopy(kwargs)
     kwargs_f = load_latest_parameters(op.join('output',
         kwargs['full_expid']))
     dict_update_nested_dict(kwargs_f, kwargs)

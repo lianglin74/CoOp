@@ -241,6 +241,8 @@ class AMLClient(object):
                     log_full=True)
             if 'master_log' in info:
                 cmd_run(['tail', '-n', '100', info['master_log']])
+            if info['status'] == self.status_failed:
+                detect_aml_error_message(info['appID'])
             logging.info(pformat(info))
             return [info]
 
@@ -312,7 +314,9 @@ class AMLClient(object):
                 if fname.startswith('/'):
                     fname = fname[1:]
                 remote_file = op.join(remote_folder, fname)
-                if not cloud.exists(remote_file):
+                if not cloud.exists(remote_file) and \
+                        any(remote_file.endswith(suffix)
+                            for suffix in ['.pt', '.yaml']):
                     cloud.az_upload2(local_file, remote_file)
 
     def upload_qd_model(self, model_file):

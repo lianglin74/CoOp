@@ -2283,6 +2283,13 @@ def compare_gmap_evals(all_eval_file,
     result.append('all map = {}'.format(', '.join(
         map(lambda x: str(round(x, 3)), all_map))))
 
+    non_zero_cats = [cat for cat, ap in all_cat2map[0].items()
+            if all_cat2map[1][cat] > 0 and  ap > 0]
+    logging.info('#non zero cat = {}'.format(len(non_zero_cats)))
+    for cat2map in all_cat2map:
+        logging.info('non zero cat mAP = {}'.format(
+            calc_mean([cat2map[c] for c in non_zero_cats])))
+
     if label_to_testcount is not None:
         all_valid_map = [calc_mean([ap for cat, ap in cat2map.items() if
             label_to_testcount.get(cat, 0) >
