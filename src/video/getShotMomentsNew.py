@@ -851,7 +851,7 @@ def writeTrainingLabelsForAutoML(labelFile, results, timePoint = True, suffix = 
         videoFileNamePrefix = videoFileBase[:-7]
     
     testList = ['647b025243d74e719b36d24a0c19df37_sc99', # 39 shot, 1 dunk; 
-        'CBA1' #33 shots, 11 dunks;
+        'CBA1', #33 shots, 11 dunks;
         'NBA1' #16 shots, 0 dunk
         ]
     # vadalition: 10 dunk; test: 8 dunk; 
@@ -1101,7 +1101,7 @@ def main():
 
 def calculateF1andWriteRes(dir, odFileList, eventLabelJsonFile, textLabels = False, textLabelFolder = None):
     # Used to write labels for GL autoML training
-    writeAutoMLLabel = True
+    writeAutoMLLabel = False
 
     odFileList = read_file_to_list(dir + odFileList)
     #predict_file = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_chop/TSV/head350_prediction_1551538896210_sc99_01_q1.tsv"
