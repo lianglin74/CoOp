@@ -2328,12 +2328,16 @@ def merge_class_names_by_location_id(anno):
             r['class'] = [r['class']]
             r['class'].extend((rects[i]['class'] for i in range(1,
                 len(rects))))
+            r['conf'] = [r['conf']]
+            r['conf'].extend((rects[i].get('conf', 1) for i in range(1,
+                len(rects))))
             merged_anno.append(r)
         return merged_anno
     else:
         assert all('location_id' not in a for a in anno)
         for a in anno:
             a['class'] = [a['class']]
+            a['conf'] = [a['conf']]
         return anno
 
 def softnms_c(rects, **kwargs):

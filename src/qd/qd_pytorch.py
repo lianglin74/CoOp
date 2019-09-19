@@ -446,8 +446,11 @@ class MCEBLoss(nn.Module):
                 target_with_bkg)
 
 class IBCEWithLogitsNegLoss(nn.Module):
-    def __init__(self, neg, pos, neg_pos_ratio=None,
-            ignore_hard_neg_th=None, ignore_hard_pos_th=None):
+    def __init__(self, neg, pos,
+            neg_pos_ratio=None,
+            ignore_hard_neg_th=None,
+            ignore_hard_pos_th=None,
+            minus_2_weight=1.):
         super(IBCEWithLogitsNegLoss, self).__init__()
         self.neg = neg
         self.pos = pos
@@ -457,22 +460,29 @@ class IBCEWithLogitsNegLoss(nn.Module):
         self.ignore_hard_neg_th = ignore_hard_neg_th
         self.ignore_hard_pos_th = ignore_hard_pos_th
         self.eps = 1e-5
+        # -2 means it is a hard negative sample and we can pose more weight on
+        # it
+        self.minus_2_weight = minus_2_weight
 
     def forward(self, feature, target, weight=None, reduce=True):
         # currently, we do not support to customize teh weight. This field is
         # only used for mmdetection, where teh weight is used.
         # meanwhile, we only support reduce=True here
         assert reduce
-        debug_info = ''
+        debug_infos = []
         print_debug = (self.num_called % self.display) == 0
 
         pos_position = target == 1
-        neg_position = target == 0
+        # we assume it is a class level hard negative. That is, if any one of
+        # the rows has -2 in that column; that colum will have -2 for all rows.
+        minus_2_pos = ((target == -2).sum(dim=0, keepdim=True) > 0).expand_as(target)
+        neg_position = ((target == 0) | minus_2_pos)
         ignore_position = target == -1
 
         target = target.float()
 
         weight = torch.ones_like(target)
+        weight[minus_2_pos] = self.minus_2_weight
 
         weight[ignore_position] = 0
         sig_feature = torch.sigmoid(feature)
@@ -480,29 +490,32 @@ class IBCEWithLogitsNegLoss(nn.Module):
         weight[(pos_position) & (sig_feature >= self.pos)] = 0
 
         if print_debug:
-            debug_info += 'ignore easy neg = {}; '.format(
-                ((neg_position) & (sig_feature <= self.neg)).sum())
-            debug_info += 'ignore easy pos = {}; '.format(
-                ((pos_position) & (sig_feature >= self.pos)).sum())
+            debug_infos.append('')
+            debug_infos.append('ignore easy neg = {}; '.format(
+                ((neg_position) & (sig_feature <= self.neg)).sum()))
+            debug_infos.append('ignore easy pos = {}; '.format(
+                ((pos_position) & (sig_feature >= self.pos)).sum()))
+            if self.minus_2_weight != 1:
+                debug_infos.append('#minus_2_pos = {}'.format(minus_2_pos.sum()))
 
         if self.ignore_hard_neg_th is not None:
             weight[(neg_position & (sig_feature >= self.ignore_hard_neg_th))] = 0
             if print_debug:
-                debug_info += 'ignore hard neg = {}; '.format((neg_position & (sig_feature >=
-                    self.ignore_hard_neg_th)).sum())
+                debug_infos.append('ignore hard neg = {}; '.format((neg_position & (sig_feature >=
+                    self.ignore_hard_neg_th)).sum()))
 
         if self.ignore_hard_pos_th is not None:
             weight[(pos_position & (sig_feature <= self.ignore_hard_pos_th))] = 0
             if print_debug:
-                debug_info += 'ignore hard pos = {}; '.format((pos_position &
-                    (sig_feature <= self.ignore_hard_pos_th)).sum())
+                debug_infos.append('ignore hard pos = {}; '.format((pos_position &
+                    (sig_feature <= self.ignore_hard_pos_th)).sum()))
 
         if self.neg_pos_ratio is not None:
             pos_position_in_loss = pos_position & (weight > 0)
             neg_position_in_loss = neg_position & (weight > 0)
             if self.neg_pos_ratio > 0:
-                num_pos_in_loss = pos_position_in_loss.sum()
-                num_neg_in_loss = neg_position_in_loss.sum()
+                num_pos_in_loss = weight[pos_position_in_loss].sum()
+                num_neg_in_loss = weight[neg_position_in_loss].sum()
                 if num_pos_in_loss != 0 and num_neg_in_loss != 0:
                     num_pos_in_loss = num_pos_in_loss.float()
                     num_neg_in_loss = num_neg_in_loss.float()
@@ -510,8 +523,8 @@ class IBCEWithLogitsNegLoss(nn.Module):
                             num_pos_in_loss * (self.neg_pos_ratio + 1))
                     neg_weight = (num_pos_in_loss + num_neg_in_loss) * self.neg_pos_ratio / (
                             num_neg_in_loss * (self.neg_pos_ratio + 1))
-                    weight[pos_position_in_loss] = pos_weight
-                    weight[neg_position_in_loss] = neg_weight
+                    weight[pos_position_in_loss] *= pos_weight
+                    weight[neg_position_in_loss] *= neg_weight
             elif self.neg_pos_ratio == -1:
                 weight[pos_position_in_loss] = (target - sig_feature)[pos_position_in_loss]
         else:
@@ -533,21 +546,25 @@ class IBCEWithLogitsNegLoss(nn.Module):
                 avg_neg_in_loss = 0
             else:
                 avg_neg_in_loss = sig_feature[neg_position_in_loss].sum() / num_neg_in_loss
-            debug_info += ('#pos_in_loss = {}, avg_pos_in_loss = {}, '
+            debug_infos.append('sum of weight in pos position = {}; '
+                    'sum of weight in neg position = {}'.format(
+                    weight[pos_position].sum(),
+                    weight[neg_position].sum(),
+            ))
+            debug_infos.append(('#pos_in_loss = {}, avg_pos_in_loss = {}, '
                           '#neg_in_loss = {}, avg_neg_in_loss = {}, '
                           ).format(
                           num_pos_in_loss, avg_pos_in_loss,
                           num_neg_in_loss, avg_neg_in_loss,
-                          )
-            debug_info += ('ignore_hard_neg_th = {}, '
+                          ))
+            debug_infos.append(('ignore_hard_neg_th = {}, '
                     'ignore_hard_pos_th = {}, '
                     'neg = {}, '
-                    'pos = {}').format(
-                    self.ignore_hard_neg_th,
-                    self.ignore_hard_pos_th,
-                    self.neg,
-                    self.pos)
-            logging.info(debug_info)
+                    'pos = {}, '
+                    'minus_2_weight = {}').format(
+                    self.ignore_hard_neg_th, self.ignore_hard_pos_th,
+                    self.neg, self.pos, self.minus_2_weight))
+            logging.info('\n'.join(debug_infos))
 
         self.num_called += 1
 
