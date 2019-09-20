@@ -483,6 +483,7 @@ class IBCEWithLogitsNegLoss(nn.Module):
 
         weight = torch.ones_like(target)
         weight[minus_2_pos] = self.minus_2_weight
+        target[minus_2_pos] = 0
 
         weight[ignore_position] = 0
         sig_feature = torch.sigmoid(feature)
