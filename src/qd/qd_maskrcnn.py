@@ -726,7 +726,7 @@ class MaskRCNNPipeline(ModelPipeline):
             self.kwargs['MODEL']['ROI_BOX_HEAD']['NUM_CLASSES'] = len(self.labelmap) + 1
 
         set_if_not_exist(self.kwargs['MODEL'], 'RETINANET', {})
-        self.kwargs['MODEL']['RETINANET']['NUM_CLASSES'] = len(self.labelmap)
+        self.kwargs['MODEL']['RETINANET']['NUM_CLASSES'] = len(self.labelmap) + 1
 
         if self.stageiter:
             self.kwargs['SOLVER']['STEPS'] = tuple([self.parse_iter(i) for i in self.stageiter])

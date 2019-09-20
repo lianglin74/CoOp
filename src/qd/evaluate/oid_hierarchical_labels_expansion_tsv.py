@@ -171,6 +171,7 @@ def expand_labels(tsv_file, imagelevel_label, json_hierarchy_file,
         row_new = [row[0], expanded_boxes]
       else:
         expanded_boxes = expansion_generator.expand_boxes_from_tsv(row[-1])
+        expanded_boxes = _load_labels(expanded_boxes)
         if apply_nms:
           expanded_boxes = apply_per_class_nms(expanded_boxes)
         expanded_boxes = json.dumps(expanded_boxes)

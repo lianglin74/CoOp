@@ -450,8 +450,11 @@ def inject_to_tensorboard(info):
         wt.add_scalar(tag=k, scalar_value=v)
 
 def detect_aml_error_message(app_id):
-    folder = op.join('./assets', app_id, 'azureml-logs')
     import glob
+    folders = glob.glob(op.join('./assets', '*{}'.format(app_id),
+        'azureml-logs'))
+    assert len(folders) == 1, 'not unique: {}'.format(', '.join(folders))
+    folder = folders[0]
     from qd.qd_common import read_to_buffer
     for log_file in glob.glob(op.join(folder, '70_driver_log*')):
         all_line = read_to_buffer(log_file).decode().split('\n')

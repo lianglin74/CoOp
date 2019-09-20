@@ -239,6 +239,15 @@ def except_to_update_bb_loss_type(param):
         return True
 
 def update_parameters(param):
+    logging.info('use populate_expid')
+    populate_expid(param)
+
+def populate_expid(param):
+    if 'expid' in param:
+        return
+    param['expid'] = generate_expid(param)
+
+def generate_expid(param):
     dict_ensure_path_key_converted(param)
     default_param = {
             'max_iter': 10000,
@@ -353,8 +362,6 @@ def update_parameters(param):
     for k, v in viewitems(default_param):
         assert k in param, 'set default outside'
 
-    if 'expid' in param:
-        return
     # we need to update expid so that the model folder contains the critical
     # param information
     infos = []
@@ -405,7 +412,7 @@ def update_parameters(param):
 
     if 'expid_prefix' in param:
         infos.insert(0, param['expid_prefix'])
-    param['expid'] = '_'.join(infos)
+    return '_'.join(infos)
 
 def create_pipeline(kwargs):
     pipeline_type = kwargs.get('pipeline_type')
