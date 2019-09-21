@@ -7,6 +7,7 @@ from qd.qd_common import calculate_iou
 
 from video.getShotMoments import f1Report,getEventLabelsFromText
 from video.getEventLabels import getVideoAndEventLabels, labelConverter
+from video.ballPositionPrediction import FreeFall
 
 from tqdm import tqdm
 import numpy as np
@@ -145,7 +146,10 @@ class Trajectory(object):
         if self.printMissingBallFrames and shot:
             self.writeMissingBallFrames()
 
-        return shot, startTime, endTime, eventType, self.ioaTime, reason
+        # find the ball speed
+        v0 = self.calculateBallInitSpeed()
+
+        return shot, startTime, endTime, eventType, self.ioaTime, v0, reason
 
     def writeMissingBallFrames(self):
         fileName = self.videoFile.replace(".mp4", "-missingBallFrames.txt")
@@ -161,7 +165,7 @@ class Trajectory(object):
         l = len(self.ballTraj)
 
         ballIndex = self.findFirstBallPositionLowerThanRim(maxIouIndex)
-        if ballIndex == -1:
+        if ballIndex is None:
             return False
         else:
             ballRects = self.ballTraj[ballIndex]
@@ -177,26 +181,44 @@ class Trajectory(object):
     def necessaryCondition(self, maxIouIndex):
         return True
 
-    def findFirstBallPositionLowerThanRim(self, maxIouIndex):
-        i = maxIouIndex
+    def findFirstBallPositionLowerThanRim(self, ioaIndex):
+        i = ioaIndex
         l = len(self.ballTraj)
         while i < l:
             if objectExists(self.ballTraj[i]) and objectExists(self.rimTraj[i]) and not self.ballAboveRim(self.ballTraj[i], self.rimTraj[i]):
                 return i
             i += 1
-        return -1
-    
-    def findLastBallPositionLowerThanRim(self, maxIouIndex):
-        l = len(self.ballTraj)
+        return None
+
+    def calculateBallInitSpeed(self):
+        #get the last ioa index        
+        l = len(self.iouTraj)
         i = l - 1
-        pos = i
-        while i > 0:
-            if objectExists(self.ballTraj[i]) and objectExists(self.rimTraj[i]) and not self.ballAboveRim(self.ballTraj[i], self.rimTraj[i]):
+        pos = None
+        while i >= 0:
+            if self.iouTraj[i] > self.iouLowThresh:
                 pos = i
-            else:
                 break
             i -= 1
-        return -1
+        
+        s1 = None
+        s2 = None
+        if pos is not None:
+            s1 = self.findFirstBallPositionLowerThanRim(pos + 2)        
+        if s1 is not None:
+            s2 = self.findFirstBallPositionLowerThanRim(s1 + 3) 
+        if s1 is not None and s2 is not None:
+            ballSize = (getHeightOfObject(self.ballTraj[s1][0]) + getHeightOfObject(self.ballTraj[s2][0]))/2
+            freeFall = FreeFall(ballSize, self.frameRate)
+            p1 = getCenterOfObject(self.ballTraj[s1][0])
+            p2 = getCenterOfObject(self.ballTraj[s2][0])
+            rimRect = self.rimTraj[s1]
+            y0 = rimRect[0]['rect'][3] - ballSize/2.0
+            dt = (self.frameTraj[s2] - self.frameTraj[s1]) * self.frameRate
+            vy = freeFall.calculateV0_frame(y0, self.frameTraj[s1], p1[1], self.frameTraj[s2], p2[1])
+            return vy
+        
+        return None
 
     def guessAllBallPositions(self):
         # find first iou and last iou index
@@ -373,11 +395,11 @@ class EventDetector(object):
                         print("Event ended!")
                         
                     eventStarted = False
-                    shot, startTimeRes, endTimeRes, eventType, ioaTime, reason = trajectory.analyze()
+                    shot, startTimeRes, endTimeRes, eventType, ioaTime, speed, reason = trajectory.analyze()
                     if shot:
                         # update results
                         eventResults.append(
-                            (startTimeRes, endTimeRes, eventType, ioaTime, reason))
+                            (startTimeRes, endTimeRes, eventType, ioaTime, speed, reason))
                     # else: #doing nothing
                     trajectory.clear()
                 # else: #event going on, doing nothing
@@ -1194,8 +1216,8 @@ def getMiguTestingResults():
 
 if __name__ == '__main__':
     getValidationResults()
-    getTestingResults()
-    getMiguTestingResults()
+    #getTestingResults()
+    #getMiguTestingResults()
     
     #main()
     #test_getShotStats()
