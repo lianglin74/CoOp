@@ -28,7 +28,7 @@ def azcopy_upload(src, dest_url, dest_key):
             '--quiet',
             '--parallel-level',
             '32']
-    from qd.process_tsv import hash_sha1
+    from qd.qd_common import hash_sha1
     resume_file = '/tmp/azure.' + hash_sha1([src, dest_url]) + '.jnl'
     cmd.append('--resume')
     cmd.append(resume_file)
@@ -93,6 +93,13 @@ def blob_download_all_qdoutput(prefix, c=None, out_folder='output',
         target_folder = op.join(out_folder, full_expid)
         c.blob_download_qdoutput(src_path, target_folder,
                 latest_only=latest_only)
+
+def get_azcopy():
+    # this is v10
+    azcopy = op.expanduser('~/code/azcopy/azcopy')
+    if not op.isfile(azcopy):
+        azcopy = 'azcopy'
+    return azcopy
 
 def get_leaf_names(all_fname):
     # build the tree first
@@ -210,7 +217,7 @@ class CloudStorage(object):
     def az_sync(self, src_dir, dest_dir):
         assert self.sas_token
         cmd = []
-        cmd.append(op.expanduser('~/code/azcopy/azcopy'))
+        cmd.append(get_azcopy())
         cmd.append('sync')
         cmd.append(op.realpath(src_dir))
         url = 'https://{}.blob.core.windows.net'.format(self.account_name)
@@ -229,7 +236,7 @@ class CloudStorage(object):
     def az_upload2(self, src_dir, dest_dir):
         assert self.sas_token
         cmd = []
-        cmd.append(op.expanduser('~/code/azcopy/azcopy'))
+        cmd.append(get_azcopy())
         cmd.append('cp')
         cmd.append(op.realpath(src_dir))
         url = 'https://{}.blob.core.windows.net'.format(self.account_name)
@@ -244,6 +251,24 @@ class CloudStorage(object):
             cmd.append('--recursive')
         cmd_run(cmd)
         return data_url, url
+
+    def az_download(self, remote_path, local_path):
+        assert self.sas_token
+        cmd = []
+        cmd.append(op.expanduser('~/code/azcopy/azcopy'))
+        cmd.append('cp')
+        url = 'https://{}.blob.core.windows.net'.format(self.account_name)
+        if remote_path.startswith('/'):
+            remote_path = remote_path[1:]
+        url = op.join(url, self.container_name, remote_path)
+        assert self.sas_token.startswith('?')
+        data_url = url
+        url = url + self.sas_token
+        cmd.append(url)
+        cmd.append(op.realpath(local_path))
+        cmd_run(cmd)
+        return data_url, url
+
 
     def download_to_path(self, blob_name, local_path):
         from qd.qd_common import ensure_directory

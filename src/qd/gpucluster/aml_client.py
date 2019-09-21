@@ -108,6 +108,13 @@ def download_run_logs(run_info, full=True):
         return []
     all_log_file = []
     log_folder = os.environ.get('AML_LOG_FOLDER', 'assets')
+    full_indicator = op.join(log_folder, run_info['appID'], 'full')
+    if not full and \
+            run_info['status'] == AMLClient.status_failed and \
+            not op.isfile(full_indicator):
+        logging.info('changing full as True since it is failed and we do not '
+                'have full logs yet')
+        full = True
     for k, v in run_info['logFiles'].items():
         target_file = op.join(log_folder, run_info['appID'], k)
         from qd.qd_common import url_to_file_by_wget
@@ -117,6 +124,9 @@ def download_run_logs(run_info, full=True):
         else:
             url_to_file_by_curl(v, target_file, -1024 * 100 )
         all_log_file.append(target_file)
+    if full:
+        from qd.qd_common import write_to_file
+        write_to_file('', full_indicator)
     return all_log_file
 
 def get_compute_status(compute_target):
@@ -174,11 +184,15 @@ class AMLClient(object):
                     v['datastore_name'] = '{}_{}'.format(
                             v['cloud_blob'].account_name,
                             v['cloud_blob'].container_name)
-                else:
-                    assert v['storage_type'] == 'file'
+                elif v['storage_type'] == 'file':
                     v['datastore_name'] = 'file_{}_{}'.format(
                             v['cloud_blob'].account_name,
                             v['file_share'])
+                else:
+                    raise NotImplementedError()
+
+        import copy
+        self.env = {} if env is None else copy.deepcopy(env)
 
         self.with_log = with_log
 
@@ -198,7 +212,6 @@ class AMLClient(object):
 
         from azureml.core import Experiment
         self.experiment = Experiment(self.ws, name=self.experiment_name)
-        self.env = {} if env is None else env
 
     def get_compute_status(self):
         compute_status = get_compute_status(self.compute_target)
@@ -467,6 +480,13 @@ def detect_aml_error_message(app_id):
                 end = min(i + 1, len(all_line))
                 logging.info(log_file)
                 logging.info('\n'.join(all_line[start: end]))
+        # check how many gpus by nvidia-smi
+        import re
+        num_gpu = len([line for line in all_line if re.match('.*N/A.*Default', line) is
+            not None])
+        if num_gpu != 4:
+            logging.info(log_file)
+            logging.info(num_gpu)
 
 def execute(task_type, **kwargs):
     if task_type in ['q', 'query']:

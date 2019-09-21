@@ -46,12 +46,15 @@ except ImportError:
 import copy
 
 
+def print_trace():
+    import traceback
+    traceback.print_exc()
+
 def try_once(func):
     def func_wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
         except Exception as e:
-            import traceback
             logging.info('ignore error \n{}'.format(str(e)))
             traceback.print_exc()
     return func_wrapper
@@ -311,6 +314,16 @@ def zip_qd(out_zip):
             '-x',
             '\*src/qd_classifier/.cache/\*']
     cmd_run(cmd, working_dir=os.getcwd(), shell=True)
+
+def limited_retry_agent(num, func, *args, **kwargs):
+    for i in range(num):
+        try:
+            return func(*args, **kwargs)
+        except:
+            logging.info('fails: tried {}-th time'.format(i + 1))
+            import time
+            print_trace()
+            time.sleep(5)
 
 def retry_agent(func, *args, **kwargs):
     i = 0
@@ -2381,19 +2394,6 @@ def acquireLock(lock_f='/tmp/lockfile.LOCK'):
 def releaseLock(locked_file_descriptor):
     ''' release exclusive lock file access '''
     locked_file_descriptor.close()
-
-def exclusive_open_to_read(fname):
-    from qd.qd_common import get_user_name
-    user_name = get_user_name()
-    lock_fd = acquireLock(op.join('/tmp',
-        '{}_lock_{}'.format(user_name, hash_sha1(fname))))
-    # under the context of blobfuse, it will download teh whole file. We don't
-    # know if there is any issue if multi-process open the file at the same
-    # time, but it should be no worse if we open it sequentially.
-    fp = open(fname, 'r')
-    releaseLock(lock_fd)
-    return fp
-
 
 if __name__ == '__main__':
     init_logging()

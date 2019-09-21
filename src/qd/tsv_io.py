@@ -4,17 +4,16 @@ import glob
 import json
 import random
 from qd.qd_common import ensure_directory
-from qd.qd_common import load_list_file
 from qd.qd_common import generate_lineidx
 from qd.qd_common import copy_file
 from qd.qd_common import worth_create
 from qd.qd_common import hash_sha1
+from qd.qd_common import get_user_name
 import six
 import os
 import os.path as op
 import shutil
 import re
-from qd.qd_common import exclusive_open_to_read
 try:
     from itertools import izip as zip
 except ImportError:
@@ -861,4 +860,48 @@ def load_labels(file_name):
         key_to_idx[key] = i
     return key_to_rects, key_to_idx
 
+def exclusive_open_to_read(fname):
+    user_name = get_user_name()
+    from qd.qd_common import acquireLock, releaseLock
+    lock_fd = acquireLock(op.join('/tmp',
+        '{}_lock_{}'.format(user_name, hash_sha1(fname))))
+    try:
+        # in AML, it could fail with Input/Output error. If it fails, we will
+        # use azcopy as a fall back solution for reading
+        from qd.qd_common import limited_retry_agent
+        fp = limited_retry_agent(10, open, fname, 'r')
+    except:
+        if 'FILE_OPEN_AZCOPY_BLOB_ACCOUNT_PATH' in os.environ:
+            return azcopy_read(fname)
+        else:
+            raise
+
+    releaseLock(lock_fd)
+    return fp
+
+def azcopy_read(fname):
+    # we ignore fname since it could be a mounted blobfuse folder in AML
+    local_file_name = op.join('/tmp', '{}_{}'.format(get_user_name(),
+        hash_sha1(op.realpath(op.abspath(fname))) +
+        op.splitext(fname)[1]))
+    if op.isfile(local_file_name):
+        return open(local_file_name, 'r')
+    config_file = os.environ['FILE_OPEN_AZCOPY_BLOB_ACCOUNT_PATH']
+    from qd.cloud_storage import create_cloud_storage
+    remote_path = op.join(os.environ['FILE_OPEN_AZCOPY_REMOTE_PATH'],
+            op.relpath(fname, os.environ['FILE_OPEN_AZCOPY_LOCAL_PATH']))
+    c = create_cloud_storage(config_file=config_file)
+    logging.info('downloading from {} to {} for {}'.format(remote_path,
+        local_file_name, fname))
+    c.az_download(remote_path, local_file_name)
+    return open(local_file_name, 'r')
+
+def load_list_file(fname):
+    # prefer this than qd.qd_common.load_list_file
+    with exclusive_open_to_read(fname) as fp:
+        lines = fp.readlines()
+    result = [line.strip() for line in lines]
+    if len(result) > 0 and result[-1] == '':
+        result = result[:-1]
+    return result
 
