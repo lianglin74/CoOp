@@ -7,6 +7,7 @@ from qd.qd_common import load_from_yaml_file, dict_update_nested_dict
 from qd.qd_common import cmd_run
 from qd.qd_common import decode_general_cmd
 from qd.qd_common import ensure_directory
+from qd.qd_common import try_once
 from qd.cloud_storage import create_cloud_storage
 
 
@@ -108,13 +109,14 @@ def download_run_logs(run_info, full=True):
         return []
     all_log_file = []
     log_folder = os.environ.get('AML_LOG_FOLDER', 'assets')
-    full_indicator = op.join(log_folder, run_info['appID'], 'full')
-    if not full and \
-            run_info['status'] == AMLClient.status_failed and \
-            not op.isfile(full_indicator):
-        logging.info('changing full as True since it is failed and we do not '
-                'have full logs yet')
-        full = True
+    log_status_file = op.join(log_folder, run_info['appID'],
+            'log_status.yaml')
+    if not full:
+        if op.isfile(log_status_file):
+            log_status = load_from_yaml_file(log_status_file)
+            if run_info['status'] == AMLClient.status_failed and \
+                    log_status['status'] != AMLClient.status_failed:
+                full = True
     for k, v in run_info['logFiles'].items():
         target_file = op.join(log_folder, run_info['appID'], k)
         from qd.qd_common import url_to_file_by_wget
@@ -124,9 +126,12 @@ def download_run_logs(run_info, full=True):
         else:
             url_to_file_by_curl(v, target_file, -1024 * 100 )
         all_log_file.append(target_file)
-    if full:
-        from qd.qd_common import write_to_file
-        write_to_file('', full_indicator)
+
+    log_status = {'status': run_info['status'],
+                  'is_full': full}
+    from qd.qd_common import write_to_yaml_file
+    write_to_yaml_file(log_status, log_status_file)
+
     return all_log_file
 
 def get_compute_status(compute_target):
@@ -140,6 +145,8 @@ class AMLClient(object):
     status_running = 'Running'
     status_queued = 'Queued'
     status_failed = 'Failed'
+    status_completed = 'Completed'
+    status_canceled = 'Canceled'
     def __init__(self, azure_blob_config_file, config_param, docker,
             datastore_name, aml_config, use_custom_docker,
             compute_target, source_directory, entry_script,
@@ -266,8 +273,9 @@ class AMLClient(object):
             num_gpu = run_info['num_gpu']
         else:
             num_gpu = self.num_gpu
-        self.submit(run_info['cmd'], num_gpu=num_gpu)
+        app_id = self.submit(run_info['cmd'], num_gpu=num_gpu)
         run.cancel()
+        return app_id
 
     def attach_data_store(self):
         from azureml.core import Datastore
@@ -414,6 +422,7 @@ class AMLClient(object):
 
         r = self.experiment.submit(estimator10)
         logging.info('job id = {}, cmd = \n{}'.format(r.id, cmd))
+        return r.id
 
     def inject(self, run_id=None):
         all_info = self.query(run_id)
@@ -462,12 +471,14 @@ def inject_to_tensorboard(info):
     for k, v in info.items():
         wt.add_scalar(tag=k, scalar_value=v)
 
+@try_once
 def detect_aml_error_message(app_id):
     import glob
     folders = glob.glob(op.join('./assets', '*{}'.format(app_id),
         'azureml-logs'))
     assert len(folders) == 1, 'not unique: {}'.format(', '.join(folders))
     folder = folders[0]
+    has_nvidia_smi = False
     from qd.qd_common import read_to_buffer
     for log_file in glob.glob(op.join(folder, '70_driver_log*')):
         all_line = read_to_buffer(log_file).decode().split('\n')
@@ -484,9 +495,53 @@ def detect_aml_error_message(app_id):
         import re
         num_gpu = len([line for line in all_line if re.match('.*N/A.*Default', line) is
             not None])
-        if num_gpu != 4:
+        has_nvidia_smi =  any(('nvidia-smi' in line for line in all_line))
+        if has_nvidia_smi and num_gpu != 4:
             logging.info(log_file)
             logging.info(num_gpu)
+
+def monitor():
+    from qd.db import create_annotation_db
+    c = create_annotation_db()
+    cluster_to_client = {}
+    dbjob_client_jobinfo = []
+    for row in c.iter_general('ongoingjob'):
+        if 'job_id' in row:
+            appID = row['job_id']
+        else:
+            appID = row['appID']
+        cluster = row['cluster']
+        if cluster not in cluster_to_client:
+            client = create_aml_client(cluster=cluster,
+                    with_log=False)
+            cluster_to_client[cluster] = client
+        client = cluster_to_client[cluster]
+        job_info = client.query(appID)[0]
+        dbjob_client_jobinfo.append((row, client, job_info))
+
+    # update status
+    for row, client, job_info in dbjob_client_jobinfo:
+        c.update_many('ongoingjob', {'_id': row['_id']},
+                {'$set': {'status': job_info['status'],
+                          'portal_url': job_info['portal_url']}})
+
+    for row, client, job_info in dbjob_client_jobinfo:
+        if job_info['status'] in [client.status_completed,
+                client.status_canceled]:
+            logging.info('removing _id = {}'.format(row['_id']))
+            c.delete_many('ongoingjob', _id=row['_id'])
+        elif job_info['status'] == client.status_failed:
+            logging.info('resubmitting {}'.format(job_info['appID']))
+            new_appID = client.resubmit(job_info['appID'])
+            retried = row.get('retry', 0) + 1
+            history = row.get('history', [])
+            history.append(job_info['appID'])
+            c.update_many('ongoingjob', {'_id': row['_id']},
+                          {'$set': {'appID': new_appID,
+                                    'status': client.status_queued,
+                                    'history': history,
+                                    'retried': retried},
+                           '$unset': {'portal_url': ''}})
 
 def execute(task_type, **kwargs):
     if task_type in ['q', 'query']:
@@ -503,6 +558,9 @@ def execute(task_type, **kwargs):
     elif task_type in ['qq']:
         c = create_aml_client(**kwargs)
         c.query(by_status=AMLClient.status_queued)
+    elif task_type in ['qr']:
+        c = create_aml_client(**kwargs)
+        c.query(by_status=AMLClient.status_running)
     elif task_type in ['init', 'initc']:
         c = create_aml_client(**kwargs)
         c.sync_code('')
@@ -545,6 +603,8 @@ def execute(task_type, **kwargs):
         from qd.db import inject_cluster_summary
         info['cluster'] = 'aml'
         inject_cluster_summary(info)
+    elif task_type in ['monitor']:
+        monitor()
     elif task_type in ['i', 'inject']:
         run_ids = kwargs.get('remainders', [])
         m = create_aml_client(**kwargs)
@@ -565,7 +625,9 @@ def parse_args():
             choices=['ssh', 'q', 'query', 'f', 'failed', 'a', 'abort', 'submit',
                 'qf', # query failed jobs
                 'qq', # query queued jobs
+                'qr', # query running jobs
                 'd', 'download_qdoutput',
+                'monitor',
                 'parse',
                 'init',
                 'initc', # init with compile
