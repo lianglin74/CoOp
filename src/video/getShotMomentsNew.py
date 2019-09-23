@@ -17,7 +17,7 @@ import os
 
 def setDebug(frame): 
     return False
-    #return frame > 2370 and frame <2387
+    #return frame > 3924 and frame < 4500
     #return frame > 300 and frame < 525
 
 class Trajectory(object):
@@ -36,6 +36,7 @@ class Trajectory(object):
         self.rimPersonIoaThresh = 0.05
         self.personHeightToRimRatio = 2.0
         self.dunkTimeWindow = 0.25
+        self.personRimHeightConditionLoose = True
         
         # To solve the problem in case: Case "RimNotGood_1"
         self.enlargeRatio = 1.5
@@ -64,8 +65,6 @@ class Trajectory(object):
 
         self.iouTraj.append(iou)
 
-        self.debug = setDebug(frame)
-
         if self.debug:
             print("Frame, iou, ballRects, rimRects: ", frame, iou, ballRects, rimRects)
 
@@ -78,7 +77,7 @@ class Trajectory(object):
                 personRect = personRects[0]['rect']
                 rimRect = rimRects[0]['rect']
                 if getHeightOfRect(personRect) > self.personHeightToRimRatio * getHeightOfRect(rimRect) \
-                  and isAbove((personRect[0], personRect[1]), (rimRect[0], rimRect[1])) \
+                  and isAbove((personRect[0], personRect[1]), (rimRect[2], rimRect[3]) if self.personRimHeightConditionLoose else (rimRect[0], rimRect[1])) \
                   and calculateIOA(rimRect, personRect) > self.rimPersonIoaThresh:                    
                     return True, frame
         
@@ -146,7 +145,7 @@ class Trajectory(object):
         if self.printMissingBallFrames and shot:
             self.writeMissingBallFrames()
 
-        # find the ball speed
+        # find the ball speed        
         v0 = self.calculateBallInitSpeed()
 
         return shot, startTime, endTime, eventType, self.ioaTime, v0, reason
@@ -181,12 +180,15 @@ class Trajectory(object):
     def necessaryCondition(self, maxIouIndex):
         return True
 
-    def findFirstBallPositionLowerThanRim(self, ioaIndex):
+    def findFirstBallPositionLowerThanRim(self, ioaIndex, usingDetectedBalls = False):
         i = ioaIndex
         l = len(self.ballTraj)
         while i < l:
             if objectExists(self.ballTraj[i]) and objectExists(self.rimTraj[i]) and not self.ballAboveRim(self.ballTraj[i], self.rimTraj[i]):
-                return i
+                if not usingDetectedBalls:
+                    return i
+                elif i > 0 and objectExists(self.ballTraj[i-1]) and self.ballTraj[i][0]['conf'] != self.ballTraj[i - 1][0]['conf']:
+                    return i
             i += 1
         return None
 
@@ -204,9 +206,9 @@ class Trajectory(object):
         s1 = None
         s2 = None
         if pos is not None:
-            s1 = self.findFirstBallPositionLowerThanRim(pos + 2)        
+            s1 = self.findFirstBallPositionLowerThanRim(pos + 2, usingDetectedBalls = True)        
         if s1 is not None:
-            s2 = self.findFirstBallPositionLowerThanRim(s1 + 3) 
+            s2 = self.findFirstBallPositionLowerThanRim(s1 + 3, usingDetectedBalls = True) 
         if s1 is not None and s2 is not None:
             ballSize = (getHeightOfObject(self.ballTraj[s1][0]) + getHeightOfObject(self.ballTraj[s2][0]))/2
             freeFall = FreeFall(ballSize, self.frameRate)
@@ -214,8 +216,18 @@ class Trajectory(object):
             p2 = getCenterOfObject(self.ballTraj[s2][0])
             rimRect = self.rimTraj[s1]
             y0 = rimRect[0]['rect'][3] - ballSize/2.0
-            dt = (self.frameTraj[s2] - self.frameTraj[s1]) * self.frameRate
+                
             vy = freeFall.calculateV0_frame(y0, self.frameTraj[s1], p1[1], self.frameTraj[s2], p2[1])
+            if self.debug:
+                print(self.ballTraj[s1][0])
+                print(self.ballTraj[s2][0])
+                print(rimRect)
+                print(s1, s2)
+                print("ballsize: ", ballSize)
+                print("y0: ", y0)
+                print("frame 1: ", self.frameTraj[s1], " p1: ", p1)
+                print("frame 2: ", self.frameTraj[s2], " p2: ", p2)
+                print("vy: ", vy)
             return vy
         
         return None
@@ -293,6 +305,8 @@ class EventDetector(object):
           #Case "WrongBasketball_2": needs rimConfThresh to be below 0.19. 
           #Case "RimNotGood_1": prefer rimConfThresh to be above 0.35
 
+        self.predictMissingBall = True
+
         self.backboardConfThresh = 0.1
         # When to start or end an event
         self.distanceBallToRimThresh = 3
@@ -333,6 +347,7 @@ class EventDetector(object):
             curTime = self.imageCnt / self.frameRate
             
             self.debug = setDebug(self.imageCnt)
+            trajectory.debug = self.debug
 
             if self.debug:
                 print("image: ", self.imageCnt)
@@ -350,7 +365,7 @@ class EventDetector(object):
                 rimRects, backboardRects, prevRects)
 
             # Add missing ball: for case: BallNotDetected_1:
-            if not objectExists(ballRects):
+            if not objectExists(ballRects) and self.predictMissingBall:
                 #print("Before adding ball rects:", ballRects)
                 ballRects = trajectory.predictBallRects()
                 #print("After adding ball rects:", ballRects)
@@ -929,7 +944,7 @@ def getShotStats(pred_results, true_results):
     j = 0
     allTimePoints = []
 
-    tolerance = 0.5
+    tolerance = 1.0
     correctLabel = False
     treatingDunkAsShot = False
     labelCorrectionDict = {}
@@ -1121,11 +1136,11 @@ def main():
 
         writeToTSV(predict_file, pred_results)
 
-def calculateF1andWriteRes(dir, odFileList, eventLabelJsonFile, textLabels = False, textLabelFolder = None):
+def calculateF1andWriteRes(odFileList, eventLabelJsonFile = "", textLabelFolder = ""):
+    usingNewAlg = True
     # Used to write labels for GL autoML training
     writeAutoMLLabel = False
-
-    odFileList = read_file_to_list(dir + odFileList)
+    
     #predict_file = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_chop/TSV/head350_prediction_1551538896210_sc99_01_q1.tsv"
     #predict_file = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_chop/prediction_1551538896210_sc99_01_q1.tsv"
 
@@ -1135,22 +1150,26 @@ def calculateF1andWriteRes(dir, odFileList, eventLabelJsonFile, textLabels = Fal
 
     allCorrectLabels = {}
 
-    for odFileName in odFileList:        
-        predict_file = dir + odFileName
+    for predict_file in odFileList:
+        dir = os.path.dirname(predict_file) + "/"
+        odFileName = os.path.basename(predict_file)
         videoFileName = odFileName.replace("tsv", "mp4")
 
         print("----Processing file: ", predict_file)
-        eventDetector = EventDetector(predict_file, dir + videoFileName)
-        pred_results = eventDetector.findEvent()
+        if usingNewAlg:
+            eventDetector = EventDetector(predict_file, dir + videoFileName)
+            pred_results = eventDetector.findEvent()
+        else:
+            from video.getShotMoments import findShot
+            pred_results = findShot(predict_file)
         #pred_results = findShot(predict_file)
 
         checkResultsOverlap(pred_results)
         
-        ret = True
-        if textLabels:
-            true_results = getEventLabelsFromText(textLabelFolder + odFileName.replace('tsv', 'GTevents.txt'))
-        else:
-            ret, true_results = getVideoAndEventLabels(eventLabelJsonFile, videoFileName)
+        ret, true_results = getVideoAndEventLabels(eventLabelJsonFile, videoFileName)
+        if not ret:        
+            ret, true_results = getEventLabelsFromText(textLabelFolder + odFileName.replace('tsv', 'GTevents.txt'))
+
         if ret: 
             allReports += "--Report for file: " + videoFileName + "\n"
 
@@ -1198,27 +1217,49 @@ def calculateF1andWriteRes(dir, odFileList, eventLabelJsonFile, textLabels = Fal
 def getValidationResults():
     dir = "/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/validation/extracted/"    
     odFileList = "odFilelist.txt"
+    odFileList = read_file_to_list(dir + odFileList)
+    odFileList = [dir + f for f in odFileList]
     eventLabelJsonFile = '/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/test/extracted/label/Project_all_corrected_manual.aucvl'
-    calculateF1andWriteRes(dir, odFileList, eventLabelJsonFile)
+    calculateF1andWriteRes(odFileList, eventLabelJsonFile)
 
 def getTestingResults():
-    dir = "/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/test/extracted/"    
+    dir = "/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/test/extracted/"
     odFileList = "odFilelist.txt"
+    odFileList = read_file_to_list(dir + odFileList)
+    odFileList = [dir + f for f in odFileList]
     eventLabelJsonFile = '/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/test/extracted/label/Project_all_corrected_manual.aucvl'
-    calculateF1andWriteRes(dir, odFileList, eventLabelJsonFile)
+    calculateF1andWriteRes(odFileList, eventLabelJsonFile)
 
 def getMiguTestingResults():
     dir = "/mnt/gpu02_raid/data/video/CBA/CBA_demo_v3/"
     odFileList = "odFilelist.txt"
+    odFileList = read_file_to_list(dir + odFileList)
+    odFileList = [dir + f for f in odFileList]
     textFileFolder = '/mnt/gpu02_raid/data/video/CBA/CBA_demo_v3/shotDunkLabels/'
-    calculateF1andWriteRes(dir, odFileList, '', textLabels = True, textLabelFolder = textFileFolder)
+    calculateF1andWriteRes(odFileList, '', textLabelFolder = textFileFolder)
+
+def compareWithGoogleAutoML():    
+    odFileList = []
+    testList = ['647b025243d74e719b36d24a0c19df37_sc99_q1','647b025243d74e719b36d24a0c19df37_sc99_q2','647b025243d74e719b36d24a0c19df37_sc99_q3','647b025243d74e719b36d24a0c19df37_sc99_q4', # 39 shot, 1 dunk; 
+        'CBA1', #33 shots, 11 dunks;
+        'NBA1' #16 shots, 0 dunk
+        ]
+    
+    filePathList = ["/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/test/extracted/", "/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/test/extracted/", "/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/test/extracted/", "/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/test/extracted/",
+        "/mnt/gpu02_raid/data/video/CBA/CBA_demo_v3/", "/mnt/gpu02_raid/data/video/CBA/CBA_demo_v3/"]
+    
+    for testFile, dir in zip(testList, filePathList):
+        odFileList.append(dir + testFile + ".tsv")
+    
+    calculateF1andWriteRes(odFileList, eventLabelJsonFile = '/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/test/extracted/label/Project_all_corrected_manual.aucvl', textLabelFolder = "/mnt/gpu02_raid/data/video/CBA/CBA_demo_v3/shotDunkLabels/")
 
 
 if __name__ == '__main__':
     getValidationResults()
     #getTestingResults()
     #getMiguTestingResults()
-    
+    compareWithGoogleAutoML()
+
     #main()
     #test_getShotStats()
     # testGetDegreeOfTwoPoints()
