@@ -15,6 +15,9 @@ import math
 import copy
 import os
 
+#Some parms not in classes:
+eventWindowToleranceInEvaluation = 0.5
+
 def setDebug(frame): 
     return False
     #return frame > 3924 and frame < 4500
@@ -36,7 +39,7 @@ class Trajectory(object):
         self.rimPersonIoaThresh = 0.05
         self.personHeightToRimRatio = 2.0
         self.dunkTimeWindow = 0.25
-        self.personRimHeightConditionLoose = True
+        self.personRimHeightConditionLoose = False
         
         # To solve the problem in case: Case "RimNotGood_1"
         self.enlargeRatio = 1.5
@@ -944,7 +947,7 @@ def getShotStats(pred_results, true_results):
     j = 0
     allTimePoints = []
 
-    tolerance = 1.0
+    #eventWindowToleranceInEvaluation = 0.5
     correctLabel = False
     treatingDunkAsShot = False
     labelCorrectionDict = {}
@@ -957,7 +960,7 @@ def getShotStats(pred_results, true_results):
             y_pred.append( (nonShotLabel, None) )
             y_true.append( (shotLabel if treatingDunkAsShot else tRes[1], tRes) )
             j += 1
-        elif tRes[0] > pRes[1] + tolerance:
+        elif tRes[0] > pRes[1] + eventWindowToleranceInEvaluation:
             allTimePoints.append(pRes)
             y_pred.append( (shotLabel if treatingDunkAsShot else pRes[2], pRes) )
             y_true.append( (nonShotLabel, None) )
@@ -970,7 +973,7 @@ def getShotStats(pred_results, true_results):
 
             if correctLabel:
                 print("predict, label: ", pRes[3], tRes[0])
-                if (abs(tRes[0] - pRes[3]) > tolerance):
+                if (abs(tRes[0] - pRes[3]) > eventWindowToleranceInEvaluation):
                     print("Label Correction failed! label, ioaTime", tRes[0], pRes[3])
                 else:
                     labelCorrectionDict[tRes[0]] = pRes[3]
@@ -1255,7 +1258,7 @@ def compareWithGoogleAutoML():
 
 
 if __name__ == '__main__':
-    getValidationResults()
+    #getValidationResults()
     #getTestingResults()
     #getMiguTestingResults()
     compareWithGoogleAutoML()
