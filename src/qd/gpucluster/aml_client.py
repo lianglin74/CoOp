@@ -590,11 +590,20 @@ def execute(task_type, **kwargs):
         partial_ids = kwargs['remainders']
         del kwargs['remainders']
         client = create_aml_client(**kwargs)
-        if len(partial_ids) == 0:
-            client.auto_resubmit()
+        if 'resubmit_to' in kwargs and \
+                kwargs['resubmit_to'] != kwargs.get('cluster'):
+            resubmit_to = kwargs['resubmit_to']
+            if 'cluster' in kwargs:
+                del kwargs['cluster']
+            kwargs['cluster'] = resubmit_to
+            dest_client = create_aml_client(**kwargs)
         else:
-            for partial_id in partial_ids:
-                client.resubmit(partial_id)
+            dest_client = client
+        for partial_id in partial_ids:
+            run_info = client.query(partial_id)[0]
+            dest_client.submit(run_info['cmd'],
+                    num_gpu=run_info['num_gpu'])
+            client.abort(run_info['appID'])
     elif task_type in ['s', 'summary']:
         m = create_aml_client(**kwargs)
         info = m.get_compute_status()
@@ -637,6 +646,7 @@ def parse_args():
     parser.add_argument('-no-wl', dest='with_log',
             action='store_false')
     parser.add_argument('-c', '--cluster', default=argparse.SUPPRESS, type=str)
+    parser.add_argument('-rt', '--resubmit_to', default=argparse.SUPPRESS, type=str)
     parser.add_argument('-p', '--param', help='parameter string, yaml format',
             type=str)
     parser.add_argument('-n', '--num_gpu', default=argparse.SUPPRESS, type=int)
