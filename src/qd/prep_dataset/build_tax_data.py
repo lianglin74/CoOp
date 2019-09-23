@@ -8,7 +8,7 @@ from qd.tsv_io import TSVDataset
 import os.path as op
 from qd.process_tsv import build_taxonomy_from_single_source
 from qd.process_tsv import get_data_sources
-from qd.qd_common import load_list_file
+from qd.tsv_io import load_list_file
 from qd.qd_common import list_to_dict
 from qd.qd_common import ensure_copy_folder
 from qd.tsv_io import tsv_reader

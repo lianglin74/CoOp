@@ -9,7 +9,8 @@ from pprint import pformat
 import matplotlib.pyplot as plt
 
 from qd.yolodet import detect_image
-from qd.qd_common import img_from_base64, load_list_file
+from qd.qd_common import img_from_base64
+from qd.tsv_io import load_list_file
 from qd.qd_common import network_input_to_image
 from qd.qd_caffe import load_net
 from qd.qd_common import write_to_file

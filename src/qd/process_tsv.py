@@ -51,7 +51,8 @@ from qd.qd_common import init_logging
 from qd.qd_common import json_dump
 from qd.qd_common import list_to_dict, list_to_dict_unique
 from qd.qd_common import parse_test_data
-from qd.qd_common import read_to_buffer, load_list_file
+from qd.qd_common import read_to_buffer
+from qd.tsv_io import load_list_file
 from qd.qd_common import worth_create
 from qd.qd_common import write_to_file
 from qd.qd_common import write_to_yaml_file, load_from_yaml_file

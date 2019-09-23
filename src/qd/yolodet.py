@@ -732,7 +732,7 @@ def tsvdet_iter(caffenet, caffemodel, in_rows, key_idx,img_idx, pixel_mean,
     #caffe.print_perf(count)
     # reorder the prediction results
     from tsv_io import reorder_tsv_keys
-    from qd_common import load_list_file
+    from qd.tsv_io import load_list_file
     logging.info('loading {} to get the ordered keys'.format(key_file))
     ordered_keys = load_list_file(key_file)
     logging.info('re-ordering the detection result by keys')

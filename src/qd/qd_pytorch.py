@@ -9,7 +9,7 @@ from qd.qd_common import img_from_base64, load_from_yaml_file
 from qd.qd_common import worth_create
 from qd.qd_common import read_to_buffer
 from qd.qd_common import write_to_file
-from qd.qd_common import load_list_file
+from qd.tsv_io import load_list_file
 from qd.qd_common import get_mpi_rank, get_mpi_size
 from qd.qd_common import get_mpi_local_rank, get_mpi_local_size
 from qd.qd_common import parse_general_args

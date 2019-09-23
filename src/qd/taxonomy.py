@@ -19,7 +19,7 @@ import nltk
 from nltk.corpus import wordnet as wn
 from .qd_common import write_to_file, read_to_buffer
 from .qd_common import init_logging, ensure_directory
-from .qd_common import img_from_base64, load_list_file
+from .tsv_io import load_list_file
 from .qd_common import load_from_yaml_file
 from .qd_common import encoded_from_img
 try:

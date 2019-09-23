@@ -1,7 +1,7 @@
 import os
 import os.path as op
 import json
-from qd.qd_common import load_list_file
+from qd.tsv_io import load_list_file
 from qd.tsv_io import TSVFile, tsv_reader
 from qd.evaluate.oid_hierarchical_labels_expansion_tsv import expand_labels
 import numpy as np

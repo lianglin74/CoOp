@@ -45,7 +45,7 @@ from qd.qd_caffe import update_kernel_active2
 from qd.qd_caffe import update_bn
 from qd.qd_common import add_yolo_low_shot_regularizer
 from qd.qd_common import remove_data_augmentation
-from qd.qd_common import load_list_file
+from qd.tsv_io import load_list_file
 from qd.qd_common import visualize_train
 from qd.qd_common import add_yolo_angular_loss_regularizer
 from qd.process_image import show_net_input
