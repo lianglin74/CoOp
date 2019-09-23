@@ -816,6 +816,8 @@ class MaskRCNNPipeline(ModelPipeline):
             cc.append('th{}'.format(self.predict_threshold))
         if cfg.INPUT.MIN_SIZE_TEST != 800:
             cc.append('testInputSize{}'.format(cfg.INPUT.MIN_SIZE_TEST))
+        if cfg.INPUT.MAX_SIZE_TEST != 1333:
+            cc.append('MaxIn{}'.format(cfg.INPUT.MAX_SIZE_TEST))
         if cfg.MODEL.ROI_HEADS.NMS != 0.5:
             cc.append('roidNMS{}'.format(cfg.MODEL.ROI_HEADS.NMS))
         if cfg.MODEL.ROI_HEADS.DETECTIONS_PER_IMG != 100:

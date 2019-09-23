@@ -84,6 +84,9 @@ class AnnotationDB(object):
     def remove_phillyjob(self, **kwargs):
         self._phillyjob.delete_many(kwargs)
 
+    def delete_many(self, collection_name, **kwargs):
+        self._qd['qd'][collection_name].delete_many(kwargs)
+
     def update_one(self, doc_name, query, update):
         return self._qd['qd'][doc_name].update_one(query, update)
 
@@ -100,8 +103,8 @@ class AnnotationDB(object):
     def iter_phillyjob(self, **kwargs):
         return self._phillyjob.find(kwargs)
 
-    def iter_general(self, table_name):
-        return self._qd['qd'][table_name].find().sort('create_time', -1)
+    def iter_general(self, table_name, **kwargs):
+        return self._qd['qd'][table_name].find(kwargs).sort('create_time', -1)
 
     # acc related
     def insert_acc(self, **kwargs):
@@ -149,6 +152,9 @@ class AnnotationDB(object):
             kwargs['create_time'] = datetime.now()
 
         self._label.insert_one(kwargs)
+
+    def insert_one(self, collection_name, **kwargs):
+        self._qd['qd'][collection_name].insert_one(kwargs)
 
     def build_label_index(self):
         self._label.create_index([('uuid', 1)], unique=True)

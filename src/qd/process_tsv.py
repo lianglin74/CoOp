@@ -43,6 +43,7 @@ from qd.qd_common import calculate_image_ap
 from qd.qd_common import calculate_iou
 from qd.qd_common import dict_to_list
 from qd.qd_common import ensure_directory
+from qd.qd_common import normalize_to_str
 from qd.qd_common import generate_lineidx
 from qd.qd_common import hash_sha1
 from qd.qd_common import ensure_copy_file
@@ -1368,14 +1369,6 @@ def update_confusion_matrix(predicts, gts, threshold,
             else:
                 inc_one_dic_dic(confusion_gt_pred,
                         gt_class, 'None')
-
-def normalize_to_str(s):
-    if sys.version_info.major == 3:
-        return s
-    else:
-        if type(s) is str:
-            s = s.decode('unicode_escape')
-        return unicodedata.normalize('NFKD', s).encode('ascii','ignore')
 
 def normalize_str_in_rects(data, out_data):
     '''

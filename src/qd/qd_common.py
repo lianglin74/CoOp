@@ -56,7 +56,7 @@ def try_once(func):
             return func(*args, **kwargs)
         except Exception as e:
             logging.info('ignore error \n{}'.format(str(e)))
-            traceback.print_exc()
+            print_trace()
     return func_wrapper
 
 @try_once
@@ -289,6 +289,10 @@ def zip_qd(out_zip):
             'aux_data/yolo9k/\*',
             '-x',
             'visualization\*',
+            '-x',
+            'output\*',
+            '-x',
+            'data\*',
             '-x',
             '\*.build_release\*',
             '-x',
@@ -565,9 +569,116 @@ def url_to_image(url):
         image = np.asarray(bytearray(buf), dtype='uint8')
         return cv2.imdecode(image, cv2.IMREAD_COLOR)
 
+def normalize_to_str(s):
+    if sys.version_info.major == 3:
+        return s
+    else:
+        if type(s) is str:
+            s = s.decode('unicode_escape')
+        import unicodedata
+        return unicodedata.normalize('NFKD', s).encode('ascii','ignore')
+
+def query_wiki_info(query_term):
+    query_term = '{} site:en.wikipedia.org'.format(query_term)
+    rls = limited_retry_agent(10, scrape_bing_general_rich, query_term, 1)
+    if rls is None:
+        return
+    rl = rls[0]
+    n_title = normalize_to_str(rl['title'])
+    result = re.match('(.*) - Wikipedia', n_title)
+    if result:
+        best_name = result.groups()[0]
+    else:
+        best_name = query_term
+    result = {
+            'query_term': query_term,
+            'best_name': best_name,
+            'wiki_tile': rl['title'],
+            'norm_wiki_title': normalize_to_str(rl['title']),
+            'wiki_url': rl['url']}
+    logging.info(pformat(result))
+
+def scrape_bing_general_rich(query_term, depth):
+    '''
+    note, the order of url list is not the same as the web query. Even we keep
+    the order of how to add it to the result, the order is still not the same.
+    '''
+    # we might add duplicated terms. need 1) deduplicate, 2) keep the order
+    # when it is added
+    import requests
+    import xml.etree.ElementTree as ET
+    format_str = \
+            'http://www.bing.com/search?q={}&form=MONITR&qs=n&format=pbxml&first={}&count={}&fdpriority=premium&mkt=en-us'
+    start = 0
+    all_result = []
+    while True:
+        count = min(depth - start, 150)
+        if count <= 0:
+            break
+        query_str = format_str.format(query_term, start, count)
+        start = start + count
+        r = requests.get(query_str, allow_redirects=True)
+        content = r.content
+        #content = urllib2.urlopen(query_str).read()
+        root = ET.fromstring(content)
+        for t in root.iter('k_AnswerDataKifResponse'):
+            if t.text is None:
+                continue
+            text_result = json.loads(t.text)
+            if 'results' not in text_result:
+                continue
+            results = text_result['results']
+            for r in results:
+                rl = {k.lower() : r[k] for k in r}
+                if 'url' in rl and 'title' in rl and len(rl['title']) > 0:
+                    all_result.append(rl)
+    url_to_result = {}
+    for rl in all_result:
+        url = rl['url']
+        if url not in url_to_result:
+            url_to_result[url] = rl
+
+    return list(url_to_result.values())
+
+def scrape_bing_general(query_term, depth):
+    '''
+    note, the order of url list is not the same as the web query. Even we keep
+    the order of how to add it to the result, the order is still not the same.
+    '''
+    # we might add duplicated terms. need 1) deduplicate, 2) keep the order
+    # when it is added
+    import requests
+    import xml.etree.ElementTree as ET
+    format_str = \
+            'http://www.bing.com/search?q={}&form=MONITR&qs=n&format=pbxml&first={}&count={}&fdpriority=premium&mkt=en-us'
+    start = 0
+    all_url = []
+    while True:
+        count = min(depth - start, 150)
+        if count <= 0:
+            break
+        query_str = format_str.format(query_term, start, count)
+        start = start + count
+        r = requests.get(query_str, allow_redirects=True)
+        content = r.content
+        #content = urllib2.urlopen(query_str).read()
+        root = ET.fromstring(content)
+        for t in root.iter('k_AnswerDataKifResponse'):
+            if t.text is None:
+                continue
+            text_result = json.loads(t.text)
+            if 'results' not in text_result:
+                continue
+            results = text_result['results']
+            for r in results:
+                rl = {k.lower() : r[k] for k in r}
+                if 'url' in rl:
+                    url = rl['url']
+                    all_url.append(url)
+    return list(set(all_url))
 
 def scrape_bing(query_term, depth, trans_bg=False):
-    '''
+    ''' this is for image; for text, use scrape_bing_general
     e.g. scrape_bing('elder person', 300)
     '''
     import requests
@@ -594,8 +705,8 @@ def scrape_bing(query_term, depth, trans_bg=False):
             for r in results:
                 rl = {k.lower() : r[k] for k in r}
                 media_url = rl.get('mediaurl', '')
-                url = rl.get('url', '')
-                title = rl.get('title', '')
+                #url = rl.get('url', '')
+                #title = rl.get('title', '')
                 all_url.append(media_url)
             break
     return all_url
@@ -2360,14 +2471,15 @@ def merge_class_names_by_location_id(anno):
             a['conf'] = [a['conf']]
         return anno
 
-def softnms_c(rects, **kwargs):
+def softnms_c(rects, threshold=0, method=2, **kwargs):
     from fast_rcnn.nms_wrapper import soft_nms
     nms_input = np.zeros((len(rects), 5), dtype=np.float32)
     for i, r in enumerate(rects):
         nms_input[i, 0:4] = r['rect']
         nms_input[i, -1] = r['conf']
-    nms_out = soft_nms(nms_input, **kwargs)
-    return [{'rect': x[:4], 'conf': x[-1]} for x in nms_out]
+    nms_out = soft_nms(nms_input, threshold=threshold,
+            method=method, **kwargs)
+    return [{'rect': list(map(float, x[:4])), 'conf': float(x[-1])} for x in nms_out]
 
 def softnms(rects, th=0.5):
     rects = copy.deepcopy(rects)
