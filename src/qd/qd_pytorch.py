@@ -450,7 +450,8 @@ class IBCEWithLogitsNegLoss(nn.Module):
             neg_pos_ratio=None,
             ignore_hard_neg_th=None,
             ignore_hard_pos_th=None,
-            minus_2_weight=1.):
+            minus_2_weight=1.,
+            correct_loss=None):
         super(IBCEWithLogitsNegLoss, self).__init__()
         self.neg = neg
         self.pos = pos
@@ -463,6 +464,9 @@ class IBCEWithLogitsNegLoss(nn.Module):
         # -2 means it is a hard negative sample and we can pose more weight on
         # it
         self.minus_2_weight = minus_2_weight
+        # correct_loss should always be 1, we keep it here only for back
+        # campatibility
+        self.correct_loss = correct_loss
 
     def forward(self, feature, target, weight=None, reduce=True):
         # currently, we do not support to customize teh weight. This field is
@@ -499,18 +503,19 @@ class IBCEWithLogitsNegLoss(nn.Module):
             if self.minus_2_weight != 1:
                 debug_infos.append('#minus_2_pos = {}'.format(minus_2_pos.sum()))
 
-        if self.ignore_hard_neg_th is not None:
+        if self.ignore_hard_neg_th is not None and self.ignore_hard_neg_th <= 1:
             weight[(neg_position & (sig_feature >= self.ignore_hard_neg_th))] = 0
             if print_debug:
                 debug_infos.append('ignore hard neg = {}; '.format((neg_position & (sig_feature >=
                     self.ignore_hard_neg_th)).sum()))
 
-        if self.ignore_hard_pos_th is not None:
+        if self.ignore_hard_pos_th is not None and self.ignore_hard_pos_th >= 0:
             weight[(pos_position & (sig_feature <= self.ignore_hard_pos_th))] = 0
             if print_debug:
                 debug_infos.append('ignore hard pos = {}; '.format((pos_position &
                     (sig_feature <= self.ignore_hard_pos_th)).sum()))
 
+        loss_weight = 1.
         if self.neg_pos_ratio is not None:
             pos_position_in_loss = pos_position & (weight > 0)
             neg_position_in_loss = neg_position & (weight > 0)
@@ -526,6 +531,12 @@ class IBCEWithLogitsNegLoss(nn.Module):
                             num_neg_in_loss * (self.neg_pos_ratio + 1))
                     weight[pos_position_in_loss] *= pos_weight
                     weight[neg_position_in_loss] *= neg_weight
+                elif num_pos_in_loss == 0 and num_neg_in_loss != 0:
+                    loss_weight = 1. * self.neg_pos_ratio / (1 + self.neg_pos_ratio)
+                elif num_pos_in_loss != 0 and num_neg_in_loss == 0:
+                    loss_weight = 1. / (1 + self.neg_pos_ratio)
+                if not self.correct_loss:
+                    loss_weight = 1.
             elif self.neg_pos_ratio == -1:
                 weight[pos_position_in_loss] = (target - sig_feature)[pos_position_in_loss]
         else:
@@ -578,7 +589,7 @@ class IBCEWithLogitsNegLoss(nn.Module):
         else:
             criterion = nn.BCEWithLogitsLoss(weight, reduction='sum')
             loss = criterion(feature, target)
-            loss = torch.sum(loss) / (weight_sum + self.eps)
+            loss = loss_weight * torch.sum(loss) / (weight_sum + self.eps)
         return loss
 
 def mean_remove(x):
