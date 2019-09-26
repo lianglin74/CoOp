@@ -21,7 +21,7 @@ eventWindowToleranceInEvaluation = 0.5
 
 def setDebug(frame): 
     return False
-    #return frame > 5000 and frame < 5100
+    #return frame > 14230 and frame < 14301
     #return frame > 300 and frame < 525
 
 class Trajectory(object):
@@ -289,7 +289,7 @@ class Trajectory(object):
         else:
             return False
 
-    def predictBallRects(self, debug=0):
+    def predictBallRects(self):
         prevBallObjs = self.ballTraj
         l = len(prevBallObjs)
         if l < 2 or not objectExists(prevBallObjs[l-1]) or not objectExists(prevBallObjs[l-2]):
@@ -297,7 +297,8 @@ class Trajectory(object):
 
         widthOfBall = getWidthOfObject(prevBallObjs[l-1][0])
         heightOfBall = getHeightOfObject(prevBallObjs[l-1][0])
-        if debug:
+        
+        if self.debug:
             print('widthOfBall: ', widthOfBall)
             print('heightOfBall: ', heightOfBall)
 
@@ -308,12 +309,12 @@ class Trajectory(object):
         y = 2 * y2 - y1
 
         dummyBallObj = copy.deepcopy(prevBallObjs[l-1][0])
-        dummyBallObj['rect'][0] = x - (widthOfBall + 1.0) / 2
-        dummyBallObj['rect'][1] = y - (heightOfBall + 1.0) / 2
-        dummyBallObj['rect'][2] = x + (widthOfBall + 1.0) / 2
-        dummyBallObj['rect'][3] = y + (heightOfBall + 1.0) / 2
+        dummyBallObj['rect'][0] = x - (widthOfBall) / 2
+        dummyBallObj['rect'][1] = y - (heightOfBall) / 2
+        dummyBallObj['rect'][2] = x + (widthOfBall) / 2
+        dummyBallObj['rect'][3] = y + (heightOfBall) / 2
 
-        if debug:
+        if self.debug:
             print('dummyBallObj: ', dummyBallObj)
 
         return [dummyBallObj]
@@ -397,13 +398,26 @@ class EventDetector(object):
                 rimRects, backboardRects, prevRects)
 
             # Add missing ball: for case: BallNotDetected_1:
-            if not objectExists(ballRects) and self.predictMissingBall:
-                #print("Before adding ball rects:", ballRects)
-                ballRects = trajectory.predictBallRects()
-                #print("After adding ball rects:", ballRects)
+            if not objectExists(ballRects):                
+                if self.predictMissingBall:
+                    if self.debug:
+                        print("Before adding ball rects:", ballRects)
+
+                    if len(prevRects["ball"]) > 0:
+                        ballRects = trajectory.predictBallRects()
+
+                    if self.debug:
+                        print("After adding ball rects:", ballRects)
+                
+                prevRects["ball"] = []
+            else:
+                prevRects["ball"] = ballRects
 
             # Get the ball, rim pair with smallest distance if there are multiple balls or rims
             ballRects, rimRects = self.getClosestBallRimPair(ballRects, rimRects)
+            if self.debug:
+                print("After finding closest ball and rim: ")
+                print(ballRects, rimRects)
 
             assert(len(ballRects) <= 1)
             assert(len(rimRects) <= 1)
@@ -413,8 +427,7 @@ class EventDetector(object):
             # get the persons holding ball
             personRects = self.getPersonHoldingBall(ballRects, rects, debug = self.debug)
 
-            # Store the prev rects
-            prevRects["ball"] = ballRects
+            # Store the prev rects            
             prevRects["rim"] = rimRects
             prevRects["backboard"] = backboardRects
 
@@ -559,6 +572,9 @@ class EventDetector(object):
         pass
 
     def getPersonHoldingBall(self, ballRects, rects, debug = 0):
+        if self.debug:
+            print("Before sorting")
+            print(ballRects)
         if not objectExists(ballRects):
             return []
 
@@ -575,7 +591,8 @@ class EventDetector(object):
                 if calculateIOA(ballRects[0]['rect'], personRect) > self.ballPersonIouThresh:
                     if debug:                 
                         print("Frame:", self.imageCnt, "; Finding a person holding ball:", r)
-                    return [r]
+                        print(ballRects)
+                    return [r]                    
         return []
 
 def objectExists(objRectList):
@@ -590,12 +607,12 @@ def enlargeRect(rect0, enlargeRatio):
 
     x, y = getCenterOfRect(rect0)
     
-    rect0[0] = x - (widthOfBall ) / 2
-    rect0[1] = y - (heightOfBall ) / 2
-    rect0[2] = x + (widthOfBall ) / 2
-    rect0[3] = y + (heightOfBall ) / 2
+    newRect = [ x - (widthOfBall ) / 2, 
+                y - (heightOfBall ) / 2, 
+                x + (widthOfBall ) / 2,
+                y + (heightOfBall ) / 2]
 
-    return rect0
+    return newRect
 
 def getRectWithHighestConfScore(rects):
     return max(rects, key = lambda rect: rect['conf'])
