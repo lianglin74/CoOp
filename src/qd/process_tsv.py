@@ -45,6 +45,7 @@ from qd.qd_common import dict_to_list
 from qd.qd_common import ensure_directory
 from qd.qd_common import normalize_to_str
 from qd.qd_common import generate_lineidx
+from qd.qd_common import get_mpi_rank, get_mpi_size
 from qd.qd_common import hash_sha1
 from qd.qd_common import ensure_copy_file
 from qd.qd_common import img_from_base64
@@ -5541,6 +5542,58 @@ def find_predict_file(report_file, all_predict):
                 result = p
     assert found
     return result
+
+def softnms_row_process(row):
+    from qd.qd_common import softnms_c
+    key, str_rects = row
+    rects = json.loads(str_rects)
+    all_class_rect = [(r['class'], r) for r in rects]
+    class_to_rects = list_to_dict(all_class_rect, 0)
+    rects2 = []
+    for c, rs in class_to_rects.items():
+        rs = softnms_c(rs)
+        for r in rs:
+            r['class'] = c
+        rects2.extend(rs)
+    return key, json_dump(rects2)
+
+def mpi_tsv_process(row_processor, in_tsv_file, out_tsv_file):
+    mpi_size = get_mpi_size()
+    mpi_rank = get_mpi_rank()
+    in_tsv = TSVFile(in_tsv_file)
+    total = len(in_tsv)
+    rows_each_rank = (total + mpi_size - 1) // mpi_size
+    logging.info('size for each rank = {}'.format(rows_each_rank))
+    start = mpi_rank * rows_each_rank
+    end = min(start + rows_each_rank, total)
+    logging.info('rank = {}; start = {}; end = {}'.format(mpi_rank,
+        start, end))
+    out_tsv_rank = out_tsv_file + '.{}.{}.tsv'.format(mpi_rank, mpi_size)
+    def gen_rows():
+        for i in tqdm(range(start, end)):
+            row = in_tsv[i]
+            row = row_processor(row)
+            yield row
+    tsv_writer(gen_rows(), out_tsv_rank)
+
+    all_out = [out_tsv_file + '.{}.{}.tsv'.format(i, mpi_size) for i in
+            range(mpi_size)]
+
+    while True:
+        if all(op.isfile(f) for f in all_out):
+            break
+        logging.info('waiting {}'.format('; '.join(f for f in all_out if not
+            op.isfile(f))))
+        time.sleep(5)
+
+    if mpi_rank == 0:
+        concat_tsv_files(all_out, out_tsv_file)
+        from qd.process_tsv import delete_tsv_files
+        delete_tsv_files(all_out)
+    else:
+        while not op.isfile(out_tsv_file):
+            logging.info('waiting {}'.format(out_tsv_file))
+            time.sleep(5)
 
 if __name__ == '__main__':
     from qd.qd_common import parse_general_args
