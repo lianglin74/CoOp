@@ -5561,7 +5561,7 @@ def parallel_task_process(param):
     row_processor, in_tsv_file, tmp_out, idx_range = param
     def gen_rows():
         tsv = TSVFile(in_tsv_file)
-        for i in idx_range:
+        for i in tqdm(idx_range):
             yield row_processor(tsv[i])
     tsv_writer(gen_rows(), tmp_out)
 
