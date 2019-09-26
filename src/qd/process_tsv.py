@@ -5543,7 +5543,7 @@ def find_predict_file(report_file, all_predict):
     assert found
     return result
 
-def softnms_row_process(row):
+def softnms_row_process(row, sigma=0.5):
     from qd.qd_common import softnms_c
     key, str_rects = row
     rects = json.loads(str_rects)
@@ -5551,11 +5551,39 @@ def softnms_row_process(row):
     class_to_rects = list_to_dict(all_class_rect, 0)
     rects2 = []
     for c, rs in class_to_rects.items():
-        rs = softnms_c(rs)
+        rs = softnms_c(rs, sigma=sigma)
         for r in rs:
             r['class'] = c
         rects2.extend(rs)
     return key, json_dump(rects2)
+
+def parallel_task_process(param):
+    row_processor, in_tsv_file, tmp_out, idx_range = param
+    def gen_rows():
+        tsv = TSVFile(in_tsv_file)
+        for i in idx_range:
+            yield row_processor(tsv[i])
+    tsv_writer(gen_rows(), tmp_out)
+
+def parallel_tsv_process(row_processor, in_tsv_file,
+        out_tsv_file, num_process):
+    in_tsv = TSVFile(in_tsv_file)
+    total = len(in_tsv)
+    rows_each_rank = (total + num_process - 1) // num_process
+    all_task = []
+    for i in range(num_process):
+        start = i * rows_each_rank
+        end = start + rows_each_rank
+        end = min(end, total)
+        tmp_out = out_tsv_file + '.{}.{}.tsv'.format(i, num_process)
+        all_task.append((row_processor, in_tsv_file,
+                tmp_out, list(range(start, end))))
+    from qd.qd_common import parallel_map
+    parallel_map(parallel_task_process, all_task,
+            num_worker=num_process)
+    all_out = [out for _, _, out, _ in all_task]
+    concat_tsv_files(all_out, out_tsv_file)
+    delete_tsv_files(all_out)
 
 def mpi_tsv_process(row_processor, in_tsv_file, out_tsv_file):
     mpi_size = get_mpi_size()
@@ -5588,7 +5616,6 @@ def mpi_tsv_process(row_processor, in_tsv_file, out_tsv_file):
 
     if mpi_rank == 0:
         concat_tsv_files(all_out, out_tsv_file)
-        from qd.process_tsv import delete_tsv_files
         delete_tsv_files(all_out)
     else:
         while not op.isfile(out_tsv_file):

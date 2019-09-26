@@ -29,6 +29,7 @@ import re
 from google.protobuf import text_format
 import base64
 import cv2
+import psutil
 import shutil
 import argparse
 import subprocess as sp
@@ -221,6 +222,48 @@ def case_incensitive_overlap(all_terms):
     return [[lower_to_term[l] for l in anchor]
         for lower_to_term in all_lower_to_term]
 
+def get_executable():
+    return sys.executable
+
+def collect_process_info():
+    result = {}
+    for process in psutil.process_iter():
+        result[process.pid] = {}
+        result[process.pid]['username'] = process.username()
+        result[process.pid]['time_spent_in_hour'] = (int(time.time()) -
+                process.create_time()) / 3600.0
+        result[process.pid]['cmdline'] = ' '.join(process.cmdline())
+    return result
+
+def remote_run(str_cmd, ssh_info, return_output=False):
+    cmd = ['ssh', '-t', '-t', '-o', 'StrictHostKeyChecking no']
+    for key in ssh_info:
+        if len(key) > 0 and key[0] == '-':
+            cmd.append(key)
+            cmd.append(str(ssh_info[key]))
+    cmd.append('{}@{}'.format(ssh_info['username'], ssh_info['ip']))
+    if is_cluster(ssh_info):
+        prefix = 'source ~/.bashrc && export PATH=/usr/local/nvidia/bin:$PATH && '
+    else:
+        cs = []
+        # don't use anaconda since caffe is slower under anaconda because of the
+        # data preprocessing. not i/o
+        cs.append('source ~/.bashrc')
+        if 'conda' in get_executable():
+            cs.append('export PATH=$HOME/anaconda3/bin:\$PATH')
+            cs.append('export LD_LIBRARY_PATH=$HOME/anaconda3/lib:\$LD_LIBRARY_PATH')
+        cs.append('export PATH=/usr/local/nvidia/bin:\$PATH')
+        cs.append('export PYTHONPATH=/tmp/code/quickdetection/src/CCSCaffe/python:\$PYTHONPATH')
+        prefix = ' && '.join(cs) + ' && '
+
+    suffix = ' && hostname'
+    ssh_command = '{}{}{}'.format(prefix, str_cmd, suffix)
+    # this will use the environment variable like what you have after ssh
+    ssh_command = 'bash -i -c "{}"'.format(ssh_command)
+    cmd.append(ssh_command)
+
+    return cmd_run(cmd, return_output)
+
 def compile_by_docker(src_zip, docker_image, dest_zip):
     # compile the qd zip file and generate another one by compiling. so that
     # there is no need to compile it again.
@@ -272,7 +315,7 @@ def zip_qd(out_zip):
             '-x',
             '\*build/lib.linux-x86_64-3.7/\*',
             '-x',
-            '\*assets\*',
+            'assets\*',
             '-x',
             '\*build/temp.linux-x86_64-3.7/\*',
             '-x',
@@ -473,10 +516,10 @@ def cmd_run(list_cmd, return_output=False, env=None,
         return message.decode('utf-8')
 
 
-def parallel_map(func, all_task, isDebug=False):
+def parallel_map(func, all_task, isDebug=False,
+        num_worker=16):
     if not isDebug:
         from pathos.multiprocessing import ProcessingPool as Pool
-        num_worker = 16
         m = Pool(num_worker)
         return m.map(func, all_task)
     else:

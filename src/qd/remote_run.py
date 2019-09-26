@@ -9,6 +9,9 @@ import logging
 from qd.qd_common import is_cluster
 from qd.qd_common import cmd_run
 from qd.qd_common import write_to_file
+from qd.qd_common import remote_run
+from qd.qd_common import get_executable
+
 
 def sync_qd(ssh_info, delete=False):
     target_folder = '/tmp/code/quickdetection/'
@@ -119,38 +122,6 @@ def scp(local_file, target_file, ssh_cmd):
         ssh_cmd['ip'], target_file)]
     cmd_run(cmd)
 
-def remote_run(str_cmd, ssh_info, return_output=False):
-    cmd = ['ssh', '-t', '-t', '-o', 'StrictHostKeyChecking no']
-    for key in ssh_info:
-        if len(key) > 0 and key[0] == '-':
-            cmd.append(key)
-            cmd.append(str(ssh_info[key]))
-    cmd.append('{}@{}'.format(ssh_info['username'], ssh_info['ip']))
-    if is_cluster(ssh_info):
-        prefix = 'source ~/.bashrc && export PATH=/usr/local/nvidia/bin:$PATH && '
-    else:
-        cs = []
-        # don't use anaconda since caffe is slower under anaconda because of the
-        # data preprocessing. not i/o
-        cs.append('source ~/.bashrc')
-        if 'conda' in get_executable():
-            cs.append('export PATH=$HOME/anaconda3/bin:\$PATH')
-            cs.append('export LD_LIBRARY_PATH=$HOME/anaconda3/lib:\$LD_LIBRARY_PATH')
-        cs.append('export PATH=/usr/local/nvidia/bin:\$PATH')
-        cs.append('export PYTHONPATH=/tmp/code/quickdetection/src/CCSCaffe/python:\$PYTHONPATH')
-        prefix = ' && '.join(cs) + ' && '
-
-    suffix = ' && hostname'
-    ssh_command = '{}{}{}'.format(prefix, str_cmd, suffix)
-    # this will use the environment variable like what you have after ssh
-    ssh_command = 'bash -i -c "{}"'.format(ssh_command)
-    cmd.append(ssh_command)
-
-    return cmd_run(cmd, return_output)
-
-def get_executable():
-    return sys.executable
-
 def remote_python_run(func, kwargs, ssh_cmd, cmd_prefix=''):
     logging.info('ssh_cmd: ' + str(ssh_cmd))
     working_dir = os.path.dirname(os.path.abspath(__file__))
@@ -220,14 +191,4 @@ def process_exists(pid):
         return True
     except:
         return False
-
-def collect_process_info():
-    result = {}
-    for process in psutil.process_iter():
-        result[process.pid] = {}
-        result[process.pid]['username'] = process.username()
-        result[process.pid]['time_spent_in_hour'] = (int(time.time()) -
-                process.create_time()) / 3600.0
-        result[process.pid]['cmdline'] = ' '.join(process.cmdline())
-    return result
 
