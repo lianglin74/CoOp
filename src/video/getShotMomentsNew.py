@@ -140,7 +140,7 @@ class Trajectory(object):
                     shot = True
                     reason = 'HighRecall'
                 else:
-                    if self.extraConditions(maxIouIndex):
+                    if self.extraConditions(maxIouIndex) and self.conditionBallOverRim(maxIouIndex):
                         shot = True
                         reason = 'extraCond'
 
@@ -170,6 +170,14 @@ class Trajectory(object):
                     f.close()
                     print("Missing ball at frame: ", self.frameTraj[i], "Time: ", self.frameTraj[i]/self.frameRate, "Previous frame: rect: ", self.ballTraj[i  - 1][0]['rect'], 'conf: ', ballRects[0]['conf'])
                     return
+
+    def conditionBallOverRim(self, maxIouIndex):
+        i = maxIouIndex        
+        while i >= 0:
+            if objectExists(self.ballTraj[i]) and objectExists(self.rimTraj[i]) and self.ballTraj[i][0]['rect'][1] < self.rimTraj[i][0]['rect'][1]:
+                return True
+            i -= 1
+        return False
 
     def extraConditions(self, maxIouIndex):
         l = len(self.ballTraj)
@@ -1297,9 +1305,9 @@ def calculateF1andWriteRes(odFileList, eventLabelJsonFile = "", textLabelFolder 
             extractSegmentsForActionRecognition(predict_file, falsePositiveRes, timePoint = True)
             extractSegmentsForActionRecognition(predict_file, negativeRes, timePoint = True)
 
+    print(allReports)
     print("====F1 report for all the data: ")
     f1Report(overallPred, overallTrue)
-    print(allReports)
     print(allCorrectLabels)
 
 def getValidationResults(odFileList = "odFilelist.txt"):
