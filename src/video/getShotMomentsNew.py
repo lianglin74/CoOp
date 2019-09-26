@@ -38,8 +38,8 @@ class Trajectory(object):
         # for dunk
         self.rimPersonIoaThresh = 0.05
         self.personHeightToRimRatio = 2.0
-        self.dunkTimeWindow = 0.25
-        self.personRimHeightConditionLoose = False
+        self.dunkTimeWindow = 1.0
+        self.personRimHeightConditionLoose = True
         
         # To solve the problem in case: Case "RimNotGood_1"
         self.enlargeRatio = 1.5
@@ -80,8 +80,7 @@ class Trajectory(object):
                 personRect = personRects[0]['rect']
                 rimRect = rimRects[0]['rect']
                 if getHeightOfRect(personRect) > self.personHeightToRimRatio * getHeightOfRect(rimRect) \
-                  and isAbove((personRect[0], personRect[1]), (rimRect[2], rimRect[3]) if self.personRimHeightConditionLoose else (rimRect[0], rimRect[1])) \
-                  and calculateIOA(rimRect, personRect) > self.rimPersonIoaThresh:                    
+                  and isAbove((personRect[0], personRect[1]), (rimRect[2], rimRect[3]) if self.personRimHeightConditionLoose else (rimRect[0], rimRect[1])):
                     return True, frame
         
         return False, 0
@@ -1202,7 +1201,7 @@ def calculateF1andWriteRes(odFileList, eventLabelJsonFile = "", textLabelFolder 
     # Used to write labels for GL autoML training
     writeAutoMLLabel = False
     # Used to extract video segments for 3D conv
-    extraVideoSegments = True
+    extraVideoSegments = False
     
     #predict_file = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_chop/TSV/head350_prediction_1551538896210_sc99_01_q1.tsv"
     #predict_file = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_chop/prediction_1551538896210_sc99_01_q1.tsv"
@@ -1323,8 +1322,8 @@ def compareWithGoogleAutoML():
 
 if __name__ == '__main__':
     getValidationResults()
-    getTestingResults()
-    getMiguTestingResults()
+    #getTestingResults()
+    #getMiguTestingResults()
     
     # compareWithGoogleAutoML()
 
