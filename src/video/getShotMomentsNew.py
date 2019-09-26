@@ -913,6 +913,63 @@ def writeTrainingLabelsForAutoML(labelFile, results, timePoint = True, suffix = 
         f.write(','.join([prefix + os.path.basename(videoFileName), value['class'], '%.3f' % value['start'], '%.3f' % value['end']]) + "\n")
     f.close()
 
+
+def extractSegmentsForActionRecognition(labelFile, results, timePoint = True):
+    videoFileName = labelFile.replace(".tsv", ".mp4")
+
+    videoFileBase = os.path.basename(videoFileName)
+    videoFileCore, fileSuffix = videoFileBase.split('.')
+    videoFilePath = os.path.dirname(videoFileName)
+
+    if "data/video/CBA/CBA_demo_v3" in videoFilePath:
+        prefix = "gs://yaoguang-central-storage/shotDunk/"
+        videoFileNamePrefix = videoFileBase[:-4]
+    elif "data/video/CBA/CBA_5_test_videos/test/extracted" in videoFilePath:
+        prefix = "gs://yaoguang-central-storage/shotDunk/test/"
+        videoFileNamePrefix = videoFileBase[:-7]
+    else:        
+        prefix = "gs://yaoguang-central-storage/shotDunk/tmp/"
+        videoFileNamePrefix = videoFileBase[:-7]
+    
+    testList = ['647b025243d74e719b36d24a0c19df37_sc99', # 39 shot, 1 dunk; 
+        'CBA1', #33 shots, 11 dunks;
+        'NBA1' #16 shots, 0 dunk
+        ]
+    # vadalition: 10 dunk; test: 8 dunk; 
+    
+    if videoFileNamePrefix in testList:
+        topDir = '/mnt/gpu02_raid/data/video/CBA/eventDetection/videosForDunkDetection/test/'
+    else:
+        topDir = '/mnt/gpu02_raid/data/video/CBA/eventDetection/videosForDunkDetection/train/'
+
+    print("events: ", results)
+
+    dictList = buildEventLists(results, timePoint)
+    
+    videoLength = 2.0
+
+    for value in dictList:        
+        print("--Processing: ", ", ".join([os.path.basename(videoFileName), value['class'], '%.3f' % value['start'], '%.3f' % value['end']]))
+        className = 'nonDunk' if value['class'] != 'dunk' else 'dunk'
+
+        outputVideoDir = topDir + className + "/"
+        if not os.path.exists(outputVideoDir):
+            os.mkdir(outputVideoDir)
+
+        startTime = ('%.1f' % value['start']).replace('.', '_')
+        outputVideoName = videoFileCore + '-' + startTime + '-' + value['class'] + '.' + fileSuffix
+        extractSegment(videoFileName, outputVideoDir + outputVideoName, value['start'], videoLength)
+
+
+def extractSegment(sourceVideo, outputVideoName, startTime, length):
+    # The first command does not work. 
+    #myCmd = 'ffmpeg -ss ' + str(startTime) + ' -t ' + str(length) + ' -i ' + sourceVideo +  '  -acodec copy -vcodec copy ' + outputVideoName
+    # The following one worked: 
+    myCmd = 'ffmpeg ' + ' -i ' + sourceVideo +  ' -ss ' + str(startTime) + ' -t ' + str(length) + ' -vcodec h264 -acodec aac -strict -2  ' + outputVideoName
+    print("Calling: ", myCmd)
+    os.system(myCmd)
+
+
 def read_file_to_list(file_name):
     res_lists = []
     with open(file_name, 'r') as file:  # Use file to refer to the file object
@@ -1062,7 +1119,8 @@ def getFalsePositiveRes(allTimePoints):
                 next = allTimePoints[i + 1]
                 nextTimePoint = next[0] if len(next) == 2 else next[3]
             if v[3] - prevTimePoint > eventLength + padding and nextTimePoint - v[3] > eventLength + padding:
-                falsePositiveRes.append((v[3], 'None_of_the_above'))
+                # In fact, these are fake shots (there is IOA or IOU, but not get scores)
+                falsePositiveRes.append((v[3], 'FakeShot'))
                 prevTimePoint = v[3]
         else:
             prevTimePoint = v[0]
@@ -1143,6 +1201,8 @@ def calculateF1andWriteRes(odFileList, eventLabelJsonFile = "", textLabelFolder 
     usingNewAlg = True
     # Used to write labels for GL autoML training
     writeAutoMLLabel = False
+    # Used to extract video segments for 3D conv
+    extraVideoSegments = True
     
     #predict_file = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_chop/TSV/head350_prediction_1551538896210_sc99_01_q1.tsv"
     #predict_file = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_chop/prediction_1551538896210_sc99_01_q1.tsv"
@@ -1189,7 +1249,7 @@ def calculateF1andWriteRes(odFileList, eventLabelJsonFile = "", textLabelFolder 
 
             confusionMatrixReport(y_pred, y_pred_pointer, y_true, y_true_pointer)
 
-            if writeAutoMLLabel: 
+            if writeAutoMLLabel or extraVideoSegments: 
                 falsePositiveRes = getFalsePositiveRes(allTimePoints)
                 #print("False Positive Results: ", falsePositiveRes)
                 negativeRes = getNegativeRes(allTimePoints)
@@ -1211,6 +1271,10 @@ def calculateF1andWriteRes(odFileList, eventLabelJsonFile = "", textLabelFolder 
             writeTrainingLabelsForAutoML(predict_file, true_results, timePoint = True)
             writeTrainingLabelsForAutoML(predict_file, falsePositiveRes, timePoint = True, suffix = "fakeShot")
             writeTrainingLabelsForAutoML(predict_file, negativeRes, timePoint = True, suffix = "nonShot")
+        if extraVideoSegments:
+            extractSegmentsForActionRecognition(predict_file, true_results, timePoint = True)
+            extractSegmentsForActionRecognition(predict_file, falsePositiveRes, timePoint = True)
+            extractSegmentsForActionRecognition(predict_file, negativeRes, timePoint = True)
 
     print("====F1 report for all the data: ")
     f1Report(overallPred, overallTrue)
@@ -1258,10 +1322,11 @@ def compareWithGoogleAutoML():
 
 
 if __name__ == '__main__':
-    #getValidationResults()
-    #getTestingResults()
-    #getMiguTestingResults()
-    compareWithGoogleAutoML()
+    getValidationResults()
+    getTestingResults()
+    getMiguTestingResults()
+    
+    # compareWithGoogleAutoML()
 
     #main()
     #test_getShotStats()
