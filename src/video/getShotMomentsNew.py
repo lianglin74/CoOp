@@ -14,6 +14,7 @@ import numpy as np
 import math
 import copy
 import os
+import sys
 
 #Some parms not in classes:
 eventWindowToleranceInEvaluation = 0.5
@@ -26,7 +27,9 @@ def setDebug(frame):
 class Trajectory(object):
     def __init__(self, frameRate, debug, videoFile):
         # Important parameters to tune:
-        self.highRecall = True
+        # to filter out fake shots
+        self.highRecall = False
+
         self.iouLowThresh = 0.01
         self.iouHighThresh = 0.55
         self.shotDetectWindow = 2.0 #at least >=2.0
@@ -39,7 +42,7 @@ class Trajectory(object):
         self.rimPersonIoaThresh = 0.05
         self.personHeightToRimRatio = 2.0
         self.dunkTimeWindow = 1.0
-        self.personRimHeightConditionLoose = True
+        self.personRimHeightConditionLoose = True        
         
         # To solve the problem in case: Case "RimNotGood_1"
         self.enlargeRatio = 1.5
@@ -162,7 +165,7 @@ class Trajectory(object):
                     print("Missing ball at frame: ", self.frameTraj[i], "Time: ", self.frameTraj[i]/self.frameRate, "Previous frame: rect: ", self.ballTraj[i  - 1][0]['rect'], 'conf: ', ballRects[0]['conf'])
                     return
 
-    def extraCondition(self, maxIouIndex):
+    def extraConditions(self, maxIouIndex):
         l = len(self.ballTraj)
 
         ballIndex = self.findFirstBallPositionLowerThanRim(maxIouIndex)
@@ -1280,9 +1283,8 @@ def calculateF1andWriteRes(odFileList, eventLabelJsonFile = "", textLabelFolder 
     print(allReports)
     print(allCorrectLabels)
 
-def getValidationResults():
+def getValidationResults(odFileList = "odFilelist.txt"):
     dir = "/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/validation/extracted/"    
-    odFileList = "odFilelist.txt"
     odFileList = read_file_to_list(dir + odFileList)
     odFileList = [dir + f for f in odFileList]
     eventLabelJsonFile = '/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/test/extracted/label/Project_all_corrected_manual.aucvl'
@@ -1321,15 +1323,19 @@ def compareWithGoogleAutoML():
 
 
 if __name__ == '__main__':
-    getValidationResults()
-    #getTestingResults()
-    #getMiguTestingResults()
-    
-    # compareWithGoogleAutoML()
+    if len(sys.argv) == 2 and sys.argv[1] == 'test':
+        odFile = 'odFilelist_test.txt'
+        getValidationResults(odFile)
+    else:
+        getValidationResults()
+        #getTestingResults()
+        #getMiguTestingResults()
+        
+        # compareWithGoogleAutoML()
 
-    #main()
-    #test_getShotStats()
-    # testGetDegreeOfTwoPoints()
-    #test_getEventLabelsFromText()    
-    #test_getClosestRects()
-    #test_getRectWithHighestConfScore()
+        #main()
+        #test_getShotStats()
+        # testGetDegreeOfTwoPoints()
+        #test_getEventLabelsFromText()    
+        #test_getClosestRects()
+        #test_getRectWithHighestConfScore()
