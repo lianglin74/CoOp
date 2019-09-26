@@ -29,7 +29,9 @@ class Trajectory(object):
         # Important parameters to tune:
         # general params
         self.iouLowThresh = 0.01
+        # for case "BallBouncingOut_1"
         self.iouHighThresh = 0.8
+
         self.shotDetectWindow = 2.0 #at least >=2.0
         self.largestEventWindow = 4.0
         self.wideEventWindow = True
