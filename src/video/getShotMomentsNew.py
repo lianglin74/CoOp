@@ -21,15 +21,13 @@ eventWindowToleranceInEvaluation = 0.5
 
 def setDebug(frame): 
     return False
-    #return frame > 3924 and frame < 4500
+    #return frame > 5000 and frame < 5100
     #return frame > 300 and frame < 525
 
 class Trajectory(object):
     def __init__(self, frameRate, debug, videoFile):
         # Important parameters to tune:
-        # to filter out fake shots
-        self.highRecall = False
-
+        # general params
         self.iouLowThresh = 0.01
         self.iouHighThresh = 0.55
         self.shotDetectWindow = 2.0 #at least >=2.0
@@ -38,6 +36,12 @@ class Trajectory(object):
         self.angleRimToBallThresh = 45.0
         self.ballAboveRimThresh = 0.0
         self.eventPadding = 1.0
+        
+        # to filter out fake shots
+        self.highRecall = False
+        #Case: "BallOverlapRimOutSide_1":
+        self.ballRimLateralDistanceThresh = 0.8 #unit: ball size
+
         # for dunk
         self.rimPersonIoaThresh = 0.05
         self.personHeightToRimRatio = 2.0
@@ -124,12 +128,12 @@ class Trajectory(object):
             endTime = min(endTime, self.ioaTime + self.largestEventWindow / 2.0)
             startTime = startTime = max(startTime, self.ioaTime - self.largestEventWindow / 2.0)
 
-        if maxIouValue > self.iouHighThresh:
+        if maxIouValue > self.iouHighThresh and self.necessaryCondition1(maxIouIndex):
             shot = True
             reason = 'highIou'
         elif maxIouValue > self.iouLowThresh:
             # check the necessary condition of shot: ball is lower than rim and within a cone
-            if self.necessaryCondition(maxIouIndex):
+            if self.necessaryCondition2(maxIouIndex):
                 if self.highRecall:                
                     shot = True
                     reason = 'HighRecall'
@@ -182,7 +186,20 @@ class Trajectory(object):
             else:
                 return False
 
-    def necessaryCondition(self, maxIouIndex):
+    def necessaryCondition1(self, maxIouIndex):
+        ballRects = self.ballTraj[maxIouIndex]
+        rimRects = self.rimTraj[maxIouIndex]
+
+        ballCenter = getCenterOfObject(ballRects[0])
+        centerOfRim = getCenterOfObject(rimRects[0])
+        ballSize = getWidthOfObject(ballRects[0])
+        
+        if abs(ballCenter[0] - centerOfRim[0]) < self.ballRimLateralDistanceThresh * ballSize:
+            return True
+        else:
+            return False
+
+    def necessaryCondition2(self, maxIouIndex):
         return True
 
     def findFirstBallPositionLowerThanRim(self, ioaIndex, usingDetectedBalls = False):
