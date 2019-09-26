@@ -26,6 +26,7 @@ from qd.qd_common import json_dump
 from qd.qd_common import init_logging
 from qd.qd_common import list_to_dict
 from qd.qd_common import calculate_image_ap
+from qd.qd_common import try_delete
 from qd.qd_common import set_if_not_exist
 from qd.qd_common import load_from_yaml_file
 from qd.qd_common import calculate_iou
@@ -617,11 +618,12 @@ def test(cfg, model, distributed, predict_files, label_id_to_label,
                 speed_yaml = predict_file + '.speed.yaml'
                 merge_speed_info(speed_cache_files, speed_yaml)
                 for x in speed_cache_files:
-                    from qd.qd_common import try_delete
                     try_delete(x)
                 vis_files = [op.splitext(c)[0] + '.vis.txt' for c in speed_cache_files]
                 merge_speed_vis(vis_files,
                         op.splitext(speed_yaml)[0] + '.vis.txt')
+                for x in vis_files:
+                    try_delete(x)
 
         synchronize()
 

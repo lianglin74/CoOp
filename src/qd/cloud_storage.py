@@ -9,6 +9,7 @@ from qd.qd_common import parse_iteration
 import logging
 from tqdm import tqdm
 import os
+from qd.qd_common import ensure_directory
 logger.propagate = False
 
 def create_cloud_storage(x=None, config_file=None):
@@ -142,7 +143,7 @@ class CloudStorage(object):
         self.account_name = account_name
         self.account_key = account_key
 
-    def list_blob_names(self, prefix):
+    def list_blob_names(self, prefix=None):
         return self.block_blob_service.list_blob_names(self.container_name,
                 prefix=prefix)
 
@@ -253,6 +254,7 @@ class CloudStorage(object):
         return data_url, url
 
     def az_download(self, remote_path, local_path):
+        ensure_directory(op.dirname(local_path))
         assert self.sas_token
         cmd = []
         cmd.append(op.expanduser('~/code/azcopy/azcopy'))
@@ -260,7 +262,7 @@ class CloudStorage(object):
         url = 'https://{}.blob.core.windows.net'.format(self.account_name)
         if remote_path.startswith('/'):
             remote_path = remote_path[1:]
-        url = op.join(url, self.container_name, remote_path)
+        url = '/'.join([url, self.container_name, remote_path])
         assert self.sas_token.startswith('?')
         data_url = url
         url = url + self.sas_token
@@ -271,7 +273,6 @@ class CloudStorage(object):
 
 
     def download_to_path(self, blob_name, local_path):
-        from qd.qd_common import ensure_directory
         dir_path = op.dirname(local_path)
         from qd.qd_common import get_file_size
         if op.isfile(dir_path) and get_file_size(dir_path) == 0:

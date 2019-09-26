@@ -8,8 +8,58 @@ import multiprocessing as mp
 from qd.qd_common import is_cluster
 from qd.qd_common import write_to_yaml_file, load_from_yaml_file
 from qd.gpu_util import gpu_available
-from qd.remote_run import sync_qd
+from qd.remote_run import sync_qd, remote_python_run
 
+
+def mpi_task_processor(resource, task, func):
+    ssh_info, gpus = resource
+    logging.info(ssh_info)
+    logging.info(gpus)
+    if ssh_info == {}:
+        #yolotrain_main(**task)
+        func(**task)
+    else:
+        #yolotrain(**task)
+        cmd_prefix = 'HOROVOD_CACHE_CAPACITY=0 '
+        if len(gpus) == 1:
+            cmd_prefix += 'CUDA_VISIBLE_DEVICES={}'.format(
+                    ','.join(map(str, gpus)))
+        else:
+            cmd_prefix += 'CUDA_VISIBLE_DEVICES={} mpirun -npernode {}'.format(
+                    ','.join(map(str, gpus)), len(gpus))
+        remote_python_run(func, task, ssh_info, cmd_prefix)
+
+def task_processor(resource, task, func):
+    ssh_info, gpus = resource
+    logging.info(ssh_info)
+    logging.info(gpus)
+    task['gpus'] = gpus
+    if ssh_info == {}:
+        #yolotrain_main(**task)
+        func(**task)
+    else:
+        #yolotrain(**task)
+        cmd_prefix = ''
+        remote_python_run(func, task, ssh_info, cmd_prefix)
+
+def get_resources():
+    # use a file to load the machines. The benefit is that sometimes the run.py
+    # will be copied as anohter run_123.py, which can benefit from the new list
+    machines = load_from_yaml_file('.machines.yaml')
+    return machines
+
+def remote_run_func(func, is_mpi=True, availability_check=True, **param):
+    all_task = [param]
+    all_resource = get_resources()
+    if is_mpi:
+        l_task_processor = lambda resource, task: mpi_task_processor(resource, task,
+                func)
+    else:
+        l_task_processor = lambda resource, task: task_processor(resource, task,
+                func)
+    b = BatchProcess(all_resource, all_task, l_task_processor)
+    b._availability_check = availability_check
+    b.run()
 
 class BatchProcess(object):
     def __init__(self, all_resource, all_task, processor):

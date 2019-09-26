@@ -5557,13 +5557,49 @@ def softnms_row_process(row, sigma=0.5):
         rects2.extend(rs)
     return key, json_dump(rects2)
 
-def parallel_task_process(param):
+def tsv_subset_process(param):
     row_processor, in_tsv_file, tmp_out, idx_range = param
     def gen_rows():
         tsv = TSVFile(in_tsv_file)
         for i in tqdm(idx_range):
             yield row_processor(tsv[i])
     tsv_writer(gen_rows(), tmp_out)
+
+def multi_tsv_subset_process(param):
+    row_processor, in_tsv_files, tmp_out, idx_range = param
+    def gen_rows():
+        tsvs = [TSVFile(f) for f in in_tsv_files]
+        for i in tqdm(idx_range):
+            yield row_processor([tsv[i] for tsv in tsvs])
+    tsv_writer(gen_rows(), tmp_out)
+
+def multi_tsv_row_merger(rows):
+    all_key = [row[0] for row in rows]
+    assert all(all_key[0] == key for key in all_key[1:])
+    all_rect = [json.loads(row[1]) for row in rows]
+    str_rect = json_dump([r for rs in all_rect for r in rs])
+    return all_key[0], str_rect
+
+def parallel_multi_tsv_process(row_processor, in_tsv_files,
+        out_tsv_file, num_process):
+    in_tsvs = [TSVFile(in_tsv_file) for in_tsv_file in in_tsv_files]
+    total = len(in_tsvs[0])
+    assert all(len(t) == total for t in in_tsvs[1:])
+    rows_each_rank = (total + num_process - 1) // num_process
+    all_task = []
+    for i in range(num_process):
+        start = i * rows_each_rank
+        end = start + rows_each_rank
+        end = min(end, total)
+        tmp_out = out_tsv_file + '.{}.{}.tsv'.format(i, num_process)
+        all_task.append((row_processor, in_tsv_files,
+                tmp_out, list(range(start, end))))
+    from qd.qd_common import parallel_map
+    parallel_map(multi_tsv_subset_process, all_task,
+            num_worker=num_process)
+    all_out = [out for _, _, out, _ in all_task]
+    concat_tsv_files(all_out, out_tsv_file)
+    delete_tsv_files(all_out)
 
 def parallel_tsv_process(row_processor, in_tsv_file,
         out_tsv_file, num_process):
@@ -5579,7 +5615,7 @@ def parallel_tsv_process(row_processor, in_tsv_file,
         all_task.append((row_processor, in_tsv_file,
                 tmp_out, list(range(start, end))))
     from qd.qd_common import parallel_map
-    parallel_map(parallel_task_process, all_task,
+    parallel_map(tsv_subset_process, all_task,
             num_worker=num_process)
     all_out = [out for _, _, out, _ in all_task]
     concat_tsv_files(all_out, out_tsv_file)

@@ -171,9 +171,9 @@ def wrap_all(code_zip, code_root,
         # set up the code, models, output under qd
         logging.info('unzipping {}'.format(code_zip))
         unzip(code_zip, code_root)
-        cmd_run(['rm', 'data'], code_root)
-        cmd_run(['rm', 'models'], code_root)
-        cmd_run(['rm', 'output'], code_root)
+        cmd_run(['rm', '-rf', 'data'], code_root)
+        cmd_run(['rm', '-rf', 'models'], code_root)
+        cmd_run(['rm', '-rf', 'output'], code_root)
         cmd_run(['ln', '-s',
             data_folder,
             op.join(code_root, 'data')])

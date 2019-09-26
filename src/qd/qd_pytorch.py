@@ -759,7 +759,9 @@ def get_acc_for_plot(eval_file):
         raise NotImplementedError()
 
 def calc_neg_aware_gmap(data, split, predict_file,
-        apply_nms_det=False, expand_label_det=False, apply_nms_gt=False):
+        apply_nms_det=False,
+        expand_label_det=False,
+        apply_nms_gt=False):
     from qd.evaluate.evaluate_openimages_google import evaluate
     dataset = TSVDataset(data)
     truths = dataset.get_data(split, 'label')

@@ -208,7 +208,7 @@ def draw_bb(im, all_rect, all_label,
 
 def save_image(im, file_name):
     ensure_directory(os.path.dirname(file_name))
-    cv2.imwrite(file_name, im)
+    return cv2.imwrite(file_name, im)
 
 def load_image(file_name):
     return cv2.imread(file_name)

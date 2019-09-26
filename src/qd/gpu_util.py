@@ -4,7 +4,7 @@ import sys
 import psutil
 import re
 import logging
-from qd.remote_run import cmd_run, remote_run, collect_process_info
+from qd.qd_common import cmd_run, remote_run, collect_process_info
 from qd.qd_common import init_logging
 from qd.qd_common import try_once
 

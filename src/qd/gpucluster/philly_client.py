@@ -308,7 +308,10 @@ class PhillyVC(object):
         self.random_id = random_id
 
         random_qd = 'quickdetection{}'.format(random_id)
-        random_abs_qd = op.join('/tmp', '{}.zip'.format(random_qd))
+        from qd.qd_common import get_user_name
+        random_abs_qd = op.join('/tmp', '{}_philly_{}.zip'.format(
+            get_user_name(),
+            random_qd))
         logging.info('{}'.format(random_qd))
         from qd.qd_common import zip_qd
         if op.isfile(random_abs_qd):

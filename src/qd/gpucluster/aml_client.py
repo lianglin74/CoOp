@@ -9,6 +9,7 @@ from qd.qd_common import decode_general_cmd
 from qd.qd_common import ensure_directory
 from qd.qd_common import try_once
 from qd.cloud_storage import create_cloud_storage
+import copy
 
 
 def create_aml_client(**kwargs):
@@ -543,12 +544,61 @@ def monitor():
                                     'retried': retried},
                            '$unset': {'portal_url': ''}})
 
+# some user might not use the mongodb and we will not crash here
+@try_once
+def search_partial_id_from_db(partial_id):
+    from qd.db import create_annotation_db
+    c = create_annotation_db()
+    found = list(c.iter_phillyjob(appID={'$regex': '.*{}'.format(partial_id)}))
+    if len(found) == 0 or len(found) > 1:
+        return None
+    else:
+        return {
+                'cluster': found[0]['cluster'],
+                'appID': found[0]['appID'],
+                }
+
+class MultiAMLClient(object):
+    def __init__(self, **kwargs):
+        self.kwargs = copy.deepcopy(kwargs)
+        self.cluster_to_client = {}
+        self._default_client = None
+
+    def default_client(self):
+        if self._default_client is None:
+            self._default_client = create_aml_client(**self.kwargs)
+
+    def search_partial_id(self, partial_id):
+        search_result = search_partial_id_from_db(partial_id)
+        if search_result is None:
+            client = self.default_client
+            appID = partial_id
+        else:
+            cluster, appID = search_result['cluster'], search_result['appID']
+            if cluster in self.cluster_to_client:
+                client = self.cluster_to_client[cluster]
+            else:
+                param = copy.deepcopy(self.kwargs)
+                param['cluster'] = cluster
+                client = create_aml_client(**param)
+                self.cluster_to_client[cluster] = client
+        return client, appID
+
+    def abort(self, partial_id):
+        client, partial_id = self.search_partial_id(partial_id)
+        client.abort(partial_id)
+
+    def query(self, partial_id, **kwargs):
+        client, partial_id = self.search_partial_id(partial_id)
+        client.query(partial_id, **kwargs)
+
+
 def execute(task_type, **kwargs):
     if task_type in ['q', 'query']:
         if len(kwargs.get('remainders', [])) > 0:
             assert len(kwargs['remainders']) == 1
-            c = create_aml_client(**kwargs)
-            c.query(run_id=kwargs['remainders'][0])
+            c = MultiAMLClient(**kwargs)
+            c.query(partial_id=kwargs['remainders'][0])
         else:
             c = create_aml_client(**kwargs)
             c.query(max_runs=kwargs.get('max', None))
@@ -575,7 +625,7 @@ def execute(task_type, **kwargs):
         cmd = ' '.join(params)
         c.submit(cmd)
     elif task_type in ['a', 'abort']:
-        c = create_aml_client(**kwargs)
+        c = MultiAMLClient(**kwargs)
         for v in kwargs['remainders']:
             v = v.strip('/')
             c.abort(v)
