@@ -10,6 +10,35 @@ import time
 import logging
 
 
+def load_truths_label(tsv_file, imagelabel_tsv_file, all_idx, label):
+    tsv = TSVFile(tsv_file)
+    imagelabel_tsv = TSVFile(imagelabel_tsv_file)
+    key_to_info = {}
+    for idx in all_idx:
+        row = tsv.seek(idx)
+        key = row[0]
+        imagelabel_key, str_imagelabel = imagelabel_tsv.seek(idx)
+        assert imagelabel_key == row[0]
+        img_label = json.loads(str_imagelabel)
+        box_label = json.loads(row[1])
+        if img_label==[] and box_label==[]:
+            continue
+        for obj in img_label:
+            if obj['conf'] == 0:  # negative labels
+                if obj['class'] != label:
+                    continue
+                if key not in key_to_info:
+                    key_to_info[key] = -1
+                else:
+                    assert key_to_info[key] == -1
+        for obj in box_label:
+            if obj['class'] != label:
+                continue
+            if key not in key_to_info:
+                key_to_info[key] = []
+            key_to_info[key].append((int(obj['IsGroupOf']), obj['rect']))
+    return key_to_info
+
 def load_truths(tsv_file, imagelabel_tsv_file, shuf_file=None):
     """ Load ground-truth annotations in both image-level and box-level.
     Args:
@@ -66,6 +95,24 @@ def load_truths(tsv_file, imagelabel_tsv_file, shuf_file=None):
             gt_dict[label][key] += [(int(obj['IsGroupOf']), obj['rect'])]
     return gt_dict
 
+def load_dets_label(tsv_file, all_idx, label):
+    key_to_info = {}
+    from tqdm import tqdm
+    tsv = TSVFile(tsv_file)
+    for i in tqdm(all_idx):
+        row = tsv[i]
+        key = row[0]
+        rects = json.loads(row[1])
+        for obj in rects:
+            if obj['class'] != label:
+                continue
+            if is_valid_rect(obj['rect']):
+                if key not in key_to_info:
+                    key_to_info[key] = []
+                key_to_info[key].append((obj['conf'], obj['rect']))
+    for key in key_to_info:
+        key_to_info[key] = sorted(key_to_info[key], key=lambda x:-x[0])
+    return key_to_info
 
 def load_dets(tsv_file, truths):
     """ Load detection results.
@@ -85,7 +132,8 @@ def load_dets(tsv_file, truths):
                  and it is sorted by confidence (high to low).
     """
     det_dict = {cls:{} for cls in truths}
-    for i, row in enumerate(tsv_reader(tsv_file)):
+    from tqdm import tqdm
+    for i, row in tqdm(enumerate(tsv_reader(tsv_file))):
         key = row[0]
         rects = json.loads(row[1])
         for obj in rects:
@@ -266,6 +314,123 @@ def compute_average_precision(precision, recall):
     ap = np.sum((rec[indices] - rec[indices - 1]) * prec[indices])
     return ap
 
+def parallel_processor(task):
+    label = task['label']
+    label_order = task['label_order']
+    pred_file = task['pred_file']
+    inverted_file = task['inverted_file']
+    truths = task['truths']
+    imagelabel_truths = task['imagelabel_truths']
+    overlap_threshold = task['overlap_threshold']
+    count_group_of = task['count_group_of']
+
+    label_, str_idx = TSVFile(inverted_file)[label_order]
+    assert label == label_
+    all_idx = list(map(int, str_idx.split(' ')))
+
+    c_truths = load_truths_label(truths, imagelabel_truths, all_idx,
+            label)
+    c_dets = load_dets_label(pred_file, all_idx, label)
+
+    scores, tp_fp_labels, num_gt = eval_per_class(c_dets, c_truths, overlap_threshold, count_group_of)
+
+    if scores and num_gt:
+        scores = np.concatenate(scores)
+        tp_fp_labels = np.concatenate(tp_fp_labels)
+        precision, recall = compute_precision_recall(scores, tp_fp_labels, num_gt)
+        ap = compute_average_precision(precision, recall)
+    else:
+        ap = 0.0 # there are cases when num_gt = 0 and there are false positives.
+    return ap, num_gt
+
+def create_inverted_label_to_posneg(truths, imagelabel_truths,
+        inverted_file):
+    from collections import defaultdict
+    class_to_idx = defaultdict(list)
+    for i, (key, str_rects) in enumerate(tsv_reader(truths)):
+        rects = json.loads(str_rects)
+        for c in set([r['class'] for r in rects]):
+            class_to_idx[c].append(i)
+
+    for i, (key, str_rects) in enumerate(tsv_reader(imagelabel_truths)):
+        rects = json.loads(str_rects)
+        for c in set([r['class'] for r in rects if r['conf'] == 0]):
+            class_to_idx[c].append(i)
+    from qd.tsv_io import tsv_writer
+    tsv_writer(((c, ' '.join(map(str, idx))) for c, idx in
+        class_to_idx.items()), inverted_file)
+
+def parallel_evaluate(truths, imagelabel_truths, dets, shuf_file=None, expand_label_gt=False, expand_label_det=False, apply_nms_gt=False, apply_nms_det=False,
+             json_hierarchy_file=None, count_group_of=True, overlap_threshold=0.5, save_file=None):
+    if expand_label_gt:
+        assert json_hierarchy_file is not None, "need json hierarchy file for label expansion"
+        if not apply_nms_gt:
+            new_file = op.splitext(truths)[0] + '.expanded.tsv'
+            new_imagelevel_truths = op.splitext(imagelabel_truths)[0] + '.expanded.tsv'
+        else:
+            new_file = op.splitext(truths)[0] + '.expanded.nms.tsv'
+            new_imagelevel_truths = op.splitext(imagelabel_truths)[0] + '.expanded.nms.tsv'
+        if not (op.isfile(new_file) and op.isfile(new_imagelevel_truths)):
+            logging.info('expanding labels for ground-truth file and save to: ' + new_file)
+            expand_labels(truths, imagelabel_truths, json_hierarchy_file,
+                    new_file, new_imagelevel_truths, True, apply_nms_gt)
+        truths = new_file
+        imagelabel_truths = new_imagelevel_truths
+
+    if expand_label_det:
+        assert json_hierarchy_file is not None, "need json hierarchy file for label expansion"
+        if not apply_nms_det:
+            new_file = op.splitext(dets)[0] + '.expanded.tsv'
+        else:
+            new_file = op.splitext(dets)[0] + '.expanded.nms.tsv'
+        if not op.isfile(new_file):
+            logging.info('expanding labels for detection file and save to: ' + new_file)
+            expand_labels(dets, None, json_hierarchy_file, new_file,
+                    None, False, apply_nms_det)
+        dets = new_file
+
+    # create the inverted file
+    from qd.qd_common import hash_sha1
+    inverted_file = truths + '.inverted.{}'.format(hash_sha1(imagelabel_truths)) + '.tsv'
+    valid_labelmap = inverted_file + '.validlabel.tsv'
+    if not op.isfile(inverted_file):
+        create_inverted_label_to_posneg(truths, imagelabel_truths,
+                inverted_file)
+        from qd.qd_common import write_to_file
+        write_to_file('\n'.join([key for key, _ in tsv_reader(inverted_file)]),
+                valid_labelmap)
+
+    labelmap = load_list_file(valid_labelmap)
+    all_task = [{'label': l,
+                'label_order': i,
+                'truths': truths,
+                'imagelabel_truths': imagelabel_truths,
+                'pred_file': dets,
+                'inverted_file': inverted_file,
+                'count_group_of': count_group_of,
+                'overlap_threshold': overlap_threshold,
+                }
+            for i, l in enumerate(labelmap)]
+
+    from qd.qd_common import parallel_map
+    all_result = parallel_map(parallel_processor, all_task, num_worker=200,
+            isDebug=False)
+
+    class_ap = {}
+    class_num_gt = {}
+    for task, (ap, num_gt) in zip(all_task, all_result):
+        label = task['label']
+        class_ap[label] = ap
+        class_num_gt[label] = num_gt
+        logging.info('{} = {}'.format(label, ap))
+
+    mean_ap = sum([class_ap[cls] for cls in class_ap]) / len(class_ap)
+    total_gt = sum([class_num_gt[cls] for cls in class_num_gt])
+
+    return {'class_ap': class_ap,
+            'map': mean_ap,
+            'class_num_gt': class_num_gt,
+            'total_gt': total_gt}
 
 def evaluate(truths, imagelabel_truths, dets, shuf_file=None, expand_label_gt=False, expand_label_det=False, apply_nms_gt=False, apply_nms_det=False,
              json_hierarchy_file=None, count_group_of=True, overlap_threshold=0.5, save_file=None):
