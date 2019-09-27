@@ -19,10 +19,11 @@ import sys
 #Some parms not in classes:
 eventWindowToleranceInEvaluation = 0.5
 
-def setDebug(frame): 
-    return False
-    #return frame > 14230 and frame < 14301
-    #return frame > 300 and frame < 525
+def setDebug(frame):
+    if 0:
+        return frame > 2328 and frame < 2418
+    else:
+        return False    
 
 class Trajectory(object):
     def __init__(self, frameRate, debug, videoFile):
@@ -51,7 +52,8 @@ class Trajectory(object):
         self.personRimHeightConditionLoose = True        
         
         # To solve the problem in case: Case "RimNotGood_1"
-        self.enlargeRatio = 1.5
+        self.ballEnlargeRatioForRim = 1.5
+        self.ballEnlargeRatioForPreson = 1.1
 
         # for debugging purpose
         self.printMissingBallFrames = False
@@ -71,7 +73,7 @@ class Trajectory(object):
         self.frameTraj.append(frame)
         # calculate IOA between ball and rim (for shot detection)
         if objectExists(ballRects) and objectExists(rimRects):
-            iou = maxIOAOnebb_in_list_of_bb(ballRects[0], rimRects, self.enlargeRatio)
+            iou = maxIOAOnebb_in_list_of_bb(ballRects[0], rimRects, self.ballEnlargeRatioForRim)
         else:
             iou = 0.0
 
@@ -175,6 +177,9 @@ class Trajectory(object):
         i = maxIouIndex        
         while i >= 0:
             if objectExists(self.ballTraj[i]) and objectExists(self.rimTraj[i]) and self.ballTraj[i][0]['rect'][1] < self.rimTraj[i][0]['rect'][1]:
+                if self.debug:
+                    print("conditionBallOverRim return true")
+                
                 return True
             i -= 1
         return False
@@ -191,6 +196,10 @@ class Trajectory(object):
             ballCenter = getCenterOfObject(ballRects[0])
             centerOfRim = getCenterOfObject(rimRects[0])
             angleRimToBall = getDegreeOfTwoPoints(centerOfRim, ballCenter)
+            if self.debug:
+                print("angleRimToBall:", angleRimToBall)
+                print("abs(angleRimToBall - 90): ", abs(angleRimToBall - 90))
+
             if abs(angleRimToBall - 90) < self.angleRimToBallThresh:
                 return True
             else:
@@ -205,6 +214,8 @@ class Trajectory(object):
         ballSize = getWidthOfObject(ballRects[0])
         
         if abs(ballCenter[0] - centerOfRim[0]) < self.ballRimLateralDistanceThresh * ballSize:
+            if self.debug:
+                print("necessaryCondition1 return true")
             return True
         else:
             return False
@@ -588,7 +599,7 @@ class EventDetector(object):
 
                 personRect = r['rect']
 
-                if calculateIOA(ballRects[0]['rect'], personRect, enlargeRatio = 1.1) > self.ballPersonIouThresh:
+                if calculateIOA(ballRects[0]['rect'], personRect, enlargeRatio = self.ballEnlargeRatioForPreson) > self.ballPersonIouThresh:
                     if debug:                 
                         print("Frame:", self.imageCnt, "; Finding a person holding ball:", r)
                         print(ballRects)
@@ -636,13 +647,15 @@ def test_getClosestRects():
         #center: 50, 50; 180, 180
     print(getClosestRects(ballRects, rimRects))
 
-# Given two rectangles, rect0 is smaller. Check the ratio of intersection of rect0 and rect1 to area of rect0
-def calculateIOA(rect0, rect1, enlargeRatio = 1.0):
+# Given two rectangles, mainRect is smaller. Check the ratio of intersection of mainRect and rect1 to area of mainRect
+def calculateIOA(mainRect, rect1, enlargeRatio = 1.0):
     '''
     x0, y1, x2, y3
     '''
     if enlargeRatio > 1.0:
-        rect0 = enlargeRect(rect0, enlargeRatio)
+        rect0 = enlargeRect(mainRect, enlargeRatio)
+    else:
+        rect0 = mainRect
 
     w = min(rect0[2], rect1[2]) - max(rect0[0], rect1[0])
     if w < 0:
