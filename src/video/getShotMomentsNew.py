@@ -345,7 +345,7 @@ class EventDetector(object):
         self.distanceBallToRimThresh = 3
 
         # for dunk: 
-        self.ballPersonIouThresh = 0.2
+        self.ballPersonIouThresh = 0.0
         self.personThresh = 0.2
 
         # initialize
@@ -588,7 +588,7 @@ class EventDetector(object):
 
                 personRect = r['rect']
 
-                if calculateIOA(ballRects[0]['rect'], personRect) > self.ballPersonIouThresh:
+                if calculateIOA(ballRects[0]['rect'], personRect, enlargeRatio = 1.1) > self.ballPersonIouThresh:
                     if debug:                 
                         print("Frame:", self.imageCnt, "; Finding a person holding ball:", r)
                         print(ballRects)
