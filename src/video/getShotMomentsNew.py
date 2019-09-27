@@ -85,14 +85,19 @@ class Trajectory(object):
 
     def getDunkFrame(self, ioaIndex):
         #dunkFrameList = []
-        for rimRects, personRects, frame in zip(self.rimTraj[:ioaIndex+1], self.personTraj[:ioaIndex+1], self.frameTraj[:ioaIndex+1]):
+        l = len(self.frameTraj)
+        frameWindow = int(self.dunkTimeWindow/2.0 * self.frameRate)
+        i = min(ioaIndex + frameWindow, l - 1)
+        lowerLimit = max(ioaIndex - frameWindow, 0)
+        while i >= lowerLimit:
+            rimRects, personRects, frame = (self.rimTraj[i], self.personTraj[i], self.frameTraj[i])
             if objectExists(rimRects) and objectExists(personRects):
                 personRect = personRects[0]['rect']
                 rimRect = rimRects[0]['rect']
                 if getHeightOfRect(personRect) > self.personHeightToRimRatio * getHeightOfRect(rimRect) \
                   and isAbove((personRect[0], personRect[1]), (rimRect[2], rimRect[3]) if self.personRimHeightConditionLoose else (rimRect[0], rimRect[1])):
                     return True, frame
-        
+            i -= 1
         return False, 0
 
     def analyze(self):
@@ -157,8 +162,8 @@ class Trajectory(object):
         if ret:
             dunkTime = dunkFrame / self.frameRate
             print("Finding a possible dunk at frame: ", dunkFrame, "; time: ", dunkTime)            
-            if abs(dunkTime - self.ioaTime) < self.dunkTimeWindow:
-                eventType = "dunk"
+            #if abs(dunkTime - self.ioaTime) < self.dunkTimeWindow:
+            eventType = "dunk"
 
         # output the frames of the first missing ball
         if self.printMissingBallFrames and shot:
