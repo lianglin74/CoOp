@@ -52,8 +52,7 @@ class Trajectory(object):
         self.personRimHeightConditionLoose = True        
         
         # To solve the problem in case: Case "RimNotGood_1"
-        self.ballEnlargeRatioForRim = 1.5
-        self.ballEnlargeRatioForPreson = 1.1
+        self.ballEnlargeRatioForRim = 1.5        
 
         # for debugging purpose
         self.printMissingBallFrames = False
@@ -84,9 +83,9 @@ class Trajectory(object):
 
         return iou
 
-    def getDunkFrame(self, maxIouIndex):
+    def getDunkFrame(self, ioaIndex):
         #dunkFrameList = []
-        for rimRects, personRects, frame in zip(self.rimTraj[:maxIouIndex+1], self.personTraj[:maxIouIndex+1], self.frameTraj[:maxIouIndex+1]):
+        for rimRects, personRects, frame in zip(self.rimTraj[:ioaIndex+1], self.personTraj[:ioaIndex+1], self.frameTraj[:ioaIndex+1]):
             if objectExists(rimRects) and objectExists(personRects):
                 personRect = personRects[0]['rect']
                 rimRect = rimRects[0]['rect']
@@ -104,13 +103,20 @@ class Trajectory(object):
         # If no IOU, then return False
         shot = False
         startTime = float(self.frameTraj[0]) / self.frameRate
-        endTime = float(self.frameTraj[-1]) / self.frameRate
+        endTime = float(self.frameTraj[-1]) / self.frameRate        
         eventType = "shot"
+        ioaTime = "N/A"
+        speed = "N/A"
         reason = "N/A"
 
         # check iou
-        maxIouIndex, maxIouValue = maxIndexVal(self.iouTraj)
-        self.ioaTime = float(self.frameTraj[maxIouIndex]) / self.frameRate
+        ioaIndex = findLastIndex(self.iouTraj, condition = lambda v : v > self.iouLowThresh)
+        if ioaIndex is None:
+            return shot, startTime, endTime, eventType, ioaTime, speed, reason
+            
+        ioaValue = self.iouTraj[ioaIndex]
+        #ioaIndex, ioaValue = maxIndexVal(self.iouTraj)
+        self.ioaTime = float(self.frameTraj[ioaIndex]) / self.frameRate
 
         # add padding time
         # case WrongBasketball_1:
@@ -132,22 +138,22 @@ class Trajectory(object):
             endTime = min(endTime, self.ioaTime + self.largestEventWindow / 2.0)
             startTime = startTime = max(startTime, self.ioaTime - self.largestEventWindow / 2.0)
 
-        if maxIouValue > self.iouHighThresh and self.necessaryCondition1(maxIouIndex):
+        if ioaValue > self.iouHighThresh and self.necessaryCondition1(ioaIndex):
             shot = True
             reason = 'highIou'
-        elif maxIouValue > self.iouLowThresh:
+        elif ioaValue > self.iouLowThresh:
             # check the necessary condition of shot: ball is lower than rim and within a cone
-            if self.necessaryCondition2(maxIouIndex):
+            if self.necessaryCondition2(ioaIndex):
                 if self.highRecall:                
                     shot = True
                     reason = 'HighRecall'
                 else:
-                    if self.extraConditions(maxIouIndex) and self.conditionBallOverRim(maxIouIndex):
+                    if self.extraConditions(ioaIndex) and self.conditionBallOverRim(ioaIndex):
                         shot = True
                         reason = 'extraCond'
 
         # get the most likely dunk person (for dunk detection)
-        ret, dunkFrame = self.getDunkFrame(maxIouIndex)
+        ret, dunkFrame = self.getDunkFrame(ioaIndex)
         if ret:
             dunkTime = dunkFrame / self.frameRate
             print("Finding a possible dunk at frame: ", dunkFrame, "; time: ", dunkTime)            
@@ -173,8 +179,8 @@ class Trajectory(object):
                     print("Missing ball at frame: ", self.frameTraj[i], "Time: ", self.frameTraj[i]/self.frameRate, "Previous frame: rect: ", self.ballTraj[i  - 1][0]['rect'], 'conf: ', ballRects[0]['conf'])
                     return
 
-    def conditionBallOverRim(self, maxIouIndex):
-        i = maxIouIndex        
+    def conditionBallOverRim(self, ioaIndex):
+        i = ioaIndex        
         while i >= 0:
             if objectExists(self.ballTraj[i]) and objectExists(self.rimTraj[i]) and self.ballTraj[i][0]['rect'][1] < self.rimTraj[i][0]['rect'][1]:
                 if self.debug:
@@ -184,10 +190,10 @@ class Trajectory(object):
             i -= 1
         return False
 
-    def extraConditions(self, maxIouIndex):
+    def extraConditions(self, ioaIndex):
         l = len(self.ballTraj)
 
-        ballIndex = self.findFirstBallPositionLowerThanRim(maxIouIndex)
+        ballIndex = self.findFirstBallPositionLowerThanRim(ioaIndex)
         if ballIndex is None:
             return False
         else:
@@ -205,9 +211,9 @@ class Trajectory(object):
             else:
                 return False
 
-    def necessaryCondition1(self, maxIouIndex):
-        ballRects = self.ballTraj[maxIouIndex]
-        rimRects = self.rimTraj[maxIouIndex]
+    def necessaryCondition1(self, ioaIndex):
+        ballRects = self.ballTraj[ioaIndex]
+        rimRects = self.rimTraj[ioaIndex]
 
         ballCenter = getCenterOfObject(ballRects[0])
         centerOfRim = getCenterOfObject(rimRects[0])
@@ -220,7 +226,7 @@ class Trajectory(object):
         else:
             return False
 
-    def necessaryCondition2(self, maxIouIndex):
+    def necessaryCondition2(self, ioaIndex):
         return True
 
     def findFirstBallPositionLowerThanRim(self, ioaIndex, usingDetectedBalls = False):
@@ -334,11 +340,18 @@ def maxIndexVal(values):
     max_index, max_value = max(enumerate(values), key=lambda p: p[1])
     return max_index, max_value
 
-
 def minIndexVal(values):
     min_index, min_value = min(enumerate(values), key=lambda p: p[1])
     return min_index, min_value
 
+def findLastIndex(myList, condition):
+    l = len(myList)
+    i = l - 1
+    while i >= 0:
+        if condition(myList[i]):
+            return i
+        i -= 1
+    return None
 
 class EventDetector(object):
     # Initializer / Instance attributes
@@ -358,6 +371,7 @@ class EventDetector(object):
         # for dunk: 
         self.ballPersonIouThresh = 0.0
         self.personThresh = 0.2
+        self.ballEnlargeRatioForPreson = 1.1
 
         # initialize
         self.odTSVFile = odTSVFile
