@@ -50,6 +50,7 @@ class Trajectory(object):
         self.personHeightToRimRatio = 2.0
         self.dunkTimeWindow = 3.0
         self.personRimHeightConditionLoose = True        
+        self.dunkFrameLimit = 2
         
         # To solve the problem in case: Case "RimNotGood_1"
         self.ballEnlargeRatioForRim = 1.5        
@@ -83,8 +84,8 @@ class Trajectory(object):
 
         return iou
 
-    def getDunkFrame(self, ioaIndex):
-        #dunkFrameList = []
+    def getDunkFrameList(self, ioaIndex):
+        dunkFrameList = []
         l = len(self.frameTraj)
         frameWindow = int(self.dunkTimeWindow/2.0 * self.frameRate)
         upperLimit = min(ioaIndex + 1, l - 1)
@@ -97,9 +98,10 @@ class Trajectory(object):
                 rimRect = rimRects[0]['rect']
                 if getHeightOfRect(personRect) > self.personHeightToRimRatio * getHeightOfRect(rimRect) \
                   and isAbove((personRect[0], personRect[1]), (rimRect[2], rimRect[3]) if self.personRimHeightConditionLoose else (rimRect[0], rimRect[1])):
-                    return True, frame
+                    dunkFrameList.append(frame)
             i -= 1
-        return False, 0
+        
+        return dunkFrameList
 
     def analyze(self):
         # filtering wrong object detection
@@ -159,10 +161,10 @@ class Trajectory(object):
                         reason = 'extraCond'
 
         # get the most likely dunk person (for dunk detection)
-        ret, dunkFrame = self.getDunkFrame(ioaIndex)
-        if ret:
-            dunkTime = dunkFrame / self.frameRate
-            print("Finding a possible dunk at frame: ", dunkFrame, "; time: ", dunkTime)            
+        dunkFrameList = self.getDunkFrameList(ioaIndex)
+        if len(dunkFrameList) >= self.dunkFrameLimit:
+            dunkTime = dunkFrameList[-1] / self.frameRate
+            print("Finding a possible dunk at frame: ", dunkFrameList[-1], "; time: ", dunkTime)            
             #if abs(dunkTime - self.ioaTime) < self.dunkTimeWindow:
             eventType = "dunk"
 
