@@ -87,7 +87,7 @@ class Trajectory(object):
         #dunkFrameList = []
         l = len(self.frameTraj)
         frameWindow = int(self.dunkTimeWindow/2.0 * self.frameRate)
-        upperLimit = min(ioaIndex + frameWindow, l - 1)
+        upperLimit = min(ioaIndex + 1, l - 1)
         lowerLimit = max(ioaIndex - frameWindow, 0)
         i = upperLimit
         while i >= lowerLimit:
