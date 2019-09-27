@@ -35,7 +35,7 @@ class Trajectory(object):
         self.shotDetectWindow = 2.0 #at least >=2.0
         self.largestEventWindow = 4.0
         self.wideEventWindow = True
-        self.angleRimToBallThresh = 45.0
+        self.angleRimToBallThresh = 60.0
         self.ballAboveRimThresh = 0.0
         self.eventPadding = 1.0
         
@@ -1140,13 +1140,13 @@ def confusionMatrixReport(y_pred, y_pred_pointer, y_true, y_true_pointer):
     for i in range(K):
         for j in range(K):
             if i != j and len(cfMatrix[i][j]) > 0:
-                print("--", i, j, ": predict ", classes[i], " as ", classes[j], ": ", len(cfMatrix[i][j]), ";  ".join(str(x) for x in cfMatrix[i][j]))
+                print("--", i, j, ": predict", classes[i], "as", classes[j], ": ", len(cfMatrix[i][j]), ";  ".join(str(x) for x in cfMatrix[i][j]))
     
     print("\n----Correct predictions:")
     for i in range(K):
         for j in range(K):
             if i == j:
-                print("--", i, j, ": predict ", classes[i], " as ", classes[j], ": ", len(cfMatrix[i][j]), ";  ".join(str(x) for x in cfMatrix[i][j]))
+                print("--", i, j, ": predict", classes[i], "as", classes[j], ": ", len(cfMatrix[i][j]), ";  ".join(str(x) for x in cfMatrix[i][j]))
 
     print("\n")
     return cfMatrix
