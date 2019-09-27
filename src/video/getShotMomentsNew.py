@@ -82,9 +82,9 @@ class Trajectory(object):
 
         return iou
 
-    def getDunkFrame(self):
+    def getDunkFrame(self, maxIouIndex):
         #dunkFrameList = []
-        for rimRects, personRects, frame in zip(self.rimTraj, self.personTraj, self.frameTraj):
+        for rimRects, personRects, frame in zip(self.rimTraj[:maxIouIndex+1], self.personTraj[:maxIouIndex+1], self.frameTraj[:maxIouIndex+1]):
             if objectExists(rimRects) and objectExists(personRects):
                 personRect = personRects[0]['rect']
                 rimRect = rimRects[0]['rect']
@@ -145,7 +145,7 @@ class Trajectory(object):
                         reason = 'extraCond'
 
         # get the most likely dunk person (for dunk detection)
-        ret, dunkFrame = self.getDunkFrame()
+        ret, dunkFrame = self.getDunkFrame(maxIouIndex)
         if ret:
             dunkTime = dunkFrame / self.frameRate
             print("Finding a possible dunk at frame: ", dunkFrame, "; time: ", dunkTime)            
