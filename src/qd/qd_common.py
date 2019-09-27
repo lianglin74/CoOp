@@ -624,8 +624,8 @@ def normalize_to_str(s):
 def query_wiki_info(query_term):
     query_term = '{} site:en.wikipedia.org'.format(query_term)
     rls = limited_retry_agent(10, scrape_bing_general_rich, query_term, 1)
-    if rls is None:
-        return
+    if not rls:
+        return {'query_term': query_term}
     rl = rls[0]
     n_title = normalize_to_str(rl['title'])
     result = re.match('(.*) - Wikipedia', n_title)
@@ -639,7 +639,8 @@ def query_wiki_info(query_term):
             'wiki_tile': rl['title'],
             'norm_wiki_title': normalize_to_str(rl['title']),
             'wiki_url': rl['url']}
-    logging.info(pformat(result))
+    #logging.info(pformat(result))
+    return result
 
 def scrape_bing_general_rich(query_term, depth):
     '''
