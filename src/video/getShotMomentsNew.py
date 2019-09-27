@@ -48,7 +48,7 @@ class Trajectory(object):
         # for dunk
         self.rimPersonIoaThresh = 0.05
         self.personHeightToRimRatio = 2.0
-        self.dunkTimeWindow = 1.0
+        self.dunkTimeWindow = 3.0
         self.personRimHeightConditionLoose = True        
         
         # To solve the problem in case: Case "RimNotGood_1"
@@ -87,8 +87,9 @@ class Trajectory(object):
         #dunkFrameList = []
         l = len(self.frameTraj)
         frameWindow = int(self.dunkTimeWindow/2.0 * self.frameRate)
-        i = min(ioaIndex + frameWindow, l - 1)
+        upperLimit = min(ioaIndex + frameWindow, l - 1)
         lowerLimit = max(ioaIndex - frameWindow, 0)
+        i = upperLimit
         while i >= lowerLimit:
             rimRects, personRects, frame = (self.rimTraj[i], self.personTraj[i], self.frameTraj[i])
             if objectExists(rimRects) and objectExists(personRects):
