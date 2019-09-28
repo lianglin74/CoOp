@@ -10,6 +10,43 @@ import time
 import logging
 
 
+def parallel_oi5c_to_submit_csv(pred_tsv, submit_csv, num_decimal=4,
+        min_conf=0.):
+    from qd.tsv_io import TSVDataset
+    dataset = TSVDataset('OpenImageV5C')
+    name_to_cid = {name: cid for cid, name in tsv_reader(op.join(dataset._data_root,
+        'cid_to_name.tsv'))}
+    name_to_cid['Studio couch'] = name_to_cid['studio couch']
+    hw_tsv = dataset.get_data('test', t='hw')
+    from qd.process_tsv import parallel_multi_tsv_process
+    parallel_multi_tsv_process(lambda x: oi5c_to_submit_csv_row_processor(x,
+                                        num_decimal=num_decimal,
+                                        name_to_cid=name_to_cid,
+                                        min_conf=min_conf),
+                                [pred_tsv, hw_tsv],
+                                submit_csv,
+                                num_process=200,
+                                out_sep=',',
+                                head=('ImageId', 'PredictionString'))
+
+def oi5c_to_submit_csv_row_processor(row, num_decimal, name_to_cid, min_conf=0.):
+    (key, str_rects), (key_hw, str_hw) = row
+    rects = json.loads(str_rects)
+    h, w = map(float, str_hw.split(' '))
+    float_pattern = '{:.' + str(num_decimal) + 'f}'
+    pred = []
+    for r in rects:
+        if r['conf'] < min_conf:
+            continue
+        pred.append(name_to_cid[r['class']])
+        pred.append(float_pattern.format(r['conf']))
+        x1, y1, x2, y2 = r['rect']
+        pred.extend([float_pattern.format(x1 / w),
+            float_pattern.format(y1 / h),
+            float_pattern.format(x2 / w),
+            float_pattern.format(y2 / h)])
+    return key, ' '.join(pred)
+
 def load_truths_label(tsv_file, imagelabel_tsv_file, all_idx, label):
     tsv = TSVFile(tsv_file)
     imagelabel_tsv = TSVFile(imagelabel_tsv_file)
