@@ -6,7 +6,13 @@ from qd import tsv_io
 from qd.tsv_io import tsv_reader
 import sys
 
-def preReadFrames(cap, numSeconds, startSecond, fps, robustMode = 0):
+skipSmallRectParm = 0
+skipPersonsParm = 0
+filterPersonsParm = 1
+
+robustModeParm = 1
+
+def preReadFrames(cap, numSeconds, startSecond, fps, robustMode = robustModeParm):
     startFrameIndex = int (fps * startSecond)
     if robustMode:
         print("Slow: using robust mode...")
@@ -109,7 +115,7 @@ def showFramesWithLabels(topDir, labelFileName, video_name, startSecond, endSeco
         #  print(labels)
         #  print(skipRects(labels))
 
-        frame = drawLabel(orgFrame, skipRects(labels), skipPersons = 0, filterPersons = 1)
+        frame = drawLabel(orgFrame, labels, skipSmallRect = skipSmallRectParm, skipPersons = skipPersonsParm, filterPersons = filterPersonsParm)
         text = "Frame: " + str(i) + "; second: " + str(i / fps)
         frame = cv2.putText(frame, text, (int(0), int(60)),
                             cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 3)
@@ -119,7 +125,11 @@ def showFramesWithLabels(topDir, labelFileName, video_name, startSecond, endSeco
         if writeImage:
             cv2.imwrite(directory + 'frame_'+str(i)+'.jpg', frame)
 
-        cv2.imshow("withBox", frame)
+        #cv2.namedWindow("Image", cv2.WINDOW_AUTOSIZE);
+        height, width = frame.shape[:2]
+        cv2.namedWindow('Image', cv2.WINDOW_NORMAL)
+        cv2.resizeWindow('Image', width, height)
+        cv2.imshow("Image", frame)
 
         k = cv2.waitKeyEx(0)
         if k == 65361 or k == 2424832:  # left
@@ -163,9 +173,11 @@ def getFPS(cap):
 def areaOfRect(rect):
     return (rect[2] - rect[0]) * (rect[3] - rect[1])
 
-def drawLabel(image, labels, skipPersons = 1, filterPersons = 1):    
+def drawLabel(image, labels, skipSmallRect = 0, skipPersons = 1, filterPersons = 1):
+    if skipSmallRect:
+        labels = skipRects(labels)
     showLabel = True
-    confidenceThreshold = 0.4
+    confidenceThreshold = 0.1
     playersThreshold = 12
 
     # matlab RGB to opencv BRG
@@ -188,7 +200,7 @@ def drawLabel(image, labels, skipPersons = 1, filterPersons = 1):
         confidenceScore = v['conf']
         pos = (int(rect[2] + 3.0), int(rect[3] - 3.0))
         if (labelName == "backboard"):
-            pos = (int(rect[2] + 3.0), int(rect[1] - 3.0))
+            pos = (int(rect[2] + 3.0), int(rect[1] + 3.0))
         elif (labelName == "basketball"):
             pos = (int(rect[2] + 3.0), int(rect[1] + 15.0))
         elif (labelName == "person"):
@@ -196,6 +208,7 @@ def drawLabel(image, labels, skipPersons = 1, filterPersons = 1):
                 continue
             else:
                 countPlayers += 1
+                pos = (int(rect[2] + 3.0), int( (rect[1] + rect[3])/2.0))
 
         if 'conf' in v:
             conf = v['conf']
@@ -285,6 +298,13 @@ if __name__ == '__main__':
         labelFileName = sys.argv[2]
         video_name = sys.argv[3]
         startSecond = float(sys.argv[4]) 
+        showFramesWithLabels(topDir, labelFileName, video_name, startSecond)        
+    elif len(sys.argv) == 3:
+        fullLabelFileName = sys.argv[1]
+        startSecond = float(sys.argv[2])
+        topDir = os.path.dirname(fullLabelFileName) + "/"
+        labelFileName = os.path.basename(fullLabelFileName) 
+        video_name = labelFileName.replace('.tsv', '.mp4')
         showFramesWithLabels(topDir, labelFileName, video_name, startSecond)
     else:
         print("Missing arguments. Usage: python .\labelViewerForVideo.py <dir> <labelFileName> <videoFileName> <startTimeInSecond>")

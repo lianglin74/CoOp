@@ -2,6 +2,7 @@ import json
 from qd import tsv_io
 from qd.tsv_io import tsv_reader
 from video.labelViewerForVideo import getID2Labels, skipRects, areaOfRect
+from video.getShotMomentsNew import read_file_to_list
 import sys
 
 def genTSVForPersonDetection(topDir, video_name, tsv_images, tsv_labels, out_tsv):
@@ -24,6 +25,7 @@ def genTSVForPersonDetection(topDir, video_name, tsv_images, tsv_labels, out_tsv
 
         if not labelIndexStartingFromZero:
             print("The starting index from two TSVs are different! Exiting...")
+            exit()
         
         # get labels
         if imageId not in id2Labels:
@@ -75,7 +77,7 @@ def filterPersonLabel(labels):
 
     return filterLabels
 
-def main():
+def genTSV_forMiguTesting():
     topDir = "/mnt/gpu02_raid/data/video/CBA/CBA_demo_v3/"
     videoFileList = [ 'CBA1.mp4', 'CBA2.mp4', 'NBA1.mp4', 'NBA2.mp4' ]
 
@@ -90,14 +92,41 @@ def main():
 
         genTSVForPersonDetection(topDir, video_name, tsv_images, tsv_labels, out_tsv)
 
+def genTSV_forCBA_validation():
+    topDir = "/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/validation/extracted/extractPersonDetectionFrames/"
+    odFileList = "odFilelist.txt"
+    odFileList = read_file_to_list(topDir + odFileList)
+    videoFileList = [ v.replace(".tsv", ".mp4") for v in odFileList]
+
+    for video_name in videoFileList:
+        #video_name = "CBA1.mp4"
+        videoFileBase = video_name.replace(".mp4", "")
+        #tsv_images = "extracted_from_CBA1.tsv"
+        tsv_images = "extracted_from_" + videoFileBase + ".tsv"
+        tsv_labels = videoFileBase + "_people.tsv"
+
+        out_tsv = videoFileBase + "_player_for_vendor.tsv"
+
+        genTSVForPersonDetection(topDir, video_name, tsv_images, tsv_labels, out_tsv)
+
+def genTSV_forCBA_testing():
+    topDir = "/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/test/extracted/extractPersonDetectionFrames/"
+    odFileList = "odFilelist.txt"
+    odFileList = read_file_to_list(topDir + odFileList)
+    videoFileList = [ v.replace(".tsv", ".mp4") for v in odFileList]
+
+    for video_name in videoFileList:
+        #video_name = "CBA1.mp4"
+        videoFileBase = video_name.replace(".mp4", "")
+        #tsv_images = "extracted_from_CBA1.tsv"
+        tsv_images = "extracted_from_" + videoFileBase + ".tsv"
+        tsv_labels = videoFileBase + "_people.tsv"
+
+        out_tsv = videoFileBase + "_player_for_vendor.tsv"
+
+        genTSVForPersonDetection(topDir, video_name, tsv_images, tsv_labels, out_tsv)
+
 
 if __name__ == '__main__':
-    # generateCBA_2_part01()
-    if len(sys.argv) == 4:
-        tsv_file1 = sys.argv[1]
-        tsv_file2 = sys.argv[2]
-        out_tsv = sys.argv[3]
-
-        merge_by_key(tsv_file1, tsv_file2, out_tsv)
-    else:
-        main()
+    #genTSV_forCBA_validation()
+    genTSV_forCBA_testing()

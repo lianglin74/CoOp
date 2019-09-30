@@ -1,7 +1,8 @@
 import math
-import random
 import sys
-from video.getShotMoments import getShotAPI, getFrameRate, getEventLabelsFromText
+import random
+from video.getShotMoments import getShotAPI
+from video.getShotMomentsNew import getFrameRate, getEventLabelsFromText, getVideoAndEventLabels, read_file_to_list
 from video.generateTSVFromVideo import generateTSVByFrameList, getBaseFileName
 
 # get n random numbers in [lower, upper]
@@ -52,16 +53,21 @@ def randomGetFrameListFromVideoAroundEvents(folderName, videoFile, predictionLab
 # Number of events: 
 # CBA1: 44; # CBA2: 29;  400/69 = 6. 69*6=
 # NBA1: 16; # NBA2: 70; 400/86= 5. 
-def randomGetFrameListFromVideoAroundEvents_testing(folderName, videoFile, numFramesPerEvent = 6):
+# Using true events labeling. 
+def randomGetFrameListFromVideoAroundEvents_testing(folderName, videoFile, numFramesPerEvent = 5, textLabel = False):
     fullVideoFileName = folderName + "/"  + videoFile
 
-    textLabelFileFolder = '/mnt/gpu02_raid/data/video/CBA/CBA_demo_v3/shotDunkLabels/'
-    gtLabelFile = textLabelFileFolder + videoFile.replace('mp4', 'GTevents.txt')
+    print("--Processing file: ", fullVideoFileName)
 
-    fps = getFrameRate(fullVideoFileName)
-    
-    true_results = getEventLabelsFromText(gtLabelFile)
-    
+    if textLabel: 
+        textLabelFileFolder = '/mnt/gpu02_raid/data/video/CBA/CBA_demo_v3/shotDunkLabels/'
+        gtLabelFile = textLabelFileFolder + videoFile.replace('mp4', 'GTevents.txt')
+        true_results = getEventLabelsFromText(gtLabelFile)
+    else:
+        eventLabelJsonFile = '/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/test/extracted/label/Project_all_corrected_manual.aucvl'
+        ret, true_results = getVideoAndEventLabels(eventLabelJsonFile, videoFile)
+
+    fps = getFrameRate(fullVideoFileName)    
     numEvents =len(true_results)
 
     if numEvents == 0:
@@ -113,14 +119,36 @@ def writeFramesAroundEventsVideoList():
         frameList = randomGetFrameListFromVideoAroundEvents(folderName, videoFileName, predictionLabelFile)
         generateTSVByFrameList(folderName, videoFileName, frameList)
 
+
+########### Used to generate TSV for person detection results
 # 4 videos from Migu testing: 2 CBA, 2 NBA. 
 def writeFramesAroundEventsVideoList_testing():
     folderName = "/mnt/gpu02_raid/data/video/CBA/CBA_demo_v3/"
     videoFileList = [ 'CBA1.mp4', 'CBA2.mp4', 'NBA1.mp4', 'NBA2.mp4' ]
 
     for videoFileName in videoFileList:
-        predictionLabelFile =  getBaseFileName(videoFileName) + '.tsv'
-        frameList = randomGetFrameListFromVideoAroundEvents_testing(folderName, videoFileName, numFramesPerEvent = (6 if 'CBA' in videoFileName else 5)) 
+        frameList = randomGetFrameListFromVideoAroundEvents_testing(folderName, videoFileName, numFramesPerEvent = (6 if 'CBA' in videoFileName else 5), textLabel = True) 
+        generateTSVByFrameList(folderName, videoFileName, frameList)
+
+# 20 videos from validation/testing CBA video segments.  
+def writeFramesAroundEventsVideoList_validation():
+    folderName = "/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/validation/extracted/"
+    odFileList = "odFilelist.txt"
+    odFileList = read_file_to_list(folderName + odFileList)
+
+    for odFileName in odFileList:
+        videoFileName = odFileName.replace(".tsv", ".mp4")        
+        frameList = randomGetFrameListFromVideoAroundEvents_testing(folderName, videoFileName) 
+        generateTSVByFrameList(folderName, videoFileName, frameList)
+    
+def writeFramesAroundEventsVideoList_CBAtesting():
+    folderName = "/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/test/extracted/"    
+    odFileList = "odFilelist.txt"
+    odFileList = read_file_to_list(folderName + odFileList)
+
+    for odFileName in odFileList:
+        videoFileName = odFileName.replace(".tsv", ".mp4")        
+        frameList = randomGetFrameListFromVideoAroundEvents_testing(folderName, videoFileName) 
         generateTSVByFrameList(folderName, videoFileName, frameList)
 
 if __name__ == '__main__':
@@ -132,4 +160,7 @@ if __name__ == '__main__':
         writeFramesAroundEvents(folderName, videoFile, predictionLabelFile, totalFrames)
     else:
         #writeFramesAroundEventsVideoList()
-        writeFramesAroundEventsVideoList_testing()
+        #writeFramesAroundEventsVideoList_testing()
+        writeFramesAroundEventsVideoList_validation()
+        writeFramesAroundEventsVideoList_CBAtesting()
+

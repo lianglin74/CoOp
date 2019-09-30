@@ -1,9 +1,12 @@
 import json
+import os
 
 def getVideoAndEventLabels(jsonFile, videoFileName):
     ret = False
     labelList = []
 
+    if jsonFile is None or not os.path.exists(jsonFile):
+        return ret, labelList
     with open(jsonFile) as json_file:
         data = json.load(json_file)
         if "data" in data and videoFileName in data['data']:            

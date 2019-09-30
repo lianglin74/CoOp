@@ -17,7 +17,7 @@ import os
 import sys
 
 #Some parms not in classes:
-eventWindowToleranceInEvaluation = 0.5
+eventWindowToleranceInEvaluation = 1.0
 
 def setDebug(frame):
     if 0:
@@ -1279,7 +1279,7 @@ def main():
         writeToTSV(predict_file, pred_results)
 
 def calculateF1andWriteRes(odFileList, eventLabelJsonFile = "", textLabelFolder = ""):
-    usingNewAlg = True
+    usingNewAlg = 0
     # Used to write labels for GL autoML training
     writeAutoMLLabel = False
     # Used to extract video segments for 3D conv

@@ -11,6 +11,7 @@ import math
 import copy
 from video.getEventLabels import getVideoAndEventLabels, labelConverter
 from sklearn.metrics import classification_report,confusion_matrix
+import os
 
 
 def findShot(predict_file, frameRate=25.0):
@@ -120,7 +121,8 @@ def findShot(predict_file, frameRate=25.0):
         if addMissingRim and not rimExists and backboardExists and prevRimObj is not None:
             rimRects.append(prevRimObj)
             rimExists = True
-            print("Adding a rim rect: ", rimRects)
+            if debug:
+                print("Adding a rim rect: ", rimRects)
 
         if maxBasketRectIndex != -1:
             ballRects = rects[maxBasketRectIndex]
@@ -133,7 +135,8 @@ def findShot(predict_file, frameRate=25.0):
         if not ballExists and addMissingBall and eventStart and iouTime < startTime and len(prevBallObjs) >= 2:
             ballRects = predictBallRects(prevBallObjs, debug)
             ballExists = True
-            print("predict ball rects as: ", ballRects)
+            if debug:
+                print("predict ball rects as: ", ballRects)
 
         if rimExists and ballExists:
             assert ballRects['class'] == "basketball"
@@ -159,7 +162,7 @@ def findShot(predict_file, frameRate=25.0):
             if iou > rimBallIouLowerThresh:
                 currentTime = imageCnt/frameRate
                 iouTime = currentTime
-                if 1:
+                if 0:
                     print("--Processing image: ", imageCnt,
                           "; second: ", currentTime)
                     print("Found both rim and ball with iou: ", iou)
@@ -192,7 +195,8 @@ def findShot(predict_file, frameRate=25.0):
 
             # start to check people
             if (getPersonHoldingBall(rectClosestRim['rect'], ballRects['rect'], rects, debug)):
-                print("Found a person holding ball: ", imageCnt)
+                if debug:
+                    print("Found a person holding ball: ", imageCnt)
                 personTime = imageCnt/frameRate
 
             if addMissingBall and distanceFromBallToClosetRim < distanceFromBallToRimToTrack * widthRim and isAbove(ballCenter, centerOfRim, ballAboveRimThresh):
@@ -692,6 +696,9 @@ def calculateF1andWriteResults_1():
         writeToTSV(predict_file, pred_results)
 
 def getEventLabelsFromText(labelFile):
+    if labelFile is None or not os.path.exists(labelFile):
+        return False, []
+    
     listOfEvents = read_file_to_list(labelFile)
     
     labels = []
@@ -699,7 +706,7 @@ def getEventLabelsFromText(labelFile):
     for i in range(l):
         labels.append( (float(listOfEvents[i * 2 + 1]), labelConverter(listOfEvents[i * 2])))
             
-    return labels
+    return True, labels
 
 def test_getEventLabelsFromText():
     labelFile = '/mnt/gpu02_raid/data/video/CBA/CBA_demo_v3/shotDunkLabels/CBA2.GTevents.txt'
@@ -782,8 +789,8 @@ def getMiguTestingResults():
 
 if __name__ == '__main__':
     #main()
-    #test_getShotStats()
-    getValidationResults()
+    test_getShotStats()
+    #getValidationResults()
     #getTestingResults()
     # testGetDegreeOfTwoPoints()
     #test_getEventLabelsFromText()
