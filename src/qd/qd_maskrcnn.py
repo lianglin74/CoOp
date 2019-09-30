@@ -881,3 +881,68 @@ class MaskRCNNPipeline(ModelPipeline):
         test(cfg, model, self.distributed, [predict_result_file],
                 label_id_to_label, **self.kwargs)
 
+    def _get_model(self):
+        model = build_detection_model(cfg)
+        if self.sync_bn:
+            # need to convert to BN
+            model, convert_info = convert_to_sync_bn(model,
+                    torch.nn.BatchNorm2d, self.exclude_convert_gn)
+            logging.info(pformat(convert_info))
+        model.to(cfg.MODEL.DEVICE)
+        checkpointer = DetectronCheckpointer(cfg, model,
+                save_dir=self.output_folder)
+        model_file = self._get_checkpoint_file()
+        checkpointer.load(model_file)
+        return model
+
+    def demo(self, image_path):
+        model = self._get_model()
+
+        dataset = TSVDataset(self.data)
+        labelmap = dataset.load_labelmap()
+        extra = 1 if self.has_background_output() else 0
+        label_id_to_label = {i + extra: l for i, l in enumerate(labelmap)}
+
+        from qd.process_image import load_image
+        cv_im = load_image(image_path)
+        height, width = cv_im.shape[:2]
+        if self.bgr2rgb:
+            import cv2
+            im = cv2.cvtColor(cv_im, cv2.COLOR_BGR2RGB)
+        else:
+            im = cv_im
+
+        import torchvision.transforms as transforms
+        im = transforms.ToPILImage()(im)
+        from maskrcnn_benchmark.data.transforms import build_transforms
+        curr_transform = build_transforms(cfg, is_train=False)
+
+        target = create_empty_boxlist(width, height, self.device)
+        im, target = curr_transform(im, target)
+
+        from maskrcnn_benchmark.structures.image_list import to_image_list
+        image_list = to_image_list(im, cfg.DATALOADER.SIZE_DIVISIBILITY)
+
+        image_list = image_list.to(self.device)
+        cpu_device = torch.device("cpu")
+        model.eval()
+        with torch.no_grad():
+            output = model(image_list)
+            output = [o.to(cpu_device) for o in output]
+        box_list = output[0]
+        box_list = box_list.resize((width, height))
+        rects = boxlist_to_list_dict(box_list, label_id_to_label)
+        rects = [r for r in rects if r['conf'] >= 0.5]
+
+        logging.info('result = \n{}'.format(pformat(rects)))
+        from qd.process_image import draw_rects, show_image
+        draw_rects(rects, cv_im)
+        show_image(cv_im)
+
+def create_empty_boxlist(w, h, device):
+    boxlist_empty = BoxList(torch.zeros((0,4)).to(device),
+            (w, h),
+            mode='xyxy')
+    return boxlist_empty
+
+

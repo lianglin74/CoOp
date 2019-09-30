@@ -117,7 +117,8 @@ def aml_func_run(func, param, **submit_param):
         ensure_upload_all_data(all_data, aml_client)
     if 'basemodel' in param.get('param', {}):
         ensure_upload_init_model(param['param'], aml_client)
-    ensure_upload_trained_model(param['param'], aml_client)
+    if 'param' in param:
+        ensure_upload_trained_model(param['param'], aml_client)
     assert func.__module__ != '__main__', \
             'the executed func should not be in the main module'
     assert 'type' not in param
@@ -332,6 +333,7 @@ def generate_expid(param):
             ('MODEL$FPN$INTERPOLATE_MODE', 'Inp'),
             ('use_ddp', (None, 'NoneDDP')),
             ('data_partition', 'P', lambda x: x['data_partition'] == 1),
+            ('MODEL$ROI_BOX_HEAD$MLP_HEAD_DIM', 'Head', lambda x: dict_get_path_value(x, 'MODEL$ROI_BOX_HEAD$MLP_HEAD_DIM') == 1024),
             ]
 
     non_expid_impact_keys = ['data', 'net', 'expid_prefix',
@@ -498,6 +500,11 @@ def pipeline_eval_multi(param, all_test_data, **kwargs):
             return
         pip.ensure_predict()
         pip.ensure_evaluate()
+
+def pipeline_demo(param, image_path):
+    assert 'full_expid' in param
+    pip = load_pipeline(**param)
+    pip.demo(image_path)
 
 def test_model_pipeline(param):
     '''

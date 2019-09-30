@@ -864,6 +864,9 @@ class TorchTrain(object):
 
         self.initialized = False
 
+    def demo(self, path):
+        logging.info('not implemented')
+
     @property
     def batch_size(self):
         # do not run assert in __init__ because we may just want to run
