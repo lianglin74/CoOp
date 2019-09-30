@@ -841,6 +841,7 @@ def parse_general_args():
                 kwargs[k] = configs[k]
     if args.param:
         configs = load_from_yaml_str(args.param)
+        dict_ensure_path_key_converted(configs)
         for k in configs:
             if k not in kwargs:
                 kwargs[k] = configs[k]
