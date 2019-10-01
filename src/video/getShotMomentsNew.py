@@ -646,8 +646,9 @@ class EventDetector(object):
                     continue
 
                 personRect = r['rect']
-
-                if calculateIOA(ballRects[0]['rect'], personRect, enlargeRatio = self.ballEnlargeRatioForPreson) > self.ballPersonIouThresh:
+                ballRect = ballRects[0]['rect']
+                if calculateIOA(ballRect, personRect, enlargeRatio = self.ballEnlargeRatioForPreson) > self.ballPersonIouThresh \
+                    and ballRect[1] < personRect[1]:
                     if debug:                 
                         print("Frame:", self.imageCnt, "; Finding a person holding ball:", r)
                         print(ballRects)
