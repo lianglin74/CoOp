@@ -51,6 +51,7 @@ class Trajectory(object):
         self.dunkTimeWindow = 3.0
         self.personRimHeightConditionLoose = True        
         self.dunkFrameLimit = 2
+        self.stationaryDistanceThresh = 0.5 #unit: ball size
         
         # To solve the problem in case: Case "RimNotGood_1"
         self.ballEnlargeRatioForRim = 1.5        
@@ -94,14 +95,38 @@ class Trajectory(object):
         while i >= lowerLimit:
             rimRects, personRects, frame = (self.rimTraj[i], self.personTraj[i], self.frameTraj[i])
             if objectExists(rimRects) and objectExists(personRects):
-                personRect = personRects[0]['rect']
-                rimRect = rimRects[0]['rect']
-                if getHeightOfRect(personRect) > self.personHeightToRimRatio * getHeightOfRect(rimRect) \
-                  and isAbove((personRect[0], personRect[1]), (rimRect[2], rimRect[3]) if self.personRimHeightConditionLoose else (rimRect[0], rimRect[1])):
+                if self.findDunkPerson(personRects, rimRects, i, lowerLimit):
                     dunkFrameList.append(frame)
             i -= 1
         
         return dunkFrameList
+
+    def findDunkPerson(self, presonRects, rimRects, i, lowerLimit):
+        rimRect = rimRects[0]['rect']
+        for personRectObj in presonRects:
+            personRect = personRectObj['rect']
+            if getHeightOfRect(personRect) > self.personHeightToRimRatio * getHeightOfRect(rimRect) \
+                and isAbove((personRect[0], personRect[1]), (rimRect[2], rimRect[3]) if self.personRimHeightConditionLoose else (rimRect[0], rimRect[1])):
+                # check whether it does not move too much in more than a number of frames
+                rimSize = getWidthOfRect(rimRect)
+                if self.checkPlayerMove(personRect, rimRect, i, lowerLimit, rimSize):
+                    return True
+        
+        return False
+    
+    def checkPlayerMove(self, personRect, rimRect, i, lowerLimit, rimSize):
+        j = i - 1
+        curCenter = getCenterOfRect(personRect)
+        
+        while j >= lowerLimit:
+            personRects = self.personTraj[j]
+            for pRect in personRects:
+                pCenter = getCenterOfObject(pRect)
+                if getDistanceOfTwoPoints(curCenter, pCenter) < self.stationaryDistanceThresh * rimSize:
+                    return False
+            j -= 1
+        
+        return True   
 
     def analyze(self):
         # filtering wrong object detection
@@ -611,6 +636,7 @@ class EventDetector(object):
         if not objectExists(ballRects):
             return []
 
+        personRects = []
         #sort objects by area
         rects.sort(key = lambda instance: areaOfRect(instance['rect']), reverse = True)
 
@@ -625,8 +651,9 @@ class EventDetector(object):
                     if debug:                 
                         print("Frame:", self.imageCnt, "; Finding a person holding ball:", r)
                         print(ballRects)
-                    return [r]                    
-        return []
+                    personRects.append(r)
+
+        return personRects
 
 def objectExists(objRectList):
     return len(objRectList) > 0
@@ -1279,7 +1306,7 @@ def main():
         writeToTSV(predict_file, pred_results)
 
 def calculateF1andWriteRes(odFileList, eventLabelJsonFile = "", textLabelFolder = ""):
-    usingNewAlg = 0
+    usingNewAlg = 1
     # Used to write labels for GL autoML training
     writeAutoMLLabel = False
     # Used to extract video segments for 3D conv
@@ -1406,8 +1433,8 @@ if __name__ == '__main__':
         odFile = 'odFilelist_test.txt'
         getValidationResults(odFile)
     else:
-        getValidationResults()
-        #getTestingResults()
+        #getValidationResults()
+        getTestingResults()
         #getMiguTestingResults()
         
         # compareWithGoogleAutoML()
