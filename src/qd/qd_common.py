@@ -2552,6 +2552,30 @@ def releaseLock(locked_file_descriptor):
     ''' release exclusive lock file access '''
     locked_file_descriptor.close()
 
+def inject_maskrcnn_log_to_board(fname, folder):
+    keys = ['loss_box_reg', 'loss_classifier', 'loss_objectness', 'loss_rpn_box_reg']
+    pattern = ''.join('.*{}: ([0-9]*\.[0-9]*) .*'.format(k)for k in keys)
+    pattern = '.*iter: ([0-9]*) ' + pattern
+    logging.info(pattern)
+    all_loss = []
+    for line in read_to_buffer(fname).decode().split('\n'):
+        result = re.match(pattern, line)
+        if result is None:
+            continue
+        loss_info = {k: float(r) for r, k in zip(result.groups()[1:], keys)}
+        loss_info['iter'] = int(result.groups()[0])
+        all_loss.append(loss_info)
+
+    logging.info(len(all_loss))
+    from torch.utils.tensorboard import SummaryWriter
+    folder = op.join(folder, 'tensorboard')
+    ensure_remove_dir(folder)
+    wt = SummaryWriter(log_dir=folder)
+    for loss_info in all_loss:
+        for k in keys:
+            wt.add_scalar(tag=k, scalar_value=loss_info[k],
+                    global_step=loss_info['iter'])
+
 if __name__ == '__main__':
     init_logging()
     kwargs = parse_general_args()
