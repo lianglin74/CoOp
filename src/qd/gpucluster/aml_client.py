@@ -567,11 +567,12 @@ class MultiAMLClient(object):
     def default_client(self):
         if self._default_client is None:
             self._default_client = create_aml_client(**self.kwargs)
+        return self._default_client
 
     def search_partial_id(self, partial_id):
         search_result = search_partial_id_from_db(partial_id)
         if search_result is None:
-            client = self.default_client
+            client = self.default_client()
             appID = partial_id
         else:
             cluster, appID = search_result['cluster'], search_result['appID']
