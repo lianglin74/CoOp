@@ -21,7 +21,7 @@ eventWindowToleranceInEvaluation = 1.0
 
 def setDebug(frame):
     if 0:
-        return frame > 2328 and frame < 2418
+        return frame > 5154 and frame < 5176
     else:
         return False    
 
@@ -405,6 +405,7 @@ class EventDetector(object):
         self.ballPersonIouThresh = 0.0
         self.personThresh = 0.2
         self.ballEnlargeRatioForPreson = 1.1
+        self.stationaryDistanceThresh = 0.2
 
         # initialize
         self.odTSVFile = odTSVFile
@@ -431,7 +432,7 @@ class EventDetector(object):
         endTimeRes = -1
         
         trajectory = Trajectory(self.frameRate, self.debug, self.videoFile)
-        prevRects = {"ball": [], "rim": [], "backboard": []}
+        prevRects = {"ball": [], "rim": [], "backboard": [], "person": []}
         eventResults = []
 
         for row in tqdm(tsv_reader(self.odTSVFile)):
@@ -482,8 +483,20 @@ class EventDetector(object):
 
             # ignore wrongly preditcted balls
 
+            # filter not moving persons
+            filteredPersonRectsBySorting = []
+            filteredPersonRectsByMove = []
+            if objectExists(rimRects):            
+                filteredPersonRectsByMove, filteredPersonRectsBySorting = self.filterPersonRects(rects, prevRects["preson"], rimRects[0]['rect'], self.debug)                
+            prevRects["preson"] = filteredPersonRectsBySorting
+            if self.debug:
+                print("filteredPersonRectsBySorting", filteredPersonRectsBySorting)
+                print("filteredPersonRectsByMove", filteredPersonRectsByMove)
+
             # get the persons holding ball
-            personRects = self.getPersonHoldingBall(ballRects, rects, debug = self.debug)
+            personRects = self.getPersonHoldingBall(ballRects, filteredPersonRectsByMove, debug = self.debug)
+            if self.debug:
+                print("persons holding ball: ", personRects)
 
             # Store the prev rects            
             prevRects["rim"] = rimRects
@@ -491,6 +504,10 @@ class EventDetector(object):
 
             # Check the relative positision of rim and ball
             #distanceBallToRim, ballAboveRim = getRelativePosition(rimBB, ballBB)
+
+            # if debug, then store the images with rects to images
+            #if self.debug:
+            #    saveRectsToTSV(self.videoFile, self.imageCnt, backboardRects, rimRects, ballRects, filteredPersonRects)
 
             # Update the event status: started or not (if started, record the trajectory; else, clear up)
             #   If distance < thresh for two or three frames (filtering out wrong labels), then started.
@@ -628,6 +645,44 @@ class EventDetector(object):
 
     def checkRimBackBoardCorrespondence(self):
         pass
+
+    def filterPersonRects(self, rects, prevPersonRects, rimRect, debug = 0):
+        personRects = [ r for r in rects if r['class'] == 'person' and r['conf'] > self.personThresh]
+
+        # sort objects by area
+        personRects.sort(key = lambda instance: areaOfRect(instance['rect']), reverse = True)
+
+        # Take the top 10
+        personRects = personRects[:10]
+        filteredPersonRects = []
+
+        # filter out the stationary ones
+        rimSize = getWidthOfRect(rimRect)
+        if debug:
+            print("Rim size: ", rimSize)
+
+        for personRect in personRects:
+            if debug:
+                print("Checking preson: ", personRect)
+            if self.checkPersonMove(personRect, prevPersonRects, rimSize, debug):
+                filteredPersonRects.append(personRect)
+        
+        return filteredPersonRects, personRects
+    
+    def checkPersonMove(self, personRect, prevPersonRects, rimSize, debug = 0):        
+        curCenter = getCenterOfObject(personRect)
+        
+        for pRect in prevPersonRects: 
+            pCenter = getCenterOfObject(pRect)
+            if debug:
+                print("comparing with: ", pRect)
+                print("Distance: ", getDistanceOfTwoPoints(curCenter, pCenter)) 
+
+            if getDistanceOfTwoPoints(curCenter, pCenter) < self.stationaryDistanceThresh * rimSize:
+                return False
+
+        return True   
+
 
     def getPersonHoldingBall(self, ballRects, rects, debug = 0):
         if self.debug:
