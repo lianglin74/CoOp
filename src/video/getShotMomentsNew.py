@@ -101,9 +101,9 @@ class Trajectory(object):
         
         return dunkFrameList
 
-    def findDunkPerson(self, presonRects, rimRects, i, lowerLimit):
+    def findDunkPerson(self, personRects, rimRects, i, lowerLimit):
         rimRect = rimRects[0]['rect']
-        for personRectObj in presonRects:
+        for personRectObj in personRects:
             personRect = personRectObj['rect']
             if getHeightOfRect(personRect) > self.personHeightToRimRatio * getHeightOfRect(rimRect) \
                 and isAbove((personRect[0], personRect[1]), (rimRect[2], rimRect[3]) if self.personRimHeightConditionLoose else (rimRect[0], rimRect[1])):
@@ -404,7 +404,7 @@ class EventDetector(object):
         # for dunk: 
         self.ballPersonIouThresh = 0.0
         self.personThresh = 0.2
-        self.ballEnlargeRatioForPreson = 1.1
+        self.ballEnlargeRatioForperson = 1.1
         self.stationaryDistanceThresh = 0.2
 
         # initialize
@@ -487,8 +487,8 @@ class EventDetector(object):
             filteredPersonRectsBySorting = []
             filteredPersonRectsByMove = []
             if objectExists(rimRects):            
-                filteredPersonRectsByMove, filteredPersonRectsBySorting = self.filterPersonRects(rects, prevRects["preson"], rimRects[0]['rect'], self.debug)                
-            prevRects["preson"] = filteredPersonRectsBySorting
+                filteredPersonRectsByMove, filteredPersonRectsBySorting = self.filterPersonRects(rects, prevRects["person"], rimRects[0]['rect'], self.debug)                
+            prevRects["person"] = filteredPersonRectsBySorting
             if self.debug:
                 print("filteredPersonRectsBySorting", filteredPersonRectsBySorting)
                 print("filteredPersonRectsByMove", filteredPersonRectsByMove)
@@ -663,7 +663,7 @@ class EventDetector(object):
 
         for personRect in personRects:
             if debug:
-                print("Checking preson: ", personRect)
+                print("Checking person: ", personRect)
             if self.checkPersonMove(personRect, prevPersonRects, rimSize, debug):
                 filteredPersonRects.append(personRect)
         
@@ -702,7 +702,7 @@ class EventDetector(object):
 
                 personRect = r['rect']
                 ballRect = ballRects[0]['rect']
-                if calculateIOA(ballRect, personRect, enlargeRatio = self.ballEnlargeRatioForPreson) > self.ballPersonIouThresh \
+                if calculateIOA(ballRect, personRect, enlargeRatio = self.ballEnlargeRatioForperson) > self.ballPersonIouThresh \
                     and ballRect[1] < personRect[1]:
                     if debug:                 
                         print("Frame:", self.imageCnt, "; Finding a person holding ball:", r)
@@ -1489,8 +1489,8 @@ if __name__ == '__main__':
         odFile = 'odFilelist_test.txt'
         getValidationResults(odFile)
     else:
-        #getValidationResults()
-        getTestingResults()
+        getValidationResults()
+        #getTestingResults()
         #getMiguTestingResults()
         
         # compareWithGoogleAutoML()
