@@ -49,7 +49,7 @@ class Trajectory(object):
         self.rimPersonIoaThresh = 0.05
         self.personHeightToRimRatio = 2.0
         self.dunkTimeWindow = 3.0
-        self.personRimHeightConditionLoose = True        
+        self.personRimHeightConditionLoose = True
         self.dunkFrameLimit = 2
         self.stationaryDistanceThresh = 0.5 #unit: ball size
         
@@ -85,7 +85,7 @@ class Trajectory(object):
 
         return iou
 
-    def getDunkFrameList(self, ioaIndex):
+    def getDunkFrameList_1(self, ioaIndex):
         dunkFrameList = []
         l = len(self.frameTraj)
         frameWindow = int(self.dunkTimeWindow/2.0 * self.frameRate)
@@ -101,16 +101,32 @@ class Trajectory(object):
         
         return dunkFrameList
 
+    def getDunkFrameList(self, ioaIndex):
+        dunkFrameList = []
+        l = len(self.frameTraj)
+        frameWindow = int(self.dunkTimeWindow/2.0 * self.frameRate)
+        upperLimit = min(ioaIndex + frameWindow, l - 1)
+        lowerLimit = max(ioaIndex - frameWindow, 0)
+        i = ioaIndex
+        while i <= upperLimit:
+            rimRects, personRects, frame = (self.rimTraj[i], self.personTraj[i], self.frameTraj[i])
+            if objectExists(rimRects) and objectExists(personRects):
+                if self.findDunkPerson(personRects, rimRects, i, lowerLimit):
+                    dunkFrameList.append(frame)
+            i += 1
+        
+        return dunkFrameList
+
     def findDunkPerson(self, personRects, rimRects, i, lowerLimit):
         rimRect = rimRects[0]['rect']
         for personRectObj in personRects:
             personRect = personRectObj['rect']
             if getHeightOfRect(personRect) > self.personHeightToRimRatio * getHeightOfRect(rimRect) \
-                and isAbove((personRect[0], personRect[1]), (rimRect[2], rimRect[3]) if self.personRimHeightConditionLoose else (rimRect[0], rimRect[1])):
+                    and isAbove((personRect[0], personRect[1]), (rimRect[2], rimRect[3]) if self.personRimHeightConditionLoose else (rimRect[0], rimRect[1])):                
+                return True
                 # check whether it does not move too much in more than a number of frames
-                rimSize = getWidthOfRect(rimRect)
-                if self.checkPlayerMove(personRect, rimRect, i, lowerLimit, rimSize):
-                    return True
+                #rimSize = getWidthOfRect(rimRect)
+                #if self.checkPlayerMove(personRect, rimRect, i, lowerLimit, rimSize):
         
         return False
     
@@ -146,7 +162,9 @@ class Trajectory(object):
         ioaIndex = findLastIndex(self.iouTraj, condition = lambda v : v > self.iouLowThresh)
         if ioaIndex is None:
             return shot, startTime, endTime, eventType, ioaTime, speed, reason
-            
+        
+        firstIoaIndex = findFirstIndex(self.iouTraj, condition = lambda v : v > self.iouLowThresh)
+
         ioaValue = self.iouTraj[ioaIndex]
         #ioaIndex, ioaValue = maxIndexVal(self.iouTraj)
         self.ioaTime = float(self.frameTraj[ioaIndex]) / self.frameRate
@@ -186,7 +204,7 @@ class Trajectory(object):
                         reason = 'extraCond'
 
         # get the most likely dunk person (for dunk detection)
-        dunkFrameList = self.getDunkFrameList(ioaIndex)
+        dunkFrameList = self.getDunkFrameList(firstIoaIndex)
         if len(dunkFrameList) >= self.dunkFrameLimit:
             dunkTime = dunkFrameList[-1] / self.frameRate
             print("Finding a possible dunk at frame: ", dunkFrameList[-1], "; time: ", dunkTime)            
@@ -386,6 +404,15 @@ def findLastIndex(myList, condition):
         i -= 1
     return None
 
+def findFirstIndex(myList, condition):
+    l = len(myList)
+    i = 0
+    while i < l:
+        if condition(myList[i]):
+            return i
+        i += 1
+    return None
+
 class EventDetector(object):
     # Initializer / Instance attributes
     def __init__(self, odTSVFile, videoFile):
@@ -494,9 +521,9 @@ class EventDetector(object):
                 print("filteredPersonRectsByMove", filteredPersonRectsByMove)
 
             # get the persons holding ball
-            personRects = self.getPersonHoldingBall(ballRects, filteredPersonRectsByMove, debug = self.debug)
-            if self.debug:
-                print("persons holding ball: ", personRects)
+            #personRects = self.getPersonHoldingBall(ballRects, filteredPersonRectsByMove, debug = self.debug)
+            #if self.debug:
+            #    print("persons holding ball: ", personRects)
 
             # Store the prev rects            
             prevRects["rim"] = rimRects
@@ -522,7 +549,7 @@ class EventDetector(object):
                     if self.debug:
                         print("Event started!")
             else:
-                iou = trajectory.add(ballRects, rimRects, personRects, self.imageCnt)
+                iou = trajectory.add(ballRects, rimRects, filteredPersonRectsByMove, self.imageCnt)
                 
                 eventEnded = self.checkWhetherEventEnded(ballRects, rimRects, curTime, startTime, trajectory.shotDetectWindow)
                 if (eventEnded):
