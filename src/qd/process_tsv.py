@@ -5691,6 +5691,29 @@ def mpi_tsv_process(row_processor, in_tsv_file, out_tsv_file):
             logging.info('waiting {}'.format(out_tsv_file))
             time.sleep(5)
 
+def create_focus_dataset(data, source_version, target_labels, out_data):
+    out_dataset = TSVDataset(out_data)
+    write_to_file('\n'.join(target_labels),
+            out_dataset.get_labelmap_file())
+
+    # train
+    dataset = TSVDataset(data)
+    write_to_file(dataset.get_data('train'), out_dataset.get_data('trainX'))
+    write_to_file(dataset.get_data('train', t='hw'),
+            out_dataset.get_data('trainX', t='hw'))
+
+    def gen_rows():
+        target_label_set = set(target_labels)
+        for key, str_rects in dataset.iter_data('train', t='label',
+                version=source_version, progress=True):
+            rects = json.loads(str_rects)
+            rects = [r for r in rects if r['class'] in target_label_set]
+            yield '_'.join([data, 'train', key]), json_dump(rects)
+    out_dataset.write_data(gen_rows(), 'train', t='label')
+    num_rows = dataset.num_rows('train')
+    tsv_writer(((0, i) for i in range(num_rows)),
+            op.join(out_dataset._data_root, 'train.shuffle.txt'))
+
 if __name__ == '__main__':
     from qd.qd_common import parse_general_args
     init_logging()
