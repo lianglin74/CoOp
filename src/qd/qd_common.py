@@ -2552,8 +2552,9 @@ def releaseLock(locked_file_descriptor):
     ''' release exclusive lock file access '''
     locked_file_descriptor.close()
 
-def inject_maskrcnn_log_to_board(fname, folder):
-    keys = ['loss_box_reg', 'loss_classifier', 'loss_objectness', 'loss_rpn_box_reg']
+def inject_maskrcnn_log_to_board(fname, folder, keys=None):
+    if not keys:
+        keys = ['loss_box_reg', 'loss_classifier', 'loss_objectness', 'loss_rpn_box_reg']
     pattern = ''.join('.*{}: ([0-9]*\.[0-9]*) .*'.format(k)for k in keys)
     pattern = '.*iter: ([0-9]*) ' + pattern
     logging.info(pattern)
