@@ -370,6 +370,8 @@ def limited_retry_agent(num, func, *args, **kwargs):
             logging.info('fails: tried {}-th time'.format(i + 1))
             import time
             print_trace()
+            if i == num - 1:
+                raise
             time.sleep(5)
 
 def retry_agent(func, *args, **kwargs):
@@ -516,9 +518,8 @@ def cmd_run(list_cmd, return_output=False, env=None,
         return message.decode('utf-8')
 
 
-def parallel_map(func, all_task, isDebug=False,
-        num_worker=16):
-    if not isDebug:
+def parallel_map(func, all_task, num_worker=16):
+    if num_worker > 0:
         from pathos.multiprocessing import ProcessingPool as Pool
         m = Pool(num_worker)
         return m.map(func, all_task)
@@ -1902,6 +1903,13 @@ def encoded_from_img(im, quality=None):
         x = cv2.imencode('.jpg', im)[1]
     return base64.b64encode(x)
 
+def encode_image(im, quality=None):
+    if quality:
+        x = cv2.imencode('.jpg', im, (cv2.IMWRITE_JPEG_QUALITY, quality))[1]
+    else:
+        x = cv2.imencode('.jpg', im)[1]
+    return x.tobytes()
+
 def img_from_base64(imagestring):
     try:
         jpgbytestring = base64.b64decode(imagestring)
@@ -2576,6 +2584,11 @@ def inject_maskrcnn_log_to_board(fname, folder, keys=None):
         for k in keys:
             wt.add_scalar(tag=k, scalar_value=loss_info[k],
                     global_step=loss_info['iter'])
+
+class DummyCfg(object):
+    # provide a signature of clone(), used by maskrcnn checkpointer
+    def clone(self):
+        return
 
 if __name__ == '__main__':
     init_logging()

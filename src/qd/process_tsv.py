@@ -318,7 +318,7 @@ def ensure_inject_decorate(func):
             func_name = func_name[len('ensure_'): ]
         argnames, ins_varargs, ins_kwargs, ins_defaults = inspect.getargspec(func)
         # we have not supported if other paramseters is not None
-        assert ins_varargs is None and ins_kwargs is None and ins_defaults is None
+        assert ins_varargs is None and ins_kwargs is None
         query = {'task_type': func_name}
         for n, v in zip(argnames[: len(args)], args):
             assert n not in query
@@ -382,7 +382,7 @@ def ensure_composite_key_url(data, split):
             yield key, url
     dataset.write_data(gen_rows(), split, 'key.url')
 
-def upload_image_to_blob(data, split):
+def upload_image_to_blob(data, split, config=None):
     dataset = TSVDataset(data)
     if not dataset.has(split):
         logging.info('{} - {} does not exist'.format(data, split))
@@ -394,7 +394,7 @@ def upload_image_to_blob(data, split):
         return
     parallel = True
     if not parallel:
-        s = CloudStorage()
+        s = CloudStorage(config=config)
         def gen_rows():
             for key, _, str_im in tqdm(dataset.iter_data(split)):
                 url_key = map_image_key_to_url_key(data, split, key)
@@ -413,7 +413,7 @@ def upload_image_to_blob(data, split):
         num_chunk = num_rows // 1000
         num_chunk = max(1, num_chunk)
         tasks = split_to_chunk(range(num_rows), num_chunk)
-        tasks = [(data, split, t, i, len(tasks)) for i, t in enumerate(tasks)]
+        tasks = [(data, split, t, i, len(tasks), config) for i, t in enumerate(tasks)]
         from .qd_common import parallel_map
         parallel_map(upload_image_to_blob_by_idx, tasks)
         # merge the result
@@ -428,13 +428,13 @@ def upload_image_to_blob(data, split):
             rm_tsv(dataset.get_data(split, 'key.url.{}.{}'.format(idx_task, len(tasks))))
 
 def upload_image_to_blob_by_idx(args):
-    data, split, idxes, idx_task, num_task = args
+    data, split, idxes, idx_task, num_task, config = args
     t = 'key.url.{}.{}'.format(idx_task, num_task)
     dataset = TSVDataset(data)
     if dataset.has(split, t):
         logging.info('return since exist')
         return
-    s = CloudStorage()
+    s = CloudStorage(config=config)
     def gen_rows():
         for key, _, str_im in tqdm(dataset.iter_data(split, filter_idx=idxes)):
             url_key = map_image_key_to_url_key(data, split, key)
@@ -448,8 +448,8 @@ def upload_image_to_blob_by_idx(args):
     dataset.write_data(gen_rows(), split, t)
 
 @ensure_inject_decorate
-def ensure_upload_image_to_blob(data, split):
-    upload_image_to_blob(data, split)
+def ensure_upload_image_to_blob(data, split, config=None):
+    upload_image_to_blob(data, split, config=config)
 
 @ensure_inject_decorate
 def ensure_inject_image(data, split):
@@ -5565,6 +5565,9 @@ def tsv_subset_process(info):
     idx_range = info['idx_range']
     head = info['head']
     sep = info['out_sep']
+    if op.isfile(tmp_out):
+        logging.info('skip since exist: {}'.format(tmp_out))
+        return
     def gen_rows():
         if idx_process == 0 and head is not None:
             yield head
@@ -5589,7 +5592,10 @@ def multi_tsv_subset_process(info):
             yield head
         tsvs = [TSVFile(f) for f in in_tsv_files]
         for i in tqdm(idx_range):
-            yield row_processor([tsv[i] for tsv in tsvs])
+            row_result = row_processor([tsv[i] for tsv in tsvs])
+            if row_result is not None:
+                # we can return None to remove rows
+                yield row_result
     tsv_writer(gen_rows(), tmp_out, sep=out_sep)
 
 def multi_tsv_row_merger(rows):
@@ -5600,17 +5606,19 @@ def multi_tsv_row_merger(rows):
     return all_key[0], str_rect
 
 def parallel_multi_tsv_process(row_processor, in_tsv_files,
-        out_tsv_file, num_process, head=None, out_sep='\t'):
+        out_tsv_file, num_process, num_jobs=None, head=None, out_sep='\t'):
     in_tsvs = [TSVFile(in_tsv_file) for in_tsv_file in in_tsv_files]
     total = len(in_tsvs[0])
     assert all(len(t) == total for t in in_tsvs[1:])
-    rows_each_rank = (total + num_process - 1) // num_process
+    if num_jobs is None:
+        num_jobs = max(1, num_process)
+    rows_each_rank = (total + num_jobs - 1) // num_jobs
     all_task = []
-    for i in range(num_process):
+    for i in range(num_jobs):
         start = i * rows_each_rank
         end = start + rows_each_rank
         end = min(end, total)
-        tmp_out = out_tsv_file + '.{}.{}.tsv'.format(i, num_process)
+        tmp_out = out_tsv_file + '.{}.{}.tsv'.format(i, num_jobs)
         info = {'row_processor': row_processor,
                 'idx_process': i,
                 'in_tsv_files': in_tsv_files,
@@ -5628,16 +5636,21 @@ def parallel_multi_tsv_process(row_processor, in_tsv_files,
     delete_tsv_files(all_out)
 
 def parallel_tsv_process(row_processor, in_tsv_file,
-        out_tsv_file, num_process, head=None, out_sep='\t'):
+        out_tsv_file, num_process, num_jobs=None, head=None, out_sep='\t'):
     in_tsv = TSVFile(in_tsv_file)
     total = len(in_tsv)
-    rows_each_rank = (total + num_process - 1) // num_process
+    if num_jobs is None:
+        if num_process == 0:
+            num_jobs = 1
+        else:
+            num_jobs = num_process
+    rows_each_rank = (total + num_jobs - 1) // num_jobs
     all_task = []
-    for i in range(num_process):
+    for i in range(num_jobs):
         start = i * rows_each_rank
         end = start + rows_each_rank
         end = min(end, total)
-        tmp_out = out_tsv_file + '.{}.{}.tsv'.format(i, num_process)
+        tmp_out = out_tsv_file + '.{}.{}.tsv'.format(i, num_jobs)
         info = {'row_processor': row_processor,
                 'idx_process': i,
                 'in_tsv_file': in_tsv_file,
@@ -5713,6 +5726,51 @@ def create_focus_dataset(data, source_version, target_labels, out_data):
     num_rows = dataset.num_rows('train')
     tsv_writer(((0, i) for i in range(num_rows)),
             op.join(out_dataset._data_root, 'train.shuffle.txt'))
+
+class CogAPI(object):
+    def __init__(self):
+        self.remote_image_features = ["adult"]
+        self.computervision_client = None
+
+    def ensure_init(self):
+        from msrest.authentication import CognitiveServicesCredentials
+        from azure.cognitiveservices.vision.computervision import ComputerVisionClient
+        if self.computervision_client is None:
+            x = load_from_yaml_file('aux_data/configs/cognitive_credential.yaml')
+            self.subscription_key = x['subscription_key']
+            self.endpoint = x['https://southcentralus.api.cognitive.microsoft.com']
+            self.computervision_client = ComputerVisionClient(self.endpoint,
+                    CognitiveServicesCredentials(self.subscription_key))
+
+    def call(self, image_url):
+        self.ensure_init()
+        remote_image_analysis = self.computervision_client.analyze_image(image_url,
+                self.remote_image_features)
+        result = {'is_adult': remote_image_analysis.adult.is_adult_content,
+                'adult_score': remote_image_analysis.adult.adult_score,
+                'is_racy': remote_image_analysis.adult.is_racy_content,
+                'racy_score': remote_image_analysis.adult.racy_score}
+        return result
+
+def adult_filtering_by_cogapi(data, split):
+    dataset = TSVDataset(data)
+    api = CogAPI()
+    in_tsv = dataset.get_data(split, 'key.url')
+    out_tsv = dataset.get_data(split, 'key.adult')
+    def row_processor(row):
+        key, url = row
+        try:
+            result = api.call(url)
+            return key, json_dump(result)
+        except:
+            from qd.qd_common import print_trace
+            print_trace()
+            return key, json_dump(-1)
+    if op.isfile(out_tsv):
+        return
+    parallel_tsv_process(row_processor, in_tsv,
+            out_tsv, num_process=16, num_jobs=1024)
+
 
 if __name__ == '__main__':
     from qd.qd_common import parse_general_args

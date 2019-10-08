@@ -9,12 +9,8 @@ from qd.tsv_io import tsv_writer
 from maskrcnn_benchmark.utils.checkpoint import DetectronCheckpointer
 from maskrcnn_benchmark.utils.comm import synchronize
 import shutil
+from qd.qd_common import DummyCfg
 
-
-class DummyCfg(object):
-    # provide a signature of clone(), used by maskrcnn checkpointer
-    def clone(self):
-        return
 
 class MaskClassificationPipeline(ModelPipeline):
     def __init__(self, **kwargs):

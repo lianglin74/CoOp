@@ -95,7 +95,7 @@ class AnnotationDB(object):
 
     def update_phillyjob(self, query, update):
         self.add_meta_data(update)
-        return self._phillyjob.update_one(query, {'$set': update})
+        return self._phillyjob.update_many(query, {'$set': update})
 
     def iter_judge(self, **kwargs):
         return self._judge.find(kwargs)
@@ -415,9 +415,6 @@ def inject_cluster_summary(info):
 def update_cluster_job_db(all_job_info):
     c = create_annotation_db()
     existing_job_infos = list(c.iter_phillyjob())
-    existing_job_appID = set([j['appID'] for j in existing_job_infos])
-    # we assume the appID is unique across multiple VCs
-    assert len(existing_job_appID) == len(existing_job_infos)
 
     appID_to_record = {j['appID']: j for j in existing_job_infos}
 

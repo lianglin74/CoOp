@@ -74,11 +74,12 @@ def coco_eval_tsv(predict_tsv, gt_tsv):
 
     return coco_eval_json(predict_json, gt_json)
 
-def coco_eval_json(predict_json, gt_json):
+def coco_eval_json(predict_json, gt_json, maxDet=100):
     cocoGt=COCO(gt_json)
     cocoDt=cocoGt.loadRes(predict_json)
 
     cocoEval = COCOeval(cocoGt,cocoDt,'bbox')
+    cocoEval.params.maxDets[-1] = maxDet
     cocoEval.evaluate()
     cocoEval.accumulate()
     cocoEval.summarize()

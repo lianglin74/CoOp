@@ -136,12 +136,18 @@ class CloudStorage(object):
         account_key = config.get('account_key')
         self.sas_token = config.get('sas_token')
         self.container_name = config['container_name']
-
-        self.block_blob_service = BlockBlobService(account_name=account_name,
-                account_key=account_key, sas_token=self.sas_token)
-
         self.account_name = account_name
         self.account_key = account_key
+        self._block_blob_service = None
+
+    @property
+    def block_blob_service(self):
+        if self._block_blob_service is None:
+            self._block_blob_service = BlockBlobService(
+                    account_name=self.account_name,
+                    account_key=self.account_key,
+                    sas_token=self.sas_token)
+        return self._block_blob_service
 
     def list_blob_names(self, prefix=None):
         return self.block_blob_service.list_blob_names(self.container_name,

@@ -84,6 +84,10 @@ class TSVFile(object):
 
         self._cache()
 
+    def __del__(self):
+        if self._fp:
+            self._fp.close()
+
     def num_rows(self):
         self._ensure_lineidx_loaded()
         return len(self._lineidx)
@@ -861,10 +865,10 @@ def load_labels(file_name):
     return key_to_rects, key_to_idx
 
 def exclusive_open_to_read(fname):
-    user_name = get_user_name()
-    from qd.qd_common import acquireLock, releaseLock
-    lock_fd = acquireLock(op.join('/tmp',
-        '{}_lock_{}'.format(user_name, hash_sha1(fname))))
+    #user_name = get_user_name()
+    #from qd.qd_common import acquireLock, releaseLock
+    #lock_fd = acquireLock(op.join('/tmp',
+        #'{}_lock_{}'.format(user_name, hash_sha1(fname))))
     try:
         # in AML, it could fail with Input/Output error. If it fails, we will
         # use azcopy as a fall back solution for reading
@@ -876,7 +880,7 @@ def exclusive_open_to_read(fname):
         else:
             raise
 
-    releaseLock(lock_fd)
+    #releaseLock(lock_fd)
     return fp
 
 def azcopy_read(fname):

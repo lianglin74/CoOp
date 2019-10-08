@@ -98,6 +98,12 @@ def create_aml_run(experiment, run_id):
     except:
         all_run = experiment.get_runs()
         matched_runs = [r for r in all_run if r.id.endswith(run_id)]
+        # sometimes, AML will return two runs with the same ID. it is quite
+        # strange. Here, we deduplicate the runs by the id
+        id_runs = [(r.id, r) for r in matched_runs]
+        from qd.qd_common import list_to_dict
+        id_to_runs = list_to_dict(id_runs, 0)
+        matched_runs = [runs[0] for _, runs in id_to_runs.items()]
         assert len(matched_runs) == 1, ', '.join([r.id for r in
             matched_runs])
         r = matched_runs[0]
@@ -153,6 +159,7 @@ class AMLClient(object):
             compute_target, source_directory, entry_script,
             with_log=True,
             env=None,
+            multi_process=True,
             **kwargs):
         self.kwargs = kwargs
         self.cluster = kwargs.get('cluster', 'aml')
@@ -220,6 +227,7 @@ class AMLClient(object):
 
         from azureml.core import Experiment
         self.experiment = Experiment(self.ws, name=self.experiment_name)
+        self.multi_process = multi_process
 
     def get_compute_status(self):
         compute_status = get_compute_status(self.compute_target)
@@ -341,6 +349,15 @@ class AMLClient(object):
                             for suffix in ['.pt', '.yaml']):
                     cloud.az_upload2(local_file, remote_file)
 
+    def upload_qd_output(self, model_file):
+        assert(op.isfile(model_file))
+        rel_model_file = op.relpath(model_file, './output')
+        target_path = op.join(self.config_param['output_folder']['path'],
+                rel_model_file)
+        cloud = self.config_param['output_folder']['cloud_blob']
+        if not cloud.exists(target_path):
+            cloud.az_upload2(model_file, target_path)
+
     def upload_qd_model(self, model_file):
         def split_all_path(fpath):
             path_splits = []
@@ -399,6 +416,8 @@ class AMLClient(object):
             assert (num_gpu % 4) == 0
             mpi_config.process_count_per_node = 4
             node_count = num_gpu // 4
+        if not self.multi_process:
+            mpi_config = None
 
         if self.use_custom_docker:
             estimator10 = Estimator(

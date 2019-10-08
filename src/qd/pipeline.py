@@ -334,6 +334,10 @@ def generate_expid(param):
             ('use_ddp', (None, 'NoneDDP')),
             ('data_partition', 'P', lambda x: x['data_partition'] == 1),
             ('MODEL$ROI_BOX_HEAD$MLP_HEAD_DIM', 'Head', lambda x: dict_get_path_value(x, 'MODEL$ROI_BOX_HEAD$MLP_HEAD_DIM') == 1024),
+            ('MODEL$RPN$MATCHER_TYPE', 'RpnM', lambda x: dict_get_path_value(x, 'MODEL$RPN$MATCHER_TYPE') == 'default'),
+            ('MODEL$ROI_HEADS$MATCHER_TYPE', 'RoiM', lambda x: dict_get_path_value(x, 'MODEL$ROI_HEADS$MATCHER_TYPE') == 'default'),
+            ('MODEL$ROI_HEADS$BG_IOU_THRESHOLD', 'RoiBG', lambda x: dict_get_path_value(x, 'MODEL$ROI_HEADS$BG_IOU_THRESHOLD') == 0.5),
+            ('MODEL$RPN$BG_IOU_THRESHOLD', 'RpnBG', lambda x: dict_get_path_value(x, 'MODEL$RPN$BG_IOU_THRESHOLD') == 0.3),
             ]
 
     non_expid_impact_keys = ['data', 'net', 'expid_prefix',
@@ -356,6 +360,14 @@ def generate_expid(param):
             'ovthresh',
             'MODEL$ROI_HEADS$NMS_POLICY$TYPE',
             'images_per_gpu',
+            'yolo_predict_session_param$nms_threshold',
+            'env',
+            ]
+
+    add_time_hash_keys = [ # if we have these keys, just append a time stamp
+            # with a hash code to reduce the effort to name the expid
+            'yolo_train_session_param$anchors',
+            'stagelr',
             ]
 
     if param['pipeline_type'] == 'MaskRCNNPipeline':
@@ -400,10 +412,15 @@ def generate_expid(param):
             else:
                 infos.append('{}{}'.format(v, pk))
 
+    if any(dict_has_path(param, k) for k in add_time_hash_keys):
+        import datetime
+        infos.append(datetime.datetime.now().strftime('%m%d%H%M%S{}'.format(hash_sha1(param)[:2])))
+
     known_keys = []
     known_keys.extend((k for k in need_hash_sha_params))
     known_keys.extend((k for k in non_expid_impact_keys))
     known_keys.extend((s[0] for s in direct_add_value_keys))
+    known_keys.extend(add_time_hash_keys)
 
     all_path = dict_get_all_path(param)
 

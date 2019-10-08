@@ -762,12 +762,14 @@ def calc_neg_aware_gmap(data, split, predict_file,
         apply_nms_det=False,
         expand_label_det=False,
         apply_nms_gt=False):
-    from qd.evaluate.evaluate_openimages_google import evaluate
+    #from qd.evaluate.evaluate_openimages_google import evaluate
+    from qd.evaluate.evaluate_openimages_google import parallel_evaluate as evaluate
     dataset = TSVDataset(data)
     truths = dataset.get_data(split, 'label')
     imagelabel_truths = dataset.get_data(split, 'imagelabel')
     assert op.isfile(truths), truths
     assert op.isfile(imagelabel_truths)
+    start = time.time()
     result = evaluate(truths, imagelabel_truths, predict_file,
             json_hierarchy_file=op.join(dataset._data_root, 'hierarchy.json'),
             apply_nms_det=apply_nms_det,
@@ -775,6 +777,7 @@ def calc_neg_aware_gmap(data, split, predict_file,
             expand_label_gt=True,
             apply_nms_gt=apply_nms_gt,
             )
+    logging.info(time.time() - start)
     from qd.qd_common import convert_to_yaml_friendly
     result = convert_to_yaml_friendly(result)
     return result
@@ -816,6 +819,7 @@ class TorchTrain(object):
                 'device': 'cuda',
                 'test_mergebn': False,
                 'bgr2rgb': False, # this should be True, but set it False for back compatibility
+                'coco_eval_max_det': 100,
                 }
 
         assert 'batch_size' not in kwargs, 'use effective_batch_size'
@@ -1502,6 +1506,8 @@ class TorchTrain(object):
                 logging.info('inferred the latest version is {}'.format(
                     latest_version))
             cc.append('v{}'.format(self.test_version))
+        if self.coco_eval_max_det != 100:
+            cc.append('MaxDet{}'.format(self.coco_eval_max_det))
         cc.append('report')
         return '.'.join(cc)
 
@@ -1582,7 +1588,8 @@ class TorchTrain(object):
                         'all-medium': 0,
                         'all-small': 0}
             else:
-                result = coco_eval_json(predict_json, gt_json)
+                result = coco_eval_json(predict_json, gt_json,
+                        maxDet=self.coco_eval_max_det)
 
             write_to_yaml_file(result, evaluate_file)
         elif self.evaluate_method == 'top1':

@@ -25,6 +25,9 @@ class YoloV2PtPipeline(ModelPipeline):
             test_input_size = self.yolo_predict_session_param.get('test_input_size', 416)
             if test_input_size != 416:
                 cc.append('InputSize{}'.format(test_input_size))
+            nms = self.yolo_predict_session_param.get('nms_threshold', 0.45)
+            if nms != 0.45:
+                cc.append('NMS{}'.format(nms))
 
     def _get_checkpoint_file(self, epoch=None, iteration=None):
         assert epoch is None, 'not supported'
