@@ -444,6 +444,8 @@ def upload_image_to_blob_by_idx(args):
             else:
                 url = s.upload_stream(StringIO(base64.b64decode(str_im)),
                         'images/' + url_key)
+            if s.sas_token:
+                url += s.sas_token
             yield key, url
     dataset.write_data(gen_rows(), split, t)
 
