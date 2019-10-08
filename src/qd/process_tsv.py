@@ -407,14 +407,14 @@ def upload_image_to_blob(data, split, config=None):
                 yield key, url
         dataset.write_data(gen_rows(), split, 'key.url')
     else:
-        from .qd_common import split_to_chunk
-        from .tsv_io import rm_tsv
+        from qd.qd_common import split_to_chunk
+        from qd.tsv_io import rm_tsv
         num_rows = dataset.num_rows(split)
         num_chunk = num_rows // 1000
         num_chunk = max(1, num_chunk)
         tasks = split_to_chunk(range(num_rows), num_chunk)
         tasks = [(data, split, t, i, len(tasks), config) for i, t in enumerate(tasks)]
-        from .qd_common import parallel_map
+        from qd.qd_common import parallel_map
         parallel_map(upload_image_to_blob_by_idx, tasks)
         # merge the result
         def gen_rows():
@@ -5738,7 +5738,7 @@ class CogAPI(object):
         if self.computervision_client is None:
             x = load_from_yaml_file('aux_data/configs/cognitive_credential.yaml')
             self.subscription_key = x['subscription_key']
-            self.endpoint = x['https://southcentralus.api.cognitive.microsoft.com']
+            self.endpoint = x['endpoint']
             self.computervision_client = ComputerVisionClient(self.endpoint,
                     CognitiveServicesCredentials(self.subscription_key))
 
