@@ -115,7 +115,26 @@ def read_file_to_list(file_name):
 
     return res_lists
 
-def generateTSVByFrameList(folderName, videoFileName, frameList):
+def readAllFrames(videoFileFullPath):
+    cap = cv2.VideoCapture(videoFileFullPath)
+
+    allFrames = []
+    
+    frameIndex = 0
+    while True: 
+        ret, frame = cap.read()
+        if not ret:
+            print("Stop getting frame from video: ", videoFileFullPath, ", at frameIndex: ", frameIndex)
+            break
+        else:
+            allFrames.append(frame)
+
+        frameIndex += 1
+
+    cap.release()
+    return allFrames
+    
+def generateTSVByFrameList(folderName, videoFileName, frameList, robustMode = True):
     debug = 0
     sepSign = "$"
     emptyJson = json.dumps([])
@@ -129,17 +148,24 @@ def generateTSVByFrameList(folderName, videoFileName, frameList):
     f = open(tsvFileName, 'w')
 
     cap = cv2.VideoCapture(folderName + '/' + videoFileName)
-    
+
+    allFrames = []
+    if robustMode:
+        allFrames = readAllFrames(folderName + '/' + videoFileName)
+
     for frameIndex in frameList:
         imageId = videoFileName + sepSign + str(frameIndex)
-    
-        # set frame pos
-        cap.set(cv2.CAP_PROP_POS_FRAMES, frameIndex)
-        # read frame
-        ret, frame = cap.read()
-        if not ret:
-            print("Error")
-            exit()
+
+        if robustMode:
+            frame = allFrames[frameIndex]
+        else:
+            # set frame pos
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frameIndex)
+            # read frame
+            ret, frame = cap.read()
+            if not ret:
+                print("Error in getting frame from video: ", videoFileName, ", frameIndex: ", frameIndex)
+                continue
 
         imageJPG = cv2.imencode('.jpg', frame)[1]
 
@@ -155,6 +181,31 @@ def generateTSVByFrameList(folderName, videoFileName, frameList):
     endTime = time.process_time()
     print("endTime: ", endTime)
     print("Total used time: ", endTime - startTime)
+
+def saveFramesByFrameList(folderName, videoFileName, frameList, returnFrames = 0):
+    sepSign = '$'
+    cap = cv2.VideoCapture(folderName + '/' + videoFileName)
+    imageList = []
+    
+    for frameIndex in frameList:
+        imageId = videoFileName + sepSign + str(frameIndex)
+    
+        # set frame pos
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frameIndex)
+        # read frame
+        ret, frame = cap.read()
+        if not ret:
+            print("Error")
+            exit()
+
+        if returnFrames:
+            imageList.append(frame)
+        else:
+            cv2.imwrite(imageId +'.jpg', frame)
+
+    cap.release()
+    if returnFrames:
+        return imageList
 
 def genTSVForCBA():
     folderName = "CBA"
