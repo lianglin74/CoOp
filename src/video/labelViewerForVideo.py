@@ -10,7 +10,7 @@ skipSmallRectParm = 0
 skipPersonsParm = 0
 filterPersonsParm = 1
 
-robustModeParm = 1
+robustModeParm = 0
 
 def preReadFrames(cap, numSeconds, startSecond, fps, robustMode = robustModeParm):
     startFrameIndex = int (fps * startSecond)
