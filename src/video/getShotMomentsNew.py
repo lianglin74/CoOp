@@ -52,6 +52,7 @@ class Trajectory(object):
         self.personRimHeightConditionLoose = True
         self.dunkFrameLimit = 2
         self.stationaryDistanceThresh = 0.5 #unit: ball size
+        self.rimPersonLateralDistanceRatio = 1.5
         
         # To solve the problem in case: Case "RimNotGood_1"
         self.ballEnlargeRatioForRim = 1.5        
@@ -119,10 +120,12 @@ class Trajectory(object):
 
     def findDunkPerson(self, personRects, rimRects, i, lowerLimit):
         rimRect = rimRects[0]['rect']
+        rimSize = getHeightOfRect(rimRect)
         for personRectObj in personRects:
             personRect = personRectObj['rect']
             if getHeightOfRect(personRect) > self.personHeightToRimRatio * getHeightOfRect(rimRect) \
-                    and isAbove((personRect[0], personRect[1]), (rimRect[2], rimRect[3]) if self.personRimHeightConditionLoose else (rimRect[0], rimRect[1])):                
+                    and isAbove((personRect[0], personRect[1]), (rimRect[2], rimRect[3]) if self.personRimHeightConditionLoose else (rimRect[0], rimRect[1])) \
+                    and abs(personRect[0] - rimRect[2]) < self.rimPersonLateralDistanceRatio * rimSize:
                 return True
                 # check whether it does not move too much in more than a number of frames
                 #rimSize = getWidthOfRect(rimRect)
