@@ -1296,11 +1296,13 @@ def visualize_train(solver):
         visualize_net(solver.net)
         solver.step(10)
 
-def network_input_to_image(data, mean_value):
+def network_input_to_image(data, mean_value, std_value=[1.0,1.0,1.0]):
     all_im = []
     for d in data:
-        im = (d.transpose((1, 2, 0)) + np.asarray(mean_value).reshape(1, 1,
-            3)).astype(np.uint8).copy()
+        im = (d.transpose((1, 2, 0))
+            * np.asarray(std_value).reshape(1, 1, 3)
+            + np.asarray(mean_value).reshape(1, 1, 3)
+            ).astype(np.uint8).copy()
         all_im.append(im)
     return all_im
 
