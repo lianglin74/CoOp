@@ -5545,7 +5545,7 @@ def find_predict_file(report_file, all_predict):
     assert found
     return result
 
-def softnms_row_process(row, sigma=0.5):
+def softnms_row_process(row, sigma=0.5, method=2, Nt=0.5):
     from qd.qd_common import softnms_c
     key, str_rects = row
     rects = json.loads(str_rects)
@@ -5553,7 +5553,7 @@ def softnms_row_process(row, sigma=0.5):
     class_to_rects = list_to_dict(all_class_rect, 0)
     rects2 = []
     for c, rs in class_to_rects.items():
-        rs = softnms_c(rs, sigma=sigma)
+        rs = softnms_c(rs, sigma=sigma, method=method, Nt=Nt)
         for r in rs:
             r['class'] = c
         rects2.extend(rs)
