@@ -5535,7 +5535,7 @@ def find_predict_file(report_file, all_predict):
             rs = report_file[len(ps):]
             logging.info(rs)
             eval_keys = ['predict', 'tsv', 'coco_box', 'neg_aware_gmap', 'top1',
-                    'noNMSGt', 'noNMSDet', 'noExpandDet', 'speed']
+                    'noNMSGt', 'noNMSDet', 'noExpandDet', 'speed', 'MaxDet.*']
             p0 = ''.join(['(\.{})?'.format(k) for k in eval_keys])
             pattern = '{}(\.v[0-9]*)?\.(report|yaml)'.format(p0)
             if re.match(pattern, rs):
