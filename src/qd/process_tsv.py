@@ -5620,7 +5620,10 @@ def parallel_multi_tsv_process(row_processor, in_tsv_files,
         start = i * rows_each_rank
         end = start + rows_each_rank
         end = min(end, total)
-        tmp_out = out_tsv_file + '.{}.{}.tsv'.format(i, num_jobs)
+        if num_jobs == 1:
+            tmp_out = out_tsv_file
+        else:
+            tmp_out = out_tsv_file + '.{}.{}.tsv'.format(i, num_jobs)
         info = {'row_processor': row_processor,
                 'idx_process': i,
                 'in_tsv_files': in_tsv_files,
@@ -5633,9 +5636,10 @@ def parallel_multi_tsv_process(row_processor, in_tsv_files,
     from qd.qd_common import parallel_map
     parallel_map(multi_tsv_subset_process, all_task,
             num_worker=num_process)
-    all_out = [task['tmp_out'] for task in all_task]
-    concat_tsv_files(all_out, out_tsv_file)
-    delete_tsv_files(all_out)
+    if num_jobs > 1:
+        all_out = [task['tmp_out'] for task in all_task]
+        concat_tsv_files(all_out, out_tsv_file)
+        delete_tsv_files(all_out)
 
 def parallel_tsv_process(row_processor, in_tsv_file,
         out_tsv_file, num_process, num_jobs=None, head=None, out_sep='\t'):
@@ -5731,7 +5735,7 @@ def create_focus_dataset(data, source_version, target_labels, out_data):
 
 class CogAPI(object):
     def __init__(self):
-        self.remote_image_features = ["adult"]
+        self.remote_image_features = ['adult']
         self.computervision_client = None
 
     def ensure_init(self):
@@ -5748,6 +5752,19 @@ class CogAPI(object):
         self.ensure_init()
         remote_image_analysis = self.computervision_client.analyze_image(image_url,
                 self.remote_image_features)
+        result = {}
+        if 'adult' in self.remote_image_features:
+            result.update(self.parse_adult(remote_image_analysis))
+        else:
+            result.update(self.parse_type(remote_image_analysis))
+        return result
+
+    def parse_type(self, remote_image_analysis):
+        return {'clip_art_type': remote_image_analysis.image_type.clip_art_type,
+                'line_drawing_type': remote_image_analysis.image_type.line_drawing_type,
+                }
+
+    def parse_adult(self, remote_image_analysis):
         result = {'is_adult': remote_image_analysis.adult.is_adult_content,
                 'adult_score': remote_image_analysis.adult.adult_score,
                 'is_racy': remote_image_analysis.adult.is_racy_content,

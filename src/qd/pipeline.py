@@ -269,6 +269,8 @@ def generate_expid(param):
             ('num_extra_convs', 'ExtraConv'),
             ('yolo_train_session_param$data_augmentation', 'Aug',
                 except_to_update_for_data_augmentation),
+            ('yolo_train_session_param$data_augmentation$box_data_param$max_boxes',
+                'MB'),
             ('yolo_train_session_param$data_augmentation$box_data_param$max_trials',
                 'AugTrials'),
             ('yolo_train_session_param$data_augmentation$box_data_param$random_scale_min',
@@ -338,6 +340,11 @@ def generate_expid(param):
             ('MODEL$ROI_HEADS$MATCHER_TYPE', 'RoiM', lambda x: dict_get_path_value(x, 'MODEL$ROI_HEADS$MATCHER_TYPE') == 'default'),
             ('MODEL$ROI_HEADS$BG_IOU_THRESHOLD', 'RoiBG', lambda x: dict_get_path_value(x, 'MODEL$ROI_HEADS$BG_IOU_THRESHOLD') == 0.5),
             ('MODEL$RPN$BG_IOU_THRESHOLD', 'RpnBG', lambda x: dict_get_path_value(x, 'MODEL$RPN$BG_IOU_THRESHOLD') == 0.3),
+            ('yolo_train_session_param$use_maskrcnn_trainer', ('MT', None)),
+            ('rt_param$xy_scale', 'XY'),
+            ('rt_param$wh_scale', 'WH'),
+            ('rt_param$object_scale', 'O'),
+            ('rt_param$valid_norm_xywhpos', ('VNXYWHPos', None)),
             ]
 
     non_expid_impact_keys = ['data', 'net', 'expid_prefix',
@@ -362,12 +369,8 @@ def generate_expid(param):
             'images_per_gpu',
             'yolo_predict_session_param$nms_threshold',
             'env',
-            ]
-
-    add_time_hash_keys = [ # if we have these keys, just append a time stamp
-            # with a hash code to reduce the effort to name the expid
-            'yolo_train_session_param$anchors',
-            'stagelr',
+            'test_max_iter',
+            'test_input_size',
             ]
 
     if param['pipeline_type'] == 'MaskRCNNPipeline':
@@ -379,13 +382,17 @@ def generate_expid(param):
     # we need to update expid so that the model folder contains the critical
     # param information
     infos = []
-    need_hash_sha_params = ['basemodel', 'lock_up_to']
+    need_hash_sha_params = ['basemodel', 'lock_up_to',
+            'yolo_train_session_param$anchors', 'stagelr']
     for k in need_hash_sha_params:
-        if k in param:
-            if len(param[k]) > 5:
-                infos.append('{}{}'.format(k, hash_sha1(param[k])[:5]))
+        if dict_has_path(param, k):
+            v = dict_get_path_value(param, k)
+            if len(v) > 5 or isinstance(v, list) or isinstance(v, tuple):
+                infos.append('{}{}'.format(k.split('$')[-1],
+                    hash_sha1(v)[:5]))
             else:
-                infos.append('{}{}'.format(k, param[k]))
+                infos.append('{}{}'.format(k.split('$')[-1],
+                    v))
 
     for setting in direct_add_value_keys:
         k, v = setting[:2]
@@ -412,15 +419,10 @@ def generate_expid(param):
             else:
                 infos.append('{}{}'.format(v, pk))
 
-    if any(dict_has_path(param, k) for k in add_time_hash_keys):
-        import datetime
-        infos.append(datetime.datetime.now().strftime('%m%d%H%M%S{}'.format(hash_sha1(param)[:2])))
-
     known_keys = []
     known_keys.extend((k for k in need_hash_sha_params))
     known_keys.extend((k for k in non_expid_impact_keys))
     known_keys.extend((s[0] for s in direct_add_value_keys))
-    known_keys.extend(add_time_hash_keys)
 
     all_path = dict_get_all_path(param)
 
@@ -453,6 +455,9 @@ def create_pipeline(kwargs):
     elif pipeline_type == 'classification_by_mask':
         from qd.pipelines.classification_by_maskrcnn import MaskClassificationPipeline
         return MaskClassificationPipeline(**kwargs)
+    elif pipeline_type == 'YoloByMask':
+        from qd.pipelines.yolo_by_mask import YoloByMask
+        return YoloByMask(**kwargs)
     else:
         raise NotImplementedError()
 

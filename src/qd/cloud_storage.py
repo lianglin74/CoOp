@@ -12,10 +12,13 @@ import os
 from qd.qd_common import ensure_directory
 logger.propagate = False
 
-def create_cloud_storage(x=None, config_file=None):
+def create_cloud_storage(x=None, config_file=None, config=None):
+    if config is not None:
+        return CloudStorage(config)
     if config_file is None:
         config_file = './aux_data/configs/{}blob_account.yaml'.format(x)
-    c = CloudStorage(load_from_yaml_file(config_file))
+    config = load_from_yaml_file(config_file)
+    c = CloudStorage(config)
     return c
 
 def azcopy_upload(src, dest_url, dest_key):
@@ -240,11 +243,14 @@ class CloudStorage(object):
         cmd_run(cmd)
         return data_url, url
 
-    def az_upload2(self, src_dir, dest_dir):
+    def az_upload2(self, src_dir, dest_dir, sync=False):
         assert self.sas_token
         cmd = []
         cmd.append(get_azcopy())
-        cmd.append('cp')
+        if sync:
+            cmd.append('sync')
+        else:
+            cmd.append('cp')
         cmd.append(op.realpath(src_dir))
         url = 'https://{}.blob.core.windows.net'.format(self.account_name)
         if dest_dir.startswith('/'):
@@ -259,12 +265,15 @@ class CloudStorage(object):
         cmd_run(cmd)
         return data_url, url
 
-    def az_download(self, remote_path, local_path):
+    def az_download(self, remote_path, local_path, sync=True, is_folder=False):
         ensure_directory(op.dirname(local_path))
         assert self.sas_token
         cmd = []
         cmd.append(op.expanduser('~/code/azcopy/azcopy'))
-        cmd.append('cp')
+        if sync:
+            cmd.append('sync')
+        else:
+            cmd.append('cp')
         url = 'https://{}.blob.core.windows.net'.format(self.account_name)
         if remote_path.startswith('/'):
             remote_path = remote_path[1:]
@@ -274,6 +283,11 @@ class CloudStorage(object):
         url = url + self.sas_token
         cmd.append(url)
         cmd.append(op.realpath(local_path))
+        if is_folder:
+            cmd.append('--recursive')
+            if sync:
+                # azcopy's requirement
+                ensure_directory(local_path)
         cmd_run(cmd)
         return data_url, url
 

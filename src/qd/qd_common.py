@@ -2592,6 +2592,23 @@ class DummyCfg(object):
     def clone(self):
         return
 
+def print_frame_info():
+    import inspect
+    frame = inspect.currentframe()
+    frames = inspect.getouterframes(frame)
+    frame = frames[1].frame
+    args, _, _, vs = inspect.getargvalues(frame)
+    info = []
+    info.append('func name = {}'.format(inspect.getframeinfo(frame)[2]))
+    for i in args:
+        try:
+            info.append('{} = {}'.format(i, vs[i]))
+        except:
+            info.append('type({}) = {}'.format(i, type(vs[i])))
+            continue
+    logging.info('; '.join(info))
+
+
 if __name__ == '__main__':
     init_logging()
     kwargs = parse_general_args()

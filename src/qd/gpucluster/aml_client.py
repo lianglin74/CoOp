@@ -115,7 +115,7 @@ def download_run_logs(run_info, full=True):
     if 'logFiles' not in run_info:
         return []
     all_log_file = []
-    log_folder = os.environ.get('AML_LOG_FOLDER', 'assets')
+    log_folder = get_log_folder()
     log_status_file = op.join(log_folder, run_info['appID'],
             'log_status.yaml')
     if not full:
@@ -147,6 +147,16 @@ def get_compute_status(compute_target):
     info['preparing_node_count'] = compute_target.status.node_state_counts.preparing_node_count
     info['max_node_count'] = compute_target.scale_settings.maximum_node_count
     return info
+
+def log_downloaded(appID):
+    fname = op.join(get_log_folder(), appID, 'log_status.yaml')
+    if not op.isfile(fname):
+        return False
+    status = load_from_yaml_file(fname)
+    if status['status'] != AMLClient.status_running and \
+            not status['is_full']:
+        return False
+    return True
 
 class AMLClient(object):
     status_running = 'Running'
@@ -253,9 +263,17 @@ class AMLClient(object):
                 valid_status = [self.status_running, self.status_queued]
                 if by_status:
                     valid_status.append(by_status)
-                return self.with_log and r.status in valid_status
-            all_info = [parse_run_info(r, with_details=check_with_details(r),
-                with_log=self.with_log, log_full=False) for r in all_run]
+                with_details = r.status in valid_status
+                log_full = False
+                if not with_details and not log_downloaded(r):
+                    with_details = True
+                    log_full = True
+                parse_info = {}
+                parse_info = {'with_details': with_details,
+                              'with_log': self.with_log,
+                              'log_full': log_full}
+                return parse_info
+            all_info = [parse_run_info(r, **check_with_details(r)) for r in all_run]
             for info in all_info:
                 # used for injecting to db
                 info['cluster'] = self.cluster
@@ -491,10 +509,13 @@ def inject_to_tensorboard(info):
     for k, v in info.items():
         wt.add_scalar(tag=k, scalar_value=v)
 
+def get_log_folder():
+    return os.environ.get('AML_LOG_FOLDER', 'assets')
+
 @try_once
 def detect_aml_error_message(app_id):
     import glob
-    folders = glob.glob(op.join('./assets', '*{}'.format(app_id),
+    folders = glob.glob(op.join(get_log_folder(), '*{}'.format(app_id),
         'azureml-logs'))
     assert len(folders) == 1, 'not unique: {}'.format(', '.join(folders))
     folder = folders[0]
