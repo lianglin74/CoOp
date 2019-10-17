@@ -1,6 +1,6 @@
 import cv2
 import json
-from qd import tsv_io
+#from qd import tsv_io
 from qd.process_tsv import onebb_in_list_of_bb
 from qd.tsv_io import tsv_reader, tsv_writer
 from qd.qd_common import calculate_iou
@@ -8,6 +8,7 @@ from qd.qd_common import calculate_iou
 from video.getShotMoments import f1Report,getEventLabelsFromText
 from video.getEventLabels import getVideoAndEventLabels, labelConverter
 from video.ballPositionPrediction import FreeFall
+from video.labelViewerForVideo import showImageWithLabels
 
 from tqdm import tqdm
 import numpy as np
@@ -18,10 +19,11 @@ import sys
 
 #Some parms not in classes:
 eventWindowToleranceInEvaluation = 1.0
+DEBUGMODE = 0
 
 def setDebug(frame):
-    if 0:
-        return frame > 5154 and frame < 5176
+    if DEBUGMODE:
+        return frame > 2350 and frame < 2405
     else:
         return False    
 
@@ -420,12 +422,16 @@ class EventDetector(object):
     # Initializer / Instance attributes
     def __init__(self, odTSVFile, videoFile):
         # ---- Parameters ----
-        self.basketBallConfThresh = 0.5
+        self.basketBallConfThresh = 0.5        
+        self.detectBallWithLowThresh = True
+        self.basketBallConfLowThresh = 0.05
+        self.ballSearchRegionIOAThresh = 0.9
+        self.ballReDetectRegionRatio = 5.0
+        self.predictMissingBall = True
+
         self.rimConfThresh = 0.1
           #Case "WrongBasketball_2": needs rimConfThresh to be below 0.19. 
           #Case "RimNotGood_1": prefer rimConfThresh to be above 0.35
-
-        self.predictMissingBall = True
 
         self.backboardConfThresh = 0.1
         # When to start or end an event
@@ -465,6 +471,9 @@ class EventDetector(object):
         prevRects = {"ball": [], "rim": [], "backboard": [], "person": []}
         eventResults = []
 
+        if DEBUGMODE:
+            videoCap = cv2.VideoCapture(self.videoFile)
+
         for row in tqdm(tsv_reader(self.odTSVFile)):
             curTime = self.imageCnt / self.frameRate
             
@@ -488,6 +497,18 @@ class EventDetector(object):
 
             # Add missing ball: for case: BallNotDetected_1:
             if not objectExists(ballRects):                
+                if self.detectBallWithLowThresh:
+                    if self.debug:
+                        print("Before re-detecting ball rects:", ballRects)
+                    
+                    if len(prevRects["ball"]) > 0:
+                        ballRects = self.reDetectBallRects(prevRects["ball"][0], rects)
+
+                    if self.debug:
+                        print("After re-detecting ball rects:", ballRects)
+
+            # Add missing ball: for case: BallNotDetected_1:
+            if not objectExists(ballRects):                
                 if self.predictMissingBall:
                     if self.debug:
                         print("Before adding ball rects:", ballRects)
@@ -498,10 +519,6 @@ class EventDetector(object):
                     if self.debug:
                         print("After adding ball rects:", ballRects)
                 
-                prevRects["ball"] = []
-            else:
-                prevRects["ball"] = ballRects
-
             # Get the ball, rim pair with smallest distance if there are multiple balls or rims
             ballRects, rimRects = self.getClosestBallRimPair(ballRects, rimRects)
             if self.debug:
@@ -518,7 +535,7 @@ class EventDetector(object):
             filteredPersonRectsByMove = []
             if objectExists(rimRects):            
                 filteredPersonRectsByMove, filteredPersonRectsBySorting = self.filterPersonRects(rects, prevRects["person"], rimRects[0]['rect'], self.debug)                
-            prevRects["person"] = filteredPersonRectsBySorting
+            
             if self.debug:
                 print("filteredPersonRectsBySorting", filteredPersonRectsBySorting)
                 print("filteredPersonRectsByMove", filteredPersonRectsByMove)
@@ -531,6 +548,8 @@ class EventDetector(object):
             # Store the prev rects            
             prevRects["rim"] = rimRects
             prevRects["backboard"] = backboardRects
+            prevRects["ball"] = ballRects
+            prevRects["person"] = filteredPersonRectsBySorting
 
             # Check the relative positision of rim and ball
             #distanceBallToRim, ballAboveRim = getRelativePosition(rimBB, ballBB)
@@ -538,6 +557,9 @@ class EventDetector(object):
             # if debug, then store the images with rects to images
             #if self.debug:
             #    saveRectsToTSV(self.videoFile, self.imageCnt, backboardRects, rimRects, ballRects, filteredPersonRects)
+            if self.debug:
+                showAndWriteImageWithLabels(row[0], videoCap, self.frameRate, backboardRects, rimRects, ballRects, filteredPersonRectsByMove, labelIndexStartingFromOne = False)
+                waitForKeys()     
 
             # Update the event status: started or not (if started, record the trajectory; else, clear up)
             #   If distance < thresh for two or three frames (filtering out wrong labels), then started.
@@ -568,9 +590,11 @@ class EventDetector(object):
                     # else: #doing nothing
                     trajectory.clear()
                 # else: #event going on, doing nothing
-
                 
             self.imageCnt += 1
+
+        if DEBUGMODE:
+            videoCap.release()
 
         return eventResults
 
@@ -666,6 +690,20 @@ class EventDetector(object):
             print("[Warning] image ",  self.imageCnt, ": backboard found, but no rim")
 
         return ballRects, rimRects, backboardRects
+    
+    def reDetectBallRects(self, prevBallRect, rects):
+        ballRects = []
+        searchRect = enlargeRect(prevBallRect['rect'], self.ballReDetectRegionRatio)
+        
+        for r in rects:
+            if r['class'] == 'basketball':
+                ballRect = r['rect']
+                if r['conf'] >= self.basketBallConfLowThresh and calculateIOA(ballRect, searchRect) > self.ballSearchRegionIOAThresh:
+                    ballRects.append(r)
+        if len(ballRects) > 1: 
+            ballRects = [ max(ballRects, key=lambda r: r['conf']) ]
+
+        return ballRects
 
     # if backboard shows, but rim does not show; add rim;
     def updateRimBackboardRects(self, rimRects, backboardRects, prevRects):
@@ -741,6 +779,41 @@ class EventDetector(object):
 
         return personRects
 
+def showAndWriteImageWithLabels(imageKey, videoCap, fps, backboardRects, rimRects, ballRects, filteredPersonRectsByMove, labelIndexStartingFromOne = False, writeImage = False):
+    #imageKey = row[0]
+    frameIndex = int(imageKey.split('$')[1])
+    if labelIndexStartingFromOne:
+        frameIndex -= 1
+    
+    #get frame
+    # set frame pos
+    videoCap.set(cv2.CAP_PROP_POS_FRAMES, frameIndex)
+    # read frame
+    ret, frame = videoCap.read()
+    if not ret:
+        print("Exiting due to error in reading frame for ", imageKey)        
+        exit()
+    
+    rects = []
+    rects.extend(backboardRects)
+    rects.extend(rimRects)    
+    rects.extend(ballRects)
+    rects.extend(filteredPersonRectsByMove)
+    
+    showImageWithLabels(frame, rects,  frameIndex, fps, writeImage, './')
+    
+def waitForKeys():
+    while 1:
+        ch = cv2.waitKey(0)
+        ch = chr(ch & 255)
+        if 'q' == ch or chr(27) == ch: #ESC
+            exit()
+        elif 'n' == ch or ' ' == ch or '.' == ch or '\r' == ch: #space and enter            
+            break        
+        else:
+            print("The key pressed is: ", ch)
+            print("Accepted key: { q for exit, n for next }")
+            
 def objectExists(objRectList):
     return len(objRectList) > 0
 
@@ -1515,9 +1588,12 @@ def compareWithGoogleAutoML():
 
 
 if __name__ == '__main__':
-    if len(sys.argv) == 2 and sys.argv[1] == 'test':
-        odFile = 'odFilelist_test.txt'
-        getValidationResults(odFile)
+    if len(sys.argv) == 2:
+        if sys.argv[1] == 'valtest':
+            odFile = 'odFilelist_test.txt'
+            getValidationResults(odFile)
+        elif sys.argv[1] == 'test':
+            getTestingResults()
     else:
         getValidationResults()
         #getTestingResults()

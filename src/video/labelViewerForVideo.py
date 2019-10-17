@@ -7,7 +7,7 @@ from qd.tsv_io import tsv_reader
 import sys
 
 skipSmallRectParm = 0
-skipPersonsParm = 0
+skipPersonsParm = 1
 filterPersonsParm = 1
 
 robustModeParm = 0
@@ -75,6 +75,8 @@ def showFramesWithLabels(topDir, labelFileName, video_name, startSecond, endSeco
             "start_" + str(startSecond) + "-end_" + str(endSecond) + "/"
         if not os.path.exists(directory):
             os.makedirs(directory)
+    else:
+        directory = "./"    
 
     cap = cv2.VideoCapture(topDir + "/" + video_name)
     fps = getFPS(cap)
@@ -97,6 +99,8 @@ def showFramesWithLabels(topDir, labelFileName, video_name, startSecond, endSeco
 
     i = startFrameIndex
     while i <= endFrame:
+        #print("--at beginning of a loop at i :", i)
+        
         # read frame
         # set initial frame  #set frame pos
         orgFrame = cacheFrames[i - startFrameIndex]
@@ -115,38 +119,46 @@ def showFramesWithLabels(topDir, labelFileName, video_name, startSecond, endSeco
         #  print(labels)
         #  print(skipRects(labels))
 
-        frame = drawLabel(orgFrame, labels, skipSmallRect = skipSmallRectParm, skipPersons = skipPersonsParm, filterPersons = filterPersonsParm)
-        text = "Frame: " + str(i) + "; second: " + str(i / fps)
-        frame = cv2.putText(frame, text, (int(0), int(60)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 3)
+        showImageWithLabels(orgFrame, labels, i, fps, writeImage, directory)            
 
-        # Store this frame to an image
-        #my_video_name = video_name.split(".")[0]
-        if writeImage:
-            cv2.imwrite(directory + 'frame_'+str(i)+'.jpg', frame)
-
-        #cv2.namedWindow("Image", cv2.WINDOW_AUTOSIZE);
-        height, width = frame.shape[:2]
-        cv2.namedWindow('Image', cv2.WINDOW_NORMAL)
-        cv2.resizeWindow('Image', width, height)
-        cv2.imshow("Image", frame)
-
-        k = cv2.waitKeyEx(0)
-        if k == 65361 or k == 2424832:  # left
-            i -= 1
-        elif k == 65363 or k == 32 or k == 2555904:  # right or space
-            i += 1
-        elif k == 27 or k == 113:  # q or esc
-            exit()
-        elif k == 115: #"s" for saving image
-            #cv2.imwrite(topDir + imageId + '.jpg', frame)
-            cv2.imwrite(topDir + orgImageId + '.jpg', orgFrame)
-            
-        #else:
-        #  print("Key is", k)
+        # a better way to wait        
+        while 1:
+            ch = cv2.waitKey(0)
+            ch = chr(ch & 255)
+            if 'q' == ch or chr(27) == ch: #ESC
+                exit()
+            elif 'n' == ch or ' ' == ch or '.' == ch or '\r' == ch: #space and enter
+                i += 1
+                break
+            elif 'p' == ch or '\b' == ch or ',' == ch: #backspace
+                i -= 1
+                break
+            elif 's' == ch:
+                cv2.imwrite(topDir + orgImageId + '.jpg', orgFrame)                
+                print("Saving original frame ", orgImageId)
+            else:
+                print("The key pressed is: %c" + ch)
+                print("Accepted key: { q for exit, n for next, p for previous }")
+        #print("Ending of loop at i :", i)
 
     cap.release()
 
+def showImageWithLabels(orgFrame, labels, i, fps, writeImage, directory):
+    frame = drawLabel(orgFrame, labels, skipSmallRect = skipSmallRectParm, skipPersons = skipPersonsParm, filterPersons = filterPersonsParm)
+    text = "Frame: " + str(i) + "; second: " + str(i / fps)
+    frame = cv2.putText(frame, text, (int(0), int(60)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 3)
+
+    # Store this frame to an image
+    #my_video_name = video_name.split(".")[0]
+    if writeImage:
+        cv2.imwrite(directory + 'frame_'+str(i)+'.jpg', frame)
+
+    #cv2.namedWindow("Image", cv2.WINDOW_AUTOSIZE);
+    height, width = frame.shape[:2]
+    cv2.namedWindow('Image', cv2.WINDOW_NORMAL)
+    cv2.resizeWindow('Image', width, height)
+    cv2.imshow("Image", frame)
 
 def getID2Labels(labelFileName):
     t1 = tsv_reader(labelFileName)
