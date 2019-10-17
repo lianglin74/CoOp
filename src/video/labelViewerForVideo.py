@@ -119,7 +119,7 @@ def showFramesWithLabels(topDir, labelFileName, video_name, startSecond, endSeco
         #  print(labels)
         #  print(skipRects(labels))
 
-        showImageWithLabels(orgFrame, labels, i, fps, writeImage, directory)            
+        showImageWithLabels(orgFrame, labels, imageId, i, fps, writeImage, directory)            
 
         # a better way to wait        
         while 1:
@@ -137,13 +137,13 @@ def showFramesWithLabels(topDir, labelFileName, video_name, startSecond, endSeco
                 cv2.imwrite(topDir + orgImageId + '.jpg', orgFrame)                
                 print("Saving original frame ", orgImageId)
             else:
-                print("The key pressed is: %c" + ch)
+                print("The key pressed is: [{}]".format(ch))
                 print("Accepted key: { q for exit, n for next, p for previous }")
         #print("Ending of loop at i :", i)
 
     cap.release()
 
-def showImageWithLabels(orgFrame, labels, i, fps, writeImage, directory):
+def showImageWithLabels(orgFrame, labels, imageKey, i, fps, writeImage, directory):
     frame = drawLabel(orgFrame, labels, skipSmallRect = skipSmallRectParm, skipPersons = skipPersonsParm, filterPersons = filterPersonsParm)
     text = "Frame: " + str(i) + "; second: " + str(i / fps)
     frame = cv2.putText(frame, text, (int(0), int(60)),
@@ -152,7 +152,7 @@ def showImageWithLabels(orgFrame, labels, i, fps, writeImage, directory):
     # Store this frame to an image
     #my_video_name = video_name.split(".")[0]
     if writeImage:
-        cv2.imwrite(directory + 'frame_'+str(i)+'.jpg', frame)
+        cv2.imwrite(directory + imageKey +'.jpg', frame)
 
     #cv2.namedWindow("Image", cv2.WINDOW_AUTOSIZE);
     height, width = frame.shape[:2]

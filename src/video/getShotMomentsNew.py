@@ -19,11 +19,12 @@ import sys
 
 #Some parms not in classes:
 eventWindowToleranceInEvaluation = 1.0
-DEBUGMODE = 0
+DEBUGMODE = 1
+WriteDebugImages = 1
 
 def setDebug(frame):
     if DEBUGMODE:
-        return frame > 2350 and frame < 2405
+        return frame > 8564 and frame < 8622
     else:
         return False    
 
@@ -365,8 +366,9 @@ class Trajectory(object):
     def predictBallRects(self):
         prevBallObjs = self.ballTraj
         l = len(prevBallObjs)
+        ballSpeedRatio = None
         if l < 2 or not objectExists(prevBallObjs[l-1]) or not objectExists(prevBallObjs[l-2]):
-            return []
+            return [], ballSpeedRatio
 
         widthOfBall = getWidthOfObject(prevBallObjs[l-1][0])
         heightOfBall = getHeightOfObject(prevBallObjs[l-1][0])
@@ -377,6 +379,8 @@ class Trajectory(object):
 
         x1, y1 = getCenterOfObject(prevBallObjs[l-2][0])
         x2, y2 = getCenterOfObject(prevBallObjs[l-1][0])
+
+        ballSpeedRatio = math.sqrt( (x2 - x1)**2 + (y2 - y1)**2 ) / max(widthOfBall, heightOfBall)
 
         x = 2 * x2 - x1
         y = 2 * y2 - y1
@@ -390,7 +394,7 @@ class Trajectory(object):
         if self.debug:
             print('dummyBallObj: ', dummyBallObj)
 
-        return [dummyBallObj]
+        return [dummyBallObj], ballSpeedRatio
 
 def maxIndexVal(values):
     max_index, max_value = max(enumerate(values), key=lambda p: p[1])
@@ -426,8 +430,10 @@ class EventDetector(object):
         self.detectBallWithLowThresh = True
         self.basketBallConfLowThresh = 0.05
         self.ballSearchRegionIOAThresh = 0.9
-        self.ballReDetectRegionRatio = 5.0
+        self.ballReDetectRegionRatio = 2.0
+        self.ballReDetectRegionRatio_2 = 3.0
         self.predictMissingBall = True
+        self.ballSpeedToBallRatio = 2.0 #in two frames, ball movement cannot be larger than 2.0 * ball size. 
 
         self.rimConfThresh = 0.1
           #Case "WrongBasketball_2": needs rimConfThresh to be below 0.19. 
@@ -502,10 +508,14 @@ class EventDetector(object):
                         print("Before re-detecting ball rects:", ballRects)
                     
                     if len(prevRects["ball"]) > 0:
-                        ballRects = self.reDetectBallRects(prevRects["ball"][0], rects)
+                        ballRects = self.reDetectBallRects(trajectory, prevRects["ball"][0], rects)
 
                     if self.debug:
                         print("After re-detecting ball rects:", ballRects)
+            
+            # if ball detected is far from last position, discarded it and use predicted location if possible
+            if eventStarted:
+                ballRects = self.verifyBallDetected(ballRects, prevRects['ball'])
 
             # Add missing ball: for case: BallNotDetected_1:
             if not objectExists(ballRects):                
@@ -514,10 +524,13 @@ class EventDetector(object):
                         print("Before adding ball rects:", ballRects)
 
                     if len(prevRects["ball"]) > 0:
-                        ballRects = trajectory.predictBallRects()
+                        ballRects, ballSpeedRatio = trajectory.predictBallRects()
+                        if eventStarted and ballSpeedRatio is not None and ballSpeedRatio > self.ballSpeedToBallRatio :
+                            print(" !! ball move too far: ", ballSpeedRatio)
 
                     if self.debug:
                         print("After adding ball rects:", ballRects)
+                        print("Ball movement ratio: ", ballSpeedRatio)
                 
             # Get the ball, rim pair with smallest distance if there are multiple balls or rims
             ballRects, rimRects = self.getClosestBallRimPair(ballRects, rimRects)
@@ -558,8 +571,9 @@ class EventDetector(object):
             #if self.debug:
             #    saveRectsToTSV(self.videoFile, self.imageCnt, backboardRects, rimRects, ballRects, filteredPersonRects)
             if self.debug:
-                showAndWriteImageWithLabels(row[0], videoCap, self.frameRate, backboardRects, rimRects, ballRects, filteredPersonRectsByMove, labelIndexStartingFromOne = False)
-                waitForKeys()     
+                showAndWriteImageWithLabels(row[0], videoCap, self.frameRate, backboardRects, rimRects, ballRects, filteredPersonRectsByMove, labelIndexStartingFromOne = False, writeImage = WriteDebugImages)
+                if not WriteDebugImages:
+                    waitForKeys()
 
             # Update the event status: started or not (if started, record the trajectory; else, clear up)
             #   If distance < thresh for two or three frames (filtering out wrong labels), then started.
@@ -691,9 +705,13 @@ class EventDetector(object):
 
         return ballRects, rimRects, backboardRects
     
-    def reDetectBallRects(self, prevBallRect, rects):
+    def reDetectBallRects(self, trajectory, prevBallRect, rects):        
         ballRects = []
-        searchRect = enlargeRect(prevBallRect['rect'], self.ballReDetectRegionRatio)
+        predictedBallRectObj, _ = trajectory.predictBallRects()
+        if (objectExists(predictedBallRectObj)):
+            searchRect = enlargeRect(predictedBallRectObj[0]['rect'], self.ballReDetectRegionRatio)
+        else:
+            searchRect = enlargeRect(prevBallRect['rect'], self.ballReDetectRegionRatio_2)
         
         for r in rects:
             if r['class'] == 'basketball':
@@ -704,6 +722,25 @@ class EventDetector(object):
             ballRects = [ max(ballRects, key=lambda r: r['conf']) ]
 
         return ballRects
+
+    def verifyBallDetected(self, ballRects, prevBallRects): 
+        if not objectExists(prevBallRects) or not objectExists(ballRects):
+            return ballRects
+
+        prevBallRectObj = prevBallRects[0]
+        #getballSpeedRatio 
+        widthOfBall = getWidthOfObject(prevBallRectObj)
+        heightOfBall = getHeightOfObject(prevBallRectObj)
+        
+        x1, y1 = getCenterOfObject(prevBallRectObj)
+        x2, y2 = getCenterOfObject(ballRects[0])
+
+        ballSpeedRatio = math.sqrt( (x2 - x1)**2 + (y2 - y1)**2 ) / max(widthOfBall, heightOfBall)
+
+        if ballSpeedRatio > self.ballSpeedToBallRatio:
+            return []
+        else:
+            return ballRects
 
     # if backboard shows, but rim does not show; add rim;
     def updateRimBackboardRects(self, rimRects, backboardRects, prevRects):
@@ -780,7 +817,6 @@ class EventDetector(object):
         return personRects
 
 def showAndWriteImageWithLabels(imageKey, videoCap, fps, backboardRects, rimRects, ballRects, filteredPersonRectsByMove, labelIndexStartingFromOne = False, writeImage = False):
-    #imageKey = row[0]
     frameIndex = int(imageKey.split('$')[1])
     if labelIndexStartingFromOne:
         frameIndex -= 1
@@ -800,7 +836,7 @@ def showAndWriteImageWithLabels(imageKey, videoCap, fps, backboardRects, rimRect
     rects.extend(ballRects)
     rects.extend(filteredPersonRectsByMove)
     
-    showImageWithLabels(frame, rects,  frameIndex, fps, writeImage, './')
+    showImageWithLabels(frame, rects, imageKey, frameIndex, fps, writeImage, './')
     
 def waitForKeys():
     while 1:
