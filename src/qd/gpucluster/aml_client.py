@@ -265,7 +265,7 @@ class AMLClient(object):
                     valid_status.append(by_status)
                 with_details = r.status in valid_status
                 log_full = False
-                if not with_details and not log_downloaded(r):
+                if not with_details and not log_downloaded(r.id):
                     with_details = True
                     log_full = True
                 parse_info = {}
