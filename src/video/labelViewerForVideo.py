@@ -143,8 +143,8 @@ def showFramesWithLabels(topDir, labelFileName, video_name, startSecond, endSeco
 
     cap.release()
 
-def showImageWithLabels(orgFrame, labels, imageKey, i, fps, writeImage, directory):
-    frame = drawLabel(orgFrame, labels, skipSmallRect = skipSmallRectParm, skipPersons = skipPersonsParm, filterPersons = filterPersonsParm)
+def showImageWithLabels(orgFrame, labels, imageKey, i, fps, writeImage, directory, skipSmallRect = skipSmallRectParm, skipPersons = skipPersonsParm, filterPersons = filterPersonsParm):
+    frame = drawLabel(orgFrame, labels, skipSmallRect, skipPersons, filterPersons)
     text = "Frame: " + str(i) + "; second: " + str(i / fps)
     frame = cv2.putText(frame, text, (int(0), int(60)),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 3)
@@ -212,7 +212,7 @@ def drawLabel(image, labels, skipSmallRect = 0, skipPersons = 1, filterPersons =
         confidenceScore = v['conf']
         pos = (int(rect[2] + 3.0), int(rect[3] - 3.0))
         if (labelName == "backboard"):
-            pos = (int(rect[2] + 3.0), int(rect[1] + 3.0))
+            pos = (int(rect[2] + 3.0), int(rect[1] - 6.0))
         elif (labelName == "basketball"):
             pos = (int(rect[2] + 3.0), int(rect[1] + 15.0))
         elif (labelName == "person"):
