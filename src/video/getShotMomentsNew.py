@@ -60,6 +60,9 @@ class Trajectory(object):
         # To solve the problem in case: Case "RimNotGood_1"
         self.ballEnlargeRatioForRim = 1.5        
 
+        # Not working well. Temporarily disabled. 
+        self.shiftBallByRimAnchor = False
+
         # for debugging purpose
         self.printMissingBallFrames = False
         self.debug = debug
@@ -363,8 +366,9 @@ class Trajectory(object):
         else:
             return False
 
-    def predictBallRects(self):
+    def predictBallRects(self, curRimObjList):
         prevBallObjs = self.ballTraj
+        
         l = len(prevBallObjs)
         ballSpeedRatio = None
         if l < 2 or not objectExists(prevBallObjs[l-1]) or not objectExists(prevBallObjs[l-2]):
@@ -379,6 +383,16 @@ class Trajectory(object):
 
         x1, y1 = getCenterOfObject(prevBallObjs[l-2][0])
         x2, y2 = getCenterOfObject(prevBallObjs[l-1][0])
+
+        prevRimObjs = self.rimTraj
+        if self.shiftBallByRimAnchor and objectExists(curRimObjList) and objectExists(prevRimObjs[l-1]) and objectExists(prevRimObjs[l-2]):            
+            x1Rim, y1Rim = getCenterOfObject(prevRimObjs[l-2][0])
+            x2Rim, y2Rim = getCenterOfObject(prevRimObjs[l-1][0])
+            curRimObj = curRimObjList[0]
+            xRim, yRim = getCenterOfObject(curRimObj)
+
+            x1, y1  = adjustBallPosition(x1, y1, x1Rim, y1Rim, xRim, yRim)
+            x2, y2  = adjustBallPosition(x2, y2, x2Rim, y2Rim, xRim, yRim)
 
         ballSpeedRatio = math.sqrt( (x2 - x1)**2 + (y2 - y1)**2 ) / max(widthOfBall, heightOfBall)
 
@@ -395,6 +409,11 @@ class Trajectory(object):
             print('dummyBallObj: ', dummyBallObj)
 
         return [dummyBallObj], ballSpeedRatio
+
+def adjustBallPosition(x2, y2, x2Rim, y2Rim, xRim, yRim):
+    x2 += (xRim - x2Rim)
+    y2 += (yRim - y2Rim)
+    return x2, y2
 
 def maxIndexVal(values):
     max_index, max_value = max(enumerate(values), key=lambda p: p[1])
@@ -508,7 +527,7 @@ class EventDetector(object):
                         print("Before re-detecting ball rects:", ballRects)
                     
                     if len(prevRects["ball"]) > 0:
-                        ballRects = self.reDetectBallRects(trajectory, prevRects["ball"][0], rects)
+                        ballRects = self.reDetectBallRects(trajectory, prevRects["ball"][0], rects, rimRects)
 
                     if self.debug:
                         print("After re-detecting ball rects:", ballRects)
@@ -523,8 +542,8 @@ class EventDetector(object):
                     if self.debug:
                         print("Before adding ball rects:", ballRects)
 
-                    if len(prevRects["ball"]) > 0:
-                        ballRects, ballSpeedRatio = trajectory.predictBallRects()
+                    if len(prevRects["ball"]) > 0:                        
+                        ballRects, ballSpeedRatio = trajectory.predictBallRects(rimRects)
                         if eventStarted and ballSpeedRatio is not None and ballSpeedRatio > self.ballSpeedToBallRatio :
                             print(" !! ball move too far: ", ballSpeedRatio)
 
@@ -705,9 +724,9 @@ class EventDetector(object):
 
         return ballRects, rimRects, backboardRects
     
-    def reDetectBallRects(self, trajectory, prevBallRect, rects):        
+    def reDetectBallRects(self, trajectory, prevBallRect, rects, rimRects):        
         ballRects = []
-        predictedBallRectObj, _ = trajectory.predictBallRects()
+        predictedBallRectObj, _ = trajectory.predictBallRects(rimRects)
         if (objectExists(predictedBallRectObj)):
             searchRect = enlargeRect(predictedBallRectObj[0]['rect'], self.ballReDetectRegionRatio)
         else:
