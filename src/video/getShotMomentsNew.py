@@ -24,7 +24,7 @@ WriteDebugImages = 1
 
 def setDebug(frame):
     if DEBUGMODE:
-        return frame > 8564 and frame < 8622
+        return frame > 3925 and frame < 3975
     else:
         return False    
 
@@ -533,8 +533,8 @@ class EventDetector(object):
                         print("After re-detecting ball rects:", ballRects)
             
             # if ball detected is far from last position, discarded it and use predicted location if possible
-            if eventStarted:
-                ballRects = self.verifyBallDetected(ballRects, prevRects['ball'])
+            #if eventStarted:
+            #    ballRects = self.verifyBallDetected(ballRects, prevRects['ball'])
 
             # Add missing ball: for case: BallNotDetected_1:
             if not objectExists(ballRects):                
