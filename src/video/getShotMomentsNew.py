@@ -24,7 +24,9 @@ WriteDebugImages = 1
 
 def setDebug(frame):
     if DEBUGMODE:
-        return frame > 11717 and frame < 11767
+        startFrame = int(342.96*25)
+        endFrame = startFrame + 50
+        return frame > startFrame  and frame < endFrame
     else:
         return False    
 
@@ -155,6 +157,8 @@ class Trajectory(object):
 
     def analyze(self):
         # filtering wrong object detection
+        # filter wrong balls
+        #filterOutlier(self.ballTraj, self.debug)
 
         # interpolate missing balls
 
@@ -175,8 +179,10 @@ class Trajectory(object):
         firstIoaIndex = findFirstIndex(self.iouTraj, condition = lambda v : v > self.iouLowThresh)
 
         ioaValue = self.iouTraj[ioaIndex]
-        #ioaIndex, ioaValue = maxIndexVal(self.iouTraj)
-        self.ioaTime = float(self.frameTraj[ioaIndex]) / self.frameRate
+
+        maxIoaIndex, maxIoaValue = maxIndexVal(self.iouTraj)
+        
+        self.ioaTime = float(self.frameTraj[maxIoaIndex]) / self.frameRate
 
         # add padding time
         # case WrongBasketball_1:
@@ -198,7 +204,7 @@ class Trajectory(object):
             endTime = min(endTime, self.ioaTime + self.largestEventWindow / 2.0)
             startTime = startTime = max(startTime, self.ioaTime - self.largestEventWindow / 2.0)
 
-        if ioaValue > self.iouHighThresh and self.necessaryCondition1(ioaIndex):
+        if maxIoaValue > self.iouHighThresh and self.necessaryCondition1(maxIoaIndex):
             shot = True
             reason = 'highIou'
         elif ioaValue > self.iouLowThresh:
@@ -293,7 +299,7 @@ class Trajectory(object):
         i = ioaIndex
         l = len(self.ballTraj)
         while i < l:
-            if objectExists(self.ballTraj[i]) and objectExists(self.rimTraj[i]) and not self.ballAboveRim(self.ballTraj[i], self.rimTraj[i]):
+            if objectExists(self.ballTraj[i]) and objectExists(self.rimTraj[i]) and self.ballTraj[i][0]['rect'][3] > self.rimTraj[i][0]['rect'][3]:
                 if not usingDetectedBalls:
                     return i
                 elif i > 0 and objectExists(self.ballTraj[i-1]) and self.ballTraj[i][0]['conf'] != self.ballTraj[i - 1][0]['conf']:
@@ -442,6 +448,80 @@ def findFirstIndex(myList, condition):
         i += 1
     return None
 
+def filterOutlier(objTraj, debug = 0):
+    # for each obj, calculate the movements
+    l = len(objTraj)
+
+    moveRatioList = []
+
+    assert(objectExists(objTraj[0]))
+    moveRatioList.append( [objTraj[0], 0] )
+
+    # get the move ratio for each existed frames
+    i = 1
+    cntFrame = 1
+    while i < l: 
+        if not objectExists(objTraj[i]):
+            cntFrame += 1
+        else:
+            moveRatio = calMoveRatio(objTraj[i], objTraj[i - cntFrame], cntFrame)
+            moveRatioList.append( [objTraj[i], moveRatio] )
+            cntFrame = 1        
+        i += 1
+
+    # calculate the moveSpeedRatio
+    numObjs = len(moveRatioList)
+    if numObjs == 1:
+        return    
+    # correct the first obj
+    moveRatioList[0][1] = moveRatioList[1][1]
+    j = 1
+    while j < numObjs - 1: 
+        moveRatioList[j][1] = min(moveRatioList[j][1], moveRatioList[j + 1][1])
+        j += 1
+    
+    # filtering the outlier by IQR method
+    data = [moveRatioList[j][1] for v in moveRatioList]
+    lower, upper = filterByIQR(data)
+
+    # starting the filtering
+    for obj in moveRatioList:
+        if (obj[1] > upper):
+            if debug: 
+                print("Remove outlier detection for obj: ", obj[0])
+            obj[0] = []    
+
+def filterByIQR(data):
+    from numpy import percentile
+    
+    # calculate interquartile range
+    q25, q75 = percentile(data, 25), percentile(data, 75)
+    iqr = q75 - q25
+    print('Percentiles: 25th=%.3f, 75th=%.3f, IQR=%.3f' % (q25, q75, iqr))
+    # calculate the outlier cutoff
+    cut_off = iqr * 1.5
+    lower, upper = q25 - cut_off, q75 + cut_off
+    # identify outliers
+    outliers = [x for x in data if x < lower or x > upper]
+    #print('Identified outliers:',  outliers)
+    # remove outliers
+    #outliers_removed = [x for x in data if x >= lower and x <= upper]
+    return lower, upper
+
+def calMoveRatio(objList1, objList2, cntFrame):
+    prevRectObj = objList1[0]
+    
+    widthOfObj = getWidthOfObject(prevRectObj)
+    heightOfObj = getHeightOfObject(prevRectObj)
+    
+    x1, y1 = getCenterOfObject(prevRectObj)
+    x2, y2 = getCenterOfObject(objList2[0])
+
+    moveSpeedRatio = math.sqrt( (x2 - x1)**2 + (y2 - y1)**2 ) / max(widthOfObj, heightOfObj) / cntFrame
+
+    return moveSpeedRatio
+
+
 class EventDetector(object):
     # Initializer / Instance attributes
     def __init__(self, odTSVFile, videoFile):
@@ -521,6 +601,10 @@ class EventDetector(object):
             rimRects, backboardRects = self.updateRimBackboardRects(
                 rimRects, backboardRects, prevRects)
 
+            # if ball detected is far from last position, discarded it and use predicted location if possible
+            if eventStarted:
+                ballRects = self.verifyBallDetected(ballRects, prevRects['ball'])
+
             # Add missing ball: for case: BallNotDetected_1:
             if not objectExists(ballRects):                
                 if self.detectBallWithLowThresh:
@@ -533,10 +617,6 @@ class EventDetector(object):
                     if self.debug:
                         print("After re-detecting ball rects:", ballRects)
             
-            # if ball detected is far from last position, discarded it and use predicted location if possible
-            if eventStarted:
-                ballRects = self.verifyBallDetected(ballRects, prevRects['ball'])
-
             # Add missing ball: for case: BallNotDetected_1:
             if not objectExists(ballRects):                
                 if self.predictMissingBall:
@@ -604,6 +684,7 @@ class EventDetector(object):
             if not eventStarted:                
                 eventStarted = self.checkWhetherEventStarted(endTimeRes, curTime, ballRects, rimRects)
                 if eventStarted:
+                    iou = trajectory.add(ballRects, rimRects, filteredPersonRectsByMove, self.imageCnt)
                     startTime = curTime
                     if self.debug:
                         print("Event started!")
