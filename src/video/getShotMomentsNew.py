@@ -24,7 +24,7 @@ WriteDebugImages = 1
 
 def setDebug(frame):
     if DEBUGMODE:
-        startFrame = int(342.96*25)
+        startFrame = int(478.56 *25)
         endFrame = startFrame + 50
         return frame > startFrame  and frame < endFrame
     else:
@@ -56,7 +56,7 @@ class Trajectory(object):
         self.dunkTimeWindow = 3.0
         self.personRimHeightConditionLoose = True
         self.dunkFrameLimit = 2
-        self.stationaryDistanceThresh = 0.5 #unit: ball size
+        self.stationaryDistanceThresh = 0.5 #unit: ball size        
         self.rimPersonLateralDistanceRatio = 1.5
         
         # To solve the problem in case: Case "RimNotGood_1"
@@ -226,6 +226,9 @@ class Trajectory(object):
             #if abs(dunkTime - self.ioaTime) < self.dunkTimeWindow:
             eventType = "dunk"
 
+        # filter very possible wrong dunk
+        passDunkCheck = self.dunkNecessaryCondition_1(firstIoaIndex)
+
         # output the frames of the first missing ball
         if self.printMissingBallFrames and shot:
             self.writeMissingBallFrames()
@@ -244,6 +247,13 @@ class Trajectory(object):
                     f.close()
                     print("Missing ball at frame: ", self.frameTraj[i], "Time: ", self.frameTraj[i]/self.frameRate, "Previous frame: rect: ", self.ballTraj[i  - 1][0]['rect'], 'conf: ', ballRects[0]['conf'])
                     return
+
+    def dunkNecessaryCondition_1(self, firstIoaIndex):
+        i = firstIoaIndex
+        l = len(self.ballTraj)
+        while i < l:
+            
+            i += 1
 
     def conditionBallOverRim(self, ioaIndex):
         i = ioaIndex        
@@ -548,6 +558,7 @@ class EventDetector(object):
         self.personThresh = 0.2
         self.ballEnlargeRatioForperson = 1.1
         self.stationaryDistanceThresh = 0.2
+        self.stationaryPersonAreaChangeRatio = 0.1 #percentage change
 
         # initialize
         self.odTSVFile = odTSVFile
@@ -877,14 +888,16 @@ class EventDetector(object):
     
     def checkPersonMove(self, personRect, prevPersonRects, rimSize, debug = 0):        
         curCenter = getCenterOfObject(personRect)
+        curArea = areaOfRect(personRect['rect'])
         
         for pRect in prevPersonRects: 
             pCenter = getCenterOfObject(pRect)
+            pArea = areaOfRect(pRect['rect'])
             if debug:
                 print("comparing with: ", pRect)
                 print("Distance: ", getDistanceOfTwoPoints(curCenter, pCenter)) 
 
-            if getDistanceOfTwoPoints(curCenter, pCenter) < self.stationaryDistanceThresh * rimSize:
+            if getDistanceOfTwoPoints(curCenter, pCenter) < self.stationaryDistanceThresh * rimSize and (pArea - curArea) / curArea < self.stationaryPersonAreaChangeRatio:
                 return False
 
         return True   
@@ -937,7 +950,7 @@ def showAndWriteImageWithLabels(imageKey, videoCap, fps, backboardRects, rimRect
     rects.extend(ballRects)
     rects.extend(filteredPersonRectsByMove)
     
-    showImageWithLabels(frame, rects, imageKey, frameIndex, fps, writeImage, './', skipSmallRect = 0, skipPersons = 0, filterPersons = 0)
+    showImageWithLabels(frame, rects, imageKey, frameIndex, fps, writeImage, './', skipSmallRect = 0, skipPersons = 0, filterPersons = 0, skipBalls = 0)
     
 def waitForKeys():
     while 1:
