@@ -60,6 +60,7 @@ class Trajectory(object):
         self.rimPersonLateralDistanceRatio = 1.5
         self.secondsFromIoaToDunkFinish = 0.2 #~5 frames for 25 fps
         self.ballFullyAboveRimToleranceRatio = 0.2
+        self.ballTooHighRatio = 0.5
         self.ballRimDistanceIncreaseRatio = 1.1
         
         # To solve the problem in case: Case "RimNotGood_1"
@@ -275,16 +276,15 @@ class Trajectory(object):
         ballCenter = getCenterOfObject(self.ballTraj[i][0])
         centerOfRim = getCenterOfObject(self.rimTraj[i][0])        
         distanceOfBallToRim = ballCenter[1] - centerOfRim[1]
+        ballSize = getHeightOfObject(self.ballTraj[i][0])
 
         # within a few frames, ball should be below rim
         i += 1
         upperLimit = i + dunkFrames
         while i < l and i <= upperLimit:
             if objectExists(self.ballTraj[i]) and objectExists(self.rimTraj[i]):
-                # if ball continue going higher, then return false
-                ballCenter = getCenterOfObject(self.ballTraj[i][0])
-                centerOfRim = getCenterOfObject(self.rimTraj[i][0])        
-                if (ballCenter[1] - centerOfRim[1]) > distanceOfBallToRim * self.ballRimDistanceIncreaseRatio:
+                # if ball continue going higher, then return false                
+                if self.rimTraj[i][0]['rect'][1] - self.ballTraj[i][0]['rect'][3] > self.ballTooHighRatio * ballSize:
                     return False
 
                 ballObj = self.ballTraj[i][0]
