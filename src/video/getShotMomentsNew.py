@@ -24,8 +24,8 @@ WriteDebugImages = 1
 
 def setDebug(frame):
     if DEBUGMODE:
-        startFrame = int(478.56 *25)
-        endFrame = startFrame + 50
+        startFrame = int(156.76 *25)
+        endFrame = startFrame + 100
         return frame > startFrame  and frame < endFrame
     else:
         return False    
@@ -58,6 +58,9 @@ class Trajectory(object):
         self.dunkFrameLimit = 2
         self.stationaryDistanceThresh = 0.5 #unit: ball size        
         self.rimPersonLateralDistanceRatio = 1.5
+        self.secondsFromIoaToDunkFinish = 0.2 #~5 frames for 25 fps
+        self.ballFullyAboveRimToleranceRatio = 0.2
+        self.ballRimDistanceIncreaseRatio = 1.1
         
         # To solve the problem in case: Case "RimNotGood_1"
         self.ballEnlargeRatioForRim = 1.5        
@@ -220,15 +223,15 @@ class Trajectory(object):
 
         # get the most likely dunk person (for dunk detection)
         dunkFrameList = self.getDunkFrameList(firstIoaIndex)
-        if len(dunkFrameList) >= self.dunkFrameLimit:
+        # filter very possible wrong dunk
+        passDunkCheck = self.dunkNecessaryCondition_1(firstIoaIndex)     
+
+        if len(dunkFrameList) >= self.dunkFrameLimit and passDunkCheck:
             dunkTime = dunkFrameList[-1] / self.frameRate
             print("Finding a possible dunk at frame: ", dunkFrameList[-1], "; time: ", dunkTime)            
             #if abs(dunkTime - self.ioaTime) < self.dunkTimeWindow:
             eventType = "dunk"
-
-        # filter very possible wrong dunk
-        passDunkCheck = self.dunkNecessaryCondition_1(firstIoaIndex)
-
+        
         # output the frames of the first missing ball
         if self.printMissingBallFrames and shot:
             self.writeMissingBallFrames()
@@ -250,10 +253,50 @@ class Trajectory(object):
 
     def dunkNecessaryCondition_1(self, firstIoaIndex):
         i = firstIoaIndex
+        dunkFrames = int(self.secondsFromIoaToDunkFinish * self.frameRate) + 1
         l = len(self.ballTraj)
+        # find first position where ball is higher than rim: 
         while i < l:
-            
+            if objectExists(self.ballTraj[i]) and objectExists(self.rimTraj[i]):
+                rimObj = self.rimTraj[i][0]
+                rimSize = getHeightOfObject(rimObj)
+                if self.ballTraj[i][0]['rect'][3] - self.ballFullyAboveRimToleranceRatio * rimSize < self.rimTraj[i][0]['rect'][1]:
+                    break
             i += 1
+        
+        if i >= l:
+            return False
+
+        if self.debug:
+            #import pdb; pdb.set_trace()
+            print("find a frame where ball is roughly above rim: ", self.ballTraj[i], self.rimTraj[i])
+        
+        # 
+        ballCenter = getCenterOfObject(self.ballTraj[i][0])
+        centerOfRim = getCenterOfObject(self.rimTraj[i][0])        
+        distanceOfBallToRim = ballCenter[1] - centerOfRim[1]
+
+        # within a few frames, ball should be below rim
+        i += 1
+        upperLimit = i + dunkFrames
+        while i < l and i <= upperLimit:
+            if objectExists(self.ballTraj[i]) and objectExists(self.rimTraj[i]):
+                # if ball continue going higher, then return false
+                ballCenter = getCenterOfObject(self.ballTraj[i][0])
+                centerOfRim = getCenterOfObject(self.rimTraj[i][0])        
+                if (ballCenter[1] - centerOfRim[1]) > distanceOfBallToRim * self.ballRimDistanceIncreaseRatio:
+                    return False
+
+                ballObj = self.ballTraj[i][0]
+                ballSize = getHeightOfObject(ballObj)
+                #if self.ballTraj[i][0]['rect'][1] + self.ballFullyAboveRimToleranceRatio * ballSize >  self.rimTraj[i][0]['rect'][1]:
+                if self.ballTraj[i][0]['rect'][1]  >  self.rimTraj[i][0]['rect'][1]:
+                    if self.debug:
+                        print("find a frame where ball is almost fully below rim: ", self.ballTraj[i], self.rimTraj[i])
+                    return True
+            i += 1
+
+        return False
 
     def conditionBallOverRim(self, ioaIndex):
         i = ioaIndex        
