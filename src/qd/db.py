@@ -154,6 +154,7 @@ class AnnotationDB(object):
         self._label.insert_one(kwargs)
 
     def insert_one(self, collection_name, **kwargs):
+        self.add_meta_data(kwargs)
         self._qd['qd'][collection_name].insert_one(kwargs)
 
     def build_label_index(self):
