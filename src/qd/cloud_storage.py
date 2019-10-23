@@ -266,6 +266,8 @@ class CloudStorage(object):
         return data_url, url
 
     def az_download(self, remote_path, local_path, sync=True, is_folder=False):
+        origin_local_path = local_path
+        local_path = local_path + '.tmp'
         ensure_directory(op.dirname(local_path))
         assert self.sas_token
         cmd = []
@@ -289,8 +291,8 @@ class CloudStorage(object):
                 # azcopy's requirement
                 ensure_directory(local_path)
         cmd_run(cmd)
+        os.rename(local_path, origin_local_path)
         return data_url, url
-
 
     def download_to_path(self, blob_name, local_path):
         dir_path = op.dirname(local_path)

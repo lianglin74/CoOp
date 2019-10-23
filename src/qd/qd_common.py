@@ -1347,6 +1347,18 @@ def calculate_iou1(rect0, rect1):
         return 1.
     return 1. * i / (a0 + a1 - i)
 
+def calculate_iou_xywh(r0, r1):
+    r0 = [r0[0] - r0[2] / 2.,
+            r0[1] - r0[3] / 2.,
+            r0[0] + r0[2] / 2.,
+            r0[1] + r0[3] / 2.]
+    r1 = [r1[0] - r1[2] / 2.,
+            r1[1] - r1[3] / 2.,
+            r1[0] + r1[2] / 2.,
+            r1[1] + r1[3] / 2.]
+
+    return calculate_iou(r0, r1)
+
 def calculate_iou(rect0, rect1):
     '''
     x0, y1, x2, y3
@@ -2607,7 +2619,6 @@ def print_frame_info():
             info.append('type({}) = {}'.format(i, type(vs[i])))
             continue
     logging.info('; '.join(info))
-
 
 if __name__ == '__main__':
     init_logging()

@@ -26,6 +26,7 @@ from qd.qd_common import init_logging
 from qd.qd_common import dict_has_path, dict_get_path_value, dict_get_all_path
 from qd.qd_common import dict_update_nested_dict
 from qd.qd_common import dict_ensure_path_key_converted
+from qd.qd_common import try_once
 
 
 def get_all_test_data(exp):
@@ -134,7 +135,19 @@ def aml_func_run(func, param, **submit_param):
     extra_param = convert_to_command_line(param,
             script=op.relpath(code_file_name))
     logging.info(extra_param)
-    aml_client.submit(extra_param)
+    job_id = aml_client.submit(extra_param)
+
+    job_info = {'appID': job_id}
+    job_info.update(submit_param)
+    job_info.update(param)
+    try_inject_submit_info(job_info)
+    return job_id
+
+@try_once
+def try_inject_submit_info(job_info):
+    from qd.db import create_annotation_db
+    db = create_annotation_db()
+    db.insert_one('ongoingjob', **job_info)
 
 def philly_func_run(func, param, **submit_param):
     from qd.philly import create_multi_philly_client
@@ -345,6 +358,9 @@ def generate_expid(param):
             ('rt_param$wh_scale', 'WH'),
             ('rt_param$object_scale', 'O'),
             ('rt_param$valid_norm_xywhpos', ('VNXYWHPos', None)),
+            ('rt_param$opt_anchor', ('OptA', None)),
+            ('opt_anchor_lr_mult', 'AnchorLR', lambda x:
+                    x['opt_anchor_lr_mult'] == 1),
             ]
 
     non_expid_impact_keys = ['data', 'net', 'expid_prefix',
@@ -371,6 +387,7 @@ def generate_expid(param):
             'env',
             'test_max_iter',
             'test_input_size',
+            'rt_param$use_pt_rt',
             ]
 
     if param['pipeline_type'] == 'MaskRCNNPipeline':

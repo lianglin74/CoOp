@@ -166,6 +166,7 @@ class AnnotationDB(object):
 
     def build_job_index(self):
         self._phillyjob.create_index([('create_time', 1)])
+        self._phillyjob.create_index([('appID', 1)], unique=True)
 
     def build_ground_truth_index(self):
         self._gt.create_index([('data', 1),
@@ -442,5 +443,14 @@ def update_cluster_job_db(all_job_info):
                 c.update_phillyjob(query={'appID': job_info['appID']},
                         update=job_info)
         else:
-            c.insert_phillyjob(**job_info)
+            try:
+                c.insert_phillyjob(**job_info)
+            except:
+                # if two instances are running to inject to db, there might be
+                # a chance that a new job is inserted here at the same time.
+                # For the db, we make the appID unique, and one of the
+                # instances will fail. Thus, we just ignore the error here
+                from qd.qd_common import print_trace
+                print_trace()
+                pass
 
