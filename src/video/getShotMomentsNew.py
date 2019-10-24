@@ -24,7 +24,7 @@ WriteDebugImages = 1
 
 def setDebug(frame):
     if DEBUGMODE:
-        startFrame = int(342.56 *25)
+        startFrame = int(134.2 *25)
         endFrame = startFrame + 75
         return frame > startFrame  and frame < endFrame
     else:
@@ -254,9 +254,14 @@ class Trajectory(object):
                     return
 
     def dunkNecessaryCondition_1(self, firstIoaIndex):
-        i = firstIoaIndex
         dunkFrames = int(self.secondsFromIoaToDunkFinish * self.frameRate) + 1
         l = len(self.ballTraj)
+        # if ball goes too high than rim, then judge as non-dunk (this works for most CBA, but not NBA)
+        ballSize = getHeightOfObject(self.ballTraj[0][0])
+        if self.ballGoesTooHigh(0, min(firstIoaIndex + dunkFrames, l - 1), ballSize):
+            return False
+
+        i = firstIoaIndex        
         # find first position where ball is higher than rim: 
         while i < l:
             if objectExists(self.ballTraj[i]) and objectExists(self.rimTraj[i]):
@@ -273,10 +278,6 @@ class Trajectory(object):
             #import pdb; pdb.set_trace()
             print("find a frame where ball is roughly above rim: ", self.ballTraj[i], self.rimTraj[i])
         
-        # if ball goes too high than rim, then judge as non-dunk (this works for most CBA, but not NBA)
-        ballSize = getHeightOfObject(self.ballTraj[i][0])
-        if self.ballGoesTooHigh(i + 1, min(i + dunkFrames, l - 1), ballSize):
-            return False
 
         # 
         ballCenter = getCenterOfObject(self.ballTraj[i][0])
