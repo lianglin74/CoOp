@@ -19,12 +19,12 @@ import sys
 
 #Some parms not in classes:
 eventWindowToleranceInEvaluation = 1.0
-DEBUGMODE = 0
+DEBUGMODE = 1
 WriteDebugImages = 1
 
 def setDebug(frame):
     if DEBUGMODE:
-        startFrame = int(134.2 *25)
+        startFrame = int(68.24 *25)
         endFrame = startFrame + 75
         return frame > startFrame  and frame < endFrame
     else:
@@ -261,16 +261,16 @@ class Trajectory(object):
         if self.ballGoesTooHigh(0, min(firstIoaIndex + dunkFrames, l - 1), ballSize):
             return False
 
-        firstIndexBallFullyOverRim = self.ballFullyAboveRim(firstIoaIndex, l -1)
-        if firstIndexBallFullyOverRim is None:
+        firstIndexBallWithInRimLaterally = self.ballFullyInRimLaterally(firstIoaIndex, l -1)
+        if firstIndexBallWithInRimLaterally is None:
             return False
         
         if self.debug:
             #import pdb; pdb.set_trace()
-            print("find a frame where ball is roughly above rim: ", self.ballTraj[firstIndexBallFullyOverRim], self.rimTraj[firstIndexBallFullyOverRim])
+            print("find a frame where ball is roughly above rim: ", self.ballTraj[firstIndexBallWithInRimLaterally], self.rimTraj[firstIndexBallWithInRimLaterally])
         
         # 
-        i = firstIndexBallFullyOverRim
+        i = firstIndexBallWithInRimLaterally
         ballCenter = getCenterOfObject(self.ballTraj[i][0])
         centerOfRim = getCenterOfObject(self.rimTraj[i][0])        
         distanceOfBallToRim = ballCenter[1] - centerOfRim[1]
@@ -283,7 +283,7 @@ class Trajectory(object):
                 ballObj = self.ballTraj[i][0]
                 ballSize = getHeightOfObject(ballObj)
                 #if self.ballTraj[i][0]['rect'][1] + self.ballFullyAboveRimToleranceRatio * ballSize >  self.rimTraj[i][0]['rect'][1]:
-                if self.ballTraj[i][0]['rect'][1]  >  self.rimTraj[i][0]['rect'][3]:
+                if self.ballTraj[i][0]['rect'][1]  >  self.rimTraj[i][0]['rect'][3] - self.ballFullyAboveRimToleranceRatio * ballSize:
                     if self.debug:
                         print("find a frame where ball is almost fully below rim: ", self.ballTraj[i], self.rimTraj[i])
                     return True
@@ -309,6 +309,23 @@ class Trajectory(object):
                 rimObj = self.rimTraj[i][0]
                 rimSize = getHeightOfObject(rimObj)
                 if self.ballTraj[i][0]['rect'][3] - self.ballFullyAboveRimToleranceRatio * rimSize < self.rimTraj[i][0]['rect'][1]:
+                    return i
+            i += 1
+        
+        return None
+
+    def ballFullyInRimLaterally(self, startIndex, endIndex):
+        i = startIndex        
+        # find first position where ball is laterally within rim: 
+        while i <= endIndex:
+            if objectExists(self.ballTraj[i]) and objectExists(self.rimTraj[i]):
+                rimObj = self.rimTraj[i][0]
+                rimSize = getHeightOfObject(rimObj)
+                x1Ball = self.ballTraj[i][0]['rect'][0]
+                x2Ball = self.ballTraj[i][0]['rect'][2]
+                x1Rim = self.rimTraj[i][0]['rect'][0]
+                x2Rim = self.rimTraj[i][0]['rect'][2]
+                if x1Ball >= x1Rim and x2Ball <= x2Rim:
                     return i
             i += 1
         
