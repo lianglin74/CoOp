@@ -261,25 +261,16 @@ class Trajectory(object):
         if self.ballGoesTooHigh(0, min(firstIoaIndex + dunkFrames, l - 1), ballSize):
             return False
 
-        i = firstIoaIndex        
-        # find first position where ball is higher than rim: 
-        while i < l:
-            if objectExists(self.ballTraj[i]) and objectExists(self.rimTraj[i]):
-                rimObj = self.rimTraj[i][0]
-                rimSize = getHeightOfObject(rimObj)
-                if self.ballTraj[i][0]['rect'][3] - self.ballFullyAboveRimToleranceRatio * rimSize < self.rimTraj[i][0]['rect'][1]:
-                    break
-            i += 1
-        
-        if i >= l:
+        firstIndexBallFullyOverRim = self.ballFullyAboveRim(firstIoaIndex, l -1)
+        if firstIndexBallFullyOverRim is None:
             return False
-
+        
         if self.debug:
             #import pdb; pdb.set_trace()
-            print("find a frame where ball is roughly above rim: ", self.ballTraj[i], self.rimTraj[i])
+            print("find a frame where ball is roughly above rim: ", self.ballTraj[firstIndexBallFullyOverRim], self.rimTraj[firstIndexBallFullyOverRim])
         
-
         # 
+        i = firstIndexBallFullyOverRim
         ballCenter = getCenterOfObject(self.ballTraj[i][0])
         centerOfRim = getCenterOfObject(self.rimTraj[i][0])        
         distanceOfBallToRim = ballCenter[1] - centerOfRim[1]
@@ -310,6 +301,18 @@ class Trajectory(object):
             i += 1
         return False
 
+    def ballFullyAboveRim(self, startIndex, endIndex):
+        i = startIndex        
+        # find first position where ball is higher than rim: 
+        while i <= endIndex:
+            if objectExists(self.ballTraj[i]) and objectExists(self.rimTraj[i]):
+                rimObj = self.rimTraj[i][0]
+                rimSize = getHeightOfObject(rimObj)
+                if self.ballTraj[i][0]['rect'][3] - self.ballFullyAboveRimToleranceRatio * rimSize < self.rimTraj[i][0]['rect'][1]:
+                    return i
+            i += 1
+        
+        return None
 
     def conditionBallOverRim(self, ioaIndex):
         i = ioaIndex        
