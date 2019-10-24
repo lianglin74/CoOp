@@ -7,8 +7,9 @@ from qd.tsv_io import tsv_reader
 import sys
 
 skipSmallRectParm = 0
-skipPersonsParm = 1
-filterPersonsParm = 1
+skipPersonsParm = 0
+filterPersonsParm = 0
+skipBallParm = 1
 
 robustModeParm = 0
 
@@ -143,8 +144,8 @@ def showFramesWithLabels(topDir, labelFileName, video_name, startSecond, endSeco
 
     cap.release()
 
-def showImageWithLabels(orgFrame, labels, imageKey, i, fps, writeImage, directory, skipSmallRect = skipSmallRectParm, skipPersons = skipPersonsParm, filterPersons = filterPersonsParm):
-    frame = drawLabel(orgFrame, labels, skipSmallRect, skipPersons, filterPersons)
+def showImageWithLabels(orgFrame, labels, imageKey, i, fps, writeImage, directory, skipSmallRect = skipSmallRectParm, skipPersons = skipPersonsParm, filterPersons = filterPersonsParm, skipBalls = skipBallParm):
+    frame = drawLabel(orgFrame, labels, skipSmallRect, skipPersons, filterPersons, skipBalls)
     text = "Frame: " + str(i) + "; second: " + str(i / fps)
     frame = cv2.putText(frame, text, (int(0), int(60)),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 3)
@@ -185,7 +186,7 @@ def getFPS(cap):
 def areaOfRect(rect):
     return (rect[2] - rect[0]) * (rect[3] - rect[1])
 
-def drawLabel(image, labels, skipSmallRect = 0, skipPersons = 1, filterPersons = 1):
+def drawLabel(image, labels, skipSmallRect = 0, skipPersons = 1, filterPersons = 1, skipBalls = skipBallParm):
     if skipSmallRect:
         labels = skipRects(labels)
     showLabel = True
@@ -214,6 +215,8 @@ def drawLabel(image, labels, skipSmallRect = 0, skipPersons = 1, filterPersons =
         if (labelName == "backboard"):
             pos = (int(rect[2] + 3.0), int(rect[1] - 6.0))
         elif (labelName == "basketball"):
+            if skipBalls:
+                continue
             pos = (int(rect[2] + 3.0), int(rect[1] + 15.0))
         elif (labelName == "person"):
             if skipPersons or (filterPersons and (confidenceScore < confidenceThreshold or countPlayers >= playersThreshold)):

@@ -19,13 +19,13 @@ import sys
 
 #Some parms not in classes:
 eventWindowToleranceInEvaluation = 1.0
-DEBUGMODE = 1
+DEBUGMODE = 0
 WriteDebugImages = 1
 
 def setDebug(frame):
     if DEBUGMODE:
-        startFrame = int(156.76 *25)
-        endFrame = startFrame + 100
+        startFrame = int(342.56 *25)
+        endFrame = startFrame + 75
         return frame > startFrame  and frame < endFrame
     else:
         return False    
@@ -58,9 +58,10 @@ class Trajectory(object):
         self.dunkFrameLimit = 2
         self.stationaryDistanceThresh = 0.5 #unit: ball size        
         self.rimPersonLateralDistanceRatio = 1.5
-        self.secondsFromIoaToDunkFinish = 0.2 #~5 frames for 25 fps
+        #self.secondsFromIoaToDunkFinish = 0.2 #~5 frames for 25 fps
+        self.secondsFromIoaToDunkFinish = 0.4 #~10 frames for 25 fps
         self.ballFullyAboveRimToleranceRatio = 0.2
-        self.ballTooHighRatio = 0.5
+        self.ballTooHighRatio = 0.25
         self.ballRimDistanceIncreaseRatio = 1.1
         
         # To solve the problem in case: Case "RimNotGood_1"
@@ -272,31 +273,42 @@ class Trajectory(object):
             #import pdb; pdb.set_trace()
             print("find a frame where ball is roughly above rim: ", self.ballTraj[i], self.rimTraj[i])
         
+        # if ball goes too high than rim, then judge as non-dunk (this works for most CBA, but not NBA)
+        ballSize = getHeightOfObject(self.ballTraj[i][0])
+        if self.ballGoesTooHigh(i + 1, min(i + dunkFrames, l - 1), ballSize):
+            return False
+
         # 
         ballCenter = getCenterOfObject(self.ballTraj[i][0])
         centerOfRim = getCenterOfObject(self.rimTraj[i][0])        
         distanceOfBallToRim = ballCenter[1] - centerOfRim[1]
-        ballSize = getHeightOfObject(self.ballTraj[i][0])
-
+        
         # within a few frames, ball should be below rim
         i += 1
-        upperLimit = i + dunkFrames
-        while i < l and i <= upperLimit:
+        upperLimit = min(i + dunkFrames, l - 1)
+        while i <= upperLimit:
             if objectExists(self.ballTraj[i]) and objectExists(self.rimTraj[i]):
-                # if ball continue going higher, then return false                
-                if self.rimTraj[i][0]['rect'][1] - self.ballTraj[i][0]['rect'][3] > self.ballTooHighRatio * ballSize:
-                    return False
-
                 ballObj = self.ballTraj[i][0]
                 ballSize = getHeightOfObject(ballObj)
                 #if self.ballTraj[i][0]['rect'][1] + self.ballFullyAboveRimToleranceRatio * ballSize >  self.rimTraj[i][0]['rect'][1]:
-                if self.ballTraj[i][0]['rect'][1]  >  self.rimTraj[i][0]['rect'][1]:
+                if self.ballTraj[i][0]['rect'][1]  >  self.rimTraj[i][0]['rect'][3]:
                     if self.debug:
                         print("find a frame where ball is almost fully below rim: ", self.ballTraj[i], self.rimTraj[i])
                     return True
             i += 1
 
         return False
+
+    def ballGoesTooHigh(self, startIndex, endIndex, ballSize):
+        i = startIndex      
+        while i <= endIndex:
+            if objectExists(self.ballTraj[i]) and objectExists(self.rimTraj[i]):
+                # if ball continue going higher, then return false                
+                if self.ballTraj[i][0]['rect'][3] < self.rimTraj[i][0]['rect'][1] - self.ballTooHighRatio * ballSize:
+                    return True
+            i += 1
+        return False
+
 
     def conditionBallOverRim(self, ioaIndex):
         i = ioaIndex        
