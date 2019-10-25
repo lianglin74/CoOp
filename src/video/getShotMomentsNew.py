@@ -24,7 +24,7 @@ WriteDebugImages = 1
 
 def setDebug(frame):
     if DEBUGMODE:
-        startFrame = int(226.96 *25)
+        startFrame = int(93.88 *25)
         endFrame = startFrame + 75
         return frame > startFrame  and frame < endFrame
     else:
@@ -63,6 +63,9 @@ class Trajectory(object):
         self.ballFullyAboveRimToleranceRatio = 0.2
         self.ballTooHighRatio = 0.25
         self.ballRimDistanceIncreaseRatio = 1.1
+
+        # to solve case: "WrongBallPositionDetected_1"
+        self.wrongBallToleranceFrames = 1
         
         # To solve the problem in case: Case "RimNotGood_1"
         self.ballEnlargeRatioForRim = 1.5        
@@ -172,14 +175,14 @@ class Trajectory(object):
         startTime = float(self.frameTraj[0]) / self.frameRate
         endTime = float(self.frameTraj[-1]) / self.frameRate        
         eventType = "shot"
-        ioaTime = "N/A"
+        self.ioaTime = "N/A"
         speed = "N/A"
         reason = "N/A"
 
         # check iou
         ioaIndex = findLastIndex(self.iouTraj, condition = lambda v : v > self.iouLowThresh)
         if ioaIndex is None:
-            return shot, startTime, endTime, eventType, ioaTime, speed, reason
+            return shot, startTime, endTime, eventType, self.ioaTime, speed, reason
         
         firstIoaIndex = findFirstIndex(self.iouTraj, condition = lambda v : v > self.iouLowThresh)
 
@@ -219,10 +222,13 @@ class Trajectory(object):
                     shot = True
                     reason = 'HighRecall'
                 else:
-                    if self.extraConditions(ioaIndex) and self.conditionBallOverRim(ioaIndex):
+                    if self.extraConditions(ioaIndex) and self.conditionBallOverRim(ioaIndex) is not None:
                         shot = True
                         reason = 'extraCond'
 
+        if not shot: 
+            return shot, startTime, endTime, eventType, self.ioaTime, speed, reason
+        
         # get the most likely dunk person (for dunk detection)
         dunkFrameList = self.getDunkFrameList(firstIoaIndex)
         # filter very possible wrong dunk
@@ -261,7 +267,11 @@ class Trajectory(object):
         if self.ballGoesTooHigh(0, min(firstIoaIndex + dunkFrames, l - 1), ballSize):
             return False
 
-        firstIndexBallWithInRimLaterally = self.ballFullyInRimLaterally(firstIoaIndex, l -1)
+        firstIndexBallOverRim = self.ballFullyAboveRim(max(firstIoaIndex - self.wrongBallToleranceFrames, 0) , l -1)
+        if firstIndexBallOverRim is None:
+            return False
+
+        firstIndexBallWithInRimLaterally = self.ballFullyInRimLaterally(firstIndexBallOverRim, l -1)
         if firstIndexBallWithInRimLaterally is None:
             return False
         
@@ -307,7 +317,7 @@ class Trajectory(object):
         while i <= endIndex:
             if objectExists(self.ballTraj[i]) and objectExists(self.rimTraj[i]):
                 rimObj = self.rimTraj[i][0]
-                rimSize = getHeightOfObject(rimObj)
+                rimSize = min(getWidthOfObject(rimObj), getHeightOfObject(rimObj)) 
                 if self.ballTraj[i][0]['rect'][3] - self.ballFullyAboveRimToleranceRatio * rimSize < self.rimTraj[i][0]['rect'][1]:
                     return i
             i += 1
@@ -322,12 +332,11 @@ class Trajectory(object):
         # find first position where ball is laterally within rim: 
         while i <= endIndex:
             if objectExists(self.ballTraj[i]) and objectExists(self.rimTraj[i]):
-                rimObj = self.rimTraj[i][0]
-                rimSize = getHeightOfObject(rimObj)
                 x1Ball = self.ballTraj[i][0]['rect'][0]
                 x2Ball = self.ballTraj[i][0]['rect'][2]
                 x1Rim = self.rimTraj[i][0]['rect'][0]
                 x2Rim = self.rimTraj[i][0]['rect'][2]
+
                 if self.ballRimLateralOverlap(x1Ball, x2Ball, x1Rim, x2Rim):
                     return i
             i += 1
@@ -354,10 +363,10 @@ class Trajectory(object):
                     ballLateralOverlapRim = True
 
                 if ballOverRim and ballLateralOverlapRim:
-                    return True
+                    return i
 
             i -= 1
-        return False
+        return None
 
     def extraConditions(self, ioaIndex):
         l = len(self.ballTraj)
