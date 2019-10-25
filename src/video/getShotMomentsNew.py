@@ -19,7 +19,7 @@ import sys
 
 #Some parms not in classes:
 eventWindowToleranceInEvaluation = 1.0
-DEBUGMODE = 1
+DEBUGMODE = 0
 WriteDebugImages = 1
 
 def setDebug(frame):
@@ -824,27 +824,31 @@ class EventDetector(object):
             return None
 
     def getDistanceBalltoRim(self, ballRects, rimRects):
-        ballExists = objectExists(ballRects)
-        rimExists = objectExists(rimRects)
-
-        if ballExists and rimExists:            
-            rectClosestRim = rimRects[0]
-            ballCenter = getCenterOfObject(ballRects[0])
-            centerOfRim = getCenterOfObject(rectClosestRim)
-            return getDistanceOfTwoPoints(ballCenter, centerOfRim)
-        else:
-            return None
-
+        rectClosestRim = rimRects[0]
+        ballCenter = getCenterOfObject(ballRects[0])
+        centerOfRim = getCenterOfObject(rectClosestRim)
+        return getDistanceOfTwoPoints(ballCenter, centerOfRim)
+    
     def checkWhetherEventStarted(self, endTime, curTime, ballRects, rimRects):
         # To prevent wrong detection of ball and then start another event too early. 
         # Case "WrongBasketball_2". 
         if (curTime < endTime):
             return False; 
 
-        ballToRimDistance = self.getDistanceBalltoRim(ballRects, rimRects)
+        if not objectExists(ballRects) or not objectExists(rimRects): 
+            return False
+
+        rectClosestRim = rimRects[0]
+        ballCenter = getCenterOfObject(ballRects[0])
+        centerOfRim = getCenterOfObject(rectClosestRim)
+
+        if not isAbove(ballCenter, centerOfRim):
+            return False
+
+        ballToRimDistance = getDistanceOfTwoPoints(ballCenter, centerOfRim)
         widthRim = self.getWidthOfRim(rimRects)
 
-        if ballToRimDistance is not None and widthRim is not None and ballToRimDistance < self.distanceBallToRimThresh * widthRim:
+        if ballToRimDistance < self.distanceBallToRimThresh * widthRim:
             return True
         else:
             return False
@@ -860,6 +864,9 @@ class EventDetector(object):
         if curTime < startTime + shotDetectWindow:
             return False
 
+        if not objectExists(ballRects) or not objectExists(rimRects): 
+            return False
+
         ballToRimDistance = self.getDistanceBalltoRim(ballRects, rimRects)
         widthRim = self.getWidthOfRim(rimRects)
 
@@ -867,7 +874,7 @@ class EventDetector(object):
             print("ball Rim Distance: ", ballToRimDistance)
             print("Width of rim", widthRim)
 
-        if ballToRimDistance is not None and widthRim is not None and ballToRimDistance > self.distanceBallToRimThresh * widthRim:
+        if ballToRimDistance > self.distanceBallToRimThresh * widthRim:
             return True
         else:
             return False
