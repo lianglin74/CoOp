@@ -24,7 +24,7 @@ WriteDebugImages = 1
 
 def setDebug(frame):
     if DEBUGMODE:
-        startFrame = int(68.24 *25)
+        startFrame = int(226.96 *25)
         endFrame = startFrame + 75
         return frame > startFrame  and frame < endFrame
     else:
@@ -314,6 +314,9 @@ class Trajectory(object):
         
         return None
 
+    def ballRimLateralOverlap(self, x1Ball, x2Ball, x1Rim, x2Rim):
+        return x1Ball >= x1Rim and x2Ball <= x2Rim
+
     def ballFullyInRimLaterally(self, startIndex, endIndex):
         i = startIndex        
         # find first position where ball is laterally within rim: 
@@ -325,20 +328,34 @@ class Trajectory(object):
                 x2Ball = self.ballTraj[i][0]['rect'][2]
                 x1Rim = self.rimTraj[i][0]['rect'][0]
                 x2Rim = self.rimTraj[i][0]['rect'][2]
-                if x1Ball >= x1Rim and x2Ball <= x2Rim:
+                if self.ballRimLateralOverlap(x1Ball, x2Ball, x1Rim, x2Rim):
                     return i
             i += 1
         
         return None
 
     def conditionBallOverRim(self, ioaIndex):
-        i = ioaIndex        
+        i = ioaIndex
+        ballOverRim = False
+        ballLateralOverlapRim = False       
         while i >= 0:
-            if objectExists(self.ballTraj[i]) and objectExists(self.rimTraj[i]) and self.ballTraj[i][0]['rect'][1] < self.rimTraj[i][0]['rect'][1]:
-                if self.debug:
-                    print("conditionBallOverRim return true")
-                
-                return True
+            if objectExists(self.ballTraj[i]) and objectExists(self.rimTraj[i]):
+                x1Ball = self.ballTraj[i][0]['rect'][0]
+                x2Ball = self.ballTraj[i][0]['rect'][2]
+                x1Rim = self.rimTraj[i][0]['rect'][0]
+                x2Rim = self.rimTraj[i][0]['rect'][2]
+
+                y1Ball = self.ballTraj[i][0]['rect'][1]
+                y1Rim =  self.rimTraj[i][0]['rect'][1]
+
+                if not ballOverRim and y1Ball  < y1Rim:
+                    ballOverRim = True
+                if not ballLateralOverlapRim and self.ballRimLateralOverlap(x1Ball, x2Ball, x1Rim, x2Rim):
+                    ballLateralOverlapRim = True
+
+                if ballOverRim and ballLateralOverlapRim:
+                    return True
+
             i -= 1
         return False
 
