@@ -33,6 +33,12 @@ def freeze_parameters_by_last_name(model, last_fixed_param):
         pformat(names)))
     freeze_parameters(fixed_modules)
 
+def freeze_parameters_by_name(model, fixed_param):
+    fixed_modules, names = get_all_module_with_name(model, fixed_param)
+    logging.info('fix the parameters of the following modules: {}'.format(
+        pformat(names)))
+    freeze_parameters(fixed_modules)
+
 def get_all_module_need_fixed(model, last_fixed_param):
     found = False
     result = []
@@ -49,6 +55,18 @@ def get_all_module_need_fixed(model, last_fixed_param):
         else:
             assert last_fixed_param not in n
     assert found
+    return result, names
+
+def get_all_module_with_name(model, name):
+    result = []
+    names = []
+    for n, m in model.named_modules():
+        if len(list(m.children())) > 0:
+            continue
+        if name in n:
+            result.append(m)
+            names.append(n)
+    assert(len(result) > 0)
     return result, names
 
 def freeze_parameters(modules):
@@ -528,9 +546,12 @@ class YoloByMask(MaskClassificationPipeline):
                 num_classes=num_classes,
                 **extra_yolo2extraconv_param
                 )
+        model.train()
 
         if self.last_fixed_param is not None:
             freeze_parameters_by_last_name(model, last_fixed_param=self.last_fixed_param)
+        if self.fixed_param is not None:
+            freeze_parameters_by_name(model, self.fixed_param)
         target_param = {
                 'num_classes': len(self.get_labelmap()),
                 }

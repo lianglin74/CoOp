@@ -23,6 +23,7 @@ class MaskClassificationPipeline(ModelPipeline):
     def get_train_model(self):
         # prepare the model
         model = self._get_model(self.pretrained, self.num_class)
+        model.train()
         criterion = self._get_criterion()
         # we need wrap model output and criterion into one model, to re-use
         # maskrcnn trainer
@@ -80,6 +81,7 @@ class MaskClassificationPipeline(ModelPipeline):
             checkpoint_period=self.get_snapshot_steps(),
             arguments=arguments,
             log_step=self.log_step,
+            set_model_to_train=False,
         )
 
         model_final = op.join(self.output_folder, 'snapshot', 'model_final.pth')
