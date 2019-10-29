@@ -99,7 +99,7 @@ class StandardYoloPredictModel(nn.Module):
 
 class RegionTargetPt(nn.Module):
     def __init__(self, biases=None, rescore=True, anchor_aligned_images=12800, coord_scale=1.0, positive_thresh=0.6,
-                 gpus_size=1, seen_images=0):
+                 gpus_size=1, seen_images=0, opt_anchor=False):
         super(RegionTargetPt, self).__init__()
         if biases is None:
             biases = []
@@ -108,11 +108,17 @@ class RegionTargetPt(nn.Module):
         self.positive_thresh = positive_thresh
         self.anchor_aligned_images = anchor_aligned_images
         self.gpus_size = gpus_size
-        import numpy as np
-        #self.register_buffer('biases', torch.from_numpy(np.array(biases, dtype=np.float32)))
-        self.register_buffer('biases', torch.from_numpy(np.array(biases, dtype=np.float32).reshape(-1, 2)))
+        self.opt_anchor = opt_anchor
+        if not opt_anchor:
+            import numpy as np
+            self.register_buffer('biases', torch.from_numpy(np.array(biases, dtype=np.float32).reshape(-1, 2)))
+        else:
+            pt_bias = torch.tensor(biases, requires_grad=True).reshape(-1, 2)
+            pt_bias = torch.nn.Parameter(pt_bias)
+            self.register_parameter('biases', pt_bias)
         # noinspection PyCallingNonCallable,PyUnresolvedReferences
         self.register_buffer('seen_images', torch.tensor(seen_images, dtype=torch.long))
+        self.iteration = 0
 
     def forward(self, xy, wh, obj, truth):
         '''
@@ -121,8 +127,13 @@ class RegionTargetPt(nn.Module):
         obj: 2 * 3 * 13 * 13
         truth: 2 * 150
         '''
-        import time
-        start = time.time()
+        xy, wh, obj = xy.detach(), wh.detach(), obj.detach()
+        print_debug = False
+        if self.opt_anchor and (self.iteration % 100) == 0:
+            print_debug = True
+        if print_debug:
+            logging.info('bias.abs().sum() = {}'.format(self.biases.abs().sum()))
+        self.iteration += 1
         self.seen_images += xy.size(0) * self.gpus_size
         warmup = self.seen_images.item() < self.anchor_aligned_images
 
@@ -154,31 +165,33 @@ class RegionTargetPt(nn.Module):
         num_image, num_anchor2, h, w = xy.shape
 
         target_i, target_j, target_anchor = self.calc_gt_target(truth, w, h)
-
         self.disable_invalid_target(truth, target_i, target_j, target_anchor)
 
-        logging.info(time.time() - start)
-        start = time.time()
-
-        # align gt
         num_gt = truth.shape[1]
         num_anchor = obj.shape[1]
+
+        if print_debug:
+            x = target_anchor.view((-1, 1)) == torch.arange(num_anchor).to(target_anchor.device).view((1, -1))
+            num_each_anchor = x.sum(dim=0)
+            logging.info('#each anchor = {}'.format(num_each_anchor))
         for idx_image in range(num_image):
             for idx_gt in range(num_gt):
                 i = target_i[idx_image, idx_gt]
                 j = target_j[idx_image, idx_gt]
                 n = target_anchor[idx_image, idx_gt]
-                if i < 0:
+                if i < 0 or j < 0:
+                    continue
+                if j >= h or i >= w:
                     continue
                 tx, ty, tw, th, cls = truth[idx_image, idx_gt]
-                t_xy[idx_image, 2 * n, j, i] = tx * w - i
-                t_xy[idx_image, 2 * n + num_anchor, j, i] = ty * h - j
-                t_wh[idx_image, 2 * n, j, i] = torch.log(tw * w /
-                        self.biases[n, 0])
-                t_wh[idx_image, 2 * n + num_anchor, j, i] = torch.log(th * h /
-                        self.biases[n, 1])
-                t_xywh_weight[idx_image, 2 * n, j, i] = self.coord_scale * (2 - tw * th)
-                t_xywh_weight[idx_image, 2 * n + num_anchor, j, i] = self.coord_scale * (2 - tw * th)
+                if tw <= 0 or th <= 0:
+                    continue
+                t_xy[idx_image, n, j, i] = tx * w - i
+                t_xy[idx_image, n + num_anchor, j, i] = ty * h - j
+                t_wh[idx_image, n, j, i] = torch.log(tw*w/self.biases[n, 0])
+                t_wh[idx_image, n + num_anchor, j, i] = torch.log(th*h/self.biases[n, 1])
+                t_xywh_weight[idx_image, n, j, i] = self.coord_scale * (2 - tw * th)
+                t_xywh_weight[idx_image, n + num_anchor, j, i] = self.coord_scale * (2 - tw * th)
 
                 if not self.rescore:
                     t_o_obj[idx_image, n, j, i] = 1
@@ -186,13 +199,14 @@ class RegionTargetPt(nn.Module):
                     t_o_obj[idx_image, n, j, i] = iou[idx_image, n, j, i, idx_gt]
                 t_o_noobj[idx_image, n, j, i] = obj[idx_image, n, j, i]
                 t_label[idx_image, n, j, i] = cls
-        logging.info(time.time() - start)
 
         return t_xy, t_wh, t_xywh_weight, t_o_obj, t_o_noobj, t_label
 
     def disable_invalid_target(self, truth, target_i, target_j, target_anchor):
-        eps = 1e-5
-        invalid_pos = ((truth[:, :, 2] <= eps) | (truth[:, :, 3] <= eps))
+        invalid_pos = ((truth[:, :, 0] <= 0) |
+                (truth[:, :, 0] >= 1) |
+                (truth[:, :, 1] <= 0) |
+                (truth[:, :, 1] >= 1))
         target_i[invalid_pos] = -1
         target_j[invalid_pos] = -1
         target_anchor[invalid_pos] = -1
@@ -201,20 +215,29 @@ class RegionTargetPt(nn.Module):
         '''
         truth = B x T x 5
         '''
-        eps = 1e-5
         target_i = (truth[:, :, 0] * w).long()
         target_j = (truth[:, :, 1] * h).long()
-        min_w = torch.min(truth[:, :, 2, None], self.biases[None, None, :, 0]/w)
-        max_w = torch.max(truth[:, :, 2, None], self.biases[None, None, :, 0]/w)
-        min_h = torch.min(truth[:, :, 3, None], self.biases[None, None, :, 1]/h)
-        max_h = torch.max(truth[:, :, 3, None], self.biases[None, None, :, 1]/h)
-        _, target_anchor = torch.max(min_w * min_h / (max_w * max_h + eps), dim=2)
+        target_i[target_i >= w] = w
+        target_j[target_j >= h] = h
+
+        inter_left = torch.max(-self.biases[None, :, 0, None] / 2 / w,
+            - truth[:, None, :, 2] / 2)
+        inter_right = torch.min(self.biases[None, :, 0, None] / 2 / w,
+            truth[:, None, :, 2] / 2)
+        inter_top = torch.max(-self.biases[None, :, 1, None] / 2 / h,
+            - truth[:, None, :, 3] / 2)
+        inter_bottom = torch.min(self.biases[None, :, 1, None] / 2 / h,
+            truth[:, None, :, 3] / 2)
+        overlap = (inter_right - inter_left).clamp(min=0.) * (inter_bottom -
+                inter_top).clamp(min=0)
+        a1 = self.biases[None, :, 0, None] * self.biases[None, :, 1, None] / w / h
+        a2 = truth[:, None, :, 2] * truth[:, None, :, 3]
+        iou = overlap / (a1 + a2 - overlap)
+        _, target_anchor = torch.max(iou, dim=1)
         return target_i, target_j, target_anchor
 
     def calculate_iou(self, bbs, truth):
         # num_image x num_pred x 1 + num_image x 1 x num_t
-        inter_left = ((bbs[:, :, 0, None] + truth[:, None, :, 2]) / 2. -
-                (bbs[:, :, 0, None] - truth[:, None, :, 0]).abs()).clamp(min=0)
         inter_left = torch.max(bbs[:, :, 0, None] - bbs[:, :, 2, None] / 2,
             truth[:, None, :, 0] - truth[:, None, :, 2] / 2)
         inter_right = torch.min(bbs[:, :, 0, None] + bbs[:, :, 2, None] / 2,
@@ -286,7 +309,8 @@ class RegionTargetLoss(nn.Module):
                  wh_scale=1.0,
                  object_scale=5.0, noobject_scale=1.0, coord_scale=1.0,
                  anchor_aligned_images=12800, ngpu=1, seen_images=0,
-                 valid_norm_xywhpos=False):
+                 valid_norm_xywhpos=False, use_pt_rt=False,
+                 opt_anchor=False):
         from qd.qd_common import print_frame_info
         print_frame_info()
         super(RegionTargetLoss, self).__init__()
@@ -296,14 +320,30 @@ class RegionTargetLoss(nn.Module):
         slice_points = [self.num_anchors * 2, self.num_anchors * 4, self.num_anchors * 5]
         slice_points.append((num_classes + 4 + 1) * self.num_anchors)
         self.slice_region = Slice(1, slice_points)
-        self.region_target = RegionTarget(
-            biases, rescore=rescore,
-            anchor_aligned_images=anchor_aligned_images,
-            coord_scale=coord_scale,
-            positive_thresh=obj_esc_thresh,
-            gpus_size=ngpu,
-            seen_images=seen_images
-        )
+        if opt_anchor:
+            if not use_pt_rt:
+                logging.info('use pt version of rt')
+            use_pt_rt = True
+        if not use_pt_rt:
+            assert not opt_anchor
+            self.region_target = RegionTarget(
+                biases, rescore=rescore,
+                anchor_aligned_images=anchor_aligned_images,
+                coord_scale=coord_scale,
+                positive_thresh=obj_esc_thresh,
+                gpus_size=ngpu,
+                seen_images=seen_images
+            )
+        else:
+            self.region_target = RegionTargetPt(
+                biases, rescore=rescore,
+                anchor_aligned_images=anchor_aligned_images,
+                coord_scale=coord_scale,
+                positive_thresh=obj_esc_thresh,
+                gpus_size=ngpu,
+                seen_images=seen_images,
+                opt_anchor=opt_anchor,
+            )
         self.xy_loss = EuclideanLoss(loss_weight=xy_scale)
         self.wh_loss = EuclideanLoss(loss_weight=wh_scale)
         self.o_obj_loss = EuclideanLoss(loss_weight=object_scale)
