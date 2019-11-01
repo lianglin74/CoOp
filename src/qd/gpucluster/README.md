@@ -16,7 +16,18 @@
    - If you are using system-level python, please use the option of `--user` 
    in setup command so that the lib won't contaminate the system lib
 
-2. Create the config file of `aux_data/configs/vigblob_account.yaml` for azure storage.
+2. Setup azcopy
+   Following [this link](https://docs.microsoft.com/en-us/azure/storage/common/storage-use-azcopy-v10)
+   to download the azcopy and make sure the azcopy is downloaded to
+   ~/code/azcopy/azcopy. That is, you can run the following to check if it is
+   good.
+   ```shell
+   ~/code/azcopy/azcopy --version
+   ```
+   Make sure it is NOT version 8 or older.
+
+
+3. Create the config file of `aux_data/configs/vigblob_account.yaml` for azure storage.
    The file format is
    ```yaml
    account_name: xxxx
@@ -26,7 +37,7 @@
    ```
    Note, the SAS token should start with the question mark.
 
-3. Create the config file of `aux_data/aml/config.json` to specify the
+4. Create the config file of `aux_data/aml/config.json` to specify the
    subsription information
    ```json
    {
@@ -37,7 +48,7 @@
    ```
    Note, leave the double quotes there to make it a valid json file.
 
-4. Create the config file of `aux_data/aml/aml.yaml` to specify the submission
+5. Create the config file of `aux_data/aml/aml.yaml` to specify the submission
    related parameters. Here is one example.
    ```yaml
    azure_blob_config_file: ./aux_data/configs/vigblob_account.yaml
@@ -79,7 +90,7 @@
    experiment_name: your_alias
    ```
 
-5. Set an alias
+6. Set an alias
    ```bash
    alias a='ipython --pdb src/qd/gpucluster/aml_client.py -- '
    ```
@@ -139,7 +150,7 @@
    ```
 
 4. How to submit the job
-   The first step is to upload the code to azure blob by running teh following
+   The first step is to upload the code to azure blob by running the following
    command
    ```bash
    a init
@@ -205,7 +216,9 @@
    in setup command so that the lib won't contaminate the system lib
    - This is the same as AML tool.
 
-2. Create the configuration file of `aux_data/configs/multi_philly_vc.yaml`,
+2. Setup azcopy as for AML.
+
+3. Create the configuration file of `aux_data/configs/multi_philly_vc.yaml`,
    which tells the cluster names we have.
    ```
     clusters:
@@ -215,7 +228,7 @@
    If you just want to focus on sc2, then remove `-wu1`. The VC name is
    hard-coded as `input` since there is no need to change it in our group.
 
-3. Create the configuration file of `aux_data/configs/philly_vc.yaml`. The
+4. Create the configuration file of `aux_data/configs/philly_vc.yaml`. The
    following is an example.
    ```
     vc: input
@@ -293,7 +306,7 @@
 5. How to submit a job
    1. Do initialization first by
       ```shell
-      a init
+      p init
       ```
       which will compress the code in the current folder to a zip file and
       upload it to the cloud as specified in `philly_vc.yaml`.
