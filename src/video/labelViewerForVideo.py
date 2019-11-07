@@ -8,10 +8,10 @@ import sys
 
 skipSmallRectParm = 0
 skipPersonsParm = 0
-filterPersonsParm = 0
-skipBallParm = 1
+filterPersonsParm = 1
+skipBallParm = 0
 
-robustModeParm = 0
+robustModeParm = 1
 
 def preReadFrames(cap, numSeconds, startSecond, fps, robustMode = robustModeParm):
     startFrameIndex = int (fps * startSecond)
@@ -112,6 +112,7 @@ def showFramesWithLabels(topDir, labelFileName, video_name, startSecond, endSeco
 
         # get labels
         if imageId not in id2Labels:
+            print("imageID not found in label file")
             exit()
         else:
             labels = id2Labels[imageId]
