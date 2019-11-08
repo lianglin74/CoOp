@@ -1312,7 +1312,6 @@ def execute(task_type, **kwargs):
         p = create_philly_client(**kwargs)
         p.update_config()
     elif task_type in ['init', 'initc']:
-        ensure_init_config_files()
         p = create_philly_client(**kwargs)
         p.update_config()
         p.sync_code('')
