@@ -227,10 +227,10 @@ def evaluate_by_image(c_detects, c_truths, ovthresh):
     imageid_to_dets = list_to_dict(c_detects, 0)
     keys = list(c_truths.keys())
 
-    from qd.qd_common import parallel_imap
+    from qd.qd_common import parallel_map
     params = [((imageid_to_dets.get(key, [])), c_truths[key], ovthresh) for key in keys]
     logging.info('get correctness for each image in parallel')
-    all_scores_trues = parallel_imap(get_correct, params, 16)
+    all_scores_trues = parallel_map(get_correct, params, 16)
     score_trues = []
     for scores, trues in all_scores_trues:
         score_trues.extend([(s, t) for s, t in zip(scores, trues)])
