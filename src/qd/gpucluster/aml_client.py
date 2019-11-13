@@ -175,7 +175,7 @@ class AMLClient(object):
         self.cluster = kwargs.get('cluster', 'aml')
         self.use_cli_auth = kwargs.get('use_cli_auth', False)
         self.aml_config = aml_config
-        self.compute_target = compute_target
+        self.compute_target_name = compute_target
         # do not change the datastore_name unless the storage account
         # information is changed
         self.datastore_name = datastore_name
@@ -221,23 +221,40 @@ class AMLClient(object):
 
         self.with_log = with_log
 
-        from azureml.core import Workspace
-        if self.use_cli_auth:
-            from azureml.core.authentication import AzureCliAuthentication
-            cli_auth = AzureCliAuthentication()
-            self.ws = Workspace.from_config(self.aml_config, auth=cli_auth)
-        else:
-            self.ws = Workspace.from_config(self.aml_config)
-        self.compute_target = self.ws.compute_targets[self.compute_target]
-
-        self.attach_data_store()
-        self.attach_mount_point()
-
+        self._ws = None
+        self._compute_target = None
         self.use_custom_docker = use_custom_docker
-
-        from azureml.core import Experiment
-        self.experiment = Experiment(self.ws, name=self.experiment_name)
+        self._experiment = None
         self.multi_process = multi_process
+
+    def get_data_blob_client(self):
+        self.attach_data_store()
+        return self.config_param['data_folder']['cloud_blob']
+
+    @property
+    def experiment(self):
+        if self._experiment is None:
+            from azureml.core import Experiment
+            self._experiment = Experiment(self.ws, name=self.experiment_name)
+        return self._experiment
+
+    @property
+    def ws(self):
+        if self._ws is None:
+            from azureml.core import Workspace
+            if self.use_cli_auth:
+                from azureml.core.authentication import AzureCliAuthentication
+                cli_auth = AzureCliAuthentication()
+                self._ws = Workspace.from_config(self.aml_config, auth=cli_auth)
+            else:
+                self._ws = Workspace.from_config(self.aml_config)
+        return self._ws
+
+    @property
+    def compute_target(self):
+        if self._compute_target is None:
+            self._compute_target = self.ws.compute_targets[self.compute_target_name]
+        return self._compute_target
 
     def get_compute_status(self):
         compute_status = get_compute_status(self.compute_target)
@@ -264,14 +281,10 @@ class AMLClient(object):
                 if by_status:
                     valid_status.append(by_status)
                 with_details = r.status in valid_status
-                log_full = False
-                if not with_details and not log_downloaded(r.id):
-                    with_details = True
-                    log_full = True
                 parse_info = {}
                 parse_info = {'with_details': with_details,
                               'with_log': self.with_log,
-                              'log_full': log_full}
+                              'log_full': False}
                 return parse_info
             all_info = [parse_run_info(r, **check_with_details(r)) for r in all_run]
             for info in all_info:
@@ -337,6 +350,7 @@ class AMLClient(object):
                 fname))
 
     def upload_qd_data(self, d):
+        self.attach_data_store()
         from qd.tsv_io import TSVDataset
         data_root = TSVDataset(d)._data_root
         self.config_param['data_folder']['cloud_blob'].az_sync(data_root,
@@ -396,6 +410,9 @@ class AMLClient(object):
             cloud.az_upload2(model_file, target_path)
 
     def submit(self, cmd, num_gpu=None):
+        self.attach_data_store()
+        self.attach_mount_point()
+
         script_params = {'--' + p: v['mount_point'] for p, v in self.config_param.items()}
         script_params['--command'] = cmd
 
@@ -674,6 +691,10 @@ def execute(task_type, **kwargs):
         c = create_aml_client(**kwargs)
         for full_expid in kwargs['remainders']:
             c.download_latest_qdoutput(full_expid)
+    elif task_type in ['upload_qddata', 'u']:
+        c = create_aml_client(**kwargs)
+        for data in kwargs['remainders']:
+            c.upload_qd_data(data)
     elif task_type == 'blame':
         raise NotImplementedError()
         blame(**kwargs)
@@ -727,6 +748,7 @@ def parse_args():
                 'qq', # query queued jobs
                 'qr', # query running jobs
                 'd', 'download_qdoutput',
+                'u', 'upload_qddata', # upload the folder in data/
                 'monitor',
                 'parse',
                 'init',
