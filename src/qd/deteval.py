@@ -174,6 +174,35 @@ def load_dets_iter(rows, region_only=False):
 def rect_area(rc):
     return (rc[2]-rc[0] + 1)*(rc[3]-rc[1] + 1);
 
+def get_correct(param):
+    dets, curr_truths, ovthresh = param
+    dets = sorted(dets, key=lambda x: -x[0])
+
+    y_trues = []
+    y_scores = []
+
+    dettag = set()
+
+    for det in dets:
+        y_true = 0;
+        conf = det[0]
+        bbox = det[1]
+
+        # get overlaps with truth rectangles
+        overlaps = np.array([IoU(bbox, gtbox[1]) for gtbox in curr_truths])
+        bbox_idx_max = np.argmax(overlaps)
+        if overlaps[bbox_idx_max] > ovthresh:
+            # if a detection hits a difficult gt_box, skip this detection
+            if curr_truths[bbox_idx_max][0] != 0:
+                continue
+
+            if bbox_idx_max not in dettag:
+                y_true = 1
+                dettag.add(bbox_idx_max)
+        y_trues += [ y_true ]
+        y_scores += [ conf ]
+    return y_scores, y_trues
+
 #calculate the Jaccard similarity between two rectangles
 def IoU(rc1, rc2):
     if rc1 and rc2:
@@ -184,12 +213,41 @@ def IoU(rc1, rc2):
     else:
         return 0
 
+def evaluate_by_image(c_detects, c_truths, ovthresh):
+    '''
+    For each detection in a class, check whether it hits a ground truth box or not
+    Return: (a list of confs, a list of hit or miss, number of ground truth boxes)
+    '''
+    #calculate npos
+    npos = 0;
+    for img_id in c_truths:
+        npos += len([difficulty_gtbox for difficulty_gtbox in c_truths[img_id] if difficulty_gtbox[0] == 0])
+
+    from qd.qd_common import list_to_dict
+    imageid_to_dets = list_to_dict(c_detects, 0)
+    keys = list(c_truths.keys())
+
+    from qd.qd_common import parallel_imap
+    params = [((imageid_to_dets.get(key, [])), c_truths[key], ovthresh) for key in keys]
+    logging.info('get correctness for each image in parallel')
+    all_scores_trues = parallel_imap(get_correct, params, 16)
+    score_trues = []
+    for scores, trues in all_scores_trues:
+        score_trues.extend([(s, t) for s, t in zip(scores, trues)])
+    logging.info('sorting')
+    score_trues = sorted(score_trues, key=lambda x: -x[0])
+    y_scores = [s for s, t in score_trues]
+    y_trues = [t for s, t in score_trues]
+
+    return (np.array(y_scores), np.array(y_trues), npos)
+
 #evaluate the detection results
 def evaluate_(c_detects, c_truths, ovthresh):
     '''
     For each detection in a class, check whether it hits a ground truth box or not
     Return: (a list of confs, a list of hit or miss, number of ground truth boxes)
     '''
+    c_detects = sorted(c_detects, key=lambda x:-x[1])
     #calculate npos
     npos = 0;
     for img_id in c_truths:
@@ -282,7 +340,10 @@ def _eval(truths, detresults, ovthresh, confs=None, label_to_keys=None):
                 valid_keys}
             c_detects = [(key, conf, bbox) for key, conf, bbox in c_detects
                     if key in valid_keys]
-        (c_y_scores, c_y_trues, c_npos) = evaluate_(c_detects, c_truths, ovthresh)
+        if len(truths) == 1:
+            (c_y_scores, c_y_trues, c_npos) = evaluate_by_image(c_detects, c_truths, ovthresh)
+        else:
+            (c_y_scores, c_y_trues, c_npos) = evaluate_(c_detects, c_truths, ovthresh)
         if confs and np.sum(c_y_trues):
             c_coverage_ratio = float(np.sum(c_y_trues)) / c_npos
             precision, recall, thresholds = metrics.precision_recall_curve(c_y_trues, c_y_scores)
