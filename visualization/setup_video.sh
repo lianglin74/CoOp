@@ -1,8 +1,8 @@
 sudo su -
  
 apt-get update
-apt-get install apache2
-apt-get install apache2-dev
+apt-get install -y apache2
+apt-get install -y apache2-dev
 
 mkdir -p /tmp/setup_video
 cd /tmp/setup_video
