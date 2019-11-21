@@ -5790,6 +5790,90 @@ def adult_filtering_by_cogapi(data, split):
     parallel_tsv_process(row_processor, in_tsv,
             out_tsv, num_process=16, num_jobs=1024)
 
+def scale_ocr_result(result, h_scale, w_scale):
+    for r in result:
+        r['rect'][::2] = [x * w_scale for x in r['rect'][::2]]
+        r['rect'][1::2] = [x * h_scale for x in r['rect'][1::2]]
+        r['lines'][::2] = [x * w_scale for x in r['lines'][::2]]
+        r['lines'][1::2] = [x * h_scale for x in r['lines'][1::2]]
+
+def ocr_engine_result_to_rects(lines):
+    rects = []
+    for info in lines:
+        r = {}
+        xs = info['boundingBox'][::2]
+        ys = info['boundingBox'][1::2]
+        r['rect'] = [min(xs), min(ys), max(xs), max(ys)]
+        r['class'] = 'text'
+        r['lines'] = info['boundingBox']
+        r['text'] = info['text']
+        rects.append(r)
+    return rects
+
+def run_ocr_on_content(input_file, urls):
+    headers = {
+        'Content-Type':'image/jpg'
+    }
+    url = urls[int(random.random() * 9999) % len(urls)]
+    import requests
+    r = requests.post(url, headers=headers, data=input_file)
+
+    if (r.ok):
+        x = json.loads(r.text)
+        if 'recognitionResults' not in x:
+            return []
+        rects = ocr_engine_result_to_rects(x['recognitionResults'][0]['lines'])
+        return rects
+
+class OCRRowProcessor(object):
+    def __init__(self, urls):
+        self.urls = urls
+
+    def __call__(self, row):
+        key, str_rects, str_im = row
+        im = img_from_base64(str_im)
+        def proper_image_scale(im):
+            h, w = im.shape[:2]
+            if h <= w:
+                ratio = 800. / h
+                w = ratio * w
+                h = 800
+                if w > 8000:
+                    w = 8000
+            else:
+                ratio = 800. / w
+                w = 800
+                h = ratio * h
+                if h > 8000:
+                    h = 8000
+            im = cv2.resize(im, (int(w), int(h)))
+            return im
+
+        if max(im.shape[:2]) <= 200 or max(im.shape[:2]) > 8000:
+            im_scale = proper_image_scale(im)
+            h_scale, w_scale = (1. * im_scale.shape[0] / im.shape[0], 1. *
+                    im_scale.shape[1] / im.shape[1])
+        else:
+            h_scale, w_scale = 1, 1
+            im_scale = im
+
+        content = cv2.imencode('.jpg', im_scale)[1]
+        try:
+            result = run_ocr_on_content(content.tobytes(), self.urls)
+        except:
+            logging.info(pformat(im_scale.shape))
+            raise
+        if result is None:
+            logging.info('unable to process {}'.format(key))
+            return key, -1
+        else:
+            scale_ocr_result(result, 1./h_scale, 1./w_scale)
+            return key, json_dump(result)
+
+def ocr_tsv(in_tsv, out_tsv, urls):
+    processor = OCRRowProcessor(urls)
+    parallel_tsv_process(processor, in_tsv, out_tsv,
+            num_process=5, num_jobs=10240)
 
 if __name__ == '__main__':
     from qd.qd_common import parse_general_args
