@@ -202,6 +202,12 @@ def float_tolorance_equal(d1, d2, check_order=True):
             return d1.replace(tzinfo=d2.tzinfo) == d2
         else:
             return d1 == d2
+    elif type(d1) is np.ndarray:
+        try:
+            return np.abs(d1[:] - d2[:]).sum() < 1e-5 * np.abs(d1[:]).sum()
+        except:
+            logging.info('size might not be the same; d1 = {}; d2 = {}'.format(d1.shape, d2.shape))
+            return False
     else:
         import torch
         if type(d1) is torch.Tensor:
@@ -1296,11 +1302,13 @@ def visualize_train(solver):
         visualize_net(solver.net)
         solver.step(10)
 
-def network_input_to_image(data, mean_value):
+def network_input_to_image(data, mean_value, std_value=[1.0,1.0,1.0]):
     all_im = []
     for d in data:
-        im = (d.transpose((1, 2, 0)) + np.asarray(mean_value).reshape(1, 1,
-            3)).astype(np.uint8).copy()
+        im = (d.transpose((1, 2, 0))
+            * np.asarray(std_value).reshape(1, 1, 3)
+            + np.asarray(mean_value).reshape(1, 1, 3)
+            ).astype(np.uint8).copy()
         all_im.append(im)
     return all_im
 
@@ -1344,6 +1352,18 @@ def calculate_iou1(rect0, rect1):
     if a0 == 0 and a1 == 0 and i == 0:
         return 1.
     return 1. * i / (a0 + a1 - i)
+
+def calculate_iou_xywh(r0, r1):
+    r0 = [r0[0] - r0[2] / 2.,
+            r0[1] - r0[3] / 2.,
+            r0[0] + r0[2] / 2.,
+            r0[1] + r0[3] / 2.]
+    r1 = [r1[0] - r1[2] / 2.,
+            r1[1] - r1[3] / 2.,
+            r1[0] + r1[2] / 2.,
+            r1[1] + r1[3] / 2.]
+
+    return calculate_iou(r0, r1)
 
 def calculate_iou(rect0, rect1):
     '''
@@ -2589,6 +2609,22 @@ class DummyCfg(object):
     # provide a signature of clone(), used by maskrcnn checkpointer
     def clone(self):
         return
+
+def print_frame_info():
+    import inspect
+    frame = inspect.currentframe()
+    frames = inspect.getouterframes(frame)
+    frame = frames[1].frame
+    args, _, _, vs = inspect.getargvalues(frame)
+    info = []
+    info.append('func name = {}'.format(inspect.getframeinfo(frame)[2]))
+    for i in args:
+        try:
+            info.append('{} = {}'.format(i, vs[i]))
+        except:
+            info.append('type({}) = {}'.format(i, type(vs[i])))
+            continue
+    logging.info('; '.join(info))
 
 if __name__ == '__main__':
     init_logging()

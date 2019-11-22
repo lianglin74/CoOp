@@ -115,7 +115,7 @@ def download_run_logs(run_info, full=True):
     if 'logFiles' not in run_info:
         return []
     all_log_file = []
-    log_folder = os.environ.get('AML_LOG_FOLDER', 'assets')
+    log_folder = get_log_folder()
     log_status_file = op.join(log_folder, run_info['appID'],
             'log_status.yaml')
     if not full:
@@ -148,6 +148,16 @@ def get_compute_status(compute_target):
     info['max_node_count'] = compute_target.scale_settings.maximum_node_count
     return info
 
+def log_downloaded(appID):
+    fname = op.join(get_log_folder(), appID, 'log_status.yaml')
+    if not op.isfile(fname):
+        return False
+    status = load_from_yaml_file(fname)
+    if status['status'] != AMLClient.status_running and \
+            not status['is_full']:
+        return False
+    return True
+
 class AMLClient(object):
     status_running = 'Running'
     status_queued = 'Queued'
@@ -165,7 +175,7 @@ class AMLClient(object):
         self.cluster = kwargs.get('cluster', 'aml')
         self.use_cli_auth = kwargs.get('use_cli_auth', False)
         self.aml_config = aml_config
-        self.compute_target = compute_target
+        self.compute_target_name = compute_target
         # do not change the datastore_name unless the storage account
         # information is changed
         self.datastore_name = datastore_name
@@ -211,23 +221,40 @@ class AMLClient(object):
 
         self.with_log = with_log
 
-        from azureml.core import Workspace
-        if self.use_cli_auth:
-            from azureml.core.authentication import AzureCliAuthentication
-            cli_auth = AzureCliAuthentication()
-            self.ws = Workspace.from_config(self.aml_config, auth=cli_auth)
-        else:
-            self.ws = Workspace.from_config(self.aml_config)
-        self.compute_target = self.ws.compute_targets[self.compute_target]
-
-        self.attach_data_store()
-        self.attach_mount_point()
-
+        self._ws = None
+        self._compute_target = None
         self.use_custom_docker = use_custom_docker
-
-        from azureml.core import Experiment
-        self.experiment = Experiment(self.ws, name=self.experiment_name)
+        self._experiment = None
         self.multi_process = multi_process
+
+    def get_data_blob_client(self):
+        self.attach_data_store()
+        return self.config_param['data_folder']['cloud_blob']
+
+    @property
+    def experiment(self):
+        if self._experiment is None:
+            from azureml.core import Experiment
+            self._experiment = Experiment(self.ws, name=self.experiment_name)
+        return self._experiment
+
+    @property
+    def ws(self):
+        if self._ws is None:
+            from azureml.core import Workspace
+            if self.use_cli_auth:
+                from azureml.core.authentication import AzureCliAuthentication
+                cli_auth = AzureCliAuthentication()
+                self._ws = Workspace.from_config(self.aml_config, auth=cli_auth)
+            else:
+                self._ws = Workspace.from_config(self.aml_config)
+        return self._ws
+
+    @property
+    def compute_target(self):
+        if self._compute_target is None:
+            self._compute_target = self.ws.compute_targets[self.compute_target_name]
+        return self._compute_target
 
     def get_compute_status(self):
         compute_status = get_compute_status(self.compute_target)
@@ -253,9 +280,13 @@ class AMLClient(object):
                 valid_status = [self.status_running, self.status_queued]
                 if by_status:
                     valid_status.append(by_status)
-                return self.with_log and r.status in valid_status
-            all_info = [parse_run_info(r, with_details=check_with_details(r),
-                with_log=self.with_log, log_full=False) for r in all_run]
+                with_details = r.status in valid_status
+                parse_info = {}
+                parse_info = {'with_details': with_details,
+                              'with_log': self.with_log,
+                              'log_full': False}
+                return parse_info
+            all_info = [parse_run_info(r, **check_with_details(r)) for r in all_run]
             for info in all_info:
                 # used for injecting to db
                 info['cluster'] = self.cluster
@@ -319,6 +350,7 @@ class AMLClient(object):
                 fname))
 
     def upload_qd_data(self, d):
+        self.attach_data_store()
         from qd.tsv_io import TSVDataset
         data_root = TSVDataset(d)._data_root
         self.config_param['data_folder']['cloud_blob'].az_sync(data_root,
@@ -378,6 +410,9 @@ class AMLClient(object):
             cloud.az_upload2(model_file, target_path)
 
     def submit(self, cmd, num_gpu=None):
+        self.attach_data_store()
+        self.attach_mount_point()
+
         script_params = {'--' + p: v['mount_point'] for p, v in self.config_param.items()}
         script_params['--command'] = cmd
 
@@ -491,10 +526,13 @@ def inject_to_tensorboard(info):
     for k, v in info.items():
         wt.add_scalar(tag=k, scalar_value=v)
 
+def get_log_folder():
+    return os.environ.get('AML_LOG_FOLDER', 'assets')
+
 @try_once
 def detect_aml_error_message(app_id):
     import glob
-    folders = glob.glob(op.join('./assets', '*{}'.format(app_id),
+    folders = glob.glob(op.join(get_log_folder(), '*{}'.format(app_id),
         'azureml-logs'))
     assert len(folders) == 1, 'not unique: {}'.format(', '.join(folders))
     folder = folders[0]
@@ -653,6 +691,10 @@ def execute(task_type, **kwargs):
         c = create_aml_client(**kwargs)
         for full_expid in kwargs['remainders']:
             c.download_latest_qdoutput(full_expid)
+    elif task_type in ['upload_qddata', 'u']:
+        c = create_aml_client(**kwargs)
+        for data in kwargs['remainders']:
+            c.upload_qd_data(data)
     elif task_type == 'blame':
         raise NotImplementedError()
         blame(**kwargs)
@@ -706,6 +748,7 @@ def parse_args():
                 'qq', # query queued jobs
                 'qr', # query running jobs
                 'd', 'download_qdoutput',
+                'u', 'upload_qddata', # upload the folder in data/
                 'monitor',
                 'parse',
                 'init',

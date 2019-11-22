@@ -18,17 +18,21 @@ class MaskClassificationPipeline(ModelPipeline):
 
         self.step_lr = self.parse_iter(self.step_lr)
         self.max_iter = self.parse_iter(self.max_iter)
+        self.num_class = len(self.get_labelmap())
 
-    def train(self):
-        device = torch.device('cuda')
-        num_class = len(self.get_labelmap())
-
+    def get_train_model(self):
         # prepare the model
-        model = self._get_model(self.pretrained, num_class)
+        model = self._get_model(self.pretrained, self.num_class)
+        model.train()
         criterion = self._get_criterion()
         # we need wrap model output and criterion into one model, to re-use
         # maskrcnn trainer
         model = ModelLoss(model, criterion)
+        return model
+
+    def train(self):
+        device = torch.device('cuda')
+        model = self.get_train_model()
         model.to(device)
 
         optimizer = self.get_optimizer(model)
@@ -63,8 +67,7 @@ class MaskClassificationPipeline(ModelPipeline):
         arguments.update(extra_checkpoint_data)
 
         # use the maskrcnn trainer engine
-        train_loader = self._get_data_loader(data=self.data,
-                split='train', stage='train',
+        train_loader = self.get_train_data_loader(
                 start_iter=arguments['iteration'])
 
         from maskrcnn_benchmark.engine.trainer import do_train
@@ -78,6 +81,7 @@ class MaskClassificationPipeline(ModelPipeline):
             checkpoint_period=self.get_snapshot_steps(),
             arguments=arguments,
             log_step=self.log_step,
+            set_model_to_train=False,
         )
 
         model_final = op.join(self.output_folder, 'snapshot', 'model_final.pth')
@@ -88,6 +92,11 @@ class MaskClassificationPipeline(ModelPipeline):
 
         synchronize()
         return last_iter
+
+    def get_train_data_loader(self, start_iter=0):
+        return self._get_data_loader(data=self.data,
+                split='train', stage='train',
+                start_iter=start_iter)
 
     def _get_data_loader(self, data, split, stage, shuffle=True, start_iter=0):
         dataset = self._get_dataset(data, split, stage=stage,
@@ -128,6 +137,13 @@ class MaskClassificationPipeline(ModelPipeline):
                 )
         return loader
 
+    def get_test_data_loader(self):
+        return self._get_data_loader(
+                data=self.test_data,
+                split=self.test_split,
+                stage='test',
+                shuffle=False)
+
     def _get_test_data_loader(self, test_data, test_split, labelmap):
         test_dataset = self._get_dataset(test_data, test_split, stage='test',
                 labelmap=labelmap)
@@ -141,6 +157,16 @@ class MaskClassificationPipeline(ModelPipeline):
     def get_rank_specific_tsv(self, f, rank):
         return '{}_{}_{}.tsv'.format(f, rank, self.mpi_size)
 
+    def get_test_model(self):
+        return self._get_model(pretrained=False,
+                num_class=len(self.get_labelmap()))
+
+    def load_test_model(self, model, model_file):
+        checkpointer = DetectronCheckpointer(cfg=DummyCfg(),
+                model=model,
+                save_dir=self.output_folder)
+        checkpointer.load(model_file)
+
     def predict(self, model_file, predict_result_file):
         if self.mpi_size > 1:
             sub_predict_file = self.get_rank_specific_tsv(predict_result_file,
@@ -148,22 +174,13 @@ class MaskClassificationPipeline(ModelPipeline):
         else:
             sub_predict_file = predict_result_file
 
-        labelmap = self.get_labelmap()
-
-        model = self._get_model(pretrained=False, num_class=len(labelmap))
-        model = self._data_parallel_wrap(model)
+        model = self.get_test_model()
+        #model = self._data_parallel_wrap(model)
         model.to('cuda')
 
-        checkpointer = DetectronCheckpointer(cfg=DummyCfg(),
-                model=model,
-                save_dir=self.output_folder)
-        checkpointer.load(model_file)
+        self.load_test_model(model, model_file)
 
-        dataloader = self._get_data_loader(
-                data=self.test_data,
-                split=self.test_split,
-                stage='test',
-                shuffle=False)
+        dataloader = self.get_test_data_loader()
 
         softmax_func = self._get_test_normalize_module()
 
@@ -174,18 +191,23 @@ class MaskClassificationPipeline(ModelPipeline):
         def gen_rows():
             from tqdm import tqdm
             start = time.time()
-            for i, (inputs, labels, keys) in tqdm(enumerate(dataloader),
+            for i, (inputs, _, keys) in tqdm(enumerate(dataloader),
                     total=len(dataloader)):
+                if self.test_max_iter is not None and i >= self.test_max_iter:
+                    # this is used for speed test, where we only would like to run a
+                    # few images
+                    break
                 meters.update(data=time.time() - start)
                 start = time.time()
-                inputs = inputs.cuda()
-                labels = labels.cuda()
+                if not isinstance(inputs, list):
+                    inputs = inputs.cuda()
                 meters.update(input_to_cuda=time.time() - start)
                 start = time.time()
                 output = model(inputs)
                 meters.update(model=time.time() - start)
                 start = time.time()
-                output = softmax_func(output)
+                if softmax_func is not None:
+                    output = softmax_func(output)
                 meters.update(softmax=time.time() - start)
                 for row in self.predict_output_to_tsv_row(output, keys):
                     yield row

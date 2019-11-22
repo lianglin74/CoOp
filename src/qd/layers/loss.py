@@ -10,5 +10,8 @@ class ModelLoss(nn.Module):
     def forward(self, data, target):
         out = self.module(data)
         loss = self.criterion(out, target)
-        return {'criterion_loss': loss}
+        if isinstance(loss, dict):
+            return loss
+        else:
+            return {'criterion_loss': loss}
 

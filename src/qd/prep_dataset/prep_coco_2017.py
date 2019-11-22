@@ -10,9 +10,7 @@ from qd.qd_common import init_logging
 import copy
 
 
-def prep_coco(coco_root, json_name, image_folder, out_tsv_file):
-    annfile = op.join(coco_root, 'annotations', json_name);
-    imgfolder = op.join(coco_root, 'images', image_folder);
+def prep_coco(imgfolder, annfile, out_tsv_file):
     with open(annfile,'r') as jsin:
         print("Loading annotations...")
         truths = json.load(jsin)
@@ -42,7 +40,7 @@ def prep_coco(coco_root, json_name, image_folder, out_tsv_file):
 
     def generate_tsv_row():
         random.seed(666)
-        image_ids = anndict.keys()
+        image_ids = list(anndict.keys())
         logging.info('shuffle the list ({})'.format(len(image_ids)))
         shuffle(image_ids)
 
@@ -75,7 +73,9 @@ def test_prep_coco_full():
         op.join(out_folder, 'test.tsv'))];
 
     for json_name, image_folder, out_tsv_file in input_output:
-        prep_coco(coco_root, json_name, image_folder, out_tsv_file)
+        annfile = op.join(coco_root, 'annotations', json_name);
+        imgfolder = op.join(coco_root, 'images', image_folder);
+        prep_coco(imgfolder, annfile, out_tsv_file)
 
 def load_coco_annotation(annfile):
     with open(annfile,'r') as jsin:

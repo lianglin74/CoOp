@@ -896,6 +896,14 @@ class MaskRCNNPipeline(ModelPipeline):
         return model
 
     def demo(self, image_path):
+        from qd.process_image import load_image
+        cv_im = load_image(image_path)
+        rects = self.predict_one(cv_im)
+        from qd.process_image import draw_rects, show_image
+        draw_rects(rects, cv_im, add_label=False)
+        show_image(cv_im)
+
+    def predict_one(self, cv_im):
         model = self._get_model()
 
         dataset = TSVDataset(self.data)
@@ -903,8 +911,6 @@ class MaskRCNNPipeline(ModelPipeline):
         extra = 1 if self.has_background_output() else 0
         label_id_to_label = {i + extra: l for i, l in enumerate(labelmap)}
 
-        from qd.process_image import load_image
-        cv_im = load_image(image_path)
         height, width = cv_im.shape[:2]
         if self.bgr2rgb:
             import cv2
@@ -932,12 +938,10 @@ class MaskRCNNPipeline(ModelPipeline):
         box_list = output[0]
         box_list = box_list.resize((width, height))
         rects = boxlist_to_list_dict(box_list, label_id_to_label)
-        rects = [r for r in rects if r['conf'] >= 0.5]
+        rects = [r for r in rects if r['conf'] >= 0.2]
 
         logging.info('result = \n{}'.format(pformat(rects)))
-        from qd.process_image import draw_rects, show_image
-        draw_rects(rects, cv_im)
-        show_image(cv_im)
+        return rects
 
 def create_empty_boxlist(w, h, device):
     boxlist_empty = BoxList(torch.zeros((0,4)).to(device),

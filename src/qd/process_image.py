@@ -35,17 +35,23 @@ def put_text(im, text, bottomleft=(0,100),
             thickness=font_thickness)
     return cv2.getTextSize(text, font, font_scale, font_thickness)[0]
 
-def show_net_input_image(data):
-    all_image = network_input_to_image(data, [104, 117, 123])
-    for im in all_image:
-        show_image(im)
+def show_net_input_image(data, mean_value=[104, 117, 123], std_value=[1, 1, 1],
+        save_to_file=None):
+    all_image = network_input_to_image(data, mean_value, std_value)
+    for i in range(len(all_image)):
+        if save_to_file:
+            save_image(all_image[i], save_to_file+'{}.jpg'.format(i))
+        else:
+            show_image(all_image[i])
 
-def show_net_input(data, label, max_image_to_show=None):
-    all_image = network_input_to_image(data, [104, 117, 123])
-    num_image = label.shape[0]
+def show_net_input(data, label, max_image_to_show=None,
+                mean_value=[104, 117, 123], std_value=[1, 1, 1],
+                save_to_file=None, draw_label=True):
+    all_image = network_input_to_image(data, mean_value, std_value)
+    num_image = data.shape[0]
+    num_rect = label.shape[1] // 5
     if max_image_to_show:
         num_image = min(max_image_to_show, num_image)
-    num_rect = label.shape[1] // 5
     im_height = all_image[0].shape[0]
     im_width = all_image[0].shape[1]
     for i in range(num_image):
@@ -63,8 +69,11 @@ def show_net_input(data, label, max_image_to_show=None):
             rects.append((cx - 0.5 * w, cy - 0.5 * h, cx + 0.5 * w, cy + 0.5 *
                 h))
             txts.append(txt)
-        draw_bb(all_image[i], rects, txts)
-        show_image(all_image[i])
+        draw_bb(all_image[i], rects, txts, draw_label=draw_label)
+        if save_to_file:
+            save_image(all_image[i], save_to_file+'{}.jpg'.format(i))
+        else:
+            show_image(all_image[i])
 
 def drawline(img,pt1,pt2,color,thickness=1,style='dotted',gap=10):
     dist =((pt1[0]-pt2[0])**2+(pt1[1]-pt2[1])**2)**.5

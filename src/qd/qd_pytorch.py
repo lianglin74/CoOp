@@ -1506,7 +1506,7 @@ class TorchTrain(object):
                 logging.info('inferred the latest version is {}'.format(
                     latest_version))
             cc.append('v{}'.format(self.test_version))
-        if self.coco_eval_max_det != 100:
+        if self.coco_eval_max_det is not None and self.coco_eval_max_det != 100:
             cc.append('MaxDet{}'.format(self.coco_eval_max_det))
         cc.append('report')
         return '.'.join(cc)

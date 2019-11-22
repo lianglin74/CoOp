@@ -5535,7 +5535,7 @@ def find_predict_file(report_file, all_predict):
             rs = report_file[len(ps):]
             logging.info(rs)
             eval_keys = ['predict', 'tsv', 'coco_box', 'neg_aware_gmap', 'top1',
-                    'noNMSGt', 'noNMSDet', 'noExpandDet', 'speed']
+                    'noNMSGt', 'noNMSDet', 'noExpandDet', 'speed', 'MaxDet.*']
             p0 = ''.join(['(\.{})?'.format(k) for k in eval_keys])
             pattern = '{}(\.v[0-9]*)?\.(report|yaml)'.format(p0)
             if re.match(pattern, rs):
@@ -5545,7 +5545,7 @@ def find_predict_file(report_file, all_predict):
     assert found
     return result
 
-def softnms_row_process(row, sigma=0.5):
+def softnms_row_process(row, sigma=0.5, method=2, Nt=0.5):
     from qd.qd_common import softnms_c
     key, str_rects = row
     rects = json.loads(str_rects)
@@ -5553,7 +5553,7 @@ def softnms_row_process(row, sigma=0.5):
     class_to_rects = list_to_dict(all_class_rect, 0)
     rects2 = []
     for c, rs in class_to_rects.items():
-        rs = softnms_c(rs, sigma=sigma)
+        rs = softnms_c(rs, sigma=sigma, method=method, Nt=Nt)
         for r in rs:
             r['class'] = c
         rects2.extend(rs)
@@ -5620,7 +5620,10 @@ def parallel_multi_tsv_process(row_processor, in_tsv_files,
         start = i * rows_each_rank
         end = start + rows_each_rank
         end = min(end, total)
-        tmp_out = out_tsv_file + '.{}.{}.tsv'.format(i, num_jobs)
+        if num_jobs == 1:
+            tmp_out = out_tsv_file
+        else:
+            tmp_out = out_tsv_file + '.{}.{}.tsv'.format(i, num_jobs)
         info = {'row_processor': row_processor,
                 'idx_process': i,
                 'in_tsv_files': in_tsv_files,
@@ -5633,9 +5636,10 @@ def parallel_multi_tsv_process(row_processor, in_tsv_files,
     from qd.qd_common import parallel_map
     parallel_map(multi_tsv_subset_process, all_task,
             num_worker=num_process)
-    all_out = [task['tmp_out'] for task in all_task]
-    concat_tsv_files(all_out, out_tsv_file)
-    delete_tsv_files(all_out)
+    if num_jobs > 1:
+        all_out = [task['tmp_out'] for task in all_task]
+        concat_tsv_files(all_out, out_tsv_file)
+        delete_tsv_files(all_out)
 
 def parallel_tsv_process(row_processor, in_tsv_file,
         out_tsv_file, num_process, num_jobs=None, head=None, out_sep='\t'):
@@ -5731,7 +5735,7 @@ def create_focus_dataset(data, source_version, target_labels, out_data):
 
 class CogAPI(object):
     def __init__(self):
-        self.remote_image_features = ["adult"]
+        self.remote_image_features = ['adult']
         self.computervision_client = None
 
     def ensure_init(self):
@@ -5748,6 +5752,19 @@ class CogAPI(object):
         self.ensure_init()
         remote_image_analysis = self.computervision_client.analyze_image(image_url,
                 self.remote_image_features)
+        result = {}
+        if 'adult' in self.remote_image_features:
+            result.update(self.parse_adult(remote_image_analysis))
+        else:
+            result.update(self.parse_type(remote_image_analysis))
+        return result
+
+    def parse_type(self, remote_image_analysis):
+        return {'clip_art_type': remote_image_analysis.image_type.clip_art_type,
+                'line_drawing_type': remote_image_analysis.image_type.line_drawing_type,
+                }
+
+    def parse_adult(self, remote_image_analysis):
         result = {'is_adult': remote_image_analysis.adult.is_adult_content,
                 'adult_score': remote_image_analysis.adult.adult_score,
                 'is_racy': remote_image_analysis.adult.is_racy_content,
@@ -5773,6 +5790,90 @@ def adult_filtering_by_cogapi(data, split):
     parallel_tsv_process(row_processor, in_tsv,
             out_tsv, num_process=16, num_jobs=1024)
 
+def scale_ocr_result(result, h_scale, w_scale):
+    for r in result:
+        r['rect'][::2] = [x * w_scale for x in r['rect'][::2]]
+        r['rect'][1::2] = [x * h_scale for x in r['rect'][1::2]]
+        r['lines'][::2] = [x * w_scale for x in r['lines'][::2]]
+        r['lines'][1::2] = [x * h_scale for x in r['lines'][1::2]]
+
+def ocr_engine_result_to_rects(lines):
+    rects = []
+    for info in lines:
+        r = {}
+        xs = info['boundingBox'][::2]
+        ys = info['boundingBox'][1::2]
+        r['rect'] = [min(xs), min(ys), max(xs), max(ys)]
+        r['class'] = 'text'
+        r['lines'] = info['boundingBox']
+        r['text'] = info['text']
+        rects.append(r)
+    return rects
+
+def run_ocr_on_content(input_file, urls):
+    headers = {
+        'Content-Type':'image/jpg'
+    }
+    url = urls[int(random.random() * 9999) % len(urls)]
+    import requests
+    r = requests.post(url, headers=headers, data=input_file)
+
+    if (r.ok):
+        x = json.loads(r.text)
+        if 'recognitionResults' not in x:
+            return []
+        rects = ocr_engine_result_to_rects(x['recognitionResults'][0]['lines'])
+        return rects
+
+class OCRRowProcessor(object):
+    def __init__(self, urls):
+        self.urls = urls
+
+    def __call__(self, row):
+        key, str_rects, str_im = row
+        im = img_from_base64(str_im)
+        def proper_image_scale(im):
+            h, w = im.shape[:2]
+            if h <= w:
+                ratio = 800. / h
+                w = ratio * w
+                h = 800
+                if w > 8000:
+                    w = 8000
+            else:
+                ratio = 800. / w
+                w = 800
+                h = ratio * h
+                if h > 8000:
+                    h = 8000
+            im = cv2.resize(im, (int(w), int(h)))
+            return im
+
+        if max(im.shape[:2]) <= 200 or max(im.shape[:2]) > 8000:
+            im_scale = proper_image_scale(im)
+            h_scale, w_scale = (1. * im_scale.shape[0] / im.shape[0], 1. *
+                    im_scale.shape[1] / im.shape[1])
+        else:
+            h_scale, w_scale = 1, 1
+            im_scale = im
+
+        content = cv2.imencode('.jpg', im_scale)[1]
+        try:
+            result = run_ocr_on_content(content.tobytes(), self.urls)
+        except:
+            logging.info(pformat(im_scale.shape))
+            raise
+        if result is None:
+            logging.info('unable to process {}'.format(key))
+            return key, -1
+        else:
+            scale_ocr_result(result, 1./h_scale, 1./w_scale)
+            return key, json_dump(result)
+
+def ocr_tsv(in_tsv, out_tsv, urls):
+    processor = OCRRowProcessor(urls)
+    parallel_tsv_process(processor, in_tsv, out_tsv,
+            num_process=5, num_jobs=10240)
 
 if __name__ == '__main__':
     from qd.qd_common import parse_general_args
