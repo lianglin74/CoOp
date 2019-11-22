@@ -995,6 +995,8 @@ class MultiPhillyVC(object):
                         j: j['appID'] in ids, my_own=False))
         all_status = list(set([j['status'] for j in all_job_info]))
         all_status = sorted(all_status, reverse=True)
+        all_job_info = sorted(all_job_info, key=lambda t: t['startDateTime'],
+                reverse=True)
         for status in all_status:
             print_job_infos([j for j in all_job_info if j['status'] == status])
         return all_job_info
