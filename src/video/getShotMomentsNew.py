@@ -18,13 +18,13 @@ import os
 import sys
 
 #Some parms not in classes:
-eventWindowToleranceInEvaluation = 1.0
+eventWindowToleranceInEvaluation = 1.5
 DEBUGMODE = 0
 WriteDebugImages = 1
 
 def setDebug(frame):
     if DEBUGMODE:
-        startFrame = int(93.88 *25)
+        startFrame = int(1.0 *25)
         endFrame = startFrame + 75
         return frame > startFrame  and frame < endFrame
     else:
@@ -46,7 +46,7 @@ class Trajectory(object):
         self.eventPadding = 1.0
         
         # to filter out fake shots
-        self.highRecall = False
+        self.highRecall = 1
         #Case: "BallOverlapRimOutSide_1":
         self.ballRimLateralDistanceThresh = 0.8 #unit: ball size
 
@@ -181,6 +181,7 @@ class Trajectory(object):
 
         # check iou
         ioaIndex = findLastIndex(self.iouTraj, condition = lambda v : v > self.iouLowThresh)
+        
         if ioaIndex is None:
             return shot, startTime, endTime, eventType, self.ioaTime, speed, reason
         
@@ -226,8 +227,15 @@ class Trajectory(object):
                         shot = True
                         reason = 'extraCond'
 
-        if not shot: 
-            return shot, startTime, endTime, eventType, self.ioaTime, speed, reason
+        #if not shot: 
+        #    return shot, startTime, endTime, eventType, self.ioaTime, speed, reason
+        if shot == False:
+            shot = True
+            reason = "always"
+            startTime = 0.1
+            endTime = 3.9
+            eventType = "shot"
+            self.ioaTime = 2.0
         
         # get the most likely dunk person (for dunk detection)
         dunkFrameList = self.getDunkFrameList(firstIoaIndex)
@@ -693,7 +701,15 @@ class EventDetector(object):
         if DEBUGMODE:
             videoCap = cv2.VideoCapture(self.videoFile)
 
+        rowList = []
         for row in tqdm(tsv_reader(self.odTSVFile)):
+            rowList.append(row)
+        
+        rowCnt = len(rowList)
+
+        for rowId in range(rowCnt):
+            row = rowList[rowId]
+
             curTime = self.imageCnt / self.frameRate
             
             self.debug = setDebug(self.imageCnt)
@@ -784,7 +800,7 @@ class EventDetector(object):
             #if self.debug:
             #    saveRectsToTSV(self.videoFile, self.imageCnt, backboardRects, rimRects, ballRects, filteredPersonRects)
             if self.debug:
-                showAndWriteImageWithLabels(row[0], videoCap, self.frameRate, backboardRects, rimRects, ballRects, filteredPersonRectsByMove, labelIndexStartingFromOne = False, writeImage = WriteDebugImages)
+                showAndWriteImageWithLabels(row[0], videoCap, self.frameRate, backboardRects, rimRects, ballRects, filteredPersonRectsByMove, labelIndexStartingFromOne = True, writeImage = WriteDebugImages)
                 if not WriteDebugImages:
                     waitForKeys()
 
@@ -804,7 +820,7 @@ class EventDetector(object):
             else:
                 iou = trajectory.add(ballRects, rimRects, filteredPersonRectsByMove, self.imageCnt)
                 
-                eventEnded = self.checkWhetherEventEnded(ballRects, rimRects, curTime, startTime, trajectory.shotDetectWindow)
+                eventEnded = True if rowId == rowCnt - 1 else self.checkWhetherEventEnded(ballRects, rimRects, curTime, startTime, trajectory.shotDetectWindow)
                 if (eventEnded):
                     if self.debug:
                         print("Event ended!")
@@ -1538,7 +1554,7 @@ def getShotStats(pred_results, true_results):
     while i < lp and j < lt:
         pRes = pred_results[i]
         tRes = true_results[j]
-        if tRes[0] < pRes[0]:
+        if tRes[0] < pRes[0] - eventWindowToleranceInEvaluation:
             allTimePoints.append(tRes)
             y_pred.append( (nonShotLabel, None) )
             y_true.append( (shotLabel if treatingDunkAsShot else tRes[1], tRes) )
@@ -1807,6 +1823,110 @@ def calculateF1andWriteRes(odFileList, eventLabelJsonFile = "", textLabelFolder 
     f1Report(overallPred, overallTrue)
     print(allCorrectLabels)
 
+
+def calculateF1andWriteRes_Clips(csvFile = 'train_noNBA.csv'):
+    topDir = "/raid/data/video/CBA/Labeled_Clips/"
+
+    import csv
+    video_list = []
+    with open(topDir + csvFile, 'r') as f:
+        reader = csv.reader(f)
+        video_list = list(reader)
+
+    ####
+
+    usingNewAlg = 1
+    # Used to write labels for GL autoML training
+    writeAutoMLLabel = False
+    # Used to extract video segments for 3D conv
+    extraVideoSegments = False
+    
+    #predict_file = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_chop/TSV/head350_prediction_1551538896210_sc99_01_q1.tsv"
+    #predict_file = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_chop/prediction_1551538896210_sc99_01_q1.tsv"
+
+    overallPred = []
+    overallTrue = []
+    allReports = ""
+
+    allCorrectLabels = {}
+
+    for row in video_list:
+        fileName = row[0].replace("clips/", "detection_result/")
+        fileName = fileName.replace(".mp4", "_bbbp.tsv")
+        predict_file = topDir + fileName
+
+        videoFileName = topDir + row[0]
+        
+        if usingNewAlg:
+            eventDetector = EventDetector(predict_file, videoFileName)
+            pred_results = eventDetector.findEvent()
+        else:
+            from video.getShotMoments import findShot
+            pred_results = findShot(predict_file)
+        #pred_results = findShot(predict_file)
+
+        checkResultsOverlap(pred_results)
+        
+        ret = True
+        points = int(row[1])
+        if points != 2:
+            continue
+
+        print("----Processing file: ", predict_file)
+        print("video file: ", videoFileName)
+
+        currentLabel = 'dunk' if row[2] == 'dunk' else 'shot'
+
+        true_results = [(2.0, currentLabel)]
+
+        if ret: 
+            allReports += "--Report for file: " + videoFileName + "\n"
+
+            print("----calculate F1 for file: ", predict_file)            
+            #print("True_results:", true_results)
+            #calculateF1(pred_results, true_results)
+
+            y_pred_combo, y_true_combo, allTimePoints, correctLabelsDict = getShotStats(pred_results, true_results)
+            #print(y_pred_combo)
+            #print(y_true_combo)
+
+            y_pred, y_pred_pointer = zip(*y_pred_combo)
+            y_true, y_true_pointer = zip(*y_true_combo)
+
+            confusionMatrixReport(y_pred, y_pred_pointer, y_true, y_true_pointer)
+
+            if writeAutoMLLabel or extraVideoSegments: 
+                falsePositiveRes = getFalsePositiveRes(allTimePoints)
+                #print("False Positive Results: ", falsePositiveRes)
+                negativeRes = getNegativeRes(allTimePoints)
+            
+            allCorrectLabels[videoFileName] = correctLabelsDict
+
+            overallPred.extend(y_pred)
+            overallTrue.extend(y_true)
+
+            allReports += f1Report(y_pred, y_true)
+        else:
+            print("!! cannot find label for video file: ", videoFileName)
+            exit()
+
+        # write events
+        writeToTSV(predict_file, pred_results)
+        #writeToTSV(predict_file, true_results, True)
+        if writeAutoMLLabel:
+            writeTrainingLabelsForAutoML(predict_file, true_results, timePoint = True)
+            writeTrainingLabelsForAutoML(predict_file, falsePositiveRes, timePoint = True, suffix = "fakeShot")
+            writeTrainingLabelsForAutoML(predict_file, negativeRes, timePoint = True, suffix = "nonShot")
+        if extraVideoSegments:
+            extractSegmentsForActionRecognition(predict_file, true_results, timePoint = True)
+            extractSegmentsForActionRecognition(predict_file, falsePositiveRes, timePoint = True)
+            extractSegmentsForActionRecognition(predict_file, negativeRes, timePoint = True)
+
+    print(allReports)
+    print("====F1 report for all the data: ")
+    f1Report(overallPred, overallTrue)
+    print(allCorrectLabels)
+
 def getValidationResults(odFileList = "odFilelist.txt"):
     dir = "/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/validation/extracted/"    
     odFileList = read_file_to_list(dir + odFileList)
@@ -1854,7 +1974,9 @@ if __name__ == '__main__':
         elif sys.argv[1] == 'test':
             getTestingResults()
     else:
-        getValidationResults()
+        calculateF1andWriteRes_Clips()
+
+        #getValidationResults()
         #getTestingResults()
         #getMiguTestingResults()
         
