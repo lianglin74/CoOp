@@ -18,7 +18,8 @@ import os
 import sys
 
 #Some parms not in classes:
-eventWindowToleranceInEvaluation = 1.5
+ShortClipMode=False
+eventWindowToleranceInEvaluation = 1.5 if ShortClipMode else 1.0
 DEBUGMODE = 0
 WriteDebugImages = 1
 
@@ -46,7 +47,7 @@ class Trajectory(object):
         self.eventPadding = 1.0
         
         # to filter out fake shots
-        self.highRecall = 1
+        self.highRecall = 1 if ShortClipMode else False
         #Case: "BallOverlapRimOutSide_1":
         self.ballRimLateralDistanceThresh = 0.8 #unit: ball size
 
@@ -227,9 +228,10 @@ class Trajectory(object):
                         shot = True
                         reason = 'extraCond'
 
-        #if not shot: 
-        #    return shot, startTime, endTime, eventType, self.ioaTime, speed, reason
-        if shot == False:
+        if not ShortClipMode and not shot: 
+            return shot, startTime, endTime, eventType, self.ioaTime, speed, reason
+            
+        if ShortClipMode and shot == False:
             shot = True
             reason = "always"
             startTime = 0.1
@@ -701,15 +703,9 @@ class EventDetector(object):
         if DEBUGMODE:
             videoCap = cv2.VideoCapture(self.videoFile)
 
-        rowList = []
-        for row in tqdm(tsv_reader(self.odTSVFile)):
-            rowList.append(row)
+		rowCnt = sum(1 for row in tqdm(tsv_reader(self.odTSVFile)))
         
-        rowCnt = len(rowList)
-
-        for rowId in range(rowCnt):
-            row = rowList[rowId]
-
+        for row in tqdm(tsv_reader(self.odTSVFile)):        
             curTime = self.imageCnt / self.frameRate
             
             self.debug = setDebug(self.imageCnt)
@@ -800,7 +796,7 @@ class EventDetector(object):
             #if self.debug:
             #    saveRectsToTSV(self.videoFile, self.imageCnt, backboardRects, rimRects, ballRects, filteredPersonRects)
             if self.debug:
-                showAndWriteImageWithLabels(row[0], videoCap, self.frameRate, backboardRects, rimRects, ballRects, filteredPersonRectsByMove, labelIndexStartingFromOne = True, writeImage = WriteDebugImages)
+                showAndWriteImageWithLabels(row[0], videoCap, self.frameRate, backboardRects, rimRects, ballRects, filteredPersonRectsByMove, labelIndexStartingFromOne = False, writeImage = WriteDebugImages)
                 if not WriteDebugImages:
                     waitForKeys()
 
@@ -820,7 +816,7 @@ class EventDetector(object):
             else:
                 iou = trajectory.add(ballRects, rimRects, filteredPersonRectsByMove, self.imageCnt)
                 
-                eventEnded = True if rowId == rowCnt - 1 else self.checkWhetherEventEnded(ballRects, rimRects, curTime, startTime, trajectory.shotDetectWindow)
+                eventEnded = True if self.imageCnt == rowCnt - 1 else self.checkWhetherEventEnded(ballRects, rimRects, curTime, startTime, trajectory.shotDetectWindow)
                 if (eventEnded):
                     if self.debug:
                         print("Event ended!")
@@ -1554,7 +1550,7 @@ def getShotStats(pred_results, true_results):
     while i < lp and j < lt:
         pRes = pred_results[i]
         tRes = true_results[j]
-        if tRes[0] < pRes[0] - eventWindowToleranceInEvaluation:
+        if tRes[0] < pRes[0] - eventWindowToleranceInEvaluation if ShortClipMode else 0:
             allTimePoints.append(tRes)
             y_pred.append( (nonShotLabel, None) )
             y_true.append( (shotLabel if treatingDunkAsShot else tRes[1], tRes) )
@@ -1974,9 +1970,9 @@ if __name__ == '__main__':
         elif sys.argv[1] == 'test':
             getTestingResults()
     else:
-        calculateF1andWriteRes_Clips()
+        #calculateF1andWriteRes_Clips()
 
-        #getValidationResults()
+        getValidationResults()
         #getTestingResults()
         #getMiguTestingResults()
         
