@@ -202,6 +202,12 @@ def float_tolorance_equal(d1, d2, check_order=True):
             return d1.replace(tzinfo=d2.tzinfo) == d2
         else:
             return d1 == d2
+    elif type(d1) is np.ndarray:
+        try:
+            return np.abs(d1[:] - d2[:]).sum() < 1e-5 * np.abs(d1[:]).sum()
+        except:
+            logging.info('size might not be the same; d1 = {}; d2 = {}'.format(d1.shape, d2.shape))
+            return False
     else:
         import torch
         if type(d1) is torch.Tensor:
