@@ -219,7 +219,8 @@ class TSVSplit(Dataset):
     read the hw property
     '''
     def __init__(self, data, split, version=0, cache_policy=None):
-        self.tsv = TSVSplitProperty(data, split, t=None, version=version,
+        # image tsv only has version 0
+        self.tsv = TSVSplitProperty(data, split, t=None, version=0,
                 cache_policy=cache_policy)
         self.label_tsv = TSVSplitProperty(data, split, t='label',
                 version=version, cache_policy=cache_policy)
