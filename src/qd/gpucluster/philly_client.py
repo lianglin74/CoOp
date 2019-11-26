@@ -1236,21 +1236,6 @@ def parse_args():
             type=str)
     return parser.parse_args()
 
-def ensure_init_config_files():
-    def infinite_check(config_file, config_template):
-        if not op.isfile(config_file):
-            logging.info('Please create {}. Template: {}'.format(
-                config_file, config_template))
-        while not op.isfile(config_file):
-            time.sleep(5)
-    config_file = './aux_data/configs/vigblob_account.yaml'
-    config_template = './aux_data/configs/vigblob_account.template.yaml'
-    infinite_check(config_file, config_template)
-
-    config_file = './aux_data/configs/philly_vc.yaml'
-    config_template = './aux_data/configs/philly_vc.template.yaml'
-    infinite_check(config_file, config_template)
-
 def parse_job_command(job_info):
     config_extra_param = job_info['meta']['extra_param']
     extra_param = decode_config_extra_param(config_extra_param)
