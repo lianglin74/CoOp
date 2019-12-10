@@ -1691,10 +1691,17 @@ def populate_dataset_hw(data, splits):
 def ensure_label_extract(data, splits):
     dataset = TSVDataset(data)
     for split in splits:
-        full_tsv = dataset.get_data(split)
-        label_tsv = dataset.get_data(split, 'label')
-        if not op.isfile(label_tsv) and op.isfile(full_tsv):
-            extract_label(full_tsv, label_tsv)
+        if (not dataset.has(split, 'label')) and \
+                dataset.has(split):
+            import ipdb;ipdb.set_trace(context=15)
+            def gen_rows():
+                if op.isfile(dataset.get_data(split)):
+                    iter_row = dataset.iter_data(split)
+                else:
+                    iter_row = dataset.iter_composite(split, t=None, version=0)
+                for key, str_rects, _ in iter_row:
+                    yield key, str_rects
+            dataset.write_data(gen_rows(), split, 'label')
 
 def populate_dataset_details(data, check_image_details=False,
         splits=None, check_box=False, data_root=None):
