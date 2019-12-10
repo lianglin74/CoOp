@@ -230,6 +230,7 @@ class MaskClassificationPipeline(ModelPipeline):
             concat_tsv_files(cache_files, predict_result_file)
             from qd.process_tsv import delete_tsv_files
             delete_tsv_files(cache_files)
+        if is_main_process():
             # in distributed testing, some images might be predicted by
             # more than one worker since the distributed sampler only
             # garrantee each image will be processed at least once, not
