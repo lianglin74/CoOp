@@ -263,10 +263,62 @@
    format is the same as AML's
    - `multi_process`: if it is true, it wil launch the script multiple times
    (the number of GPU times) and give each process different environement
-   variables so that you know which GPU to use.
+   variables so that you know which GPU to use. It is essentially to launch the
+   command with mpirun. If it is false, it will launch your command once.
    - `config_param`: tells where to find the code, data, output folder. If you
    want to use hdfs system to keep your data, specify the path started with
    /hdfs.
+
+   - This example only uses one blob for data access. If we want to use
+     multiple blobs, you can specify all blob information in blob_mount_info
+     ```
+      vc: input
+      cluster: wu1
+      #cluster: sc2
+      user_name: jianfw
+      password: null
+      blob_mount_info:
+          - blob_mount_point: /blob
+            azure_blob_config_file: ./aux_data/configs/vigeastblob_account.yaml
+            blob_fuse_options:
+                - '-o'
+                - "attr_timeout=240"
+                - "-o"
+                - "entry_timeout=240"
+                - "-o"
+                - "negative_timeout=120"
+                - "--log-level=LOG_WARNING"
+                - "-o"
+                - "allow_other"
+                - "--file-cache-timeout-in-seconds=10000000"
+          - blob_mount_point: /data_blob
+            azure_blob_config_file: ./aux_data/configs/vigblob_account.yaml
+            blob_fuse_options:
+                - '-o'
+                - 'ro' # read-only
+                - '-o'
+                - "attr_timeout=240"
+                - "-o"
+                - "entry_timeout=240"
+                - "-o"
+                - "negative_timeout=120"
+                - "--log-level=LOG_WARNING"
+                - "-o"
+                - "allow_other"
+                - "--file-cache-timeout-in-seconds=10000000"
+      multi_process: true
+      config_param:
+          #code_path: /hdfs/input/jianfw/code/quickdetection.zip
+          code_path: /blob/jianfw/code/quickdetection.zip
+          data_folder: /data_blob/jianfw/data/qd_data
+          #data_folder: /hdfs/input/jianfw/data/qd_data
+          model_folder: /blob/jianfw/work/qd_models
+          output_folder: /blob/jianfw/work/qd_output
+      docker:
+          image: philly/jobs/test/vig-qd-env
+          tag: py36ptnight
+     ```
+
 
 5. Set an alias
    ```bash
