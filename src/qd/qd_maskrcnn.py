@@ -271,6 +271,8 @@ def train(cfg, local_rank, distributed, log_step=20, sync_bn=False,
         log_step=log_step,
         data_partition=data_partition,
         explicit_average_grad=not use_ddp,
+        # only buffers are learned
+        no_update=cfg.SOLVER.BASE_LR==0,
     )
 
     return model

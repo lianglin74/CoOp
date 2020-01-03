@@ -46,14 +46,16 @@ def infer_type(vc, cluster):
             ('input', 'wu1'),
             ('pnrsy', 'eu1'),
             ('pnrsy', 'sc1'),
-            ('pnrsy', 'et1')]
+            ('pnrsy', 'et1'),
+            ('resrchvc', 'rr1')]
     if any(v == vc and c == cluster for v, c in all_prem):
         return 'prem'
     elif any(v == vc and c == cluster for v, c in all_ap):
         return 'ap'
     elif any(v == vc and c == cluster for v, c in all_azure):
         return 'azure'
-    assert False
+    else:
+        return 'azure'
 
 def philly_input_run(cmd, return_output=False):
     # the username here is not improved since we do not use this function any
@@ -252,7 +254,14 @@ class PhillyVC(object):
         self.dest_config_file = op.join(self.dest_config_folder,
                 op.basename(self.src_config_path))
 
-        self.blob_mount_point = kwargs['blob_mount_point']
+        if 'blob_mount_info' not in kwargs:
+            # only for legacy config
+            self.blob_mount_info = [{'blob_mount_point': kwargs['blob_mount_point'],
+                                     'azure_blob_config_file': kwargs['azure_blob_config_file']}]
+        else:
+            self.blob_mount_info = kwargs['blob_mount_info']
+
+
         self.config_param = kwargs['config_param']
         self.docker = kwargs['docker']
         self.dry_run = kwargs.get('dry_run')
@@ -265,30 +274,66 @@ class PhillyVC(object):
         # from log since philly_server.py will print nvidia-smi results
         self.query_with_gpu = False
         self.query_with_log = kwargs.get('with_log')
-        self.azure_blob_config_file = kwargs.get('azure_blob_config_file')
+
+        self._path2info = None
+
+    @property
+    def path2info(self):
+        if self._path2info is None:
+            point_to_client = {info['blob_mount_point']:
+                    create_cloud_storage(config_file=info['azure_blob_config_file'])
+                    for info in self.blob_mount_info}
+            self._path2info = {}
+            for path_type, path in self.config_param.items():
+                info = {'path_in_cluster': path}
+                if path.startswith('/hdfs'):
+                    info['type'] = 'hdfs'
+                else:
+                    info['type'] = 'blob'
+                    for point, client in point_to_client.items():
+                        if path.startswith(point):
+                            assert 'client' not in info
+                            info['client'] = client
+                            info['mount_point'] = point
+                            info['rel_path_in_blob'] = path[len(point): ]
+                self._path2info[path_type] = info
+        return self._path2info
+
 
     @property
     def use_blob_as_input(self):
-        return self.config_param['data_folder'].startswith(
-                self.blob_mount_point)
+        return self.path2info['data_folder']['type'] == 'blob'
 
     def get_cloud_storage(self):
-        return create_cloud_storage(config_file=self.azure_blob_config_file)
+        logging.error('should not be called any more, since we do not know '
+                'which blob to use')
+        return create_cloud_storage(config_file=self.blob_mount_info[0]['azure_blob_config_file'])
 
     def get_data_folder_in_blob(self):
-        assert self.config_param['data_folder'].startswith(self.blob_mount_point)
-        result = self.config_param['data_folder'][len(self.blob_mount_point): ]
-        if result.startswith('/'):
-            result = result[1:]
-        return result
+        assert self.path2info['data_folder']['type'] == 'blob'
+        return self.path2info['data_folder']['rel_path_in_blob']
 
     def get_output_folder_in_blob(self):
-        assert self.config_param['output_folder'].startswith(self.blob_mount_point)
-        result = self.config_param['output_folder'][len(self.blob_mount_point): ]
-        if result.startswith('/'):
-            result = result[1:]
+        assert self.path2info['output_folder']['type'] == 'blob'
+        return self.path2info['output_folder']['rel_path_in_blob']
+
+    def get_cluster_status(self):
+        cmd = 'https://philly/api/summary?clusterId={}'.format(
+                self.cluster)
+        summary = self.philly_rest_api(cmd)
+        summary = json.loads(summary)
+        result = {}
+        if 'ExceptionType' in summary:
+            result['quota'] = 0
+            result['activeGpus'] = 400
+        else:
+            result['quota'] = summary['queueStatus']['virtualClusters'][self.vc]['quota']
+            result['activeGpus'] = summary['activeGPUsByVc'][self.vc]
+            result['total_gpu'] = summary['totalGPUsUp']
+
         return result
 
+    @deprecated('use get cluster status')
     def get_summary(self):
         cmd = 'https://philly/api/summary?clusterId={}'.format(
                 self.cluster)
@@ -327,20 +372,18 @@ class PhillyVC(object):
                     random_abs_qd)
 
         copy_to_hdfs = not self.use_blob_as_input
+        info = self.path2info['code_path']
         if infer_type(self.vc, self.cluster) == 'azure':
-            if self.use_blob_as_input:
-                self.config_param['code_path']
+            if info['type'] == 'blob':
                 from qd.cloud_storage import blob_upload
-                assert self.config_param['code_path'].startswith(self.blob_mount_point)
-                rel_code_path = self.config_param['code_path'][
-                        len(self.blob_mount_point): ]
-                blob_upload(random_abs_qd, rel_code_path,
-                        c=self.get_cloud_storage())
+                blob_upload(random_abs_qd, info['rel_path_in_blob'], c=info['client'])
             else:
+                logging.info('we should never reach here. To be deleted')
                 philly_upload_dir(random_abs_qd, '{}/code'.format(self.user_name),
                         vc=self.vc,
                         cluster=self.cluster, c=self.get_cloud_storage(), blob=True, copy_to_hdfs=copy_to_hdfs)
         else:
+            logging.info('we should never reach here. To be deleted')
             philly_upload(random_abs_qd, '{}/code'.format(self.user_name), vc=self.vc,
                     cluster=self.cluster)
 
@@ -414,7 +457,7 @@ class PhillyVC(object):
             self.upload_file(self.src_config_path, self.dest_config_folder)
         else:
             c = create_cloud_storage(
-                    config_file=self.azure_blob_config_file)
+                    config_file=self.blob_mount_info[0]['azure_blob_config_file'])
             c.az_upload2(self.src_config_path,
                     op.join(self.dest_config_folder,
                         op.basename(self.src_config_path)))
@@ -504,7 +547,8 @@ class PhillyVC(object):
                 'model_folder': self.config_param['model_folder'],
                 'output_folder': self.config_param['output_folder'],
                 'command': command}
-        extraParam = base64.b64encode(dump_to_yaml_str(dict_param)).decode()
+        from qd.qd_common import dump_to_yaml_bytes
+        extraParam = base64.b64encode(dump_to_yaml_bytes(dict_param)).decode()
 
         return extraParam
 
@@ -524,7 +568,7 @@ class PhillyVC(object):
         logging.info('extraParam: {}'.format(extraParam))
         # no matter it is blobfuse or hdfs, we always use blobfuse for config
         # file
-        config_file = op.join(self.blob_mount_point,
+        config_file = op.join(self.blob_mount_info[0]['blob_mount_point'],
                 self.dest_config_file)
         #config_file = "/hdfs/{}/{}/{}".format(self.vc,
             #self.dest_config_folder, op.basename(self.src_config_path))
@@ -576,7 +620,6 @@ class PhillyVC(object):
             "Timeout":None,
             }
         gpus_per_node = 4
-        assert cluster in ['sc2', 'wu1'], 'need to update gpus_per_node'
         num_containers = (num_gpu + gpus_per_node - 1) // gpus_per_node
         #data["NumOfContainers"] = "2"
         data["NumOfContainers"] = str(num_containers)
@@ -587,31 +630,34 @@ class PhillyVC(object):
             data["OneProcessPerContainer"] = False
             data["DynamicContainerSize"] = False
 
-        cloud_blob = create_cloud_storage(
-                config_file=self.azure_blob_config_file)
-        blob_container = cloud_blob.container_name
-        blob_key = cloud_blob.account_key
+        cloud_blobs = [create_cloud_storage(config_file=info['azure_blob_config_file'])
+            for info in self.blob_mount_info]
+        data['volumes'] = {}
 
-        data['volumes'] = {
-                'blob': {
-                            'type': 'blobfuseVolume',
-                            'storageAccount': cloud_blob.account_name,
-                            'containerName': blob_container,
-                            'path': self.blob_mount_point,
-                            "options":
-                            [
-                                "-o", "attr_timeout=240",
-                                "-o", "entry_timeout=240",
-                                "-o", "negative_timeout=120",
-                                "--log-level=LOG_WARNING",
-                                "-o", "allow_other",
-                                "--file-cache-timeout-in-seconds=1000000",
-                            ]
-                        }
+        default_options = [
+                        "-o", "attr_timeout=240",
+                        "-o", "entry_timeout=240",
+                        "-o", "negative_timeout=120",
+                        "--log-level=LOG_WARNING",
+                        "-o", "allow_other",
+                        "--file-cache-timeout-in-seconds=1000000",
+                    ]
+        for i, (mount_info, cloud_blob) in enumerate(zip(self.blob_mount_info, cloud_blobs)):
+            data['volumes']['blob{}'.format(i)] = {
+                    'type': 'blobfuseVolume',
+                    'storageAccount': cloud_blob.account_name,
+                    'containerName': cloud_blob.container_name,
+                    'path': mount_info['blob_mount_point'],
+                    "options": mount_info.get('blob_fuse_options',
+                        default_options)
                 }
-        data['credentials'] = {'storageAccounts': {cloud_blob.account_name: {
-            '_comments': 'redentials for accessing the storage account.',
-            'key': blob_key,}}}
+
+        data['credentials'] = {'storageAccounts': {}}
+        for cloud_blob in cloud_blobs:
+            blob_key = cloud_blob.account_key
+            data['credentials']['storageAccounts'][cloud_blob.account_name] = {
+                            'key': blob_key,
+                            }
 
         if self.use_blob_as_input:
             data['Inputs'][0]['Path'] = '/blob/{}'.format(self.user_name)
@@ -641,9 +687,9 @@ class PhillyVC(object):
             return result_str
 
     def submit_without_sync(self, extraParam, num_gpu=None):
-        '''
-        use submit() because of bad naming here.
-        '''
+        return self.submit(extraParam, num_gpu)
+
+    def submit(self, extraParam, num_gpu=None):
         if num_gpu is None:
             num_gpu = self.num_gpu
         result = self.philly_submit_v2(str(self.random_id), num_gpu,
@@ -670,8 +716,23 @@ class PhillyVC(object):
 
         status = json.loads(self.philly_job_status(job_id))
 
-        meta = decode_general_cmd(json.loads(self.philly_job_meta(job_id))['cmd'])
+        meta = json.loads(self.philly_job_meta(job_id))
         logging.info(pformat(meta))
+
+        # meta['cmd'] = ' --mpi-args env CUDA_CACHE_DISABLE=1 NCCL_DEBUG=INFO '
+        # 'OMP_NUM_THREADS=2 -- '
+        # '/hdfs/sys/dynamicScripts/20191108.1-master-d45d53749ffba25aeaf8fb3cb8ad306fc7e07df9/run-job  '
+        # '--domain .wu1.philly.selfhost.corp.microsoft.com --pathin_dataDir '
+        # '/blob/jianfw --config-file /blob/jianfw/code/philly_server.py --hdfs  '
+        # '--tool-type ns  -- '
+        # 'Y29kZV9wYXRoOiAvYmxvYi9qaWFuZncvY29kZS9xdWlja2RldGVjdGlvbl9waGlsbHkuemlwCmNvbW1hbmQ6IHB5dGhvbiBzcmMvcWQvcGlwZWxpbmUucHkgLWJwIFlXeHNYM1JsYzNSZlpHRjBZVG9LTFNCbGRtRnNkV0YwWlY5dFpYUm9iMlE2SUdOdlkyOWZZbTk0Q2lBZ2RHVnpkRjlrWVhSaE9pQmpiMk52TWpBeE4wWjFiR3dLSUNCMFpYTjBYM053YkdsME9pQjBaWE4wQ25CaGNtRnRPZ29nSUUxaGMydFVVMVpFWVhSaGMyVjBPZ29nSUNBZ2NtVnRiM1psWDJsdFlXZGxjMTkzYVhSb2IzVjBYMkZ1Ym05MFlYUnBiMjV6T2lCbVlXeHpaUW9nSUdKaGMyVmZiSEk2SURBdU1EZ0tJQ0JpWVhObGJXOWtaV3c2SUc5MWRIQjFkQzlqYjJOdk1qQXhOMFoxYkd4ZlpUSmxYMlpoYzNSbGNsOXlZMjV1WDFKZk5UQmZSbEJPWHpGNFgwMWZRbE14Tmw5TllYaEpkR1Z5TVRnd01EQXdYMHhTTUM0d01pOXpibUZ3YzJodmRDOXRiMlJsYkY5cGRHVnlYekF4T0RBd01EQXVjSFFLSUNCaVozSXljbWRpT2lCbVlXeHpaUW9nSUdSaGRHRTZJRlJoZUVOdlkyOHlUMGsxUXpBdU53b2dJR1JwYzNSZmRYSnNYM1JqY0Y5d2IzSjBPaUF5TmpJME9Rb2dJR1ZtWm1WamRHbDJaVjlpWVhSamFGOXphWHBsT2lBMk5Bb2dJR1Z1ZGpvS0lDQWdJR0YyWVdsc1lXSnBiR2wwZVY5amFHVmphem9nZEhKMVpRb2dJQ0FnWTJ4MWMzUmxjam9nZDNVeENpQWdJQ0J1ZFcxZlozQjFPaUF4TmdvZ0lDQWdjblZ1WDNSNWNHVTZJSEJvYVd4c2VRb2dJR1Y0Y0dsa09pQk5YMkpoYzJWdGIyUmxiR0U0WVdRM1gxSmxiVzkyWlVWdGNIUjVSbUZzYzJWZlFsTTJORjlOWVhoSmRHVnlNVGc0TlRFMlgweFNNQzR3T0FvZ0lHVjRjR2xrWDNCeVpXWnBlRG9nVFFvZ0lHbHRZV2RsYzE5d1pYSmZaM0IxT2lBMENpQWdiRzluWDNOMFpYQTZJREV3TUFvZ0lHMWhlRjlwZEdWeU9pQXhPRGcxTVRZS0lDQnVaWFE2SUdVeVpWOW1ZWE4wWlhKZmNtTnVibDlTWHpVd1gwWlFUbDh4ZUY5MFlnb2dJSEJwY0dWc2FXNWxYM1I1Y0dVNklFMWhjMnRTUTA1T1VHbHdaV3hwYm1VS0lDQjBaWE4wWDJKaGRHTm9YM05wZW1VNklEWTBDblI1Y0dVNklIQnBjR1ZzYVc1bFgzUnlZV2x1WDJWMllXeGZiWFZzZEdrSwpkYXRhX2ZvbGRlcjogL2RhdGFfYmxvYi9qaWFuZncvZGF0YS9xZF9kYXRhCm1vZGVsX2ZvbGRlcjogL2Jsb2IvamlhbmZ3L3dvcmsvcWRfbW9kZWxzCm91dHB1dF9mb2xkZXI6IC9ibG9iL2ppYW5mdy93b3JrL3FkX291dHB1dAo='
+
+        cmd_options = load_from_yaml_str(base64.b64decode(meta['cmd'].split(' ')[-1]))
+
+        command = decode_general_cmd(cmd_options['command'])
+        del cmd_options['command']
+        logging.info(pformat(cmd_options))
+        logging.info(pformat(command))
 
         logging.info('satus = {}'.format(status['status']))
         ssh_command = self.get_ssh_command(status)
@@ -802,6 +863,7 @@ class PhillyVC(object):
         result = self.philly_rest_api(cmd_str)
         return result
 
+    @deprecated('we do not know which folder to upload. data or output?')
     def upload_file(self, file_from, file_target, blob=False):
         c = self.get_cloud_storage()
         if self.cluster in ['sc2', 'wu1']:
@@ -845,8 +907,9 @@ class PhillyVC(object):
     def upload_qd_data(self, d):
         from qd.tsv_io import TSVDataset
         data_root = TSVDataset(d)._data_root
-        if self.use_blob_as_input:
-            cloud = self.get_cloud_storage()
+        info = self.path2info['data_folder']
+        if info['type'] == 'blob':
+            cloud = info['client']
             cloud.az_sync(data_root,
                     op.join(self.get_data_folder_in_blob(), d))
         else:
@@ -869,7 +932,8 @@ class PhillyVC(object):
         assert(len(path_splits) >= 3 and path_splits[-2] == "snapshot")
         target_path = op.join(self.get_output_folder_in_blob(),
                 path_splits[-3], path_splits[-2], path_splits[-1])
-        cloud = self.get_cloud_storage()
+        assert self.path2info['model_folder']['type'] == 'blob'
+        cloud = self.path2info['model_folder']['client']
         if not cloud.exists(target_path):
             cloud.az_upload2(model_file, target_path)
 
@@ -881,8 +945,9 @@ class PhillyVC(object):
 
     def qd_data_exists(self, fname):
         # this assume the data folder in config
-        if self.use_blob_as_input:
-            cloud = self.get_cloud_storage()
+        info = self.path2info['data_folder']
+        if info['type'] == 'blob':
+            cloud = info['client']
             return cloud.exists(op.join(self.get_data_folder_in_blob(),
                     fname))
         else:
@@ -904,6 +969,11 @@ class PhillyVC(object):
                 '"{}"'.format(CMD)]
         result_str = cmd_run(cmd, shell=True, return_output=True)
         return result_str
+
+    def inject(self, inject_collection='phillyjob'):
+        all_job_info = self.query()
+        from qd.db import update_cluster_job_db
+        update_cluster_job_db(all_job_info, inject_collection)
 
 class MultiPhillyVC(object):
     def __init__(self, **kwargs):
@@ -1004,7 +1074,8 @@ class MultiPhillyVC(object):
     def inject(self):
         all_job_info = self.query()
         from qd.db import update_cluster_job_db
-        update_cluster_job_db(all_job_info)
+        update_cluster_job_db(all_job_info,
+                self.kwargs.get('inject_collection', 'phillyjob'))
 
     def print_summary(self):
         all_summary = [c.get_summary() for c in self.clients]
@@ -1231,6 +1302,7 @@ def parse_args():
     parser.add_argument('-no-m', '--with_meta', default=True, action='store_false')
 
     parser.add_argument('-no-s', '--real_submit', default=True, action='store_false')
+    parser.add_argument('-ic', '--inject_collection', default='phillyjob', type=str)
 
     parser.add_argument('remainders', nargs=argparse.REMAINDER,
             type=str)

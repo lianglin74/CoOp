@@ -1777,9 +1777,12 @@ def unicode_representer(dumper, uni):
     node = yaml.ScalarNode(tag=u'tag:yaml.org,2002:str', value=uni)
     return node
 
-def dump_to_yaml_str(context):
+def dump_to_yaml_bytes(context):
     return yaml.dump(context, default_flow_style=False,
             encoding='utf-8', allow_unicode=True)
+
+def dump_to_yaml_str(context):
+    return dump_to_yaml_bytes(context).decode()
 
 def write_to_yaml_file(context, file_name):
     ensure_directory(op.dirname(file_name))
