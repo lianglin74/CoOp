@@ -89,7 +89,48 @@
    #   experiment cannot be deleted in AML and it is hard to figure out the
    #   user name based on the experiment name or job ID
    experiment_name: your_alias
+   env:
+       ENV_KEY: ENV_VALUE # specify any environment you want, the value: str
    ```
+   - This example only uses one blob for data access. If you want to use multiple
+     blobs, make those folder variables as dictionray. Here is an example
+     ```yaml
+     azure_blob_config_file: null # no need to specify
+     datastore_name: null # no need to specify
+     # used to initialize the workspace
+     aml_config: aux_data/aml/config.json 
+
+     # the following is related with the job submission. If you don't use the
+     # submission utility here, you can set any value
+
+     # during job submission, aml-sdk will upload all data in this folder
+     source_directory: ./src/qd/gpucluster
+     # this is the entry point the AML will execute in the cluster
+     entry_script: aml_server.py
+     config_param: 
+        code_path:
+            azure_blob_config_file: ./aux_data/configs/vigeastblob_account.yaml # the blob account information
+            path: jianfw/code/quickdetection.zip # where the zipped source code is
+        data_folder:
+            azure_blob_config_file: ./aux_data/configs/vigeastblob_account.yaml # the blob account information
+            path: jianfw/data/qd_data # after the source code is unzipped, this folder will be as $ROOT/data
+        model_folder:
+            azure_blob_config_file: ./aux_data/configs/vigeastblob_account.yaml # the blob account information
+            path: jianfw/work/qd_models # this folder will be as $ROOT/models
+        output_folder:
+            azure_blob_config_file: ./aux_data/configs/vigeastblob_account.yaml # the blob account information
+            path: jianfw/work/qd_output # this folder will be as $ROOT/output
+     # if False, it will use AML's PyTorch estimator, which is not heavily tested here
+     use_custom_docker: true
+     # this is from AML admin. don't change it unless got notified
+     compute_target: NC24RSV3 
+     docker:
+         # the custom docker. If use_custom_docker is False, this will be ignored
+         image: amsword/setup:py36pt11 
+     experiment_name: your_alias
+     env:
+         ENV_KEY: ENV_VALUE # specify any environment you want, the value: str
+     ```
 
 6. Set an alias
    ```bash
