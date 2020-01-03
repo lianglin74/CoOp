@@ -3,6 +3,7 @@ from pprint import pformat
 import logging
 import os
 
+from deprecated import deprecated
 from qd.qd_common import load_from_yaml_file, dict_update_nested_dict
 from qd.qd_common import cmd_run
 from qd.qd_common import decode_general_cmd
@@ -141,11 +142,26 @@ def download_run_logs(run_info, full=True):
 
     return all_log_file
 
+def iter_active_runs(compute_target):
+    from azureml._restclient.workspace_client import WorkspaceClient
+    workspace_client = WorkspaceClient(compute_target.workspace.service_context)
+    return workspace_client.get_runs_by_compute(compute_target.name)
+
 def get_compute_status(compute_target):
     info = {}
+
     info['running_node_count'] = compute_target.status.node_state_counts.running_node_count
     info['preparing_node_count'] = compute_target.status.node_state_counts.preparing_node_count
+    info['unusable_node_count'] = compute_target.status.node_state_counts.unusable_node_count
     info['max_node_count'] = compute_target.scale_settings.maximum_node_count
+
+    info['total_gpu'] = info['max_node_count'] * 4
+    info['total_free_gpu'] = (info['max_node_count'] -
+        info['unusable_node_count'] - info['running_node_count'] -
+        info['preparing_node_count']) * 4
+    all_job_status = [j.status for j in iter_active_runs(compute_target)]
+    info['num_running_job'] = len([j for j in all_job_status if j == 'Running'])
+
     return info
 
 def log_downloaded(appID):
@@ -153,10 +169,18 @@ def log_downloaded(appID):
     if not op.isfile(fname):
         return False
     status = load_from_yaml_file(fname)
-    if status['status'] != AMLClient.status_running and \
-            not status['is_full']:
+    if not status['is_full']:
         return False
     return True
+
+def print_topk_long_run_jobs(ws, topk):
+    all_expname_job = []
+    for name, exp in ws.experiments.items():
+        running_jobs = [r for r in exp.get_runs() if r.status == AMLClient.status_running]
+        running_job_infos = [parse_run_info(r) for r in running_jobs]
+        all_expname_job.extend([(name, r) for r in running_job_infos])
+    all_expname_job = sorted(all_expname_job, key=lambda x:-x[1]['elapsedTime'])
+    logging.info(pformat(all_expname_job[:topk]))
 
 class AMLClient(object):
     status_running = 'Running'
@@ -256,6 +280,12 @@ class AMLClient(object):
             self._compute_target = self.ws.compute_targets[self.compute_target_name]
         return self._compute_target
 
+    def get_cluster_status(self):
+        compute_status = get_compute_status(self.compute_target)
+
+        return compute_status
+
+    @deprecated('use get_cluster_status')
     def get_compute_status(self):
         compute_status = get_compute_status(self.compute_target)
 
@@ -265,7 +295,11 @@ class AMLClient(object):
         run = create_aml_run(self.experiment, run_id)
         run.cancel()
 
-    def query(self, run_id=None, by_status=None, max_runs=None):
+    def blame(self):
+        print_topk_long_run_jobs(self.ws, 5)
+
+    def query(self, run_id=None, by_status=None, max_runs=None,
+            with_log=False):
         if run_id is None:
             # all_run is ordered by created time, latest first
             all_run = list(self.experiment.get_runs())
@@ -283,7 +317,7 @@ class AMLClient(object):
                 with_details = r.status in valid_status
                 parse_info = {}
                 parse_info = {'with_details': with_details,
-                              'with_log': self.with_log,
+                              'with_log': self.with_log or with_log,
                               'log_full': False}
                 return parse_info
             all_info = [parse_run_info(r, **check_with_details(r)) for r in all_run]
@@ -297,7 +331,7 @@ class AMLClient(object):
             r = create_aml_run(self.experiment, run_id)
             info = parse_run_info(r,
                     with_details=True,
-                    with_log=self.with_log,
+                    with_log=self.with_log or with_log,
                     log_full=True)
             if 'master_log' in info:
                 cmd_run(['tail', '-n', '100', info['master_log']])
@@ -433,13 +467,6 @@ class AMLClient(object):
             assert type(v) is str
         env.environment_variables.update(self.env)
 
-        #env.environment_variables['NCCL_IB_DISABLE'] = '0'
-        #env.environment_variables['NCCL_SOCKET_IFNAME'] = 'eth0'
-
-        #env.environment_variables['NCCL_IB_HCA'] = 'mlx4_0:1'
-        #env.environment_variables['CUDA_CACHE_DISABLE'] = '1'
-        #env.environment_variables['OMP_NUM_THREADS'] = '2'
-
         from azureml.core.runconfig import MpiConfiguration
         mpi_config = MpiConfiguration()
         if num_gpu is None:
@@ -485,10 +512,25 @@ class AMLClient(object):
         for info in all_info:
             if 'logFiles' in info:
                 del info['logFiles']
-        update_cluster_job_db(all_info)
+
+        collection_name = self.kwargs.get('inject_collection', 'phillyjob')
+        failed_jobs = [info for info in all_info if info['status'] == self.status_failed]
+        failed_job_ids = [info['appID'] for info in failed_jobs]
+        from qd.db import create_annotation_db
+        c = create_annotation_db()
+        appID_to_failed_job = {info['appID']: info for info in failed_jobs}
+        for job_in_db in c.iter_general(collection_name,
+                **{'appID': {'$in': failed_job_ids}}):
+            if job_in_db['status'] == self.status_failed:
+                del appID_to_failed_job[job_in_db['appID']]
+        for _, info in appID_to_failed_job.items():
+            self.query(info['appID'], with_log=True)
+
+        update_cluster_job_db(all_info,
+                collection_name=collection_name)
 
     def sync_code(self, random_id, compile_in_docker=False):
-        random_qd = 'quickdetection{}'.format(random_id)
+        random_qd = 'aml_quickdetection{}'.format(random_id)
         import os.path as op
         from qd.qd_common import get_user_name
         random_abs_qd = op.join('/tmp', get_user_name(),
@@ -696,8 +738,8 @@ def execute(task_type, **kwargs):
         for data in kwargs['remainders']:
             c.upload_qd_data(data)
     elif task_type == 'blame':
-        raise NotImplementedError()
-        blame(**kwargs)
+        c = create_aml_client(**kwargs)
+        c.blame()
     elif task_type == 'resubmit':
         partial_ids = kwargs['remainders']
         del kwargs['remainders']
@@ -770,6 +812,7 @@ def parse_args():
     parser.add_argument('-no-m', '--with_meta', default=True, action='store_false')
 
     parser.add_argument('-no-s', '--real_submit', default=True, action='store_false')
+    parser.add_argument('-ic', '--inject_collection', default='phillyjob', type=str)
 
     parser.add_argument('remainders', nargs=argparse.REMAINDER,
             type=str)
