@@ -87,7 +87,9 @@ class StandardYoloPredictModel(nn.Module):
         result = []
         for im, h, w in im_info:
             im = im.unsqueeze_(0)
-            im = im.float().to('cuda')
+            im = im.float()
+            if next(self.model.parameters()).is_cuda:
+                im = im.cuda()
             with torch.no_grad():
                 features = self.model(im)
             prob, bbox = self.predictor(features, torch.Tensor((h, w)))
@@ -476,7 +478,11 @@ class YoloByMask(MaskClassificationPipeline):
             'nms_threshold': 0.45,
             'obj_thresh': 0.01,
             'thresh': 0.01,
-            'num_workers': 16})
+            'num_workers': 16,
+            'opt_anchor_lr_mult': 1.,
+            'max_detections_per_image': -1,
+            'train_version': 0,
+            })
         self.num_train_images = None
 
         if self.yolo_train_session_param is not None:
@@ -487,6 +493,8 @@ class YoloByMask(MaskClassificationPipeline):
         super(YoloByMask, self).append_predict_param(cc)
         if self.test_input_size != 416:
             cc.append('InputSize{}'.format(self.test_input_size))
+        if self.single_class_nms:
+            cc.append('class_agnostic_nms')
         if self.nms_threshold != 0.45:
             cc.append('NMS{}'.format(self.nms_threshold))
 
@@ -506,10 +514,14 @@ class YoloByMask(MaskClassificationPipeline):
 
     def get_optimizer(self, model):
         decay, no_decay, lr2 = [], [], []
+        rt_anchor = []
         for name, param in model.named_parameters():
             if not param.requires_grad:
                 continue
-            if "last_conv" in name and name.endswith(".bias"):
+            if self.opt_anchor_lr_mult != 1 and name.endswith(
+                    'region_target.biases'):
+                rt_anchor.append(param)
+            elif "last_conv" in name and name.endswith(".bias"):
                 lr2.append(param)
             elif "scale" in name:
                 decay.append(param)
@@ -522,6 +534,9 @@ class YoloByMask(MaskClassificationPipeline):
         param_groups = [{'params': no_decay, 'weight_decay': 0., 'initial_lr': lrs[0], 'lr_mult': 1.},
                         {'params': decay, 'initial_lr': lrs[0], 'lr_mult': 1.},
                         {'params': lr2, 'weight_decay': 0., 'initial_lr': lrs[0] * 2., 'lr_mult': 2.}]
+        if len(rt_anchor) > 0:
+            param_groups.append({'params': rt_anchor, 'weight_decay': 0., 'initial_lr': lrs[0],
+                'lr_mult': self.opt_anchor_lr_mult})
         optimizer = CaffeSGD(param_groups, lr=lrs[0],
                              momentum=float(self.momentum),
                              weight_decay=float(self.weight_decay))
@@ -536,7 +551,7 @@ class YoloByMask(MaskClassificationPipeline):
 
     def get_train_data_loader(self, start_iter=0):
         dataset = TSVDataset(self.data)
-        train_data_path = '$'.join([self.data, 'train'])
+        train_data_path = '$'.join([self.data, 'train', str(self.train_version)])
         param = {'use_maskrcnn_sampler': True,
                  'solver_params': {'max_iter': self.max_iter}}
         if self.yolo_train_session_param is not None:
@@ -581,7 +596,7 @@ class YoloByMask(MaskClassificationPipeline):
             assert (len(self.anchors) % 2) == 0
             extra_yolo2extraconv_param['num_anchors'] = len(self.anchors) // 2
         num_classes = len(self.get_labelmap())
-        model = yolo_2extraconv(darknet_layers(),
+        model = yolo_2extraconv(self.get_backbone_model(),
                 weights_file=None,
                 num_classes=num_classes,
                 **extra_yolo2extraconv_param
@@ -609,6 +624,15 @@ class YoloByMask(MaskClassificationPipeline):
         model = ModelLoss(model, criterion)
         return model
 
+    def get_backbone_model(self):
+        if self.net == 'darknet19_448':
+            return darknet_layers()
+        elif self.net == 'darknet_dilate':
+            from mtorch.darknet import DarkDilatedNet
+            return DarkDilatedNet()
+        else:
+            raise NotImplementedError
+
     def get_test_model(self):
         assert self.num_extra_convs == 2
         extra_yolo2extraconv_param = {}
@@ -616,7 +640,7 @@ class YoloByMask(MaskClassificationPipeline):
             assert (len(self.anchors) % 2) == 0
             extra_yolo2extraconv_param['num_anchors'] = len(self.anchors) // 2
         num_classes = len(self.get_labelmap())
-        model = yolo_2extraconv(darknet_layers(),
+        model = yolo_2extraconv(self.get_backbone_model(),
                 weights_file=None,
                 num_classes=num_classes,
                 **extra_yolo2extraconv_param
@@ -624,11 +648,12 @@ class YoloByMask(MaskClassificationPipeline):
         kwargs = {}
         kwargs['biases'] = self.anchors
         kwargs['num_anchors'] = len(self.anchors) // 2
+        kwargs['feat_stride'] = 32 if self.net == 'darknet19_448' else 16
         from mtorch.yolo_predict import PlainPredictorSingleClassNMS, PlainPredictorClassSpecificNMS, \
                                 TreePredictorSingleClassNMS, TreePredictorClassSpecificNMS
         if self.use_treestructure:
             dataset = TSVDataset(self.data)
-            if False:
+            if self.single_class_nms:
                 predictor = TreePredictorSingleClassNMS(dataset.get_tree_file(),
                         num_classes=num_classes,
                         nms_threshold=self.nms_threshold,
@@ -641,7 +666,7 @@ class YoloByMask(MaskClassificationPipeline):
                         **kwargs,
                         )
         else:
-            if False:
+            if self.single_class_nms:
                 predictor = PlainPredictorSingleClassNMS(num_classes=num_classes,
                         nms_threshold=self.nms_threshold,
                         **kwargs,
@@ -659,6 +684,16 @@ class YoloByMask(MaskClassificationPipeline):
         from qd.qd_pytorch import torch_load
         checkpoint = torch_load(model_file)
         load_state_dict(model, checkpoint['model'])
+        # check if the anchor size is the same
+        anchor = checkpoint['model']['module.criterion.region_target.biases']
+        anchor = anchor.data.view(model.predictor.yolo_bboxs.biases.data.shape)
+        diff = (model.predictor.yolo_bboxs.biases.data - anchor).abs().sum()
+        if diff != 0:
+            logging.info('we will respect the model in the checkpoint')
+            logging.info('change the anchor from {} to {}'.format(
+                model.predictor.yolo_bboxs.biases,
+                anchor.data))
+            model.predictor.yolo_bboxs.biases.data = anchor.data
 
     def predict_output_to_tsv_row(self, output, keys):
         for info, key in zip(output, keys):

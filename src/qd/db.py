@@ -81,14 +81,34 @@ class AnnotationDB(object):
         self.add_meta_data(kwargs)
         self._phillyjob.insert_one(kwargs)
 
+    def insert_acc(self, **kwargs):
+        self.add_meta_data(kwargs)
+        self._acc.insert_one(kwargs)
+
+    def insert_label(self, **kwargs):
+        if 'uuid' not in kwargs:
+            kwargs['uuid'] = gen_uuid()
+        if 'create_time' not in kwargs:
+            kwargs['create_time'] = datetime.now()
+
+        self._label.insert_one(kwargs)
+
+    def insert_one(self, collection_name, **kwargs):
+        self.add_meta_data(kwargs)
+        self._qd['qd'][collection_name].insert_one(kwargs)
+
     def remove_phillyjob(self, **kwargs):
         self._phillyjob.delete_many(kwargs)
 
     def delete_many(self, collection_name, **kwargs):
         self._qd['qd'][collection_name].delete_many(kwargs)
 
-    def update_one(self, doc_name, query, update):
-        return self._qd['qd'][doc_name].update_one(query, update)
+    def update_one(self, doc_name, query, update, **kwargs):
+        return self._qd['qd'][doc_name].update_one(
+                query,
+                update,
+                **kwargs,
+                )
 
     def update_many(self, doc_name, query, update):
         return self._qd['qd'][doc_name].update_many(query, update)
@@ -105,11 +125,6 @@ class AnnotationDB(object):
 
     def iter_general(self, table_name, **kwargs):
         return self._qd['qd'][table_name].find(kwargs).sort('create_time', -1)
-
-    # acc related
-    def insert_acc(self, **kwargs):
-        self.add_meta_data(kwargs)
-        self._acc.insert_one(kwargs)
 
     def iter_acc(self, **query):
         return self._acc.find(query)
@@ -144,18 +159,6 @@ class AnnotationDB(object):
 
     def iter_query_label(self, query):
         return self._label.find(query)
-
-    def insert_label(self, **kwargs):
-        if 'uuid' not in kwargs:
-            kwargs['uuid'] = gen_uuid()
-        if 'create_time' not in kwargs:
-            kwargs['create_time'] = datetime.now()
-
-        self._label.insert_one(kwargs)
-
-    def insert_one(self, collection_name, **kwargs):
-        self.add_meta_data(kwargs)
-        self._qd['qd'][collection_name].insert_one(kwargs)
 
     def build_label_index(self):
         self._label.create_index([('uuid', 1)], unique=True)
@@ -292,7 +295,6 @@ class BoundingBoxVerificationDB(object):
         result = self.collection.update_many(filter=query,
                 update={'$set': {'status': new_status,
                                  time_key: datetime.now()}})
-        assert result.modified_count == len(all_id)
 
     def reset_status_to_requested(self, all_bb_task):
         self.update_status([b['_id'] for b in all_bb_task],
@@ -414,9 +416,9 @@ def inject_cluster_summary(info):
     c = create_annotation_db()
     c.insert_cluster_summary(**info)
 
-def update_cluster_job_db(all_job_info):
+def update_cluster_job_db(all_job_info, collection_name='phillyjob'):
     c = create_annotation_db()
-    existing_job_infos = list(c.iter_phillyjob())
+    existing_job_infos = list(c.iter_general(collection_name))
 
     appID_to_record = {j['appID']: j for j in existing_job_infos}
 
@@ -441,11 +443,12 @@ def update_cluster_job_db(all_job_info):
                             ' to {}'.format(k, record.get(k), v))
                     break
             if need_update:
-                c.update_phillyjob(query={'appID': job_info['appID']},
-                        update=job_info)
+                c.update_many(collection_name,
+                        query={'appID': job_info['appID']},
+                        update={'$set': job_info})
         else:
             try:
-                c.insert_phillyjob(**job_info)
+                c.insert_one(collection_name, **job_info)
             except:
                 # if two instances are running to inject to db, there might be
                 # a chance that a new job is inserted here at the same time.

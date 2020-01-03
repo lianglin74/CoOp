@@ -2,6 +2,7 @@ import json
 import logging
 import os.path as op
 import torch
+from torch import nn
 from qd.qd_pytorch import ModelPipeline, torch_load
 from qd.layers.loss import ModelLoss
 from qd.qd_common import get_mpi_rank
@@ -10,12 +11,18 @@ from maskrcnn_benchmark.utils.checkpoint import DetectronCheckpointer
 from maskrcnn_benchmark.utils.comm import synchronize
 import shutil
 from qd.qd_common import DummyCfg
+import time
+from qd.qd_pytorch import replace_module
+from qd.layers.group_batch_norm import GroupBatchNorm, get_normalize_groups
 
 
 class MaskClassificationPipeline(ModelPipeline):
     def __init__(self, **kwargs):
         super(MaskClassificationPipeline, self).__init__(**kwargs)
-
+        self._default.update({
+            'normalization_group': 32,
+            'normalization_group_size': None
+            })
         self.step_lr = self.parse_iter(self.step_lr)
         self.max_iter = self.parse_iter(self.max_iter)
         self.num_class = len(self.get_labelmap())
@@ -24,11 +31,24 @@ class MaskClassificationPipeline(ModelPipeline):
         # prepare the model
         model = self._get_model(self.pretrained, self.num_class)
         model.train()
+
+        model = self.model_surgery(model)
+
         criterion = self._get_criterion()
         # we need wrap model output and criterion into one model, to re-use
         # maskrcnn trainer
         model = ModelLoss(model, criterion)
         return model
+
+    def init_apex_amp(self, model, optimizer):
+        from apex import amp
+        # Initialize mixed-precision training
+        use_mixed_precision = False
+        amp_opt_level = 'O1' if use_mixed_precision else 'O0'
+        logging.info('start to amp init')
+        model, optimizer = amp.initialize(model, optimizer, opt_level=amp_opt_level)
+        logging.info('end amp init')
+        return model, optimizer
 
     def train(self):
         device = torch.device('cuda')
@@ -37,13 +57,7 @@ class MaskClassificationPipeline(ModelPipeline):
 
         optimizer = self.get_optimizer(model)
 
-        from apex import amp
-        # Initialize mixed-precision training
-        use_mixed_precision = False
-        amp_opt_level = 'O1' if use_mixed_precision else 'O0'
-        logging.info('start to amp init')
-        model, optimizer = amp.initialize(model, optimizer, opt_level=amp_opt_level)
-        logging.info('end amp init')
+        model, optimizer = self.init_apex_amp(model, optimizer)
 
         model = self._data_parallel_wrap(model)
 
@@ -62,6 +76,8 @@ class MaskClassificationPipeline(ModelPipeline):
         extra_checkpoint_data = checkpointer.load(self.basemodel,
                 model_only=True)
 
+        logging.info(model)
+
         arguments = {}
         arguments['iteration'] = 0
         arguments.update(extra_checkpoint_data)
@@ -70,6 +86,21 @@ class MaskClassificationPipeline(ModelPipeline):
         train_loader = self.get_train_data_loader(
                 start_iter=arguments['iteration'])
 
+        self.do_train(model, train_loader, optimizer, scheduler, checkpointer,
+            arguments)
+
+        model_final = op.join(self.output_folder, 'snapshot', 'model_final.pth')
+        last_iter = self._get_checkpoint_file(iteration=self.max_iter)
+        if self.mpi_rank == 0:
+            if not op.isfile(last_iter):
+                shutil.copy(model_final, last_iter)
+
+        synchronize()
+        return last_iter
+
+    def do_train(self, model, train_loader, optimizer, scheduler, checkpointer,
+            arguments):
+        device = torch.device('cuda')
         from maskrcnn_benchmark.engine.trainer import do_train
         do_train(
             model=model,
@@ -83,15 +114,6 @@ class MaskClassificationPipeline(ModelPipeline):
             log_step=self.log_step,
             set_model_to_train=False,
         )
-
-        model_final = op.join(self.output_folder, 'snapshot', 'model_final.pth')
-        last_iter = self._get_checkpoint_file(iteration=self.max_iter)
-        if self.mpi_rank == 0:
-            if not op.isfile(last_iter):
-                shutil.copy(model_final, last_iter)
-
-        synchronize()
-        return last_iter
 
     def get_train_data_loader(self, start_iter=0):
         return self._get_data_loader(data=self.data,
@@ -157,15 +179,71 @@ class MaskClassificationPipeline(ModelPipeline):
     def get_rank_specific_tsv(self, f, rank):
         return '{}_{}_{}.tsv'.format(f, rank, self.mpi_size)
 
+    def model_surgery(self, model):
+        if self.convert_bn == 'L1':
+            raise NotImplementedError
+        elif self.convert_bn == 'L2':
+            raise NotImplementedError
+        elif self.convert_bn == 'GN':
+            model = replace_module(model,
+                    lambda m: isinstance(m, torch.nn.BatchNorm2d),
+                    lambda m: torch.nn.GroupNorm(32, m.num_features),
+                    )
+        elif self.convert_bn == 'LNG': # layer norm by group norm
+            model = replace_module(model,
+                    lambda m: isinstance(m, torch.nn.BatchNorm2d),
+                    lambda m: torch.nn.GroupNorm(1, m.num_features))
+        elif self.convert_bn == 'ING': # Instance Norm by group norm
+            model = replace_module(model,
+                    lambda m: isinstance(m, torch.nn.BatchNorm2d),
+                    lambda m: torch.nn.GroupNorm(m.num_features, m.num_features))
+        elif self.convert_bn == 'GBN':
+            model = replace_module(model,
+                    lambda m: isinstance(m, torch.nn.BatchNorm2d),
+                    lambda m: GroupBatchNorm(get_normalize_groups(m.num_features, self.normalization_group,
+                        self.normalization_group_size), m.num_features))
+        else:
+            assert self.convert_bn is None, self.convert_bn
+        return model
+
     def get_test_model(self):
-        return self._get_model(pretrained=False,
+        model = self._get_model(pretrained=False,
                 num_class=len(self.get_labelmap()))
+
+        model = self.model_surgery(model)
+
+        return model
 
     def load_test_model(self, model, model_file):
         checkpointer = DetectronCheckpointer(cfg=DummyCfg(),
                 model=model,
                 save_dir=self.output_folder)
         checkpointer.load(model_file)
+
+    def predict_iter(self, dataloader, model, softmax_func, meters):
+        from tqdm import tqdm
+        start = time.time()
+        for i, (inputs, _, keys) in tqdm(enumerate(dataloader),
+                total=len(dataloader)):
+            if self.test_max_iter is not None and i >= self.test_max_iter:
+                # this is used for speed test, where we only would like to run a
+                # few images
+                break
+            meters.update(data=time.time() - start)
+            start = time.time()
+            if not isinstance(inputs, list):
+                inputs = inputs.to(self.device)
+            meters.update(input_to_cuda=time.time() - start)
+            start = time.time()
+            output = model(inputs)
+            meters.update(model=time.time() - start)
+            start = time.time()
+            if softmax_func is not None:
+                output = softmax_func(output)
+            meters.update(softmax=time.time() - start)
+            for row in self.predict_output_to_tsv_row(output, keys):
+                yield row
+            start = time.time()
 
     def predict(self, model_file, predict_result_file):
         if self.mpi_size > 1:
@@ -175,48 +253,27 @@ class MaskClassificationPipeline(ModelPipeline):
             sub_predict_file = predict_result_file
 
         model = self.get_test_model()
-        #model = self._data_parallel_wrap(model)
-        model.to('cuda')
-
         self.load_test_model(model, model_file)
 
+        model = model.to(self.device)
         dataloader = self.get_test_data_loader()
 
         softmax_func = self._get_test_normalize_module()
 
         model.eval()
         from maskrcnn_benchmark.utils.metric_logger import MetricLogger
-        import time
         meters = MetricLogger(delimiter="  ")
-        def gen_rows():
-            from tqdm import tqdm
-            start = time.time()
-            for i, (inputs, _, keys) in tqdm(enumerate(dataloader),
-                    total=len(dataloader)):
-                if self.test_max_iter is not None and i >= self.test_max_iter:
-                    # this is used for speed test, where we only would like to run a
-                    # few images
-                    break
-                meters.update(data=time.time() - start)
-                start = time.time()
-                if not isinstance(inputs, list):
-                    inputs = inputs.cuda()
-                meters.update(input_to_cuda=time.time() - start)
-                start = time.time()
-                output = model(inputs)
-                meters.update(model=time.time() - start)
-                start = time.time()
-                if softmax_func is not None:
-                    output = softmax_func(output)
-                meters.update(softmax=time.time() - start)
-                for row in self.predict_output_to_tsv_row(output, keys):
-                    yield row
-                start = time.time()
-        if not op.isfile(sub_predict_file):
-            tsv_writer(gen_rows(), sub_predict_file)
-        else:
-            logging.info('ignore to run since {} exists'.format(
-                sub_predict_file))
+        from qd.layers import ForwardPassTimeChecker
+        model = ForwardPassTimeChecker(model)
+        tsv_writer(self.predict_iter(dataloader, model, softmax_func, meters),
+                sub_predict_file)
+
+        speed_yaml = sub_predict_file + '.speed.yaml'
+        from qd.qd_common import write_to_yaml_file
+        write_to_yaml_file(model.get_time_info(), speed_yaml)
+        from qd.qd_common import create_vis_net_file
+        create_vis_net_file(speed_yaml,
+                op.splitext(speed_yaml)[0] + '.vis.txt')
         logging.info(str(meters))
 
         from maskrcnn_benchmark.utils.comm import is_main_process
@@ -239,6 +296,22 @@ class MaskClassificationPipeline(ModelPipeline):
             ordered_keys = dataloader.dataset.get_keys()
             from qd.tsv_io import reorder_tsv_keys
             reorder_tsv_keys(predict_result_file, ordered_keys, predict_result_file)
+
+            # during prediction, we also computed the time cost. Here we
+            # merge the time cost
+            speed_cache_files = [c + '.speed.yaml' for c in cache_files]
+            speed_yaml = predict_result_file + '.speed.yaml'
+            from qd.qd_common import merge_speed_info
+            merge_speed_info(speed_cache_files, speed_yaml)
+            from qd.qd_common import try_delete
+            for x in speed_cache_files:
+                try_delete(x)
+            vis_files = [op.splitext(c)[0] + '.vis.txt' for c in speed_cache_files]
+            from qd.qd_common import merge_speed_vis
+            merge_speed_vis(vis_files,
+                    op.splitext(speed_yaml)[0] + '.vis.txt')
+            for x in vis_files:
+                try_delete(x)
 
         synchronize()
         return predict_result_file

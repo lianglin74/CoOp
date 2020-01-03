@@ -207,7 +207,9 @@ class CloudStorage(object):
                 bar[0] = tqdm(total=total, unit_scale=True)
             bar[0].update(curr - last[0])
             last[0] = curr
-
+        if target_file.startswith('/'):
+            logging.info('remove strarting slash for {}'.format(target_file))
+            target_file = target_file[1:]
         self.block_blob_service.create_blob_from_path(
                 self.container_name,
                 target_file,
@@ -265,7 +267,17 @@ class CloudStorage(object):
         cmd_run(cmd)
         return data_url, url
 
+    def az_download_all(self, remote_path, local_path):
+        all_blob_name = list(self.list_blob_names(remote_path))
+        all_blob_name = get_leaf_names(all_blob_name)
+        for blob_name in all_blob_name:
+            target_file = blob_name.replace(remote_path, local_path)
+            if not op.isfile(target_file):
+                self.az_download(blob_name, target_file,
+                        sync=False)
+
     def az_download(self, remote_path, local_path, sync=True, is_folder=False):
+        ensure_directory(op.dirname(local_path))
         origin_local_path = local_path
         local_path = local_path + '.tmp'
         ensure_directory(op.dirname(local_path))
@@ -345,12 +357,18 @@ class CloudStorage(object):
                     break
         for t in to_remove:
             need_download_blobs.remove(t)
+        need_download_blobs = [t for t in need_download_blobs
+            if not t.endswith('.tmp')]
         for f in tqdm(need_download_blobs):
             target_f = f.replace(src_path, target_folder)
             if not op.isfile(target_f):
                 if len(f) > 0:
                     logging.info('download {} to {}'.format(f, target_f))
-                    self.download_to_path(f, target_f)
+                    try:
+                        self.az_download(f, target_f, sync=False)
+                    except:
+                        pass
+                    #self.download_to_path(f, target_f)
 
 if __name__ == '__main__':
     from qd.qd_common import init_logging

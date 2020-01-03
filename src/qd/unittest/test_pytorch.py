@@ -29,6 +29,12 @@ class TestQDPyTorch(unittest.TestCase):
 
         self.parity_check_resnet(config_file, net)
 
+    def test_resnet18_in_maskrcnn(self):
+        config_file = './src/maskrcnn-benchmark/configs/e2e_faster_rcnn_R_18_FPN_1x_tb.yaml'
+        net = 'resnet18'
+
+        self.parity_check_resnet(config_file, net)
+
     def test_resnet50_in_maskrcnn(self):
         config_file = './src/maskrcnn-benchmark/configs/e2e_faster_rcnn_R_50_FPN_1x_tbase.yaml'
         net = 'resnet50'

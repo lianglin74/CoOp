@@ -88,6 +88,12 @@ class TSVFile(object):
         if self._fp:
             self._fp.close()
 
+    def __str__(self):
+        return "TSVFile(tsv_file='{}')".format(self.tsv_file)
+
+    def __repr__(self):
+        return str(self)
+
     def num_rows(self):
         self._ensure_lineidx_loaded()
         return len(self._lineidx)
@@ -193,20 +199,24 @@ class TSVDataset(object):
     def __init__(self, name, data_root=None):
         self.name = name
         if data_root is None:
-            proj_root = op.dirname(op.dirname(op.dirname(op.realpath(__file__))))
-            data_root = op.join(proj_root, 'data', name)
+            if os.environ.get('QD_DATA_ROOT') is not None:
+                data_root = os.environ['QD_DATA_ROOT']
+            else:
+                proj_root = op.dirname(op.dirname(op.dirname(op.realpath(__file__))))
+                data_root = op.join(proj_root, 'data', name)
         self._data_root = op.relpath(data_root)
         self._fname_to_tsv = {}
 
         self._split_to_key_to_idx = {}
 
+    def __str__(self):
+        return 'TSVDataset({})'.format(self.name)
+
     def seek_by_key(self, key, split, t=None, version=None):
-        if split in self._split_to_key_to_idx:
-            key_to_idx = self._split_to_key_to_idx[split]
-        else:
-            key_to_idx = {k: i for i, k in enumerate(self.load_keys(split))}
-            self._split_to_key_to_idx[split] = key_to_idx
-        idx = key_to_idx[key]
+        idx = self.get_idx_by_key(key, split)
+        return next(self.iter_data(split, t, version, filter_idx=[idx]))
+
+    def seek_by_idx(self, idx, split, t=None, version=None):
         return next(self.iter_data(split, t, version, filter_idx=[idx]))
 
     def load_labelmap(self):
@@ -232,6 +242,15 @@ class TSVDataset(object):
 
     def get_labelmap_of_noffset_file(self):
         return op.join(self._data_root, 'noffsets.label.txt')
+
+    def get_idx_by_key(self, key, split):
+        if split in self._split_to_key_to_idx:
+            key_to_idx = self._split_to_key_to_idx[split]
+        else:
+            key_to_idx = {k: i for i, k in enumerate(self.load_keys(split))}
+            self._split_to_key_to_idx[split] = key_to_idx
+        idx = key_to_idx[key]
+        return idx
 
     def load_key_to_idx(self, split):
         result = {}
@@ -321,6 +340,9 @@ class TSVDataset(object):
         if version = 3 > 0, return train.label.v3.tsv
         if version = -1, return the highest version
         '''
+        if t is None:
+            # in this case, it is an image split, which has no version
+            version = None
         if version is None or version == 0:
             if t is None:
                 return op.join(self._data_root, '{}.tsv'.format(split_name))
@@ -628,11 +650,11 @@ def tsv_writer(values, tsv_file_name, sep='\t'):
             fp.write(v)
             fpidx.write(str(idx) + '\n')
             idx = idx + len(v)
-
-    if os.path.isfile(tsv_file_name):
-        os.remove(tsv_file_name)
-    if os.path.isfile(tsv_lineidx_file):
-        os.remove(tsv_lineidx_file)
+    # the following might crash if there are two processes which are writing at
+    # the same time. One process finishes the renaming first and the second one
+    # will crash. In this case, we know there must be some errors when you run
+    # the code, and it should be a bug to fix rather than to use try-catch to
+    # protect it here.
     os.rename(tsv_file_name_tmp, tsv_file_name)
     os.rename(tsv_lineidx_file_tmp, tsv_lineidx_file)
 

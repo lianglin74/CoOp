@@ -13,7 +13,7 @@ import numpy as np
 import logging
 import glob
 import re
-import tqdm
+from tqdm import tqdm
 try:
     from itertools import izip as zip
 except ImportError:
@@ -45,6 +45,7 @@ except ImportError:
     from urllib2 import urlopen, Request
     from urllib2 import HTTPError
 import copy
+from deprecated import deprecated
 
 
 def print_trace():
@@ -111,6 +112,11 @@ def find_float_tolorance_unequal(d1, d2):
     if all(isinstance(x, basestring) for x in [d1, d2]) or \
             all(type(x) is bool for x in [d1, d2]):
         if d1 != d2:
+            return ['0']
+        else:
+            return []
+    if type(d1) is int and type(d2) is int:
+        if d1 == d2:
             return []
         else:
             return ['0']
@@ -120,9 +126,7 @@ def find_float_tolorance_unequal(d1, d2):
             return []
         else:
             return ['0']
-    if type(d1) != type(d2):
-        return ['0']
-    if type(d1) in [dict, OrderedDict]:
+    if type(d1) in [dict, OrderedDict] and type(d2) in [dict, OrderedDict]:
         if len(d1) != len(d2):
             return ['0']
         path_d1 = dict_get_all_path(d1, with_type=True)
@@ -137,7 +141,7 @@ def find_float_tolorance_unequal(d1, d2):
                 for r in curr_result:
                     result.append(p + '$' + r)
         return result
-    elif type(d1) in [tuple, list]:
+    if type(d1) in [tuple, list] and type(d2) in [tuple, list]:
         if len(d1) != len(d2):
             return ['-1']
         result = []
@@ -146,11 +150,13 @@ def find_float_tolorance_unequal(d1, d2):
             for r in curr_result:
                 result.append('{}${}'.format(i, r))
         return result
+    if type(d1) != type(d2):
+        return ['0']
     else:
         import torch
         if type(d1) is torch.Tensor:
-            diff = (d1 - d2).abs().sum()
-            s = d1.abs().sum()
+            diff = (d1 - d2).float().abs().sum()
+            s = d1.float().abs().sum()
             if float(s) < 1e-5:
                 equal = diff < 1e-5
             else:
@@ -158,7 +164,6 @@ def find_float_tolorance_unequal(d1, d2):
             if equal:
                 return []
             else:
-                import ipdb;ipdb.set_trace(context=15)
                 return ['0']
         else:
             raise Exception('unknown type')
@@ -329,11 +334,15 @@ def zip_qd(out_zip):
             '-x',
             '\*build/temp.linux-x86_64-3.6/\*',
             '-x',
+            '\*src/detectron2/datasets/\*',
+            '-x',
             '\*src/CCSCaffe/models/\*',
             '-x',
             '\*src/CCSCaffe/data/\*',
             '-x',
             '\*src/CCSCaffe/examples/\*',
+            '-x',
+            '\*src/detectron2/output\*',
             '-x',
             'aux_data/yolo9k/\*',
             '-x',
@@ -400,7 +409,34 @@ def ensure_copy_folder(src_folder, dst_folder):
 def get_current_time_as_str():
     return datetime.now().strftime('%Y_%m_%d_%H_%M_%S')
 
+def iter_swap_param_simple(swap_params):
+    if isinstance(swap_params, dict):
+        swap_params = [(k, v) for k, v in swap_params.items()]
+    num = len(swap_params)
+    counts = [len(p[1]) for p in swap_params]
+    assert all(c > 0 for c in counts)
+    assert all(type(p[1]) is list or type(p[1]) is tuple for p in swap_params)
+    idx = [0] * num
+
+    while True:
+        result = {}
+        for p, i in zip(swap_params, idx):
+            result[p[0]] = p[1][i]
+        yield result
+
+        for i in range(num - 1, -1, -1):
+            idx[i] = idx[i] + 1
+            if idx[i] < counts[i]:
+                break
+            else:
+                idx[i] = 0
+                if i == 0:
+                    return
+
+@deprecated('use iter_swap_param_simple')
 def iter_swap_param(swap_params):
+    if isinstance(swap_params, dict):
+        swap_params = [(k, v) for k, v in swap_params.items()]
     num = len(swap_params)
     counts = [len(p[1]) for p in swap_params]
     assert all(c > 0 for c in counts)
@@ -523,6 +559,26 @@ def cmd_run(list_cmd, return_output=False, env=None,
         logging.info('finished the cmd run')
         return message.decode('utf-8')
 
+def parallel_imap(func, all_task, num_worker=16):
+    if num_worker > 0:
+        from multiprocessing import Pool
+        m = Pool(num_worker)
+        result = []
+        for x in tqdm(m.imap(func, all_task), total=len(all_task)):
+            result.append(x)
+        # there are some error comes out from os.fork() and which says
+        # OSError: [Errno 24] Too many open files.
+        # self.pid = os.fork()
+        # here, we explicitly close the pool and see if it helps. note, this is
+        # not verified to work, if we still see that kind of error message, we
+        # need other solutions
+        m.close()
+        return result
+    else:
+        result = []
+        for t in all_task:
+            result.append(func(t))
+        return result
 
 def parallel_map(func, all_task, num_worker=16):
     if num_worker > 0:
@@ -1797,12 +1853,15 @@ def load_from_yaml_file(file_name):
     with open(file_name, 'r') as fp:
         return yaml.load(fp, Loader=yaml.CLoader)
 
-def write_to_file(contxt, file_name):
+def write_to_file(contxt, file_name, append=False):
     p = os.path.dirname(file_name)
     ensure_directory(p)
     if type(contxt) is str:
         contxt = contxt.encode()
-    with open(file_name, 'wb') as fp:
+    flag = 'wb'
+    if append:
+        flag = 'ab'
+    with open(file_name, flag) as fp:
         fp.write(contxt)
 
 def load_list_file(fname):
@@ -2048,6 +2107,9 @@ def dict_has_path(d, p, with_type=False):
 def dict_set_path_if_not_exist(param, k, v):
     if not dict_has_path(param, k):
         dict_update_path_value(param, k, v)
+        return True
+    else:
+        return False
 
 def dict_update_path_value(d, p, v):
     ps = p.split('$')
@@ -2172,15 +2234,24 @@ def run_if_not_cached(func, *args, **kwargs):
 def convert_to_command_line(param, script):
     logging.info(pformat(param))
     x = copy.deepcopy(param)
-    from qd.qd_common import dump_to_yaml_str
     result = "python {} -bp {}".format(
             script,
-            base64.b64encode(dump_to_yaml_str(x)).decode())
+            base64.b64encode(dump_to_yaml_bytes(x)).decode())
     return result
 
-def print_table(a_to_bs, all_key=None):
-    all_line = get_table_print_lines(a_to_bs, all_key)
-    logging.info('\n{}'.format('\n'.join(all_line)))
+def print_table(a_to_bs, all_key=None, latex=False, **kwargs):
+    if not latex:
+        all_line = get_table_print_lines(a_to_bs, all_key)
+        logging.info('\n{}'.format('\n'.join(all_line)))
+    else:
+        from qd.latex_writer import print_simple_latex_table
+        if all_key is None:
+            all_key = list(set(a for a_to_b in a_to_bs for a in a_to_b))
+            all_key = sorted(all_key)
+        x = print_simple_latex_table(a_to_bs,
+                all_key, **kwargs)
+        logging.info('\n{}'.format(x))
+        return x
 
 def get_table_print_lines(a_to_bs, all_key):
     if len(a_to_bs) == 0:
@@ -2190,7 +2261,7 @@ def get_table_print_lines(a_to_bs, all_key):
         all_key = []
         for a_to_b in a_to_bs:
             all_key.extend(a_to_b.keys())
-        all_key = list(set(all_key))
+        all_key = sorted(list(set(all_key)))
     all_width = [max([len(str(a_to_b.get(k, ''))) for a_to_b in a_to_bs] +
         [len(k)]) for k in all_key]
     row_format = ' '.join(['{{:{}}}'.format(w) for w in all_width])
@@ -2276,8 +2347,14 @@ def attach_philly_maskrcnn_log_if_is(all_log, job_info):
             delay = (now - log_time).total_seconds()
             d, h = parse_eta_in_hours(left)
             job_info['left'] = '{}-{:.1f}h({:.1f}s)'.format(d, h, delay)
+            job_info['eta'] = calc_eta(d, h)
             return True
     return False
+
+def calc_eta(days, hours):
+    from datetime import timedelta
+    x = datetime.now() + timedelta(days=days, hours=hours + 1)
+    return '{}/{}-{}'.format(x.month, x.day, x.hour)
 
 def attach_aml_maskrcnn_log_if_is(all_log, job_info):
     for log in reversed(all_log):
@@ -2292,6 +2369,7 @@ def attach_aml_maskrcnn_log_if_is(all_log, job_info):
             # log_time here is UTC. convert it to local time
             d, h = parse_eta_in_hours(left)
             job_info['left'] = '{}-{:.1f}h'.format(d, h)
+            job_info['eta'] = calc_eta(d, h)
             return True
     return False
 
@@ -2445,7 +2523,7 @@ def get_vis_str(component_speeds):
         s = sum([c.global_avg for c in n.children])
         n.unique_in_ms = round(1000. * (n.global_avg - s), 1)
     return root.get_ascii(attributes=
-        ['name', 'global_avg_in_ms', 'unique_in_ms'])
+        ['name', 'global_avg_in_ms', 'unique_in_ms', 'count'])
 
 def create_vis_net_file(speed_yaml, vis_txt):
     info = load_from_yaml_file(speed_yaml)
@@ -2583,30 +2661,66 @@ def releaseLock(locked_file_descriptor):
     ''' release exclusive lock file access '''
     locked_file_descriptor.close()
 
-def inject_maskrcnn_log_to_board(fname, folder, keys=None):
-    if not keys:
-        keys = ['loss_box_reg', 'loss_classifier', 'loss_objectness', 'loss_rpn_box_reg']
-    pattern = ''.join('.*{}: ([0-9]*\.[0-9]*) .*'.format(k)for k in keys)
-    pattern = '.*iter: ([0-9]*) ' + pattern
+def inject_yolo_by_maskrcnn_log_to_board(fname, folder):
+    keys = ['loss',
+            'cls',
+            'o_noobj',
+            'o_obj',
+            'wh',
+            'xy',
+            'time',
+            'data',
+            ]
+    pattern = ''.join('.*{}: ([0-9\.]*) \(([0-9\.]*)\).*'.format(k)for k in keys)
+    pattern = '.*iter: ([0-9]*) .*' + 'speed: ([0-9\.]*) images/sec' + pattern
     logging.info(pattern)
     all_loss = []
-    for line in read_to_buffer(fname).decode().split('\n'):
-        result = re.match(pattern, line)
-        if result is None:
-            continue
-        loss_info = {k: float(r) for r, k in zip(result.groups()[1:], keys)}
-        loss_info['iter'] = int(result.groups()[0])
-        all_loss.append(loss_info)
+    result = parse_nums(pattern, fname)
+    result_keys = ['iteration', 'speed']
+    for k in keys:
+        result_keys.append(k + '_medium')
+        result_keys.append(k + '_mean')
+    all_loss = [dict(zip(result_keys, r)) for r in result]
 
     logging.info(len(all_loss))
     from torch.utils.tensorboard import SummaryWriter
-    folder = op.join(folder, 'tensorboard')
-    ensure_remove_dir(folder)
     wt = SummaryWriter(log_dir=folder)
     for loss_info in all_loss:
-        for k in keys:
+        for k in result_keys:
+            if k == 'iteration':
+                continue
             wt.add_scalar(tag=k, scalar_value=loss_info[k],
-                    global_step=loss_info['iter'])
+                    global_step=loss_info['iteration'])
+
+def inject_maskrcnn_log_to_board(fname, folder):
+    keys = ['loss',
+            'loss_box_reg',
+            'loss_classifier',
+            'loss_objectness',
+            'loss_rpn_box_reg',
+            'time',
+            'data',
+            ]
+    pattern = ''.join('.*{}: ([0-9\.]*) \(([0-9\.]*)\).*'.format(k)for k in keys)
+    pattern = '.*iter: ([0-9]*) .*' + 'speed: ([0-9\.]*) images/sec' + pattern
+    logging.info(pattern)
+    all_loss = []
+    result = parse_nums(pattern, fname)
+    result_keys = ['iteration', 'speed']
+    for k in keys:
+        result_keys.append(k + '_medium')
+        result_keys.append(k + '_mean')
+    all_loss = [dict(zip(result_keys, r)) for r in result]
+
+    logging.info(len(all_loss))
+    from torch.utils.tensorboard import SummaryWriter
+    wt = SummaryWriter(log_dir=folder)
+    for loss_info in all_loss:
+        for k in result_keys:
+            if k == 'iteration':
+                continue
+            wt.add_scalar(tag=k, scalar_value=loss_info[k],
+                    global_step=loss_info['iteration'])
 
 class DummyCfg(object):
     # provide a signature of clone(), used by maskrcnn checkpointer
@@ -2628,6 +2742,37 @@ def print_frame_info():
             info.append('type({}) = {}'.format(i, type(vs[i])))
             continue
     logging.info('; '.join(info))
+
+def merge_speed_info(speed_yamls, out_yaml):
+    write_to_yaml_file([load_from_yaml_file(y) for y in speed_yamls
+        if op.isfile(y)], out_yaml)
+
+def merge_speed_vis(vis_files, out_file):
+    from qd.qd_common import ensure_copy_file
+    ensure_copy_file(vis_files[0], out_file)
+
+def merge_dict_to_cfg(dict_param, cfg):
+    """merge the key, value pair in dict_param into cfg
+
+    :dict_param: TODO
+    :cfg: TODO
+    :returns: TODO
+
+    """
+    def trim_dict(d, c):
+        """remove all the keys in the dictionary of d based on the existance of
+        cfg
+        """
+        to_remove = [k for k in d if k not in c]
+        for k in to_remove:
+            del d[k]
+        to_check = [(k, d[k]) for k in d if d[k] is dict]
+        for k, t in to_check:
+            trim_dict(t, getattr(c, k))
+    trimed_param = copy.deepcopy(dict_param)
+    trim_dict(trimed_param, cfg)
+    from yacs.config import CfgNode
+    cfg.merge_from_other_cfg(CfgNode(trimed_param))
 
 if __name__ == '__main__':
     init_logging()

@@ -75,7 +75,7 @@ def ensure_upload_all_data(all_data, philly_client):
         dataset = TSVDataset(d)
         for split in ['train', 'test', 'trainval']:
             splitx = split + 'X'
-            if op.isfile(dataset.get_data(splitx)) and d.endswith('_with_bb'):
+            if op.isfile(dataset.get_data(splitx)):
                 data_sources = dataset.load_composite_source_data_split(split)
                 if len(data_sources) > 1:
                     if not philly_client.qd_data_exists('{}/{}.tsv'.format(d, split)):
@@ -108,14 +108,15 @@ def ensure_upload_trained_model(param, aml_client):
 def aml_func_run(func, param, **submit_param):
     from qd.gpucluster import create_aml_client
     aml_client = create_aml_client(**submit_param)
+    all_data = []
     if 'data' in param.get('param', {}):
         from qd.pipeline import get_all_related_data_for_gpu_jobs
         data = param['param']['data']
-        all_data = get_all_related_data_for_gpu_jobs(data)
-        if 'all_test_data' in param:
-            all_data.extend([test_data_info['test_data'] for test_data_info in
-                param['all_test_data']])
-        ensure_upload_all_data(all_data, aml_client)
+        all_data.extend(get_all_related_data_for_gpu_jobs(data))
+    if 'all_test_data' in param:
+        all_data.extend([test_data_info['test_data'] for test_data_info in
+            param['all_test_data']])
+    ensure_upload_all_data(all_data, aml_client)
     if 'basemodel' in param.get('param', {}):
         ensure_upload_init_model(param['param'], aml_client)
     if 'param' in param:
@@ -173,7 +174,7 @@ def philly_func_run(func, param, **submit_param):
             script=op.relpath(code_file_name))
     logging.info(extra_param)
     logging.info(philly_client.get_config_extra_param(extra_param))
-    philly_client.submit_without_sync(extra_param)
+    return philly_client.submit_without_sync(extra_param)
 
 def except_to_update_for_stageiter(param):
     if param.get('net', '').startswith('e2e'):
@@ -263,6 +264,7 @@ def populate_expid(param):
 
 def generate_expid(param):
     dict_ensure_path_key_converted(param)
+    config = load_from_yaml_file('./aux_data/configs/expid_generate.yaml')
     default_param = {
             'max_iter': 10000,
             'effective_batch_size': 64}
@@ -361,34 +363,29 @@ def generate_expid(param):
             ('rt_param$opt_anchor', ('OptA', None)),
             ('opt_anchor_lr_mult', 'AnchorLR', lambda x:
                     x['opt_anchor_lr_mult'] == 1),
+            ('MODEL$RPN$FG_IOU_THRESHOLD', 'RpnFGIoU', 0.7),
+            ('MODEL$RPN$NMS_POLICY$THRESH', 'RpnNMS', 0.7),
+            ('MODEL$RPN$ASPECT_RATIOS', 'RpnAR'),
+            ('MODEL$RPN$PRE_NMS_TOP_N_TRAIN', 'RpnPreNms', 2000),
+            ('MODEL$RPN$POST_NMS_TOP_N_TRAIN', 'RpnPostNms', 2000),
+            ('MODEL$RPN$FPN_POST_NMS_TOP_N_TRAIN', 'FPNPostNms', 2000),
+            ('MODEL$CLS_AGNOSTIC_BBOX_REG', ('BoxAgnostic', None)),
+            #{
+                #'key': 'MODEL$ROI_HEADS$NMS_ON_MAX_CONF_AGNOSTIC',
+                #'default': False,
+                #'action_type': 'keyword',
+                #'non_default_hint': 'NMSMax',
+            #},
             ]
+    direct_add_value_keys.extend(config.get('direct_add_value_keys', []))
 
-    non_expid_impact_keys = ['data', 'net', 'expid_prefix',
-            'test_data', 'test_split', 'test_version',
-            'dist_url_tcp_port', 'workers', 'force_train',
-            'num_workers',
-            'pipeline_type', 'test_batch_size',
-            'yolo_train_session_param$debug_train',
-            'yolo_predict_session_param',
-            'evaluate_method', 'debug_train',
-            'full_expid', 'log_step', 'device',
-            'MODEL$ROI_BOX_HEAD$CLASSIFICATION_ACTIVATE',
-            'display',
-            'apply_nms_gt',
-            'apply_nms_det',
-            'expand_label_det',
-            'SOLVER$CHECKPOINT_PERIOD',
-            'yolo_train_session_param$display',
-            'INPUT$MIN_SIZE_TEST',
-            'ovthresh',
-            'MODEL$ROI_HEADS$NMS_POLICY$TYPE',
-            'images_per_gpu',
-            'yolo_predict_session_param$nms_threshold',
-            'env',
-            'test_max_iter',
-            'test_input_size',
-            'rt_param$use_pt_rt',
-            ]
+    non_expid_impact_keys = config['non_expid_impact_keys']
+
+    def encode_nms_policy(param):
+        t = dict_get_path_value(param, 'MODEL$RPN$NMS_POLICY$TYPE')
+        if t != 'nms':
+            return 'RpnNMS{}{}'.format(t,
+                    hash_sha1(param['MODEL']['RPN']['NMS_POLICY'])[-5:])
 
     if param['pipeline_type'] == 'MaskRCNNPipeline':
         non_expid_impact_keys.extend(['DATASETS', ''])
@@ -399,8 +396,7 @@ def generate_expid(param):
     # we need to update expid so that the model folder contains the critical
     # param information
     infos = []
-    need_hash_sha_params = ['basemodel', 'lock_up_to',
-            'yolo_train_session_param$anchors', 'stagelr']
+    need_hash_sha_params = config['need_hash_sha_params']
     for k in need_hash_sha_params:
         if dict_has_path(param, k):
             v = dict_get_path_value(param, k)
@@ -412,34 +408,75 @@ def generate_expid(param):
                     v))
 
     for setting in direct_add_value_keys:
-        k, v = setting[:2]
-        if dict_has_path(param, k):
-            pk = dict_get_path_value(param, k)
-            if len(setting) == 3:
-                if isinstance(setting[2], dict):
-                    if setting[2]['default_value'] == pk:
+        if isinstance(setting, tuple):
+            k, v = setting[:2]
+            if dict_has_path(param, k):
+                pk = dict_get_path_value(param, k)
+                if len(setting) == 3:
+                    if isinstance(setting[2], dict):
+                        if setting[2]['default_value'] == pk:
+                            continue
+                    elif hasattr(setting[2], '__call__') and setting[2](param):
                         continue
-                elif setting[2](param):
+                    elif setting[2] == pk:
+                        continue
+                if type(pk) is str:
+                    pk = pk.replace('/', '.')
+                elif type(pk) in [list, tuple]:
+                    pk = '.'.join(map(str, pk))
+                if type(v) is tuple or type(v) is list:
+                    assert pk in [True, False]
+                    assert len(v) == 2
+                    if pk and v[0]:
+                        infos.append('{}'.format(v[0]))
+                    elif not pk and v[1]:
+                        infos.append('{}'.format(v[1]))
                     continue
-            if type(pk) is str:
-                pk = pk.replace('/', '.')
-            elif type(pk) in [list, tuple]:
-                pk = '.'.join(map(str, pk))
-            if type(v) is tuple or type(v) is list:
-                assert pk in [True, False]
-                assert len(v) == 2
-                if pk and v[0]:
-                    infos.append('{}'.format(v[0]))
-                elif not pk and v[1]:
-                    infos.append('{}'.format(v[1]))
-                continue
-            else:
-                infos.append('{}{}'.format(v, pk))
+                else:
+                    infos.append('{}{}'.format(v, pk))
+        elif isinstance(setting, dict):
+            k = setting['key']
+            if dict_has_path(param, k):
+                pk = dict_get_path_value(param, k)
+                default_value = setting['default']
+                if pk == default_value:
+                    continue
+                action_type = setting['action_type']
+                if action_type == 'keyword':
+                    infos.append('{}{}'.format(setting['non_default_hint'], pk))
+                elif action_type == 'bool':
+                    infos.append(setting['non_default_hint'])
+                else:
+                    raise NotImplementedError
+        else:
+            raise NotImplementedError
+
+    all_group_key_encode = [
+            {'keys': [
+                'MODEL$RPN$NMS_POLICY$TYPE',
+                'MODEL$RPN$NMS_POLICY$ALPHA',
+                'MODEL$RPN$NMS_POLICY$GAMMA',
+                'MODEL$RPN$NMS_POLICY$NUM',
+                'MODEL$RPN$NMS_POLICY$NUM2',
+                'MODEL$RPN$NMS_POLICY$COMPOSE_FINAL_RERANK'],
+             'encode': encode_nms_policy}
+            ]
+
+    for group_key_encode in all_group_key_encode:
+        keys, encode = group_key_encode['keys'], group_key_encode['encode']
+        if any(dict_has_path(param, k) for k in keys):
+            en = encode(param)
+            if en is not None:
+                infos.append(en)
 
     known_keys = []
     known_keys.extend((k for k in need_hash_sha_params))
     known_keys.extend((k for k in non_expid_impact_keys))
-    known_keys.extend((s[0] for s in direct_add_value_keys))
+    known_keys.extend((s[0] for s in direct_add_value_keys if isinstance(s,
+        tuple)))
+    known_keys.extend((s['key'] for s in direct_add_value_keys if isinstance(s,
+        dict)))
+    known_keys.extend(k for x in all_group_key_encode for k in x['keys'])
 
     all_path = dict_get_all_path(param)
 
@@ -475,6 +512,9 @@ def create_pipeline(kwargs):
     elif pipeline_type == 'YoloByMask':
         from qd.pipelines.yolo_by_mask import YoloByMask
         return YoloByMask(**kwargs)
+    elif pipeline_type == 'Detectron2Pipeline':
+        from qd.pipelines.detectron2 import Detectron2Pipeline
+        return Detectron2Pipeline(**kwargs)
     else:
         raise NotImplementedError()
 
@@ -524,6 +564,21 @@ def pipeline_continuous_train(param, all_test_data, **kwargs):
         pip.ensure_predict()
         pip.ensure_evaluate()
 
+def pipeline_pred_eval(all_test_data, **kwargs):
+    for test_data_info in all_test_data:
+        dict_ensure_path_key_converted(test_data_info)
+        pip = load_pipeline(**test_data_info)
+        # we should check here instead of before for-loop since we can alter
+        # the value of max_iter to just evaluate the intermediate model or take
+        # the intermediate model as the final model
+        if not pip.is_train_finished():
+            logging.info('the model specified by the following is not ready\n{}'.format(
+                pformat(test_data_info)))
+            return
+        pip.ensure_predict()
+        pip.ensure_evaluate()
+
+@deprecated('use pipeline_pred_eval for simplicity')
 def pipeline_eval_multi(param, all_test_data, **kwargs):
     for test_data_info in all_test_data:
         curr_param = copy.deepcopy(param)

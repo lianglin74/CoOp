@@ -53,6 +53,16 @@ import glob
 import torch.nn.functional as F
 
 
+def replace_module(module, condition_func, creator_func):
+    module_output = module
+    if condition_func(module):
+        module_output = creator_func(module)
+    for name, child in module.named_children():
+        child = replace_module(child, condition_func, creator_func)
+        module_output.add_module(name, child)
+    del module
+    return module_output
+
 def load_scheduler_state(scheduler, state):
     for k, v in state.items():
         if k in scheduler.__dict__:

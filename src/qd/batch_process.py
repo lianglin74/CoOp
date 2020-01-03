@@ -130,7 +130,12 @@ class BatchProcess(object):
         if not op.isfile(self._in_use_resource_file):
             in_use_resources = []
         else:
-            in_use_resources = load_from_yaml_file(self._in_use_resource_file)
+            from qd.qd_common import read_to_buffer
+            content = read_to_buffer(self._in_use_resource_file)
+            if len(content) == 0:
+                in_use_resources = []
+            else:
+                in_use_resources = load_from_yaml_file(self._in_use_resource_file)
         in_use_resources2 = []
         for record in in_use_resources:
             in_use_process_id = record['pid']

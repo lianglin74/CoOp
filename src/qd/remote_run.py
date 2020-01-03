@@ -16,9 +16,9 @@ from qd.qd_common import get_executable
 def sync_qd(ssh_info, delete=False):
     target_folder = '/tmp/code/quickdetection/'
     sync(ssh_info=ssh_info, target_folder=target_folder, delete=delete)
-    remote_run('cd {} && ./compile.conda.sh'.format(target_folder), ssh_info)
+    remote_run('cd {} && bash ./compile.conda.sh'.format(target_folder), ssh_info)
 
-    remote_run('{} -m nltk.downloader all'.format(get_executable()), ssh_info)
+    remote_run('{} -m nltk.downloader all'.format('python'), ssh_info)
 
     if is_cluster(ssh_info):
         c = []
@@ -55,6 +55,7 @@ def sync(ssh_info, from_folder='/home/jianfw/code/quickdetection/',
     exclude_if_exists('src/CCSCaffe/python/caffe/_caffe.so')
     exclude_if_exists('src/CCSCaffe/python/caffe/proto/')
     exclude_if_exists('src/CCSCaffe/Makefile.config')
+    exclude_if_exists('src/detectron2/output')
     exclude_if_exists('assets')
     exclude_if_exists('output')
     exclude_if_exists('data')
@@ -181,7 +182,7 @@ if __name__ == '__main__':
     remote_run('cd {} && {}{} {}'.format(
         op.dirname(working_dir),
         cmd_prefix,
-        get_executable(),
+        'python',
         target_file),
         ssh_cmd)
 

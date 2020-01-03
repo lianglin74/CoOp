@@ -83,6 +83,7 @@ from qd.tsv_io import load_labels
 from qd.tsv_io import TSVDataset, TSVFile
 from qd.tsv_io import tsv_reader, tsv_writer
 from qd.tsv_io import is_verified_rect
+from qd.tsv_io import tsv_copy
 from qd.db import create_mongodb_client
 from qd.db import create_bbverification_db
 
@@ -1494,18 +1495,24 @@ def update_labelmap(rows, num_rows, labelmap):
 def derive_composite_meta_data(data, split, t):
     data_to_dataset = {}
     dataset = TSVDataset(data)
+    all_source_data_split = dataset.load_composite_source_data_split(split)
     def gen_rows():
         assert dataset.has(split, 'label')
-        for key, _ in tqdm(dataset.iter_data(split, 'label')):
-            c_data, c_split, c_key = parse_combine(key)
+        iter_label = dataset.iter_data(split, 'label')
+        iter_shuffle = tsv_reader(dataset.get_shuffle_file(split))
+        for (idx_source, idx_row), (label_row) in zip(iter_shuffle,
+                iter_label):
+            idx_source = int(idx_source)
+            idx_row = int(idx_row)
+            c_data, c_split = all_source_data_split[idx_source]
             if c_data in data_to_dataset:
                 c_dataset = data_to_dataset[c_data]
             else:
                 c_dataset = TSVDataset(c_data)
                 data_to_dataset[c_data] = c_dataset
             assert c_dataset.has(c_split, t)
-            _, t_data = c_dataset.seek_by_key(c_key, c_split, t)
-            yield key, t_data
+            key, t_data = c_dataset.seek_by_idx(idx_row, c_split, t)
+            yield label_row[0], t_data
     assert not dataset.has(split, t)
     dataset.write_data(gen_rows(), split, t)
 
@@ -3717,7 +3724,9 @@ def update_taxonomy_by_latest(ref_data, target_data):
     # _with_bb
     ref_data = ref_data + '_with_bb'
     target_data = target_data + '_with_bb'
+    update_bb_taxonomy_by_latest(ref_data, target_data)
 
+def update_bb_taxonomy_by_latest(ref_data, target_data):
     ref_dataset = TSVDataset(ref_data)
     out_dataset = TSVDataset(target_data)
 
@@ -3731,6 +3740,7 @@ def update_taxonomy_by_latest(ref_data, target_data):
             for source_origin_label, in ref_dataset.iter_data(splitX, 'origin.label')]
     source_data_split_versions = [(d, s, -1) for d, s in source_data_splits]
 
+    lift_train = False
     dump_to_taxonomy_dataset(ref_dataset, all_idxsource_idxrow,
             source_data_split_versions, lift_train, split, out_dataset)
 
@@ -4344,15 +4354,19 @@ def build_tax_dataset_from_db(taxonomy_folder, **kwargs):
 
     logging.info('done')
 
-def build_taxonomy_from_single_source(source_data,
+def build_taxonomy_from_single_composite_source(source_data,
         source_split, source_version,
         min_image_per_label,
         out_data):
+    out_dataset = TSVDataset(out_data)
+    if op.isdir(out_dataset._data_root):
+        logging.info('ignore to build since exists')
+        return
     populate_dataset_details(source_data)
     dataset = TSVDataset(source_data)
     label_to_idx = dataset.load_inverted_label(source_split,
             version=source_version)
-    result = list(range(dataset.num_rows(source_split)))
+    all_idx = list(range(dataset.num_rows(source_split)))
     idx_to_labels = list_to_dict(dict_to_list(label_to_idx, 0), 1)
 
     while len(label_to_idx) > 0:
@@ -4368,7 +4382,7 @@ def build_taxonomy_from_single_source(source_data,
         copies = (min_image_per_label + min_count - 1)  // min_count - 1
         assert copies > 0
         # add these extra images
-        result.extend(copies * min_idx)
+        all_idx.extend(copies * min_idx)
         for i in min_idx:
             for l in idx_to_labels[i]:
                 if l in label_to_idx:
@@ -4376,10 +4390,60 @@ def build_taxonomy_from_single_source(source_data,
                     for _ in range(copies):
                         label_to_idx[l].append(i)
     random.seed(6)
-    random.shuffle(result)
+    random.shuffle(all_idx)
+    ensure_copy_file(dataset.get_labelmap_file(),
+            out_dataset.get_labelmap_file())
+
+    shuffle = TSVFile(dataset.get_shuffle_file(source_split))
+    tsv_writer((shuffle[i] for i in all_idx), out_dataset.get_shuffle_file('train'))
+    tsv_copy(dataset.get_data(source_split + 'X'),
+            out_dataset.get_data('trainX'))
+
+    out_dataset.write_data(
+            dataset.iter_data('train', 'hw', filter_idx=all_idx),
+            'train', 'hw')
+    out_dataset.write_data(
+            dataset.iter_data('train', 'label', version=source_version,
+                filter_idx=all_idx),
+            'train', 'label')
+
+def build_taxonomy_from_single_source(source_data,
+        source_split, source_version,
+        min_image_per_label,
+        out_data):
+    populate_dataset_details(source_data)
+    dataset = TSVDataset(source_data)
+    label_to_idx = dataset.load_inverted_label(source_split,
+            version=source_version)
+    all_idx = list(range(dataset.num_rows(source_split)))
+    idx_to_labels = list_to_dict(dict_to_list(label_to_idx, 0), 1)
+
+    while len(label_to_idx) > 0:
+        # remove the labels if the len(idx) >= min_image_per_label
+        to_remove = [l for l in label_to_idx if len(label_to_idx[l]) >= min_image_per_label]
+        for l in to_remove:
+            del label_to_idx[l]
+        if len(label_to_idx) == 0:
+            break
+        min_label = min(label_to_idx, key=lambda x: len(label_to_idx[x]))
+        min_idx = copy.deepcopy(label_to_idx[min_label])
+        min_count = len(min_idx)
+        copies = (min_image_per_label + min_count - 1)  // min_count - 1
+        assert copies > 0
+        # add these extra images
+        all_idx.extend(copies * min_idx)
+        for i in min_idx:
+            for l in idx_to_labels[i]:
+                if l in label_to_idx:
+                    # otherwise, it means that label is enough
+                    for _ in range(copies):
+                        label_to_idx[l].append(i)
+    random.seed(6)
+    random.shuffle(all_idx)
     out_dataset = TSVDataset(out_data)
-    tsv_writer(((0, r) for r in result), out_dataset.get_train_shuffle_file())
-    ensure_copy_file(dataset.get_data(source_split, t='labelmap', version=source_version),
+    shuffle = [(0, r) for r in all_idx]
+    tsv_writer(shuffle, out_dataset.get_train_shuffle_file())
+    ensure_copy_file(dataset.get_labelmap_file(),
             out_dataset.get_labelmap_file())
 
     write_to_file(dataset.get_data('train'),
@@ -5060,7 +5124,19 @@ def uhrs_verify_db_merge_to_tsv(collection_name='uhrs_logo_verification',
     data_split_to_key_rects, all_id = c.get_completed_uhrs_result(
             extra_match=extra_match)
     merge_uhrs_result_to_dataset(data_split_to_key_rects)
-    c.set_status_as_merged(all_id)
+    size = 1000
+    i = 0
+    while True:
+        start = i * size
+        end = i * size + size
+        if start >= len(all_id):
+            break
+        if end >= len(all_id):
+            end = len(all_id)
+        c.set_status_as_merged(all_id[start:end])
+        i += 1
+    y = [c.set_status_as_merged([i]) for i in tqdm(all_id)]
+    y = list(map(lambda i: c.set_status_as_merged([i]), all_id))
 
 def uhrs_merge_one(uhrs_rect, target_rects, tag_only=False):
     info = {'num_added': 0,
@@ -5132,31 +5208,51 @@ def set_interpretation_result_for_uhrs_result(collection_name='uhrs_logo_verific
     query = {'status': {'$in': [c.status_merged, c.status_completed]},
             'interpretation_result': None}
     positive_ids, negative_ids, uncertain_ids = [], [], []
+    pos, neg, un = 0, 0, 0
     for rect_info in tqdm(c.collection.find(query)):
         rect = rect_info['rect']
         rect.update({'uhrs': rect_info['uhrs_completed_result']})
         if is_positive_uhrs_verified(rect):
             positive_ids.append(rect_info['_id'])
+            if len(positive_ids) > 1000:
+                logging.info('positive = {}'.format(pos))
+                q = {'_id': {'$in': positive_ids}}
+                c.collection.update_many(filter=q,
+                        update={'$set': {'interpretation_result': 1}})
+                pos += len(positive_ids)
+                positive_ids.clear()
         elif is_negative_uhrs_verified(rect):
             negative_ids.append(rect_info['_id'])
+            if len(negative_ids) > 1000:
+                logging.info('neg = {}'.format(neg))
+                q = {'_id': {'$in': negative_ids}}
+                c.collection.update_many(filter=q,
+                        update={'$set': {'interpretation_result': -1}})
+                neg += len(negative_ids)
+                negative_ids.clear()
         else:
             uncertain_ids.append(rect_info['_id'])
+            if len(uncertain_ids) > 1000:
+                logging.info('un = {}'.format(un))
+                query = {'_id': {'$in': uncertain_ids}}
+                c.collection.update_many(filter=query,
+                        update={'$set': {'interpretation_result': 0}})
+                un += len(uncertain_ids)
+                uncertain_ids.clear()
 
-    logging.info('num pos ids = {}'.format(len(positive_ids)))
-    logging.info('num neg ids = {}'.format(len(negative_ids)))
-    logging.info('num uncertain ids = {}'.format(len(uncertain_ids)))
 
-    query = {'_id': {'$in': positive_ids}}
-    c.collection.update_many(filter=query,
-            update={'$set': {'interpretation_result': 1}})
-
-    query = {'_id': {'$in': negative_ids}}
-    c.collection.update_many(filter=query,
-            update={'$set': {'interpretation_result': -1}})
-
-    query = {'_id': {'$in': uncertain_ids}}
-    c.collection.update_many(filter=query,
-            update={'$set': {'interpretation_result': 0}})
+    if len(positive_ids) > 0:
+        query = {'_id': {'$in': positive_ids}}
+        c.collection.update_many(filter=query,
+                update={'$set': {'interpretation_result': 1}})
+    if len(negative_ids) > 0:
+        query = {'_id': {'$in': negative_ids}}
+        c.collection.update_many(filter=query,
+                update={'$set': {'interpretation_result': -1}})
+    if len(uncertain_ids) > 0:
+        query = {'_id': {'$in': uncertain_ids}}
+        c.collection.update_many(filter=query,
+                update={'$set': {'interpretation_result': 0}})
 
 def uhrs_verify_db_closest_rect(collection, test_data, test_split, gt_key, p):
     rect_infos = list(collection.find({'data': test_data,
@@ -5760,11 +5856,19 @@ class CogAPI(object):
         remote_image_analysis = self.computervision_client.analyze_image(image_url,
                 self.remote_image_features)
         result = {}
+        from azure.cognitiveservices.vision.computervision.models import VisualFeatureTypes
         if 'adult' in self.remote_image_features:
             result.update(self.parse_adult(remote_image_analysis))
-        else:
+        if 'description' in self.remote_image_features:
+            result.update(self.parse_description(remote_image_analysis))
+        if VisualFeatureTypes.image_type in self.remote_image_features:
             result.update(self.parse_type(remote_image_analysis))
         return result
+
+    def parse_description(self, result):
+        return {'captions': [{'text': cap.text,
+                              'conf': cap.confidence}
+                              for cap in result.description.captions]}
 
     def parse_type(self, remote_image_analysis):
         return {'clip_art_type': remote_image_analysis.image_type.clip_art_type,
@@ -5881,6 +5985,54 @@ def ocr_tsv(in_tsv, out_tsv, urls):
     processor = OCRRowProcessor(urls)
     parallel_tsv_process(processor, in_tsv, out_tsv,
             num_process=5, num_jobs=10240)
+
+def create_dataset_from_pred(pred_tsv, conf_th, src_data, out_data):
+    # create label
+    def gen_rows():
+        for key, str_rects in tqdm(tsv_reader(pred_tsv)):
+            rects = json.loads(str_rects)
+            high_rects = [r for r in rects if r['conf'] > conf_th]
+            if len(high_rects) > 0:
+                yield '_'.join([src_data, 'train', key]), json_dump(high_rects)
+    tsv_writer(gen_rows(), './data/{}/train.label.tsv'.format(out_data))
+
+    create_image_X_by_key(out_data, 'train', 'label')
+    ensure_copy_file(TSVDataset('coco2017Full').get_labelmap_file(),
+        TSVDataset(out_data).get_labelmap_file())
+    populate_dataset_details(out_data)
+
+def create_image_X_by_key(target_data, target_split, t):
+    # given train.label.tsv where key is a composed key, we derive the
+    # trainX.tsv and the shuffle file
+    dataset = TSVDataset(target_data)
+    data_split_keys = [parse_combine(key) for key, _ in
+            dataset.iter_data(target_split, t)]
+    data_to_split_keys = list_to_dict(data_split_keys, 0)
+    data_splits = []
+    for data, split_keys in data_to_split_keys.items():
+        split_to_keys = list_to_dict(split_keys, 0)
+        for split in split_to_keys:
+            data_splits.append((data, split))
+    data_to_dataset = {}
+    def get_dataset(src_data):
+        if src_data not in data_to_dataset:
+            data_to_dataset[src_data] = TSVDataset(src_data)
+        return data_to_dataset[src_data]
+    src_tsv = [get_dataset(data).get_data(split) for data, split in data_splits]
+    data_split_to_idx = {data_split: i for i, data_split in
+            enumerate(data_splits)}
+    def gen_shuffle():
+        for src_data, src_split, src_key in data_split_keys:
+            idx_source = data_split_to_idx[(src_data, src_split)]
+            idx_key = get_dataset(src_data).get_idx_by_key(src_key,
+                    src_split)
+            yield idx_source, idx_key
+
+    tsv_writer(gen_shuffle(),
+            get_dataset(target_data).get_shuffle_file(target_split))
+    write_to_file('\n'.join(src_tsv),
+            get_dataset(target_data).get_data(target_split + 'X'))
+
 
 if __name__ == '__main__':
     from qd.qd_common import parse_general_args

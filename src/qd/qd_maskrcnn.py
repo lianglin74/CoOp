@@ -40,33 +40,12 @@ from qd.tsv_io import TSVDataset
 from qd.tsv_io import tsv_reader, tsv_writer
 from qd.process_tsv import TSVFile, convert_one_label
 from qd.layers import ForwardPassTimeChecker
-from yacs.config import CfgNode
+from qd.qd_pytorch import replace_module
 import os.path as op
 from tqdm import tqdm
-
-def merge_dict_to_cfg(dict_param, cfg):
-    """merge the key, value pair in dict_param into cfg
-
-    :dict_param: TODO
-    :cfg: TODO
-    :returns: TODO
-
-    """
-    def trim_dict(d, c):
-        """remove all the keys in the dictionary of d based on the existance of
-        cfg
-        """
-        to_remove = [k for k in d if k not in c]
-        for k in to_remove:
-            del d[k]
-        to_check = [(k, d[k]) for k in d if d[k] is dict]
-        for k, t in to_check:
-            trim_dict(t, getattr(c, k))
-    trimed_param = copy.deepcopy(dict_param)
-    trim_dict(trimed_param, cfg)
-    cfg.merge_from_other_cfg(CfgNode(trimed_param))
-
+from qd.qd_common import merge_dict_to_cfg
 from qd.layers import ensure_shape_bn_layer
+
 
 def convert_to_sync_bn(module, norm=torch.nn.SyncBatchNorm, exclude_gn=False,
         is_pre_linear=False):
@@ -146,39 +125,40 @@ def lock_model_param_up_to(model, lock_up_to):
     assert ignore > 0, 'some bug?'
     logging.info('fix {} params'.format(ignore))
 
-def train(cfg, local_rank, distributed, log_step=20, sync_bn=False,
+def lock_batch_norm(model):
+    num = 0
+    for _, m in model.named_modules():
+        if isinstance(m, torch.nn.BatchNorm2d):
+            m.train(False)
+            num += 1
+    logging.info('lock bn = {}'.format(num))
+
+def train(cfg, model, local_rank, distributed, log_step=20, sync_bn=False,
         exclude_convert_gn=False,
         opt_cls_only=False, bn_momentum=0.1, init_model_only=True,
         use_apex_ddp=False,
         data_partition=1,
         use_ddp=True,
         lock_up_to=None,
+        zero_num_tracked=None,
+        lock_bn=False,
+        precise_bn2=False
         ):
-
     logging.info('start to train')
-    model = build_detection_model(cfg)
-    if sync_bn:
-        if get_mpi_size() == 1:
-            norm = torch.nn.BatchNorm2d
-        else:
-            # SyncBatchNorm only works in distributed env. We have not tested
-            # the same code path if size == 1,e.g. initialize parallel group
-            # also when size = 1
-            if use_apex_ddp:
-                import apex
-                norm = apex.parallel.optimized_sync_batchnorm.SyncBatchNorm
-            else:
-                norm = torch.nn.SyncBatchNorm
-        #norm = torch.nn.BatchNorm2d
-        model, convert_info = convert_to_sync_bn(model, norm,
-                exclude_convert_gn)
-        logging.info(pformat(convert_info))
+    if precise_bn2:
+        from qd.layers.precise_bn import create_precise_bn2
+        model = replace_module(model,
+                lambda m: isinstance(m, torch.nn.BatchNorm2d),
+                lambda m: create_precise_bn2(m),
+                )
     if bn_momentum != 0.1:
         update_bn_momentum(model, bn_momentum)
     if opt_cls_only:
         lock_except_classifier(model)
     if lock_up_to:
         lock_model_param_up_to(model, lock_up_to)
+    if lock_bn:
+        lock_batch_norm(model)
     logging.info(model)
     device = torch.device(cfg.MODEL.DEVICE)
     model.to(device)
@@ -242,6 +222,14 @@ def train(cfg, local_rank, distributed, log_step=20, sync_bn=False,
     # False. That means, it is compatible for continous training
     extra_checkpoint_data = checkpointer.load(cfg.MODEL.WEIGHT,
             model_only=init_model_only)
+
+    if zero_num_tracked:
+        num = 0
+        for n, p in model.named_buffers():
+            if 'num_batches_tracked' in n:
+                p.zero_()
+                num += 1
+        logging.info('zeroed num batch tracked = {}'.format(num))
 
     if use_hvd:
         import horovod.torch as hvd
@@ -388,7 +376,6 @@ def extract_model_feature_iter(model, data_loader, device, feature_name):
             yield img_id, result
 
 def compute_on_dataset_iter(model, data_loader, device, test_max_iter=None):
-    model.eval()
     cpu_device = torch.device("cpu")
     for i, batch in enumerate(tqdm(data_loader)):
         if test_max_iter is not None and i >= test_max_iter:
@@ -487,7 +474,7 @@ def boxlist_to_list_dict(box_list, label_id_to_label):
                 f = f.squeeze()
                 if len(f.shape) == 1:
                     # just to make it a list of float
-                    rect[k] = list(map(float, f))
+                    rect[k] = f.tolist()
                 elif len(f.shape) == 0:
                     rect[k] = float(f)
                 else:
@@ -528,19 +515,30 @@ def only_inference_to_tsv(
         meters = MetricLogger(delimiter="  ")
         def gen_rows():
             start = time.time()
-            for idx, box_list in predictions:
-                meters.update(predict_time=time.time() - start)
-                start = time.time()
+            for i, (idx, box_list) in enumerate(predictions):
+                if i > 1:
+                    meters.update(predict_time=time.time() - start)
+                    start = time.time()
                 key = ds.id_to_img_map[idx]
                 wh_info = ds.get_img_info(idx)
                 box_list = box_list.resize((wh_info['width'],
                     wh_info['height']))
+                if i > 1:
+                    meters.update(finalize_boxlist=time.time() - start)
+                    start = time.time()
                 rects = boxlist_to_list_dict(box_list, label_id_to_label)
+                if i > 1:
+                    meters.update(convert_to_list_dict=time.time() - start)
+                    start = time.time()
                 if predict_threshold is not None:
                     rects = [r for r in rects if r['conf'] >= predict_threshold]
                 str_rects = json.dumps(rects)
-                meters.update(encode_time=time.time() - start)
+                if i > 1:
+                    meters.update(json_encode=time.time() - start)
+                    start = time.time()
                 yield key, str_rects
+                if i > 1:
+                    meters.update(write=time.time() - start)
                 start = time.time()
         start = time.time()
         tsv_writer(gen_rows(), cache_file)
@@ -598,44 +596,38 @@ def test(cfg, model, distributed, predict_files, label_id_to_label,
         )
         synchronize()
 
-        if is_main_process():
-            if mpi_size > 1:
-                from qd.process_tsv import concat_tsv_files
-                cache_files = ['{}_{}_{}.tsv'.format(predict_file, i, mpi_size)
-                    for i in range(mpi_size)]
-                concat_tsv_files(cache_files, predict_file)
-                from qd.process_tsv import delete_tsv_files
-                delete_tsv_files(cache_files)
-                # in distributed testing, some images might be predicted by
-                # more than one worker since the distributed sampler only
-                # garrantee each image will be processed at least once, not
-                # exactly once. Thus, we have to remove the duplicate
-                # predictions.
-                ordered_keys = data_loader_val.dataset.get_keys()
-                from qd.tsv_io import reorder_tsv_keys
-                reorder_tsv_keys(predict_file, ordered_keys, predict_file)
-                # during prediction, we also computed the time cost. Here we
-                # merge the time cost
-                speed_cache_files = [c + '.speed.yaml' for c in cache_files]
-                speed_yaml = predict_file + '.speed.yaml'
-                merge_speed_info(speed_cache_files, speed_yaml)
-                for x in speed_cache_files:
-                    try_delete(x)
-                vis_files = [op.splitext(c)[0] + '.vis.txt' for c in speed_cache_files]
-                merge_speed_vis(vis_files,
-                        op.splitext(speed_yaml)[0] + '.vis.txt')
-                for x in vis_files:
-                    try_delete(x)
+        if is_main_process() and mpi_size > 1:
+            from qd.process_tsv import concat_tsv_files
+            cache_files = ['{}_{}_{}.tsv'.format(predict_file, i, mpi_size)
+                for i in range(mpi_size)]
+            concat_tsv_files(cache_files, predict_file)
+            from qd.process_tsv import delete_tsv_files
+            delete_tsv_files(cache_files)
+            # during prediction, we also computed the time cost. Here we
+            # merge the time cost
+            speed_cache_files = [c + '.speed.yaml' for c in cache_files]
+            speed_yaml = predict_file + '.speed.yaml'
+            from qd.qd_common import merge_speed_info
+            merge_speed_info(speed_cache_files, speed_yaml)
+            for x in speed_cache_files:
+                try_delete(x)
+            vis_files = [op.splitext(c)[0] + '.vis.txt' for c in speed_cache_files]
+            from qd.qd_common import merge_speed_vis
+            merge_speed_vis(vis_files,
+                    op.splitext(speed_yaml)[0] + '.vis.txt')
+            for x in vis_files:
+                try_delete(x)
+        if is_main_process() and 'test_max_iter' not in kwargs:
+            # in distributed testing, some images might be predicted by
+            # more than one worker since the distributed sampler only
+            # garrantee each image will be processed at least once, not
+            # exactly once. Thus, we have to remove the duplicate
+            # predictions.
+            ordered_keys = data_loader_val.dataset.get_keys()
+            from qd.tsv_io import reorder_tsv_keys
+            reorder_tsv_keys(predict_file, ordered_keys, predict_file)
 
         synchronize()
-
-def merge_speed_vis(vis_files, out_file):
-    from qd.qd_common import ensure_copy_file
-    ensure_copy_file(vis_files[0], out_file)
-
-def merge_speed_info(speed_yamls, out_yaml):
-    write_to_yaml_file([load_from_yaml_file(y) for y in speed_yamls
-        if op.isfile(y)], out_yaml)
 
 def upgrade_maskrcnn_param(kwargs):
     old_key = 'MODEL$BACKBONE$OUT_CHANNELS'
@@ -671,18 +663,21 @@ class MaskRCNNPipeline(ModelPipeline):
             })
 
         maskrcnn_root = op.join('src', 'maskrcnn-benchmark')
-        if self.net.startswith('retinanet'):
-            cfg_file = op.join(maskrcnn_root, 'configs', 'retinanet',
-                    self.net + '.yaml')
-        elif 'dconv_' in self.net:
-            cfg_file = op.join(maskrcnn_root, 'configs', 'dcn',
-                    self.net + '.yaml')
-        elif self.net.endswith('_gn'):
-            cfg_file = op.join(maskrcnn_root, 'configs', 'gn_baselines',
-                    self.net + '.yaml')
+        if self.net is not None and self.net != 'Unknown':
+            if self.net.startswith('retinanet'):
+                cfg_file = op.join(maskrcnn_root, 'configs', 'retinanet',
+                        self.net + '.yaml')
+            elif 'dconv_' in self.net:
+                cfg_file = op.join(maskrcnn_root, 'configs', 'dcn',
+                        self.net + '.yaml')
+            elif self.net.endswith('_gn'):
+                cfg_file = op.join(maskrcnn_root, 'configs', 'gn_baselines',
+                        self.net + '.yaml')
+            else:
+                cfg_file = op.join(maskrcnn_root, 'configs', self.net + '.yaml')
+            param = load_from_yaml_file(cfg_file)
         else:
-            cfg_file = op.join(maskrcnn_root, 'configs', self.net + '.yaml')
-        param = load_from_yaml_file(cfg_file)
+            param = {}
         self.default_net_param = copy.deepcopy(param)
         from qd.qd_common import dict_update_nested_dict
         dict_update_nested_dict(self.kwargs, param, overwrite=False)
@@ -708,7 +703,7 @@ class MaskRCNNPipeline(ModelPipeline):
             assert 'bgr2rgb' not in self.MaskTSVDataset or \
                     self.MaskTSVDataset['bgr2rgb'] == self.bgr2rgb
         self.kwargs['DATASETS']['TRAIN'] = ('${}'.format(
-            dump_to_yaml_str(train_arg).decode()),)
+            dump_to_yaml_str(train_arg)),)
         test_arg = {'data': self.test_data,
                     'split': self.test_split,
                     'version': self.test_version,
@@ -716,7 +711,7 @@ class MaskRCNNPipeline(ModelPipeline):
                     'bgr2rgb': self.bgr2rgb,
                     }
         self.kwargs['DATASETS']['TEST'] = ('${}'.format(
-            dump_to_yaml_str(test_arg).decode()),)
+            dump_to_yaml_str(test_arg)),)
         self.kwargs['OUTPUT_DIR'] = op.join('output', self.full_expid, 'snapshot')
         # the test_batch_size is the size for each rank. We call the mask-rcnn
         # API, which should be the batch size for all rank
@@ -762,7 +757,6 @@ class MaskRCNNPipeline(ModelPipeline):
         # evaluation
         self._default['ovthresh'] = [-1, 0.3, 0.5]
 
-        cfg.freeze()
         logging.info('cfg = \n{}'.format(cfg))
 
     def train(self):
@@ -790,7 +784,8 @@ class MaskRCNNPipeline(ModelPipeline):
             if self.use_ddp:
                 logging.info('set use_ddp=False sine data_partition > 1')
             self.use_ddp = False
-        train(cfg, self.mpi_local_rank, self.distributed, self.log_step,
+        model = self.build_detection_model()
+        train(cfg, model, self.mpi_local_rank, self.distributed, self.log_step,
                 sync_bn=self.sync_bn,
                 exclude_convert_gn=self.exclude_convert_gn,
                 opt_cls_only=self.opt_cls_only,
@@ -800,6 +795,9 @@ class MaskRCNNPipeline(ModelPipeline):
                 data_partition=self.data_partition,
                 use_ddp=self.use_ddp,
                 lock_up_to=self.lock_up_to,
+                zero_num_tracked=self.zero_num_tracked,
+                lock_bn=self.lock_bn,
+                precise_bn2=self.precise_bn2,
                 )
 
     def append_predict_param(self, cc):
@@ -808,12 +806,17 @@ class MaskRCNNPipeline(ModelPipeline):
             'MODEL$RPN$POST_NMS_TOP_N_TEST') if dict_has_path(self.default_net_param,
                 'MODEL$RPN$POST_NMS_TOP_N_TEST') else 1000)
         if cfg.MODEL.RPN.POST_NMS_TOP_N_TEST != default_post_nms_top_n_test:
-            cc.append('RPN.PostNMSTop{}'.format(cfg.MODEL.RPN.POST_NMS_TOP_N_TEST))
+            cc.append('rpPost{}'.format(cfg.MODEL.RPN.POST_NMS_TOP_N_TEST))
+        default_fpn_post_nms_top_n_test = (dict_get_path_value(self.default_net_param,
+            'MODEL$RPN$FPN_POST_NMS_TOP_N_TEST') if dict_has_path(self.default_net_param,
+                'MODEL$RPN$FPN_POST_NMS_TOP_N_TEST') else 2000)
+        if cfg.MODEL.RPN.FPN_POST_NMS_TOP_N_TEST != default_fpn_post_nms_top_n_test:
+            cc.append('FPNPostNMSTop{}'.format(cfg.MODEL.RPN.FPN_POST_NMS_TOP_N_TEST))
         default_pre_nms_top_n_test = (dict_get_path_value(self.default_net_param,
             'MODEL$RPN$PRE_NMS_TOP_N_TEST') if dict_has_path(self.default_net_param,
                 'MODEL$RPN$PRE_NMS_TOP_N_TEST') else 6000)
         if cfg.MODEL.RPN.PRE_NMS_TOP_N_TEST != default_pre_nms_top_n_test:
-            cc.append('RPN.PreNMSTop{}'.format(cfg.MODEL.RPN.PRE_NMS_TOP_N_TEST))
+            cc.append('rpPre{}'.format(cfg.MODEL.RPN.PRE_NMS_TOP_N_TEST))
         if cfg.MODEL.ROI_BOX_HEAD.CLASSIFICATION_ACTIVATE != 'softmax':
             cc.append('{}'.format(cfg.MODEL.ROI_BOX_HEAD.CLASSIFICATION_ACTIVATE))
         if self.predict_threshold is not None:
@@ -826,15 +829,88 @@ class MaskRCNNPipeline(ModelPipeline):
             cc.append('roidNMS{}'.format(cfg.MODEL.ROI_HEADS.NMS))
         if cfg.MODEL.ROI_HEADS.DETECTIONS_PER_IMG != 100:
             cc.append('roidDets{}'.format(cfg.MODEL.ROI_HEADS.DETECTIONS_PER_IMG))
+        if cfg.TEST.DETECTIONS_PER_IMG != 100:
+            cc.append('upto{}'.format(cfg.TEST.DETECTIONS_PER_IMG))
         if cfg.MODEL.ROI_HEADS.SCORE_THRESH != 0.05:
             cc.append('roidth{}'.format(cfg.MODEL.ROI_HEADS.SCORE_THRESH))
-        if cfg.MODEL.RPN.NMS_THRESH != 0.7:
-            cc.append('rpnNMS{}'.format(cfg.MODEL.RPN.NMS_THRESH))
+
+        if cfg.MODEL.RETINANET.INFERENCE_TH != 0.05:
+            cc.append('retinath{}'.format(cfg.MODEL.RETINANET.INFERENCE_TH))
+        if cfg.MODEL.RETINANET.PRE_NMS_TOP_N != 1000:
+            cc.append('retprenms{}'.format(cfg.MODEL.RETINANET.PRE_NMS_TOP_N))
+
+        if cfg.MODEL.RPN.NMS_POLICY.TYPE == 'nms':
+            if cfg.MODEL.RPN.NMS_THRESH != cfg.MODEL.RPN.NMS_POLICY.THRESH:
+                cfg.MODEL.RPN.NMS_POLICY.THRESH = cfg.MODEL.RPN.NMS_THRESH
+        if cfg.MODEL.RPN.NMS_POLICY.TYPE != 'nms':
+            cc.append(cfg.MODEL.RPN.NMS_POLICY.TYPE)
+        if cfg.MODEL.RPN.NMS_POLICY.THRESH != 0.7:
+            cc.append('rpnnmspolicy{}'.format(cfg.MODEL.RPN.NMS_POLICY.THRESH))
+        if cfg.MODEL.RPN.NMS_POLICY.ALPHA != 0.5:
+            cc.append('rpA{}'.format(cfg.MODEL.RPN.NMS_POLICY.ALPHA))
+        if cfg.MODEL.RPN.NMS_POLICY.GAMMA != 0.5:
+            cc.append('rpG{}'.format(cfg.MODEL.RPN.NMS_POLICY.GAMMA))
+        if cfg.MODEL.RPN.NMS_POLICY.NUM != 2:
+            cc.append('rpN{}'.format(cfg.MODEL.RPN.NMS_POLICY.NUM))
+
+        if cfg.MODEL.RPN.NMS_POLICY.ALPHA2 != 0.1:
+            cc.append('rpA2{}'.format(cfg.MODEL.RPN.NMS_POLICY.ALPHA2))
+        if cfg.MODEL.RPN.NMS_POLICY.GAMMA2 != 0.1:
+            cc.append('rpG2{}'.format(cfg.MODEL.RPN.NMS_POLICY.GAMMA2))
+        if cfg.MODEL.RPN.NMS_POLICY.NUM2 != 1:
+            cc.append('rpN2{}'.format(cfg.MODEL.RPN.NMS_POLICY.NUM2))
+        if cfg.MODEL.RPN.NMS_POLICY.COMPOSE_FINAL_RERANK:
+            cc.append('rpnnmsRerank')
+
         if cfg.MODEL.ROI_HEADS.NMS_POLICY.TYPE != 'nms':
             cc.append(cfg.MODEL.ROI_HEADS.NMS_POLICY.TYPE)
         if cfg.MODEL.ROI_HEADS.NMS_POLICY.THRESH != 0.5:
             cc.append('roinmspolicy{}'.format(cfg.MODEL.ROI_HEADS.NMS_POLICY.THRESH))
 
+        if cfg.MODEL.ROI_HEADS.NMS_POLICY.ALPHA != 0.5:
+            cc.append('roinmsAlpha{}'.format(cfg.MODEL.ROI_HEADS.NMS_POLICY.ALPHA))
+        if cfg.MODEL.ROI_HEADS.NMS_POLICY.GAMMA != 0.5:
+            cc.append('roinmsGamma{}'.format(cfg.MODEL.ROI_HEADS.NMS_POLICY.GAMMA))
+        if cfg.MODEL.ROI_HEADS.NMS_POLICY.NUM != 2:
+            cc.append('roinmsNum{}'.format(cfg.MODEL.ROI_HEADS.NMS_POLICY.NUM))
+
+        if cfg.MODEL.ROI_HEADS.NMS_POLICY.ALPHA2 != 0.1:
+            cc.append('roinmsAlpha2{}'.format(cfg.MODEL.ROI_HEADS.NMS_POLICY.ALPHA2))
+        if cfg.MODEL.ROI_HEADS.NMS_POLICY.GAMMA2 != 0.1:
+            cc.append('roinmsGamma2{}'.format(cfg.MODEL.ROI_HEADS.NMS_POLICY.GAMMA2))
+        if cfg.MODEL.ROI_HEADS.NMS_POLICY.NUM2 != 1:
+            cc.append('roinmsNum2{}'.format(cfg.MODEL.ROI_HEADS.NMS_POLICY.NUM2))
+        if cfg.MODEL.ROI_HEADS.NMS_POLICY.COMPOSE_FINAL_RERANK:
+            cc.append('roinmsRerank')
+
+        if cfg.MODEL.RETINANET.NMS_POLICY.TYPE != 'nms':
+            cc.append(cfg.MODEL.RETINANET.NMS_POLICY.TYPE)
+        if cfg.MODEL.RETINANET.NMS_POLICY.THRESH != 0.4:
+            cc.append('rnpolicy{}'.format(cfg.MODEL.RETINANET.NMS_POLICY.THRESH))
+
+        if cfg.MODEL.RETINANET.NMS_POLICY.ALPHA != 0.4:
+            cc.append('rnAlpha{}'.format(cfg.MODEL.RETINANET.NMS_POLICY.ALPHA))
+        if cfg.MODEL.RETINANET.NMS_POLICY.GAMMA != 0.4:
+            cc.append('rnGamma{}'.format(cfg.MODEL.RETINANET.NMS_POLICY.GAMMA))
+        if cfg.MODEL.RETINANET.NMS_POLICY.NUM != 1:
+            cc.append('rnNum{}'.format(cfg.MODEL.RETINANET.NMS_POLICY.NUM))
+
+        if cfg.MODEL.RETINANET.NMS_POLICY.ALPHA2 != 0.1:
+            cc.append('rnAlpha2{}'.format(cfg.MODEL.RETINANET.NMS_POLICY.ALPHA2))
+        if cfg.MODEL.RETINANET.NMS_POLICY.GAMMA2 != 0.1:
+            cc.append('rnGamma2{}'.format(cfg.MODEL.RETINANET.NMS_POLICY.GAMMA2))
+        if cfg.MODEL.RETINANET.NMS_POLICY.NUM2 != 0:
+            cc.append('rnNum2{}'.format(cfg.MODEL.RETINANET.NMS_POLICY.NUM2))
+        if cfg.MODEL.RETINANET.NMS_POLICY.THRESH2 != 0.4:
+            cc.append('rnTh2{}'.format(cfg.MODEL.RETINANET.NMS_POLICY.THRESH2))
+        if cfg.MODEL.RETINANET.NMS_POLICY.COMPOSE_FINAL_RERANK:
+            cc.append('rnRerank')
+
+        if cfg.MODEL.ROI_HEADS.NMS_ON_MAX_CONF_AGNOSTIC:
+            cc.append('nmsMax')
+
+        if self.bn_train_mode_test:
+            cc.append('trainmode')
 
     def get_old_check_point_file(self, curr):
         return op.join(self.output_folder, 'snapshot',
@@ -861,20 +937,62 @@ class MaskRCNNPipeline(ModelPipeline):
         elif p in ['CE', 'MCEB']:
             # 0 is background
             return True
+        elif p in ['tree']:
+            return True
         else:
             raise NotImplementedError()
 
-    def predict(self, model_file, predict_result_file):
+    def build_detection_model(self):
         model = build_detection_model(cfg)
         if self.sync_bn:
-            # need to convert to BN
+            if get_mpi_size() == 1:
+                norm = torch.nn.BatchNorm2d
+            else:
+                # SyncBatchNorm only works in distributed env. We have not tested
+                # the same code path if size == 1,e.g. initialize parallel group
+                # also when size = 1
+                if self.use_apex_ddp:
+                    import apex
+                    norm = apex.parallel.optimized_sync_batchnorm.SyncBatchNorm
+                else:
+                    norm = torch.nn.SyncBatchNorm
+                # need to convert to BN
             model, convert_info = convert_to_sync_bn(model,
-                    torch.nn.BatchNorm2d, self.exclude_convert_gn)
+                    norm, self.exclude_convert_gn)
             logging.info(pformat(convert_info))
+        if self.convert_gn:
+            if self.convert_gn == 'GBN':
+                from qd.layers.group_batch_norm import GroupBatchNorm, get_normalize_groups
+                model = replace_module(model,
+                        lambda m: isinstance(m, torch.nn.GroupNorm),
+                        lambda m: GroupBatchNorm(get_normalize_groups(m.num_channels,
+                            self.normalization_group,
+                            self.normalization_group_size), m.num_channels))
+            elif self.convert_gn == 'SGBN':
+                from qd.layers.group_batch_norm import SyncGroupBatchNorm, get_normalize_groups
+                model = replace_module(model,
+                        lambda m: isinstance(m, torch.nn.GroupNorm),
+                        lambda m: SyncGroupBatchNorm(get_normalize_groups(m.num_channels,
+                            self.normalization_group,
+                            self.normalization_group_size), m.num_channels))
+            else:
+                raise NotImplementedError
+        return model
+
+    def predict(self, model_file, predict_result_file):
+        model = self.build_detection_model()
+        #model = self._data_parallel_wrap(model)
+        model.eval()
         model.to(cfg.MODEL.DEVICE)
         checkpointer = DetectronCheckpointer(cfg, model,
-                save_dir=self.output_folder)
+                save_dir=self.output_folder,
+                )
         checkpointer.load(model_file)
+
+        if self.bn_train_mode_test:
+            for _, m in model.named_modules():
+                if isinstance(m, torch.nn.SyncBatchNorm):
+                    m.train()
 
         dataset = TSVDataset(self.data)
         labelmap = dataset.load_labelmap()
@@ -883,30 +1001,32 @@ class MaskRCNNPipeline(ModelPipeline):
         test(cfg, model, self.distributed, [predict_result_file],
                 label_id_to_label, **self.kwargs)
 
-    def _get_model(self):
-        model = build_detection_model(cfg)
-        if self.sync_bn:
-            # need to convert to BN
-            model, convert_info = convert_to_sync_bn(model,
-                    torch.nn.BatchNorm2d, self.exclude_convert_gn)
-            logging.info(pformat(convert_info))
-        model.to(cfg.MODEL.DEVICE)
-        checkpointer = DetectronCheckpointer(cfg, model,
-                save_dir=self.output_folder)
-        model_file = self._get_checkpoint_file()
-        checkpointer.load(model_file)
-        return model
+    def _get_load_model(self):
+        if self.model is None:
+            model = build_detection_model(cfg)
+            if self.sync_bn:
+                # need to convert to BN
+                model, convert_info = convert_to_sync_bn(model,
+                        torch.nn.BatchNorm2d, self.exclude_convert_gn)
+                logging.info(pformat(convert_info))
+            model.to(cfg.MODEL.DEVICE)
+            checkpointer = DetectronCheckpointer(cfg, model,
+                    save_dir=self.output_folder)
+            model_file = self._get_checkpoint_file()
+            checkpointer.load(model_file)
+            self.model = model
+        return self.model
 
     def demo(self, image_path):
         from qd.process_image import load_image
         cv_im = load_image(image_path)
         rects = self.predict_one(cv_im)
         from qd.process_image import draw_rects, show_image
-        draw_rects(rects, cv_im, add_label=False)
+        draw_rects(rects, cv_im, add_label=True)
         show_image(cv_im)
 
     def predict_one(self, cv_im):
-        model = self._get_model()
+        model = self._get_load_model()
 
         dataset = TSVDataset(self.data)
         labelmap = dataset.load_labelmap()

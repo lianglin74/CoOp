@@ -225,7 +225,8 @@ def load_image(file_name):
 def show_image(im):
     show_images([im], 1, 1)
 
-def show_images(all_image, num_rows, num_cols):
+def show_images(all_image, num_rows, num_cols,
+        titles=None):
     plt.figure(1)
 
     k = 0
@@ -241,6 +242,8 @@ def show_images(all_image, num_rows, num_cols):
                 # grey image
                 assert len(all_image[k].shape) == 2
                 plt.imshow(all_image[k])
+            if titles is not None:
+                plt.title(titles[k])
             k = k + 1
     plt.show()
     plt.close()
