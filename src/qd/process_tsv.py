@@ -1648,7 +1648,7 @@ def ensure_extract_from_data_source(data, split, t):
             yield label_row[0], str_t
     dataset.write_data(gen_rows(), split, t)
 
-def populate_dataset_hw(data, splits):
+def populate_dataset_hw(data, splits=['train', 'trainval', 'test']):
     dataset = TSVDataset(data)
     for split in splits:
         if dataset.has(split) and not dataset.has(split, 'hw'):
