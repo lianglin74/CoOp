@@ -1,0 +1,281 @@
+direct_add_value_keys:
+    - key: MODEL$WEIGHT
+      default: null
+      action_type: keyword
+      non_default_hint: init
+    - key: effective_batch_size
+      default: null
+      action_type: keyword
+      non_default_hint: BS
+    - key: max_iter
+      default: null
+      action_type: keyword
+      non_default_hint: MaxIter
+    - key: base_lr
+      default: -1
+      action_type: keyword
+      non_default_hint: LR
+    - key: max_epoch
+      default: null
+      action_type: keyword
+      non_default_hint: MaxEpoch
+    - key: last_fixed_param
+      default: null
+      action_type: keyword
+      non_default_hint: LastFixed
+    - key: opt_cls_only
+      default: false
+      action_type: bool
+      non_default_hint: ClsOnly
+    - key: MODEL$FPN$USE_GN
+      default: false
+      action_type: bool
+      non_default_hint: FpnGN
+    - key: MODEL$FPN$USE_RELU
+      default: false
+      action_type: bool
+      non_default_hint: FPNRelu
+    - key: bn_momentum
+      default: null
+      action_type: keyword
+      non_default_hint: BNMoment
+    - key: use_hvd
+      default: false
+      action_type: bool
+      non_default_hint: HVD
+    - key: yolo_train_session_param$use_maskrcnn_sampler
+      default: false
+      action_type: bool
+      non_default_hint: MaskSam
+    - key: use_treestructure
+      default: false
+      action_type: bool
+      non_default_hint: Tree
+    - key: MODEL$USE_TREESTRUCTURE
+      default: false
+      action_type: bool
+      non_default_hint: Tree
+    - key: MaskTSVDataset$multi_hot_label
+      default: false
+      action_type: bool
+      non_default_hint: MultiHot
+    - key: multi_hot_label
+      default: false
+      action_type: bool
+      non_default_hint: MultiHot
+    - key: DATALOADER$ASPECT_RATIO_GROUPING
+      default: true
+      action_type: bool
+      non_default_hint: NoARG
+    - key: INPUT$USE_FIXED_SIZE_AUGMENTATION
+      default: false
+      action_type: bool
+      non_default_hint: FSize
+    - key: num_extra_convs
+      default: null
+      action_type: keyword
+      non_default_hint: ExtraConv
+    - key: yolo_train_session_param$data_augmentation$box_data_param$max_boxes
+      default: null
+      action_type: keyword
+      non_default_hint: MB
+    - key: yolo_train_session_param$data_augmentation$box_data_param$max_trials
+      default: null
+      action_type: keyword
+      non_default_hint: AugTrials
+    - key: rt_param$xy_scale
+      default: null
+      action_type: keyword
+      non_default_hint: XY
+    - key: rt_param$wh_scale
+      default: null
+      action_type: keyword
+      non_default_hint: WH
+    - key: rt_param$object_scale
+      default: null
+      action_type: keyword
+      non_default_hint: O
+    - key: yolo_train_session_param$data_augmentation$box_data_param$random_scale_min
+      default: null
+      action_type: keyword
+      non_default_hint: ScaleMin
+    - key: yolo_train_session_param$data_augmentation$box_data_param$random_scale_max
+      default: null
+      action_type: keyword
+      non_default_hint: ScaleMax
+    - key: convert_bn
+      default: null
+      action_type: keyword
+      non_default_hint: BNTo
+    - key: cbn_policy
+      default: null
+      action_type: keyword
+      non_default_hint: ''
+    - key: cbn_gamma
+      default: null
+      action_type: keyword
+      non_default_hint: ''
+    - key: convert_gn
+      default: null
+      action_type: keyword
+      non_default_hint: GNTo
+    - key: normalization_group
+      default: 32
+      action_type: keyword
+      non_default_hint: ''
+    - key: normalization_group_size
+      default: null
+      action_type: keyword
+      non_default_hint: Size
+    - key: zero_num_tracked
+      default: False
+      action_type: bool
+      non_default_hint: ZeroTracked
+    - key: lock_bn
+      default: false
+      action_type: bool
+      non_default_hint: LockBN
+    - key: train_version
+      default: 0
+      action_type: keyword
+      non_default_hint: V
+    - key: precise_bn2
+      default: False
+      action_type: bool
+      non_default_hint: PBN
+    - key: MODEL$FPN$USE_BN
+      default: False
+      action_type: bool
+      non_default_hint: FPNBN
+    - key: MODEL$RPN$USE_BN
+      default: False
+      action_type: bool
+      non_default_hint: RpnBN
+    - key: MODEL$ROI_BOX_HEAD$USE_GN
+      default: False
+      action_type: bool
+      non_default_hint: HeadGN
+    - key: sync_bn
+      default: False
+      action_type: bool
+      non_default_hint: SyncBN
+    - key: convert_bn_to_nsbn
+      default: false
+      action_type: bool
+      non_default_hint: BN2NSBN
+    - key: convert_fbn_to_bn
+      default: false
+      action_type: bool
+      non_default_hint: FBN2BN
+    - key: step_lr
+      default: null
+      action_type: keyword
+      non_default_hint: StepLR
+    - key: INPUT$MIN_SIZE_TRAIN
+      default: 0
+      action_type: keyword
+      non_default_hint: Min
+    - key: min_size_range32
+      default: null
+      action_type: keyword
+      non_default_hint: IMIN
+    - key: INPUT$MAX_SIZE_TRAIN
+      default: 1333
+      action_type: keyword
+      non_default_hint: Max
+    - key: MODEL$BACKBONE$FREEZE_CONV_BODY_AT
+      default: 2
+      action_type: keyword
+      non_default_hint: Freeze
+    - key: SOLVER$WEIGHT_DECAY
+      default: 1e-4
+      action_type: keyword
+      non_default_hint: WD
+    - key: bgr2rgb
+      default: false
+      action_type: bool
+      non_default_hint: RGB
+    - key: MODEL$FPN$INTERPOLATE_MODE
+      default: nearest
+      action_type: keyword
+      non_default_hint: Inp
+    - key: with_dcn
+      default: false
+      action_type: bool
+      non_default_hint: DCN
+    - key: first_feature_anchor_size
+      default: 32
+      action_type: keyword
+      non_default_hint: FA
+    - key: INPUT$FIXED_SIZE_AUG$RANDOM_SCALE_MIN
+      default: null
+      action_type: keyword
+      non_default_hint: ScaleMin
+    - key: INPUT$FIXED_SIZE_AUG$RANDOM_SCALE_MAX
+      default: null
+      action_type: keyword
+      non_default_hint: ScaleMax
+    - key: INPUT$MIN_SIZE_ON_ITER
+      default: False
+      action_type: bool
+      non_default_hint: IterResize
+    - key: affine_resize
+      default: False
+      action_type: bool
+      non_default_hint: Aff
+
+need_hash_sha_params:
+    - basemodel
+    - lock_up_to
+    - yolo_train_session_param$anchors
+    - anchors
+    - MODEL$RPN$ANCHOR_SIZES
+    - MODEL$ROI_BOX_HEAD$TREE_0_BKG
+    - stagelr
+non_expid_impact_keys:
+    - data
+    - net
+    - expid_prefix
+    - test_data
+    - test_split
+    - test_version
+    - dist_url_tcp_port
+    - workers
+    - force_train
+    - num_workers
+    - pipeline_type
+    - test_batch_size
+    - yolo_train_session_param$debug_train
+    - yolo_predict_session_param
+    - evaluate_method
+    - debug_train
+    - full_expid
+    - log_step
+    - device
+    - MODEL$ROI_BOX_HEAD$CLASSIFICATION_ACTIVATE
+    - display
+    - apply_nms_gt
+    - apply_nms_det
+    - expand_label_det
+    - SOLVER$CHECKPOINT_PERIOD
+    - yolo_train_session_param$display
+    - INPUT$MIN_SIZE_TEST
+    - ovthresh
+    - MODEL$ROI_HEADS$NMS_POLICY$TYPE
+    - images_per_gpu
+    - yolo_predict_session_param$nms_threshold
+    - env
+    - test_max_iter
+    - test_input_size
+    - rt_param$use_pt_rt
+    - num_gpu
+    - MODEL$RPN$NMS_THRESH
+    - MODEL$RPN$PRE_NMS_TOP_N_TEST
+    - MODEL$RPN$POST_NMS_TOP_N_TEST
+    - MODEL$RPN$FPN_POST_NMS_TOP_N_TEST
+    - MODEL$ROI_HEADS$DETECTIONS_PER_IMG
+    - MODEL$ROI_HEADS$SCORE_THRESH
+    - TEST$DETECTIONS_PER_IMG
+    - MODEL$RETINANET$INFERENCE_TH
+    - MODEL$ROI_HEADS$NMS_ON_MAX_CONF_AGNOSTIC
+    - ignore_evaluate
