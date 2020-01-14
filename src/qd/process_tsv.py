@@ -6033,6 +6033,36 @@ def create_image_X_by_key(target_data, target_split, t):
     write_to_file('\n'.join(src_tsv),
             get_dataset(target_data).get_data(target_split + 'X'))
 
+def create_tiny_set(data, out_data):
+    dataset = TSVDataset(data)
+    out_dataset = TSVDataset(out_data)
+
+    num_image = dataset.num_rows('train')
+    all_idx = list(range(num_image))
+    random.shuffle(all_idx)
+
+    out_num_train = int(0.1 * len(all_idx))
+    out_num_test = int(0.05 * len(all_idx))
+    train_idx = all_idx[:out_num_train]
+    test_idx = all_idx[out_num_train: (out_num_train + out_num_test)]
+
+    ensure_copy_file(dataset.get_labelmap_file(),
+            out_dataset.get_labelmap_file())
+
+    for t in [None, 'label']:
+        out_dataset.write_data(dataset.iter_data('train',
+                                                 t=t,
+                                                 filter_idx=train_idx,
+                                                 progress=True),
+                               split='train',
+                               t=t)
+        out_dataset.write_data(dataset.iter_data('train',
+                                                 t=t,
+                                                 filter_idx=test_idx,
+                                                 progress=True),
+                               split='test',
+                               t=t)
+
 
 if __name__ == '__main__':
     from qd.qd_common import parse_general_args
