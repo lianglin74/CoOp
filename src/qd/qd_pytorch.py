@@ -53,6 +53,29 @@ import glob
 import torch.nn.functional as F
 
 
+def adapt_convbn_weight(weight, running_mean,
+        curr_scale, curr_mean):
+    # original: input: rgb, 0-1; first conv has no bias. The second layer is BN
+    # convert: input should be 0-255 without norm and scale. the first conv's
+    # weight and the running mean will be updated. The running mean can be seen
+    # as a negated bias
+
+    # make the input as bgr from rgb. note there is no need to update the bias
+    # or running mean
+
+    # no need to update bias because bias is only associated with the
+    # output channels
+    weight = weight[:, [2, 1, 0], :, :]
+    curr_scale = torch.tensor(curr_scale)
+    weight = weight / (255. * curr_scale[None, :, None, None])
+
+    curr_mean = torch.tensor(curr_mean)
+    x = curr_mean / curr_scale
+    spatial_dim = weight.shape[2] * weight.shape[3]
+    x = x.view((len(x), 1)).repeat((1, spatial_dim)).view((-1, 1))
+    running_mean += torch.mm(weight.view((weight.shape[0], -1)), x).view(-1)
+    return weight, running_mean
+
 def replace_module(module, condition_func, creator_func):
     module_output = module
     if condition_func(module):
