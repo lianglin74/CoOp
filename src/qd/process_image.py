@@ -30,9 +30,15 @@ def put_text(im, text, bottomleft=(0,100),
         color=(255,255,255), font_scale=0.5,
         font_thickness=1):
     font = cv2.FONT_HERSHEY_SIMPLEX
-    cv2.putText(im,text,bottomleft,
-            font,font_scale, color,
-            thickness=font_thickness)
+    if hasattr(cv2, 'UMat'):
+        im2 = cv2.putText(cv2.UMat(im),text,bottomleft,
+                font,font_scale, color,
+                thickness=font_thickness)
+        im[:] = im2.get()
+    else:
+        cv2.putText(im,text,bottomleft,
+                font,font_scale, color,
+                thickness=font_thickness)
     return cv2.getTextSize(text, font, font_scale, font_thickness)[0]
 
 def show_net_input_image(data, mean_value=[104, 117, 123], std_value=[1, 1, 1],
@@ -117,6 +123,13 @@ __gold_colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255),
         (0, 255, 255),
         ]
 
+def rectangle(img, *args, **kwargs):
+    if hasattr(cv2, 'UMat'):
+        im2 = cv2.rectangle(cv2.UMat(img), *args, **kwargs)
+        img[:] = im2.get()
+    else:
+        cv2.rectangle(img, *args, **kwargs)
+
 def draw_bb(im, all_rect, all_label,
         probs=None,
         color=None,
@@ -174,7 +187,7 @@ def draw_bb(im, all_rect, all_label,
                     thickness=rect_thickness)
             pass
         else:
-            cv2.rectangle(im, (int(rect[0]), int(rect[1])),
+            rectangle(im, (int(rect[0]), int(rect[1])),
                     (int(rect[2]), int(rect[3])), color[label],
                     thickness=rect_thickness)
         if probs is not None:
@@ -204,7 +217,7 @@ def draw_bb(im, all_rect, all_label,
                 color[label]))
 
     for left_top, right_bottom, c in all_filled_region:
-        cv2.rectangle(im, left_top, right_bottom,
+        rectangle(im, left_top, right_bottom,
                 c,
                 thickness=-1)
     for label_in_image, (text_left, text_bottom), c in all_put_text:
