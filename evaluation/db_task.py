@@ -1,3 +1,4 @@
+import argparse
 import collections
 try:
     # Python 2/3 compatibility
@@ -9,10 +10,13 @@ import json
 import logging
 import os
 import os.path as op
+from pprint import pformat
+import sys
 
 from qd.qd_common import calculate_iou
-from qd.tsv_io import TSVDataset, tsv_reader
+from qd.tsv_io import TSVDataset, tsv_reader,tsv_writer
 from qd.db import BoundingBoxVerificationDB
+from qd.process_tsv import upload_image_to_blob
 
 CFG_IOU = "iou"
 CFG_REQUIRED_FIELDS = "required"
@@ -41,7 +45,13 @@ def submit_to_verify(gt_dataset_name, gt_split, pred_file, collection_name,
     priority_tier = BoundingBoxVerificationDB.urgent_priority_tier if is_urgent else 2
     gt_dataset = TSVDataset(gt_dataset_name)
 
-    key2pred = {p[0]: json.loads(p[1]) for p in tsv_reader(pred_file)}
+    key2pred = {}
+    for parts in tsv_reader(pred_file):
+        if len(parts) == 2 and parts[0] and parts[1]:
+            key2pred[parts[0]] = json.loads(parts[1])
+        else:
+            logging.info('invalid pred: {}'.format(str(parts)))
+
     num_total_bboxes = 0
     num_verify = 0
     all_bb_tasks = []
@@ -73,7 +83,7 @@ def submit_to_verify(gt_dataset_name, gt_split, pred_file, collection_name,
             if is_in_gt:
                 continue
 
-            if "conf" not in bbox or bbox["conf"] >= conf_thres:
+            if "conf" not in bbox or conf_thres==0 or bbox["conf"] >= conf_thres:
                 num_verify += 1
                 if "rect" not in bbox:
                     bbox["rect"] = "DUMMY"  # for tag results
@@ -104,6 +114,7 @@ def download_merge_correct_to_gt(collection_name, gt_dataset_name=None, gt_split
         extra_match['split'] = gt_split
     data_split_to_key_rects, all_id = cur_db.get_completed_uhrs_result(extra_match=extra_match)
 
+    all_data_split = list(data_split_to_key_rects.keys())
     # check rect format
     for (data, split), uhrs_key_rects in viewitems(data_split_to_key_rects):
         for _, rect in uhrs_key_rects:
@@ -114,6 +125,12 @@ def download_merge_correct_to_gt(collection_name, gt_dataset_name=None, gt_split
     # merge verified correct to ground truth
     from qd import process_tsv
     process_tsv.merge_uhrs_result_to_dataset(data_split_to_key_rects, tag_only=tag_only)
+    all_gt_labels = []
+    for data, split in all_data_split:
+        dataset = TSVDataset(data)
+        all_gt_labels.append(dataset.get_data(split, 'label', -1))
+    return all_gt_labels
+
 
 def is_uhrs_consensus_correct(uhrs_res):
     """ From UHRS feedback, "1" -> Yes, "2" -> No, "3" -> Can't judge
@@ -126,26 +143,149 @@ def is_uhrs_consensus_correct(uhrs_res):
             return True
     return False
 
+
+def ensure_build_dataset_to_verify(dataset_name, split, image_tsv=None,
+        gt_label_tsv=None):
+    from qd.qd_common import json_dump
+    img_fpath = 'data/uhrs_verify_tag_imagenet/Jian1570A2_base64.balance_min50.tsv'
+    gt_fpath = 'data/uhrs_verify_tag_imagenet/Jian1570A2_base64.label.balance_min50.tsv'
+    dataset_name = 'uhrs_verify_tag_imagenet'
+    split = 'train'
+
+    def gen_rows():
+        img_iter = tsv_reader(img_fpath)
+        gt_iter = tsv_reader(gt_fpath)
+        for img_parts, gt_parts in zip(img_iter, gt_iter):
+            assert(img_parts[0] == gt_parts[0])
+            gt_labels = gt_parts[1].split(',')
+            gt_bboxes = []
+            for l in gt_labels:
+                l = l.strip()
+                assert l != ''
+                gt_bboxes.append({'class': l})
+            yield img_parts[0], json_dump(gt_bboxes), img_parts[2]
+
+    outfile = op.join('data', dataset_name, '{}.tsv'.format(split))
+    if op.isfile(outfile):
+        logging.info('already exists: {}'.format(outfile))
+        return
+    tsv_writer(gen_rows(), outfile)
+
+
+def populate_dataset_to_evaluate(dataset_name, split, data_root):
+    data_dir = op.join(data_root, dataset_name)
+    assert op.isdir(data_dir), 'directory: {} does not exist'.format(data_dir)
+
+    # check image url
+    image_file = op.join(data_dir, '{}.tsv'.format(split))
+    assert op.isfile(image_file), 'image tsv: {} does not exist'.format(image_file)
+    url_file = op.join(data_dir, '{}.key.url.tsv'.format(split))
+    if not op.isfile(url_file):
+        upload_image_to_blob(dataset_name, split)
+
+    # check label file
+    label_file = op.join(data_dir, '{}.label.tsv'.format(split))
+    if not op.isfile(label_file):
+        def gen_rows():
+            for parts in tsv_reader(image_file):
+                yield parts[0], "[]"
+        tsv_writer(gen_rows(), label_file)
+
+
+def check_predict_format(data_type, predict_file, dataset_name, split, data_root):
+    assert op.isfile(predict_file), 'predict file: {} does not exist'.format(predict_file)
+    data_dir = op.join(data_root, dataset_name)
+    label_file = op.join(data_dir, '{}.label.tsv'.format(split))
+    image_keys = set(p[0] for p in tsv_reader(label_file))
+
+    def is_label_valid(labels, required_fields):
+        if not isinstance(labels, list):
+            return False
+        for rect in labels:
+            if not isinstance(rect, dict):
+                return False
+            for f in required_fields:
+                if f not in rect:
+                    return False
+        return True
+
+    if data_type == 'tagging':
+        required_fields = ['class']
+    else:
+        required_fields = ['class', 'rect']
+    for parts in tsv_reader(predict_file):
+        key = parts[0]
+        labels = json.loads(parts[1])
+        assert key in image_keys, '{} not found in dataset {}'.format(key,
+                dataset_name)
+        if not is_label_valid(labels, required_fields):
+            raise ValueError('Format error in predict file: {}'.format(parts[1]))
+
+
+def main():
+    logging.info(pformat(sys.argv))
+
+    parser = argparse.ArgumentParser(description='Human evaluation for tagging and detection')
+    parser.add_argument('--task', required=True, type=str,
+                        help='Choose from submit, download')
+    parser.add_argument('--type', required=True, type=str,
+                        help='Choose from tagging, detection, logo')
+    parser.add_argument('--dataset', required=True, type=str,
+                        help='The name of evaluation dataset. See README.md for'
+                             'a list of available datasets')
+    parser.add_argument('--split', default='test', type=str,
+                        help='The split of evaluation dataset, default is test')
+    parser.add_argument('--predict_file', default='', type=str,
+                        help='Required for submitting task, the prediction'
+                             'results not in ground truth will be submitted to verify')
+    parser.add_argument('--conf_thres', default=0, type=float,
+                        help='Confidence threshold of prediction results')
+
+    args = parser.parse_args()
+    if args.type == 'tagging':
+        collection_name = 'uhrs_tag_verification'
+    elif args.type == 'detection':
+        collection_name = 'uhrs_bounding_box_verification'
+    elif args.type == 'logo':
+        collection_name = 'uhrs_logo_verification'
+    else:
+        raise ValueError('unknown data type: {}'.format(args.type))
+
+    data_root = './data'  # data root is hard coded due to TSVDataset requirements
+    gt_dataset_name = args.dataset
+    gt_split = args.split
+    populate_dataset_to_evaluate(gt_dataset_name, gt_split, data_root)
+
+    if args.task == 'submit':
+        predict_file = args.predict_file
+        check_predict_format(args.type, predict_file, gt_dataset_name, gt_split, data_root)
+        submit_to_verify(gt_dataset_name, gt_split, predict_file, collection_name,
+                conf_thres=args.conf_thres, gt_version=-1, is_urgent=True)
+
+        logging.info('*****************************************')
+        logging.info('Successfully submitted tasks. Please check the progress at:')
+        logging.info('verify tag -> https://prod.uhrs.playmsn.com/Manage/Task/TaskList?hitappid=35851')
+        logging.info('verify bbox -> https://prod.uhrs.playmsn.com/Manage/Task/TaskList?hitAppId=35716&taskOption=0&project=-1&taskGroupId=-1')
+        logging.info('*****************************************')
+
+    elif args.task == 'download':
+        logging.info('*********IMPORTANT NOTE******************')
+        logging.info('Make sure that all the tasks you submitted have finished before downloading')
+        logging.info('verify tag -> https://prod.uhrs.playmsn.com/Manage/Task/TaskList?hitappid=35851')
+        logging.info('verify bbox -> https://prod.uhrs.playmsn.com/Manage/Task/TaskList?hitAppId=35716&taskOption=0&project=-1&taskGroupId=-1')
+
+        updated_files = download_merge_correct_to_gt(collection_name, gt_dataset_name=gt_dataset_name, gt_split=gt_split)
+
+        logging.info('*****************************************')
+        logging.info('Successfully download tasks.')
+        logging.info('The ground truth labels are updated at: {}'.format('; '.join(updated_files)))
+        logging.info('*****************************************')
+    else:
+        raise ValueError('unknown task: {}'.format(args.task))
+
+
 if __name__ == "__main__":
     from qd.qd_common import init_logging
     init_logging()
-    #gt_dataset_name = "coco_tag"
-    #gt_split = "train"
-    #pred_file = [MODIFY_PATH_HERE]
-    gt_dataset_name = "uhrs_verify_tag_openimage"
-    gt_split = "train"
-    pred_file = [MODIFY_PATH_HERE]
-    collection_name = "uhrs_tag_verification"
+    main()
 
-    # NOTE: this script must be called from quickdetection/
-    # Use is_urgent=True for unblocking evalution, False for other tasks
-    submit_to_verify(gt_dataset_name, gt_split, pred_file, collection_name,
-            conf_thres=0, gt_version=-1, is_urgent=True)
-
-    # After submitting tasks, check the progress at:
-    # verify tag -> https://prod.uhrs.playmsn.com/Manage/Task/TaskList?hitappid=35851
-    # verify bbox -> https://prod.uhrs.playmsn.com/Manage/Task/TaskList?hitAppId=35716&taskOption=0&project=-1&taskGroupId=-1
-
-    # When the tasks above are all finished, call this function to merge the verified
-    # correct results to ground truth dataset
-    # download_merge_correct_to_gt(collection_name, gt_dataset_name=gt_dataset_name, gt_split=gt_split)

@@ -9,12 +9,18 @@ import datetime
 import json
 import logging
 import os
+import os.path as op
+import requests
 import sys
 import time
 
 import _init_paths
 from evaluation import eval_utils
 from qd import qd_common, tsv_io
+from qd.qd_common import json_dump
+from qd.qd_common import image_url_to_bytes
+from qd.tsv_io import TSVDataset, tsv_reader, tsv_writer
+from qd.process_tsv import parallel_tsv_process
 
 def call_api(gt_config_file, det_type):
     """
@@ -114,7 +120,7 @@ def post_process_aws(response, im_height, im_width, prop_parents=True):
     return all_res
 
 
-def call_gcloud(imgfile, det_file, key_col=0, img_col=2, detection="object"):
+def call_gcloud(imgfile, det_file, key_col=0, img_col=2, detection="detection"):
     """
     Calls Google Could to get object detection results.
     https://cloud.google.com/vision/docs/detecting-objects
@@ -126,9 +132,9 @@ def call_gcloud(imgfile, det_file, key_col=0, img_col=2, detection="object"):
         return
 
     client = vision.ImageAnnotatorClient()
-    time_elapsed = 0
-    num_imgs = 0
     def gen_rows():
+        num_imgs = 0
+        time_elapsed = 0
         for idx, cols in enumerate(tsv_io.tsv_reader(imgfile)):
             imgkey = cols[key_col]
             num_imgs += 1
@@ -137,7 +143,7 @@ def call_gcloud(imgfile, det_file, key_col=0, img_col=2, detection="object"):
                 img_arr = qd_common.img_from_base64(cols[img_col])
                 im_h, im_w, im_c = img_arr.shape
                 tic = time.time()
-                if detection == "object":
+                if detection == "detection":
                     resp = client.object_localization(image=img).localized_object_annotations
                     res = post_process_gcloud(resp, im_h, im_w)
                 elif detection == "logo":
@@ -158,8 +164,9 @@ def call_gcloud(imgfile, det_file, key_col=0, img_col=2, detection="object"):
                 res = []
             yield imgkey, qd_common.json_dump(res)
 
+        logging.info("#imgs: {}, avg time: {}s per image".format(num_imgs, time_elapsed/num_imgs))
+
     tsv_io.tsv_writer(gen_rows(), det_file)
-    logging.info("#imgs: {}, avg time: {}s per image".format(num_imgs, time_elapsed/num_imgs))
 
 
 def post_process_gcloud(response, im_height, im_width):
@@ -196,4 +203,287 @@ def post_process_gcloud_tag(response):
     for obj in response:
         all_res.append({"mid": obj.mid, "class": obj.description, "conf": obj.score})
     return all_res
+
+def call_cvapi(uri, is_b64=False, model='tag'):
+    """
+        uri could be: 1) base64 encoded image string, set is_b64=True.
+        2) file path.
+        3) url, starting with http
+    """
+    use_prod = False
+    if use_prod:
+        analyze_url = 'https://westus.api.cognitive.microsoft.com/vision/v2.0/models/celebrities/analyze'
+        headers = {
+            'Ocp-Apim-Subscription-Key': "ZTkwNTE2ZmQ4NThlNDVjMmFhNDMzMjRlZjBlOThlN2E=",
+            'Content-Type': 'application/octet-stream',
+        }
+    else:
+        analyze_url = 'https://vision-usw2-dev.westus2.cloudapp.azure.com/api/analyze'
+        headers = {
+            "Authorization":"Basic MmY2ODBkY2QzZDcxNDAxZDhmNTcxZGU5ODFiYmI1MzA=",
+            'Content-Type': 'application/octet-stream',
+        }
+    if model == 'tag':
+        v = 'Tags'
+    elif model == 'caption':
+        v = 'Description'
+    elif model == 'logo':
+        v = 'Brands'
+    else:
+        raise ValueError('unknown target model {}'.format(model))
+    params = {'visualFeatures': v}
+
+    if is_b64:
+        data = base64.b64decode(uri)
+    elif uri.startswith('http'):
+        #data = image_url_to_bytes(uri)
+        #curl -k -X POST --data '{"url":"https://tse3.mm.bing.net/th?id=OIP.M9cfa7362b791260dbfbfbb2a5810a01eo2&pid=Api"}' -H "Content-Type:application/json" -H "Ocp-Apim-Subscription-Key:a9819f53e76b40099ac8aec16257f51d" "https://westus.api.cognitive.microsoft.com/vision/v2.0/models/celebrities/analyze"
+        #data = '{"url": "' + uri + '"}'
+        data = image_url_to_bytes(uri)
+    else:
+        assert op.isfile(uri)
+        with open(uri, 'rb') as fp:
+            data = fp.read()
+    response = requests.post(
+        analyze_url, headers=headers, params=params, data=data)
+    response.raise_for_status()
+
+    # The 'analysis' object contains various fields that describe the image. The most
+    # relevant caption for the image is obtained from the 'description' property.
+    analysis = response.json()
+
+    if model == 'tag':
+       tags = analysis['tags']
+       ret = []
+       for t in tags:
+        ret.append({'class': t['name'], 'conf': t['confidence']})
+    elif model == 'caption':
+        tags = analysis["description"]['tags']
+        ret = {'tags': tags}
+        caption_res = analysis["description"]["captions"]
+        if len(caption_res) > 0:
+            ret['caption'] = caption_res[0]["text"].capitalize()
+            ret['confidence'] = caption_res[0]["confidence"]
+        else:
+            #logging.info(str(analysis))
+            pass
+        ret = [ret]
+    elif model == 'logo':
+        ret = []
+        for it in analysis['brands']:
+            rect = it['rectangle']
+            x, y, w, h = rect['x'], rect['y'], rect['w'], rect['h']
+            ret.append({'class': it['name'], 'rect': [x, y, x+w, y+h], 'conf':
+                    it['confidence']})
+    return ret
+
+def call_cvapi_parallel(imgfile, key_col, img_col, model, outfile,
+        is_debug=False):
+    from qd.qd_common import limited_retry_agent
+    def row_proc(parts):
+        key = parts[key_col]
+        str_img = parts[img_col]
+        try:
+            res = limited_retry_agent(5, call_cvapi, str_img, is_b64=True,
+                        model=model)
+        except:
+            res = []
+        return key, json_dump(res)
+
+    num_proc = 0 if is_debug else 16
+    parallel_tsv_process(row_proc, imgfile, outfile, num_proc)
+
+def main():
+    datas = [
+        ['GettyImages2k', 'test'], ['linkedin1k', 'test'],
+        #['OpenImageV4LogoTest', 'test'],['OpenImageV4LogoTest1', 'test'],
+        #['old_capeval_2k_test', 'test'],
+    ]
+    services = [
+        'google',
+        #'amazon',
+        'microsoft',
+    ]
+    target = 'tag'
+    #target = 'logo'
+    #target = 'caption'
+    for data, split in datas:
+        dirpath = op.join('data', data)
+        imgfile = op.join(dirpath, '{}.tsv'.format(split))
+        key_col = 0
+        img_col = 2
+        for service in services:
+            outfile = op.join(dirpath, '{}.{}.tsv'.format(service,
+                        target))
+            if op.isfile(outfile):
+                logging.info('{} already exist'.format(outfile))
+                continue
+            if service == 'microsoft':
+                call_cvapi_parallel(imgfile, key_col, img_col, target,
+                        outfile, is_debug=False)
+            elif service == 'amazon':
+                response_file = op.join(dirpath, 'amazon.resp.tsv')
+                det_file = op.join(dirpath, 'amazon.detection.tsv')
+                tag_file = op.join(dirpath, 'amazon.tag.tsv')
+                call_aws(imgfile, response_file, det_file, tag_file, key_col,
+                        img_col)
+            elif service == 'google':
+                call_gcloud(imgfile, outfile, key_col, img_col,
+                        target)
+
+def main4():
+    dirpath = 'data/GettyImages'
+    fpath = 'data/GettyImages/images.json'
+    contents = json.load(open(fpath))
+    count = 0
+    val_set = []
+    test_set = []
+    for c in contents:
+        key = '{}/{}'.format(c['id'], c['uri'])
+        cap = c['description']
+        if c['reviewed'] and count < 2000:
+            val_set.append([key, cap])
+            count += 1
+        else:
+            test_set.append([key, cap])
+    tsv_writer(val_set, op.join(dirpath, 'gettyimages_val.csv'), sep=',')
+    tsv_writer(test_set, op.join(dirpath, 'gettyimages_test.csv'), sep=',')
+    print(count)
+
+def main3():
+    data = 'OfficePPTUserInserted'
+    imgfile = 'data/{}/test.tsv'.format(data)
+    key_col = 0
+    img_col = 2
+    model = 'caption'
+    outfile = 'data/{}/cvapi.caption.tsv'.format(data)
+    call_cvapi_parallel(imgfile, key_col, img_col, model, outfile)
+
+    csv_file = 'data/{}/caption_result.csv'.format(data)
+    caption_iter = tsv_reader(outfile)
+    #orig_iter = tsv_reader(imgfile)
+    #def gen_rows():
+        #for parts1, parts2 in zip(caption_iter, orig_iter):
+            #url = parts1[0]
+            #assert parts2[0] == url
+            #orig = json.loads(parts2[1])['description']
+            #resp = json.loads(parts1[1])
+            #if len(resp) == 0:
+                #caption = ''
+                #conf = ''
+            #else:
+                #resp = resp[0]
+                #caption = resp.get('caption', '; '.join(resp['tags']))
+                #conf = resp.get('confidence', '')
+            #yield url, caption, conf, orig
+    def gen_rows():
+        for parts1 in caption_iter:
+            url = parts1[0]
+            resp = json.loads(parts1[1])
+            if len(resp) == 0:
+                caption = ''
+                conf = ''
+            else:
+                resp = resp[0]
+                caption = resp.get('caption', '; '.join(resp['tags']))
+                conf = resp.get('confidence', '')
+            yield url, caption, conf
+
+    tsv_writer(gen_rows(), csv_file, sep=',')
+
+def main2():
+    from tqdm import tqdm
+    from evaluation.collect_data_for_labels import urls_to_img_file_parallel
+    data = 'GettyImages'
+    fpath = 'data/GettyImages/images.json'
+    with open(fpath, 'r') as fp:
+        contents = json.load(fp)
+    fields = ['tags', 'description', 'reviewed']
+    num_reviewed = 0
+    all_url = []
+    all_id_set = set()
+    for c in contents:
+        assert c['id'] not in all_id_set
+        all_id_set.add(c['id'])
+        url = 'https://osizewuspersimmon001.blob.core.windows.net/m365content/publish/{}/{}'.format(
+            c['id'], c['uri'])
+        all_url.append([url, json_dump(c)])
+
+    url_file = 'data/{}/urls.tsv'.format(data)
+    tsv_writer(all_url, url_file)
+    def row_proc(parts):
+        url, content = parts
+        content = json.loads(content)
+        try:
+            resp = call_cvapi(url)
+            caption = resp.get('caption', '; '.join(resp['tags']))
+        except Exception as e:
+            logging.info('fail to call {}, error: {}'.format(url, str(e)))
+            resp = {}
+            caption = ''
+        return url, caption, resp.get('confidence', ''), content['description']
+    outfile = 'data/{}/caption_results.csv'.format(data)
+    parallel_tsv_process(row_proc, url_file,
+        outfile, 0, out_sep=',')
+
+    #outpath = 'data/{}/images.tsv'.format(data)
+    #urls_to_img_file_parallel(all_url, 0, [0, 1], outpath, keep_order=False, is_debug=False)
+
+    #out_data = 'GettyImages2k'
+    #select_urls = []
+    #for url, content, str_img in tsv_reader(outpath):
+        #content = json.loads(content)
+        #if content['reviewed']:
+            #select_urls.append(url)
+
+    #assert len(select_urls) >= 2000
+    #select_urls = set(select_urls[:2000])
+    #assert len(select_urls) == 2000
+    #out_dataset = TSVDataset(out_data)
+    #def gen_rows():
+        #for url, content, str_img in tsv_reader(outpath):
+            #if url in select_urls:
+                #content = json.loads(content)
+                #tags = [{'class': c} for c in content['tags']]
+                #yield content['id'], json_dump(tags), str_img
+
+    #out_dataset.write_data(gen_rows(), 'test')
+
+def main1():
+    from evaluation.dataproc import urls_to_img_file_parallel, scrape_image_parallel
+
+    data = 'linkedin1k'
+    label_counts = [
+        ['', 1000], ['ceo', 100], ['company', 100], ['people', 100],
+        ['office', 100], ['chart', 50], ['business', 100]
+    ]
+    outfile = 'data/{}/query.tsv'.format(data)
+    #scrape_image_parallel(label_counts, outfile, ext="jpg",
+            #query_format="site:linkedin.com {}")
+    urls = []
+    for _, term, url in tsv_reader(outfile):
+        if 'linkedin.com' in url:
+            urls.append(url)
+    urls = set(urls)
+    print(len(urls))
+    in_rows = [[url] for url in urls]
+    imgpath = 'data/{}/query.image.tsv'.format(data)
+    #urls_to_img_file_parallel(in_rows, 0, [0],imgpath, keep_order=False, is_debug=False)
+    dataset = TSVDataset(data)
+    def gen_rows():
+        count = 0
+        for url, str_img in tsv_reader(imgpath):
+            count += 1
+            yield 'linkedin{}'.format(count), '[]', str_img
+    dataset.write_data(gen_rows(), 'test')
+
+if __name__ == '__main__':
+    from qd.qd_common import init_logging
+    init_logging()
+    #url = 'https://osizewuspersimmon001.blob.core.windows.net/m365content/publish/00c70963-e397-484b-a1e3-94d83ec8ec23/901382928.jpg'
+    #call_cvapi(url)
+    main()
+    #imgfile = 'data/openimageV4_256/trainval.tsv'
+    #det_file = 'data/openimageV4_256/trainval.google.tag.tsv'
+    #call_gcloud(imgfile, det_file, key_col=0, img_col=2, detection="tag")
 

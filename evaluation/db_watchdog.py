@@ -131,6 +131,8 @@ def _gen_labels_for_bb_tasks(bb_tasks):
 def create_new_task(label_enumerator, urgent_level, args):
     # write task files
     outdir = get_working_dir(args.db_name, args.collection_name)
+    qd_common.ensure_remove_dir(outdir)
+    qd_common.ensure_directory(outdir)
     label_file = op.join(outdir, "label.tsv")
     tsv_io.tsv_writer(label_enumerator, label_file)
     task_files = generate_task.generate_task_files(

@@ -292,9 +292,12 @@ def scrape_image(args):
     tsv_io.tsv_writer(gen_rows(), outfile)
 
 def clean_query_keywords(query_str):
-    replace_chars = ";/?:@=&<>#%\{\}|\\^~[]`"
+    #replace_chars = ";/?:@=&<>#%\{\}|\\^~[]`"
+    replace_chars = ";/?@=&<>#%\{\}|\\^~[]`"
     for char in replace_chars:
         query_str = query_str.replace(char, ' ')
+    querys = query_str.split()
+    query_str = '+'.join(querys)
     return query_str
 
 def save_img_to_file(img_bytes, fpath):
