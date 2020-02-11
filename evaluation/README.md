@@ -5,6 +5,11 @@ Therefore, human judges are asked to verify if the prediction results are correc
 not. Correct prediction will be added to ground truth labels. Then evaluation
 can be done on the updated ground truth.
 
+This approach is especially useful for comparing with competitors. There is no
+need to get labels covering competitors' taxonomy. We can update ground truth
+labels basing on competitors' prediction reuslts, and do the evaluation in an
+open vocabulary manner.
+
 ## Evaluation datasets
 All dataset related files are stored at `vigdgx02:/raid/data/[DATASET_NAME]`.
 The class labels are **case insensitive**.
@@ -32,36 +37,7 @@ vigdgx02
 ln -s /raid/data data
 ```
 
-## Update ground truth
-**1. Submit a predict file to verify**
-
-```bash
-cd "${QUICKDETECTION_ROOT}"
-python evaluation/db_task.py \
-    --task submit \
-    --type [choose from tagging/detection] \
-    --dataset [choose from evaluation datasets] \
-    --predict_file [file path]
-```
-
-**2. Download human judgment results and update ground truth files**
-
-Before downloading, be sure to check if all the submitted tasks are finished.
-
-For tagging, go to <https://prod.uhrs.playmsn.com/Manage/Task/TaskList?hitappid=35851>
-For detection, go to <https://prod.uhrs.playmsn.com/Manage/Task/TaskList?hitAppId=35716&taskOption=0&project=-1&taskGroupId=-1>
-
-The updated ground truth files will be saved in the according dataset folder.
-The file path is printed on screen.
-```bash
-cd "${QUICKDETECTION_ROOT}"
-python evaluation/db_task.py \
-    --task download \
-    --type [choose from tagging/detection] \
-    --dataset [choose from evaluation datasets]
-```
-
-## Compare computer vision API with competitors
+## Get tagging/detection results from competitors
 
 The competitors include Amazon Rekognition API, Google Could Vision API, and Clarifai.
 To call the API, you need an account, set up authentication and
@@ -114,5 +90,52 @@ python evaluation/call_api.py \
     --target [choose from tag, detection, logo] \
     --dataset [choose from evaluation datasets] \
     --outfile [PATH]
+```
+
+## Update ground truth
+**1. Submit a predict file to verify**
+
+```bash
+cd "${QUICKDETECTION_ROOT}"
+python evaluation/db_task.py \
+    --task submit \
+    --type [choose from tagging/detection] \
+    --dataset [choose from evaluation datasets] \
+    --predict_file [file path]
+```
+
+**2. Download human judgment results and update ground truth files**
+
+Before downloading, be sure to check if all the submitted tasks are finished.
+
+For tagging, go to <https://prod.uhrs.playmsn.com/Manage/Task/TaskList?hitappid=35851>
+For detection, go to <https://prod.uhrs.playmsn.com/Manage/Task/TaskList?hitAppId=35716&taskOption=0&project=-1&taskGroupId=-1>
+
+The updated ground truth files will be saved in the according dataset folder.
+The file path is printed on screen.
+```bash
+cd "${QUICKDETECTION_ROOT}"
+python evaluation/db_task.py \
+    --task download \
+    --type [choose from tagging/detection] \
+    --dataset [choose from evaluation datasets]
+```
+
+## Calculate Precision/Recall
+After getting ground truth labels updated, Precision and Recall can be
+calculated for all the models.
+
+We use a YAML file to configure the evaluation settings, including ground truth
+labels, baselines, and confidence thresholds. An example config file can be
+found at `vigdgx02:/raid/data/GettyImages2k/api/config.yaml`.
+
+With the config file, run the command to get a table of P/R of all baselines.
+The P/R curve will be saved to the same directory as the config file.
+```bash
+cd "${QUICKDETECTION_ROOT}"
+python evaluation/human_eval.py \
+    --config [PATH to config file, e.g., /raid/data/GettyImages2k/api/config.yaml] \
+    --iou_threshold [for detection results, default is 0.5] \
+    --tag_only   # add this line for tagging evaluation
 ```
 
