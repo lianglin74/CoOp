@@ -747,6 +747,54 @@ def scrape_bing_general_rich(query_term, depth):
 
     return list(url_to_result.values())
 
+def request_by_browser(url):
+    from selenium.webdriver.chrome.options import Options
+    from selenium import webdriver
+    import bs4
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    driver = webdriver.Chrome(options=chrome_options)
+    driver.get(url)
+    soup = bs4.BeautifulSoup(driver.page_source, features='lxml')
+    return soup
+
+def iter_bing_visual_search(query_url, origin_url=True):
+    format_str = 'http://www.bing.com/images/searchbyimage?FORM=IRSBIQ&cbir=sbi&imgurl={0}'
+    # the following two parameters are not valid
+    #format_str += '&first=100'
+    #format_str += '&count=10'
+    bing_url = format_str.format(query_url)
+    soup = request_by_browser(bing_url)
+    for i, container in enumerate(soup.find_all(class_='richImage relImg')):
+        # one container has one image and one caption container. we will
+        # extract the image and the caption, which might be helpful in the
+        # future
+        info = {'rank': i}
+        # original url
+        if origin_url:
+            imgs = container.find_all(class_='richImgLnk')
+            if len(imgs) == 1:
+                img = imgs[0]
+                url = 'http://www.bing.com/images/search' + img.attrs['href']
+                result = request_by_browser(url)
+                imgs = result.find_all(alt='See the source image')
+                if len(imgs) == 1:
+                    img = imgs[0]
+                    url = img.attrs['src']
+                    info['url'] = url
+
+        # bing cache image
+        imgs = container.find_all('img', alt='See related image detail')
+        if len(imgs) == 1:
+            bing_cache_url = 'http://www.bing.com' + imgs[0].attrs['src']
+            info['bing_cache_url'] = bing_cache_url
+
+        captions = container.find_all('span', class_='tit')
+        if len(captions) == 1:
+            cap = captions[0]
+            info['caption'] = cap.text
+        yield info
+
 def scrape_bing_general(query_term, depth):
     '''
     note, the order of url list is not the same as the web query. Even we keep
