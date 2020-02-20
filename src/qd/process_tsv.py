@@ -6063,6 +6063,19 @@ def create_tiny_set(data, out_data):
                                split='test',
                                t=t)
 
+def remove_size_in_label(data, split):
+    dataset = TSVDataset(data)
+    def gen_rows():
+        for key, str_rects in tqdm(dataset.iter_data(split, 'label')):
+            rects = json.loads(str_rects)
+            assert len(rects) == 1
+            c = rects[0]['class']
+            parts = c.split('_s_')
+            assert len(parts) in [1, 2]
+            rects[0]['class'] = parts[0]
+            yield key, json_dump(rects)
+    dataset.update_data(gen_rows(), split, 'label',
+        generate_info=[('remove size in the label', )])
 
 if __name__ == '__main__':
     from qd.qd_common import parse_general_args
