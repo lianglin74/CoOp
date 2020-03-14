@@ -1,10 +1,12 @@
 import math
 import torch
 import time
-from maskrcnn_benchmark.utils.metric_logger import MetricLogger
+from qd.qd_common import list_to_dict
+
 
 class MeanSigmaMetricLogger(object):
     def __init__(self, delimiter="\t"):
+        from maskrcnn_benchmark.utils.metric_logger import MetricLogger
         self.mean_meters = MetricLogger(delimiter=delimiter)
         self.sq_meters = MetricLogger(delimiter=delimiter)
 
