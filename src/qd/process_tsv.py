@@ -5818,11 +5818,13 @@ def run_ocr_on_content(input_file, urls):
     import requests
     r = requests.post(url, headers=headers, data=input_file)
 
+    #import pdb; pdb.set_trace()
+
     if (r.ok):
         x = json.loads(r.text)
-        if 'recognitionResults' not in x:
+        if 'analyzeResult' not in x or 'readResults' not in x['analyzeResult']:
             return []
-        rects = ocr_engine_result_to_rects(x['recognitionResults'][0]['lines'])
+        rects = ocr_engine_result_to_rects(x['analyzeResult']['readResults'][0]['lines'])
         return rects
 
 class OCRRowProcessor(object):
@@ -5830,7 +5832,10 @@ class OCRRowProcessor(object):
         self.urls = urls
 
     def __call__(self, row):
-        key, str_rects, str_im = row
+        if len(row) == 3:
+            key, str_rects, str_im = row
+        else:
+            key,  str_im = row
         im = img_from_base64(str_im)
         def proper_image_scale(im):
             h, w = im.shape[:2]
@@ -5849,7 +5854,7 @@ class OCRRowProcessor(object):
             im = cv2.resize(im, (int(w), int(h)))
             return im
 
-        if max(im.shape[:2]) <= 200 or max(im.shape[:2]) > 8000:
+        if max(im.shape[:2]) <= 200 or max(im.shape[:2]) > 8000:        
             im_scale = proper_image_scale(im)
             h_scale, w_scale = (1. * im_scale.shape[0] / im.shape[0], 1. *
                     im_scale.shape[1] / im.shape[1])
@@ -5858,6 +5863,9 @@ class OCRRowProcessor(object):
             im_scale = im
 
         content = cv2.imencode('.jpg', im_scale)[1]
+
+        #write_to_file(content, 'testImageOcr.jpg')
+
         try:
             result = run_ocr_on_content(content.tobytes(), self.urls)
         except:
@@ -5873,7 +5881,8 @@ class OCRRowProcessor(object):
 def ocr_tsv(in_tsv, out_tsv, urls):
     processor = OCRRowProcessor(urls)
     parallel_tsv_process(processor, in_tsv, out_tsv,
-            num_process=5, num_jobs=10240)
+            #num_process=0, num_jobs=1)
+            num_process=5, num_jobs=10)
 
 if __name__ == '__main__':
     from qd.qd_common import parse_general_args
