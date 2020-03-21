@@ -5839,6 +5839,7 @@ def create_focus_dataset(data, source_version, target_labels, out_data):
 class CogAPI(object):
     def __init__(self):
         self.remote_image_features = ['adult']
+        self.run_ocr = False
         self.computervision_client = None
 
     def ensure_init(self):
@@ -5853,17 +5854,44 @@ class CogAPI(object):
 
     def call(self, image_url):
         self.ensure_init()
-        remote_image_analysis = self.computervision_client.analyze_image(image_url,
-                self.remote_image_features)
         result = {}
-        from azure.cognitiveservices.vision.computervision.models import VisualFeatureTypes
-        if 'adult' in self.remote_image_features:
-            result.update(self.parse_adult(remote_image_analysis))
-        if 'description' in self.remote_image_features:
-            result.update(self.parse_description(remote_image_analysis))
-        if VisualFeatureTypes.image_type in self.remote_image_features:
-            result.update(self.parse_type(remote_image_analysis))
+        if self.remote_image_features:
+            remote_image_analysis = self.computervision_client.analyze_image(image_url,
+                    self.remote_image_features)
+            from azure.cognitiveservices.vision.computervision.models import VisualFeatureTypes
+            if 'adult' in self.remote_image_features:
+                result.update(self.parse_adult(remote_image_analysis))
+            if 'description' in self.remote_image_features:
+                result.update(self.parse_description(remote_image_analysis))
+            if VisualFeatureTypes.image_type in self.remote_image_features:
+                result.update(self.parse_type(remote_image_analysis))
+        if self.run_ocr:
+            recognize_printed_results = self.computervision_client.batch_read_file(image_url,  raw=True)
+            result.update(self.parse_ocr(recognize_printed_results))
+
         return result
+
+    def parse_ocr(self, recognize_printed_results):
+        from azure.cognitiveservices.vision.computervision.models import TextOperationStatusCodes
+        # Get the operation location (URL with an ID at the end) from the response
+        operation_location_remote = recognize_printed_results.headers["Operation-Location"]
+        # Grab the ID from the URL
+        operation_id = operation_location_remote.split("/")[-1]
+
+        # Call the "GET" API and wait for it to retrieve the results 
+        while True:
+            get_printed_text_results = self.computervision_client.get_read_operation_result(operation_id)
+            if get_printed_text_results.status not in ['NotStarted', 'Running']:
+                break
+            time.sleep(1)
+
+        lines = []
+        if get_printed_text_results.status == TextOperationStatusCodes.succeeded:
+            for text_result in get_printed_text_results.recognition_results:
+                for line in text_result.lines:
+                    lines.append({'text': line.text, 'bounding_box':
+                        line.bounding_box})
+        return {'ocr': lines}
 
     def parse_description(self, result):
         return {'captions': [{'text': cap.text,
