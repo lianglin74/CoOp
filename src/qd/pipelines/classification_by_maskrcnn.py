@@ -206,6 +206,37 @@ class MaskClassificationPipeline(ModelPipeline):
             assert self.convert_bn is None, self.convert_bn
         return model
 
+    def demo(self, image_path):
+        from qd.process_image import load_image
+        cv_im = load_image(image_path)
+        self.predict_one(cv_im)
+
+    def predict_one(self, cv_im):
+        model = self.get_test_model()
+        model_file = self._get_checkpoint_file()
+        self.load_test_model(model, model_file)
+        model = model.to(self.device)
+        softmax_func = self._get_test_normalize_module()
+        model.eval()
+        from qd.layers import ForwardPassTimeChecker
+        model = ForwardPassTimeChecker(model)
+        transform = self.get_transform('test')
+        im = transform(cv_im)
+        im = im[None, :]
+        im = im.to(self.device)
+        output = model(im)
+        if softmax_func is not None:
+            output = softmax_func(output)
+        all_tops, all_top_indexes = output.topk(5, dim=1,
+                largest=True, sorted=False)
+
+        tops, top_indexes = all_tops[0], all_top_indexes[0]
+        labelmap = self.get_labelmap()
+        all_tag = [{'class': labelmap[i], 'conf': float(t)} for t, i in
+                zip(tops, top_indexes)]
+        from pprint import pformat
+        logging.info(pformat(all_tag))
+
     def get_test_model(self):
         model = self._get_model(pretrained=False,
                 num_class=len(self.get_labelmap()))

@@ -304,7 +304,7 @@ class TSVSplitImage(TSVSplit):
             idx = int(col)
         except:
             info = json.loads(col)
-            idx = self.label_to_idx[info[0]['class']]
+            idx = self.label_to_idx.get(info[0]['class'], -1)
         label = torch.from_numpy(np.array(idx, dtype=np.int))
         return label
 
@@ -326,7 +326,7 @@ class TSVSplitCropImage(TSVSplitImage):
         str_label = rect['class']
         if self.transform is not None:
             img = self.transform(img)
-        label = self.label_to_idx[rect['class']]
+        label = self.label_to_idx.get(rect['class'], -1)
         return img, label, key
 
 class TSVSplitImageMultiLabel(TSVSplitImage):
@@ -425,21 +425,21 @@ class BGR2RGB(object):
     def __call__(self, im):
         return im[:, :, [2, 1, 0]]
 
-def get_test_transform(bgr2rgb=False):
+def get_test_transform(bgr2rgb=False, resize_size=256, crop_size=224):
     normalize = get_data_normalize()
     all_trans = []
     if bgr2rgb:
         all_trans.append(BGR2RGB())
     all_trans.extend([
             transforms.ToPILImage(),
-            transforms.Resize(256),
-            transforms.CenterCrop(224),
+            transforms.Resize(resize_size),
+            transforms.CenterCrop(crop_size),
             transforms.ToTensor(),
             normalize,
             ])
     return transforms.Compose(all_trans)
 
-def get_train_transform(bgr2rgb=False):
+def get_train_transform(bgr2rgb=False, crop_size=224):
     normalize = get_data_normalize()
     totensor = transforms.ToTensor()
     color_jitter = transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4)
@@ -448,7 +448,7 @@ def get_train_transform(bgr2rgb=False):
         all_trans.append(BGR2RGB())
     all_trans.extend([
         transforms.ToPILImage(),
-        transforms.RandomResizedCrop(224),
+        transforms.RandomResizedCrop(crop_size),
         color_jitter,
         transforms.RandomHorizontalFlip(),
         totensor,
@@ -668,7 +668,7 @@ def get_latest_parameter_file(folder):
     yaml_pattern = op.join(folder,
             'parameters_*.yaml')
     yaml_files = glob.glob(yaml_pattern)
-    assert len(yaml_files) > 0
+    assert len(yaml_files) > 0, folder
     def parse_time(f):
         m = re.search('.*parameters_(.*)\.yaml', f)
         t = datetime.strptime(m.group(1), '%Y_%m_%d_%H_%M_%S')
@@ -854,6 +854,8 @@ class TorchTrain(object):
                 'test_mergebn': False,
                 'bgr2rgb': False, # this should be True, but set it False for back compatibility
                 'coco_eval_max_det': 100,
+                'train_crop_size': 224,
+                'test_crop_size': 224,
                 }
 
         assert 'batch_size' not in kwargs, 'use effective_batch_size'
@@ -947,7 +949,6 @@ class TorchTrain(object):
         if self.cudnn_benchmark:
             torch.backends.cudnn.benchmark = True
 
-        self._setup_logging()
         # in torch 0.4, torch.randperm only supports cpu. if we set it as
         # cuda.Float by default, it will crash there
         #torch.set_default_tensor_type('torch.cuda.FloatTensor')
@@ -973,6 +974,9 @@ class TorchTrain(object):
                 logging.info('init param: \n{}'.format(pformat(init_param)))
                 if not dist.is_initialized():
                     dist.init_process_group(**init_param)
+                # sometimes, the init hangs, and thus we print some logs for
+                # verification
+                logging.info('initialized')
                 # we need to synchronise before exit here so that all workers can
                 # finish init_process_group(). If not, worker A might exit the
                 # whole program first, but worker B still needs to talk with A. In
@@ -981,34 +985,43 @@ class TorchTrain(object):
         init_random_seed(self.random_seed)
         self._initialized = True
 
-    def _get_dataset(self, data, split, stage, labelmap):
-        if not self.bgr2rgb:
-            logging.warn('normally bgr2rgb should be true.')
+    def get_transform(self, stage):
         if stage == 'train':
-            transform = get_train_transform(self.bgr2rgb)
+            transform = get_train_transform(self.bgr2rgb,
+                    crop_size=self.train_crop_size)
         else:
             assert stage == 'test'
-            transform = get_test_transform(self.bgr2rgb)
+            resize_size = 256 * self.test_crop_size // 224
+            transform = get_test_transform(self.bgr2rgb,
+                    resize_size=resize_size,
+                    crop_size=self.test_crop_size)
+        return transform
 
-        if self.dataset_type == 'single':
+    def _get_dataset(self, data, split, stage, labelmap, dataset_type):
+        if not self.bgr2rgb:
+            logging.warn('normally bgr2rgb should be true.')
+
+        transform = self.get_transform(stage)
+
+        if dataset_type == 'single':
             return TSVSplitImage(data, split,
                     version=0,
                     transform=transform,
                     labelmap=labelmap,
                     cache_policy=self.cache_policy)
-        if self.dataset_type == 'crop':
+        if dataset_type == 'crop':
             return TSVSplitCropImage(data, split,
                     version=0,
                     transform=transform,
                     labelmap=labelmap,
                     cache_policy=self.cache_policy)
-        elif self.dataset_type == 'multi_hot':
+        elif dataset_type == 'multi_hot':
             return TSVSplitImageMultiLabel(data, split,
                     version=0,
                     transform=transform,
                     cache_policy=self.cache_policy,
                     labelmap=labelmap)
-        elif self.dataset_type == 'multi_hot_neg':
+        elif dataset_type == 'multi_hot_neg':
             return TSVSplitImageMultiLabelNeg(data, split, version=0,
                     transform=transform,
                     cache_policy=self.cache_policy,
@@ -1040,12 +1053,18 @@ class TorchTrain(object):
                 "model_iter_{:07d}.pt".format(iteration))
 
     def _get_model(self, pretrained, num_class):
-        model = models.__dict__[self.net](pretrained=pretrained)
-        if model.fc.weight.shape[0] != num_class:
-            model.fc = nn.Linear(model.fc.weight.shape[1], num_class)
-            torch.nn.init.xavier_uniform_(model.fc.weight)
+        if self.net in ['MobileNetV3']:
+            from qd.layers.mitorch_models import ModelFactory
+            model = ModelFactory.create(self.net, num_class)
+            assert not pretrained
+            return model
+        else:
+            model = models.__dict__[self.net](pretrained=pretrained)
+            if model.fc.weight.shape[0] != num_class:
+                model.fc = nn.Linear(model.fc.weight.shape[1], num_class)
+                torch.nn.init.xavier_uniform_(model.fc.weight)
 
-        return model
+            return model
 
     def _data_parallel_wrap(self, model):
         if self.distributed:
@@ -1057,15 +1076,17 @@ class TorchTrain(object):
             else:
                 if not self.use_hvd:
                     model = torch.nn.parallel.DistributedDataParallel(model)
-        else:
-            model = torch.nn.DataParallel(model).cuda()
+        #else:
+            #model = torch.nn.parallel.DistributedDataParallel(model)
+            #model = torch.nn.DataParallel(model).cuda()
         return model
 
     def _get_train_data_loader(self, start_iter=0):
         train_dataset = self._get_dataset(self.data,
                 'train',
                 stage='train',
-                labelmap=self.train_dataset.load_labelmap())
+                labelmap=self.train_dataset.load_labelmap(),
+                dataset_type=self.dataset_type)
 
         if self.distributed:
             self.train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
@@ -1081,8 +1102,11 @@ class TorchTrain(object):
         return train_dataset, train_loader
 
     def _get_test_data_loader(self, test_data, test_split, labelmap):
+        if self.test_dataset_type is None:
+            self.test_dataset_type = self.dataset_type
+
         test_dataset = self._get_dataset(test_data, test_split, stage='test',
-                labelmap=labelmap)
+                labelmap=labelmap, dataset_type=self.test_dataset_type)
 
         test_loader = torch.utils.data.DataLoader(
             test_dataset, batch_size=self.test_batch_size, shuffle=False,
@@ -1148,6 +1172,7 @@ class TorchTrain(object):
             from qd.qd_common import zip_qd
             zip_qd(op.join(self.output_folder, 'source_code'))
 
+        self._setup_logging()
         train_result = self.train()
 
         synchronize()
@@ -1293,6 +1318,10 @@ class TorchTrain(object):
             # is 1 or batch processing
             cc.append('BS{}'.format(self.test_batch_size))
             cc.append(self.device)
+        if self.pred_file_hint is not None:
+            cc.append(self.pred_file_hint)
+        if self.test_crop_size != 224:
+            cc.append('crop{}'.format(self.test_crop_size))
         cc.append('predict')
         cc.append('tsv')
         return '.'.join(cc)
@@ -1627,9 +1656,9 @@ class TorchTrain(object):
 
             write_to_yaml_file(result, evaluate_file)
         elif self.evaluate_method == 'top1':
-            label_tsv_file = dataset.get_data(self.test_split, 'label',
+            iter_label = dataset.iter_data(self.test_split, 'label',
                     self.test_version)
-            top1 = evaluate_topk(predict_file, label_tsv_file)
+            top1 = evaluate_topk(tsv_reader(predict_file), iter_label)
             logging.info('top1 = {}'.format(top1))
             write_to_yaml_file({'top1': top1}, evaluate_file)
         elif self.evaluate_method == 'neg_aware_gmap':
@@ -1667,11 +1696,9 @@ class TorchTrain(object):
 class ModelPipeline(TorchTrain):
     pass
 
-def evaluate_topk(predict_file, label_tsv_file):
+def evaluate_topk(iter_pred_tsv, iter_label_tsv):
     correct = 0
     total = 0
-    iter_label_tsv = tsv_reader(label_tsv_file)
-    iter_pred_tsv = tsv_reader(predict_file)
     for (key, str_rects), (key_pred, str_pred) in zip(iter_label_tsv, iter_pred_tsv):
         total = total + 1
         assert key == key_pred
