@@ -7,7 +7,7 @@
 	url = git@ssh.dev.azure.com:v3/visionbio/objectdetection/objectdetection
 [submodule "src/maskrcnn-benchmark"]
 	path = src/maskrcnn-benchmark
-	url = git@ssh.dev.azure.com:v3/visionbio/maskrcnn-benchmark/maskrcnn-benchmark
+    url = https://visionbio@dev.azure.com/visionbio/maskrcnn-benchmark/_git/maskrcnn-benchmark
 [submodule "src/mmcv"]
 	path = src/mmcv
 	url = git@ssh.dev.azure.com:v3/visionbio/mmcv/mmcv
