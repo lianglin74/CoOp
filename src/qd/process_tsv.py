@@ -13,6 +13,7 @@ import imghdr
 import inspect
 import json
 import logging
+import math
 import numpy as np
 import os
 import os.path as op
@@ -62,6 +63,8 @@ from qd.qd_common import float_tolorance_equal
 from qd.qd_common import is_positive_uhrs_verified, is_negative_uhrs_verified
 from qd.qd_common import concat_files
 from qd.qd_common import try_delete
+from qd.qd_common import encoded_from_img
+from qd.qd_common import get_frame_info
 from qd.taxonomy import child_parent_print_tree2
 from qd.taxonomy import create_markdown_url
 from qd.taxonomy import disambibuity_noffsets
@@ -191,7 +194,6 @@ def create_new_image_tsv_if_exif_rotated(data, split):
                 assert im.shape[0] == im2.shape[1]
                 assert im.shape[1] == im2.shape[0]
                 info['changed'] = info['changed'] + 1
-                from qd.qd_common import encoded_from_img
                 yield key, str_rects, encoded_from_img(im)
             else:
                 yield key, str_rects, str_im
@@ -1414,10 +1416,10 @@ def tsv_details(row_hw, row_label, num_rows):
             # special tags, which is annoying
             curr_labels = set(normalize_to_str(rect['class']) for rect in rects)
             for rect in rects:
-                r = rect['rect']
-                if all(x == 0 for x in r):
+                if 'rect' not in rect or all(x == 0 for x in rect['rect']):
                     # it is image-level annotation
                     continue
+                r = rect['rect']
                 # this should be a valid bounding box
                 cx, cy = (r[0] + r[2]) / 2., (r[1] + r[3]) / 2.
                 rw, rh = r[2] - r[0], r[3] - r[1]
@@ -1666,9 +1668,9 @@ def populate_dataset_hw(data, splits=['train', 'trainval', 'test']):
                     if dataset.has(split + 'X'):
                         ensure_extract_from_data_source(data, split, 'hw')
                         continue
-                    num_worker = 128
-                    num_tasks = num_worker * 3
                     num_images = dataset.num_rows(split)
+                    num_tasks = min(num_images, 128 * 3)
+                    num_worker = (num_tasks + 2) // 3
                     num_image_per_worker = (num_images + num_tasks - 1) // num_tasks
                     assert num_image_per_worker > 0
                     all_idx = []
@@ -1700,7 +1702,6 @@ def ensure_label_extract(data, splits):
     for split in splits:
         if (not dataset.has(split, 'label')) and \
                 dataset.has(split):
-            import ipdb;ipdb.set_trace(context=15)
             def gen_rows():
                 if op.isfile(dataset.get_data(split)):
                     iter_row = dataset.iter_data(split)
@@ -2420,7 +2421,7 @@ def visualize_box_no_draw(data, split, version, label, start_id, color_map={},
             filter_idx=idx[start_id:])
     for row_image, row_label in zip(rows_image, rows_label):
         key = row_image[0]
-        assert key == row_label[0]
+        assert key == row_label[0], (key, row_label[0])
         assert len(row_image) == 3
         assert len(row_label) == 2
         label_str = row_label[-1]
@@ -2691,13 +2692,14 @@ class TSVDatasetSource(TSVDataset):
         self.cleaness = cleaness
         self.use_negative_label = use_negative_label
 
+    def get_version_by_split(self, split_name):
+        for split_info in self._split_infos:
+            if split_info['split'] == split_name:
+                return split_info['version']
+        return -1
+
     def get_label_tsv(self, split_name):
-        def get_version_by_split(split_name):
-            for split_info in self._split_infos:
-                if split_info['split'] == split_name:
-                    return split_info['version']
-            return -1
-        version_by_config = get_version_by_split(split_name)
+        version_by_config = self.get_version_by_split(split_name)
         return super(TSVDatasetSource, self).get_data(split_name, 'label',
                 version_by_config)
 
@@ -3002,6 +3004,47 @@ def convert_one_label(rects, label_mapper):
                 rects2.append(r2)
     rects[:] = []
     rects.extend(rects2)
+
+def convert_label_by_dataset(dataset, split, version, idx, label_mapper, with_bb):
+    result = None
+    for i, row in zip(idx, dataset.iter_data(split, 'label', version=version,
+        filter_idx=idx)):
+        assert len(row) == 2
+        rects = json.loads(row[1])
+        def eval_with_bb(r):
+            if not r['class'].startswith('-'):
+                return 'rect' in r and any(x != 0 for x in r['rect'])
+            else:
+                return 'rect' not in r or all(x == 0 for x in r['rect'])
+        if with_bb:
+            # in the case with -, we will not add rect
+                                # with all zeros, thus, no need to check if it is all zeros
+                                # when it is negative samples
+            rects = [r for r in rects if eval_with_bb(r)]
+        # all annotations if eval_with_bb(r) is valid for no_bb. Thus, disable
+        # the following
+        #else:
+            #rects = [r for r in rects if not eval_with_bb(r)]
+        if result is None:
+            # don't use this, because all list will be shared
+            #result = [len(row) * ['d']] * tsv.num_rows()
+            result = [None] * dataset.num_rows(split)
+            for _ in range(len(result)):
+                result[_] = ['d'] * len(row)
+        rects2 = []
+        # the following code should use convert_one_label
+        for rect in rects:
+            if rect['class'] in label_mapper:
+                for t in label_mapper[rect['class']]:
+                    r2 = copy.deepcopy(rect)
+                    r2['class'] = t
+                    if rect['class'] != t:
+                        # keep this for logging
+                        r2['class_from'] = rect['class']
+                    rects2.append(r2)
+        row[1] = rects2
+        result[i] = row
+    return result
 
 def convert_label(label_tsv, idx, label_mapper, with_bb):
     tsv = TSVFile(label_tsv)
@@ -3397,7 +3440,12 @@ def create_trainX(train_ldtsi, extra_dtsi, tax, out_dataset,
                     dataset.name, split))
                 source_origin_label = dataset.get_label_tsv(split)
                 if not use_original_label:
-                    converted_label = convert_label(source_origin_label,
+                    #converted_label = convert_label(source_origin_label,
+                            #idx, dataset._sourcelabel_to_targetlabels,
+                            #with_bb=with_bb)
+                    converted_label = convert_label_by_dataset(
+                            dataset, split,
+                            dataset.get_version_by_split(split),
                             idx, dataset._sourcelabel_to_targetlabels,
                             with_bb=with_bb)
                     sources_origin_label.append(source_origin_label)
@@ -3439,7 +3487,95 @@ def create_trainX(train_ldtsi, extra_dtsi, tax, out_dataset,
         tsv_writer(shuffle_info,
                 out_dataset[label_type].get_shuffle_file('train'))
 
+        # expand nested trainX if needed
+        expand_nested_splitX(out_dataset[label_type].name, 'train')
+
     populate_output_num_images(train_ldtsik, 'toTrain', tax.root)
+
+def expand_nested_splitX(data, split):
+    dataset = TSVDataset(data)
+    if not dataset.has(split):
+        logging.info('{}-{} does not exist'.format(data, split))
+        return
+    if op.isfile(dataset.get_data(split)):
+        logging.info('{}/{}.tsv already exists'.format(data, split))
+        return
+    assert op.isfile(dataset.get_data(split + 'X'))
+
+    need_to_expand = False
+    src_data_splits = dataset.load_composite_source_data_split(split)
+    for src_data, src_split in src_data_splits:
+        src_dataset = TSVDataset(src_data)
+        if not op.isfile(src_dataset.get_data(src_split)):
+            assert op.isfile(src_dataset.get_data(src_split + 'X'))
+            need_to_expand = True
+            break
+    if not need_to_expand:
+        logging.info('no need to expand')
+        return
+
+    if not op.isfile(dataset.get_data(split, 'label')):
+        convertcomposite_to_standard(data, split, ignore_image=True)
+
+    cache_shuffle = {}
+    def get_shuffle(d, s):
+        if (d, s) in cache_shuffle:
+            return cache_shuffle[(d, s)]
+        else:
+            shuffle = [(int(i), int(j)) for i, j in
+                tsv_reader(TSVDataset(d).get_shuffle_file(s))]
+            cache_shuffle[(d, s)] = shuffle
+            return shuffle
+
+    cache_src_data_splits = {}
+    def get_src_data_splits(d, s):
+        if (d, s) in cache_src_data_splits:
+            return cache_src_data_splits[(d, s)]
+        else:
+            ssrc_data_splits = TSVDataset(d).load_composite_source_data_split(s)
+            cache_src_data_splits[(d, s)] = ssrc_data_splits
+            return ssrc_data_splits
+
+    cache_single_tsv = {}
+    def get_single(d, s):
+        if (d, s) in cache_single_tsv:
+            return cache_single_tsv[(d, s)]
+        else:
+            single = TSVDataset(d).get_data(s)
+            cache_single_tsv[(d, s)] = single
+            return single
+
+    cache_is_single = {}
+    def get_is_single(d, s):
+        if (d, s) in cache_is_single:
+            return cache_is_single[(d, s)]
+        else:
+            is_single = op.isfile(TSVDataset(d).get_data(s))
+            cache_is_single[(d, s)] = is_single
+            return is_single
+
+    def get_tsv_line(d, s, i):
+        single_tsv = get_is_single(d, s)
+        if single_tsv:
+            return get_single(d, s), i
+        else:
+            ssrc_data_splits = get_src_data_splits(d, s)
+            shuffle = get_shuffle(d, s)
+            idx_src, idx_row = shuffle[i]
+            src_d, src_s = ssrc_data_splits[idx_src]
+            return get_tsv_line(src_d, src_s, idx_row)
+
+    shuffle = get_shuffle(data, split)
+    all_tsv_idx = []
+    for idx_src, idx_row in shuffle:
+        ss_data, ss_split = src_data_splits[idx_src]
+        tsv, i = get_tsv_line(ss_data, ss_split, idx_row)
+        all_tsv_idx.append((tsv, i))
+    unique_tsvs = list(list_to_dict(all_tsv_idx, 0).keys())
+    tsv_to_idx = {t: i for i, t in enumerate(unique_tsvs)}
+    shuffle_result = [(tsv_to_idx[t], i) for t, i in all_tsv_idx]
+    tsv_writer(shuffle_result, dataset.get_shuffle_file(split))
+    write_to_file('\n'.join(unique_tsvs), dataset.get_data(split + 'X'))
 
 def create_testX_db(test_ldtsi, tax, out_dataset):
     t_to_ldsi = list_to_dict(test_ldtsi, 2)
@@ -3499,7 +3635,11 @@ def create_testX(test_ldtsi, tax, out_dataset):
                 sources.append(s_file)
                 source_origin_label = dataset.get_label_tsv(split)
                 sources_origin_label.append(source_origin_label)
-                converted_label = convert_label(source_origin_label,
+                #converted_label = convert_label(source_origin_label,
+                        #idx, dataset._sourcelabel_to_targetlabels,
+                        #with_bb=with_bb)
+                converted_label = convert_label_by_dataset(
+                        dataset, split, dataset.get_version_by_split(split),
                         idx, dataset._sourcelabel_to_targetlabels,
                         with_bb=with_bb)
                 for i in tqdm(idx):
@@ -3518,6 +3658,7 @@ def create_testX(test_ldtsi, tax, out_dataset):
         write_to_file('\n'.join(sources_origin_label),
                 out_dataset[label_type].get_data('testX', 'origin.label'))
         tsv_writer(all_ki, out_dataset[label_type].get_shuffle_file('test'))
+        expand_nested_splitX(out_dataset[label_type].name, 'test')
 
 def remove_or_duplicate_each_type(train_ldtsi, min_image, label_to_max_image):
     label_to_dtsi = list_to_dict(train_ldtsi, 0)
@@ -4412,6 +4553,7 @@ def build_taxonomy_from_single_source(source_data,
         min_image_per_label,
         out_data):
     populate_dataset_details(source_data)
+    populate_dataset_hw(source_data, ['train'])
     dataset = TSVDataset(source_data)
     label_to_idx = dataset.load_inverted_label(source_split,
             version=source_version)
@@ -4453,10 +4595,16 @@ def build_taxonomy_from_single_source(source_data,
     write_to_file(dataset.get_data('train', 'label', version=source_version),
             out_dataset.get_data('trainX', 'label'))
 
-def build_taxonomy_impl(taxonomy_folder, **kwargs):
+def build_taxonomy_impl(taxonomy_folder,
+        data, datas,
+        taxonomy=None,
+        num_test=50, max_image_per_label=1000,
+        min_image_per_label=200,
+        lift_train=False,
+        use_original_label=False,
+        **kwargs):
     random.seed(777)
-    dataset_name = kwargs.get('data',
-            op.basename(taxonomy_folder))
+    dataset_name = data
     overall_dataset = TSVDataset(dataset_name)
     if op.isfile(overall_dataset.get_labelmap_file()):
         logging.info('ignore to build taxonomy since {} exists'.format(
@@ -4464,8 +4612,11 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
         return
     init_logging()
     logging.info('building {}'.format(dataset_name))
-    all_tax = load_all_tax(taxonomy_folder)
-    tax = merge_all_tax(all_tax)
+    if taxonomy_folder is not None:
+        all_tax = load_all_tax(taxonomy_folder)
+        tax = merge_all_tax(all_tax)
+    else:
+        tax = Taxonomy(taxonomy)
     tax.update()
     initialize_images_count(tax.root)
     mapper = LabelToSynset()
@@ -4481,7 +4632,9 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
             'ambigous_noffsets.yaml')
     output_ambigous_noffsets(tax.root, ambigous_noffset_file)
 
-    data_infos = regularize_data_sources(kwargs['datas'])
+    if isinstance(datas, str):
+        datas = load_from_yaml_file(datas)
+    data_infos = regularize_data_sources(datas)
 
     data_sources = [TSVDatasetSource(root=tax.root, **d)
             for d in data_infos]
@@ -4496,13 +4649,17 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
     label_map_file = overall_dataset.get_labelmap_file()
     write_to_file('\n'.join(labels), label_map_file)
     # save the parameter
-    write_to_yaml_file((taxonomy_folder, kwargs), op.join(overall_dataset._data_root,
+    write_to_yaml_file(get_frame_info(),
+            op.join(overall_dataset._data_root,
             'generate_parameters.yaml'))
     dest_taxonomy_folder = op.join(overall_dataset._data_root,
             'taxonomy_folder')
     if op.isdir(dest_taxonomy_folder):
         shutil.rmtree(dest_taxonomy_folder)
-    shutil.copytree(taxonomy_folder, dest_taxonomy_folder)
+    if taxonomy_folder is not None:
+        shutil.copytree(taxonomy_folder, dest_taxonomy_folder)
+    else:
+        write_to_yaml_file(taxonomy, op.join(dest_taxonomy_folder, 'root.yaml'))
 
     out_dataset = {'with_bb': TSVDataset(dataset_name + '_with_bb'),
             'no_bb': TSVDataset(dataset_name + '_no_bb')}
@@ -4545,10 +4702,8 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
     # the image could be in the list twice
     ldtsi = list(set(ldtsi))
 
-    num_test = kwargs.get('num_test', 50)
-
     # for each label, let's duplicate the image or remove the image
-    default_max_image = kwargs.get('max_image_per_label', 1000)
+    default_max_image = max_image_per_label
     label_to_max_image = {n.name: n.__getattribute__('max_image_extract_for_train')
             if 'max_image_extract_for_train' in n.features and n.__getattribute__('max_image_extract_for_train') > default_max_image
             else default_max_image for n in tax.root.iter_search_nodes() if n != tax.root}
@@ -4558,7 +4713,7 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
     for l in labels:
         label_to_max_image['-' + l] = label_to_max_image[l]
     label_to_max_image[None] = 10000000000
-    min_image = kwargs.get('min_image_per_label', 200)
+    min_image = min_image_per_label
 
     logging.info('keep a small image pool to split')
     label_to_max_augmented_images = {l: label_to_max_image[l] * 3 for l in label_to_max_image}
@@ -4587,8 +4742,8 @@ def build_taxonomy_impl(taxonomy_folder, **kwargs):
 
     logging.info('creating the train data')
     create_trainX(train_ldtsi, extra_dtsi, tax, out_dataset,
-            lift_train=kwargs.get('lift_train', False),
-            use_original_label=kwargs.get('use_original_label', False))
+            lift_train=lift_train,
+            use_original_label=use_original_label)
 
     populate_output_num_images(test_ldtsi, 'toTest', tax.root)
 
@@ -4838,6 +4993,21 @@ def find_same_rects(target, rects, iou=0.95):
     same_class_rects = [r for r in rects if r['class'] == target['class']]
     return [r for r in same_class_rects if
         calculate_iou(target['rect'], r['rect']) > iou]
+
+def rects_diff(lefts, rights, iou=0.95):
+    result = []
+    for l in lefts:
+        if len(find_same_rects(l, rights, iou)) == 0:
+            result.append(l)
+    return result
+
+def rects_inter(lefts, rights, iou=0.95):
+    result = []
+    for l in lefts:
+        if len(find_same_rects(l, rights, iou)) > 0:
+            result.append(l)
+    return result
+
 
 def rect_in_rects(target, rects, iou=0.95):
     same_class_rects = [r for r in rects if r['class'] == target['class']]
@@ -5332,7 +5502,6 @@ def verify_prediction_by_db(pred_file, test_data, test_split, conf_th=0.3,
     logging.info('#task = {}; #exists in db = {}; #matched gt = {}; #num pri change = {}'.format(
         num_task, num_exists, num_matched_gt, num_change_pri))
 
-
 def convertcomposite_to_standard(data,
         split='train', ignore_image=False, **kwargs):
     dataset = TSVDataset(data)
@@ -5341,17 +5510,18 @@ def convertcomposite_to_standard(data,
         logging.info('file exists')
         return
     rows_image = dataset.iter_composite(split, t=None, version=None)
-    rows_label = dataset.iter_composite(split, t='label', version=None)
     num_image = dataset.num_rows(split)
     out_tsv = dataset.get_data(split)
     if not ignore_image:
         logging.info('writing image tsv: {}'.format(out_tsv))
+        rows_label = dataset.iter_data(split, t='label', version=None)
         tsv_writer(((row_label[0], row_label[1], row_image[2]) for row_image, row_label
                 in tqdm(zip(rows_image, rows_label), total=num_image)),
                 out_tsv)
-    logging.info('writing image label tsv')
-    rows = dataset.iter_composite(split, t='label', version=None)
-    tsv_writer(tqdm(rows), dataset.get_data(split, t='label'))
+    if not op.isfile(dataset.get_data(split, t='label')):
+        logging.info('writing image label tsv')
+        rows = dataset.iter_composite(split, t='label', version=None)
+        tsv_writer(tqdm(rows), dataset.get_data(split, t='label'))
 
 def gen_merged_candidate(prediction_file,
         gts, srclabel_to_destlabel=None, **kwargs):
@@ -5555,9 +5725,9 @@ def inject_accuracy_one(full_expid):
     for report_file in all_report:
         try:
             predict_file = find_predict_file(report_file, all_predict)
-        except:
-            logging.info('cannot find pred for {} from \n{}'.format(
-                report_file, '\n'.join(all_predict)))
+        except Exception as e:
+            logging.info('cannot find pred for {} from \n{}; erro = {}'.format(
+                report_file, '\n'.join(all_predict), e))
             continue
         from qd.qd_common import parse_test_data_with_version
         try:
@@ -5628,6 +5798,8 @@ def find_predict_file(report_file, all_predict):
             assert not found
             found = True
             result = p
+            return result
+    for p in all_predict:
         if p.endswith('.predict.tsv'):
             ps = p[: -len('.predict.tsv')]
         elif p.endswith('.predict'):
@@ -5665,7 +5837,6 @@ def softnms_row_process(row, sigma=0.5, method=2, Nt=0.5):
 def tsv_subset_process(info):
     row_processor = info['row_processor']
     idx_process = info['idx_process']
-    in_tsv_file = info['in_tsv_file']
     tmp_out = info['tmp_out']
     idx_range = info['idx_range']
     head = info['head']
@@ -5673,12 +5844,19 @@ def tsv_subset_process(info):
     if op.isfile(tmp_out):
         logging.info('skip since exist: {}'.format(tmp_out))
         return
+    if 'in_tsv' in info:
+        tsv = info['in_tsv']
+    else:
+        in_tsv_file = info['in_tsv_file']
+        tsv = TSVFile(in_tsv_file)
     def gen_rows():
         if idx_process == 0 and head is not None:
             yield head
-        tsv = TSVFile(in_tsv_file)
         for i in tqdm(idx_range):
-            yield row_processor(tsv[i])
+            r = row_processor(tsv[i])
+            if r is None:
+                continue
+            yield r
     tsv_writer(gen_rows(), tmp_out, sep=sep)
 
 def multi_tsv_subset_process(info):
@@ -5746,7 +5924,10 @@ def parallel_multi_tsv_process(row_processor, in_tsv_files,
 
 def parallel_tsv_process(row_processor, in_tsv_file,
         out_tsv_file, num_process, num_jobs=None, head=None, out_sep='\t'):
-    in_tsv = TSVFile(in_tsv_file)
+    if isinstance(in_tsv_file, str):
+        in_tsv = TSVFile(in_tsv_file)
+    else:
+        in_tsv = in_tsv_file
     total = len(in_tsv)
     if num_jobs is None:
         if num_process == 0:
@@ -5762,7 +5943,8 @@ def parallel_tsv_process(row_processor, in_tsv_file,
         tmp_out = out_tsv_file + '.{}.{}.tsv'.format(i, num_jobs)
         info = {'row_processor': row_processor,
                 'idx_process': i,
-                'in_tsv_file': in_tsv_file,
+                #'in_tsv_file': in_tsv_file,
+                'in_tsv': in_tsv,
                 'tmp_out': tmp_out,
                 'idx_range': list(range(start, end)),
                 'head': head,
@@ -6028,6 +6210,7 @@ def create_dataset_from_pred(pred_tsv, conf_th, src_data, out_data):
     ensure_copy_file(TSVDataset('coco2017Full').get_labelmap_file(),
         TSVDataset(out_data).get_labelmap_file())
     populate_dataset_details(out_data)
+    populate_dataset_hw(out_data, ['train'])
 
 def create_image_X_by_key(target_data, target_split, t):
     # given train.label.tsv where key is a composed key, we derive the
@@ -6091,19 +6274,251 @@ def create_tiny_set(data, out_data):
                                split='test',
                                t=t)
 
-def remove_size_in_label(data, split):
+def create_tsv_by_image_folder(folder, tsv_file,
+        max_short=1200):
+    from qd.qd_common import is_valid_image
+    from qd.qd_common import insensitive_glob
+    from qd.process_image import load_image
+    empty_label = json_dump([])
+    def gen_rows():
+        for ext in ['png', 'jpg', 'jpeg', 'JPG']:
+            pattern = '*.{}'.format(ext)
+            pattern = op.join(folder, pattern)
+            im_files = insensitive_glob(pattern)
+            for f in tqdm(im_files):
+                im = load_image(f)
+                if not is_valid_image(im):
+                    continue
+                if min(im.shape[:2]) > max_short:
+                    ratio = 1. * max_short / min(im.shape[:2])
+                    h = int(im.shape[0] * ratio)
+                    w = int(im.shape[1] * ratio)
+                    im = cv2.resize(im, (w, h))
+                    yield op.basename(f), empty_label, encoded_from_img(im)
+                else:
+                    yield op.basename(f), empty_label, base64.b64encode(read_to_buffer(f))
+    tsv_writer(gen_rows(), tsv_file)
+
+def create_versions_from_uncertain_label(data, split):
+    dataset = TSVDataset(data)
+    info = defaultdict(int)
+    assert not dataset.has(split, 'label', version=1)
+    assert not dataset.has(split, 'label', version=2)
+    def gen_rows():
+        iter_label = dataset.iter_data(split, 'label')
+        for key, str_rects in tqdm(iter_label):
+            rects = json.loads(str_rects)
+            for r in rects:
+                if r['class'].endswith('_?'):
+                    r['class'] = r['class'][:-2]
+                    info[r['class']] += 1
+            yield key, json_dump(rects)
+    def gen_info():
+        yield 'remove _? in class name', 'keep the boxes'
+        for k, v in info.items():
+            yield k, v
+    dataset.update_data(gen_rows(), split, 'label',
+            generate_info=gen_info())
+
+    info = defaultdict(int)
+    def gen_rows2():
+        iter_label = dataset.iter_data(split, 'label')
+        for key, str_rects in iter_label:
+            rects = json.loads(str_rects)
+            origin_num = len(rects)
+            info['original box'] += origin_num
+            if split == 'train':
+                rects = [r for r in rects if not r['class'].endswith('_?')]
+                info['removed'] += origin_num - len(rects)
+            else:
+                assert split == 'test'
+                for r in rects:
+                    if r['class'].endswith('_?'):
+                        r['class'] = r['class'][:-2]
+                        r['diff'] = 1
+                        info['new diff set'] += 1
+            yield key, json_dump(rects)
+    def gen_info2():
+        if split == 'train':
+            yield 'remove the box whose label ends with _?',
+        else:
+            assert split == 'test'
+            yield 'remove _? if the class ends with _?.', \
+                    'keep the box', \
+                    'add diff = 1'
+        for k, v in info.items():
+            yield k, v
+    dataset.update_data(gen_rows2(), split, 'label',
+            generate_info=gen_info2())
+
+def remove_size_in_label(data, split, version):
     dataset = TSVDataset(data)
     def gen_rows():
-        for key, str_rects in tqdm(dataset.iter_data(split, 'label')):
+        for key, str_rects in tqdm(dataset.iter_data(split, 'label',
+            version=version)):
             rects = json.loads(str_rects)
             assert len(rects) == 1
             c = rects[0]['class']
-            parts = c.split('_s_')
-            assert len(parts) in [1, 2]
-            rects[0]['class'] = parts[0]
+            assert not all(s in c for s in ['_s_', '_S_'])
+            for s in ['_s_', '_S_']:
+                parts = c.split('_s_')
+                assert len(parts) in [1, 2]
+                rects[0]['class'] = parts[0]
+                if len(parts) == 2:
+                    break
             yield key, json_dump(rects)
     dataset.update_data(gen_rows(), split, 'label',
         generate_info=[('remove size in the label', )])
+
+def crop_detbox(data, split, version, out_data=None, save_type=None):
+    dataset = TSVDataset(data)
+    iter_image = dataset.iter_data(split)
+    iter_label = dataset.iter_data(split, 'label', version=version)
+    labels = []
+    def gen_rows():
+        for (image_key, _, image_str), (label_key, str_rects) in tqdm(
+                zip(iter_image, iter_label)):
+            assert image_key == label_key
+            im = img_from_base64(image_str)
+            h, w = im.shape[:2]
+            rects = json.loads(str_rects)
+            for i, r in enumerate(rects):
+                x0, y0, x1, y1 = r['rect']
+                x0, y0 = int(x0), int(y0)
+                x1, y1 = math.ceil(x1), math.ceil(y1)
+                x0, y0 = max(0, x0), max(0, y0)
+                x1, y1 = min(x1, w), min(y1, h)
+                if x1 <= x0 or y1 <= y0:
+                    continue
+                sub = im[y0:y1, x0:x1, :]
+                del r['rect']
+                res_key = image_key + '${}'.format(i)
+                str_label = json_dump([r])
+                labels.append((res_key, str_label))
+                yield res_key, str_label, encoded_from_img(sub,
+                        save_type=save_type)
+    if out_data is None:
+        out_data = '{}_crop_{}{}'.format(data, split, version)
+    out_dataset = TSVDataset(out_data)
+    if out_dataset.has(split):
+        logging.info('{} - {} exists'.format(out_dataset.name,
+            split))
+        return
+    #assert not out_dataset.has(split)
+    out_dataset.write_data(gen_rows(), split)
+    out_dataset.write_data(labels, split, 'label')
+    populate_dataset_details(out_data)
+
+def create_single_class_detection_taxonomy(data, split, version, root_name,
+        excludes=None):
+    populate_dataset_details(data)
+    dataset = TSVDataset(data)
+    labels = [l for l, in dataset.iter_data(split, 'labelmap', version=version)]
+    if excludes is not None:
+        lower_label = [(l.lower(), l) for l in labels]
+        lower_to_labels = list_to_dict(lower_label, 0)
+        lower_excludes = [e.lower() for e in excludes]
+        for e in lower_excludes:
+            if e in lower_to_labels:
+                del lower_to_labels[e]
+        labels = [l for _, ls in lower_to_labels.items() for l in ls]
+    info = [{'name': root_name,
+            'alias_names': ','.join(labels)}]
+    return info
+
+def unflatten_to_detection(data, split, pred, output,
+        threshold=0.01):
+    dataset = TSVDataset(data)
+    iter_label = dataset.iter_data(split, 'label')
+    iter_pred = tsv_reader(pred)
+    def gen_rows():
+        pre_key = None
+        pre_rects = []
+        for (key, str_rects), (pred_key, pred_rects) in tqdm(zip(
+                iter_label, iter_pred)):
+            assert key == pred_key
+            idx = key.rfind('$')
+            real_key = key[:idx]
+            if real_key != pre_key:
+                if pre_key is not None:
+                    yield pre_key, json_dump(pre_rects)
+                pre_key = real_key
+                pre_rects = []
+            gt = json.loads(str_rects)
+            assert len(gt) == 1
+            gt = gt[0]
+            pred = json.loads(pred_rects)
+            for p in pred:
+                sub_gt = copy.deepcopy(gt)
+                sub_gt['class'] = p['class']
+                sub_gt['conf'] *= p['conf']
+                if sub_gt['conf'] > threshold:
+                    pre_rects.append(sub_gt)
+        yield pre_key, json_dump(pre_rects)
+    tsv_writer(gen_rows(), output)
+
+def flatten_labels_for_classification(image_data, image_split, label_tsv,
+        out_data, out_split):
+    input_argument = get_frame_info()
+    input_argument['func'] = 'flatten_labels_for_classification'
+
+    dataset = TSVDataset(image_data)
+
+    populate_dataset_hw(image_data, [image_split])
+
+    iter_hw = dataset.iter_data(image_split, 'hw')
+    if label_tsv is not None:
+        iter_label = tsv_reader(label_tsv)
+    else:
+        iter_label = dataset.iter_data(image_split, 'label')
+
+    all_idx = []
+    def gen_rows():
+        for idx_image, ((label_key, str_rects), (hw_key, str_hw)) in enumerate(
+                zip(iter_label, iter_hw)):
+            assert label_key == hw_key
+            h, w = map(int, str_hw.split(' '))
+            rects = json.loads(str_rects)
+            for i, r in enumerate(rects):
+                x1, y1, x2, y2 = r['rect']
+
+                # since it is for classification, it has to be a valid box.
+                # Here we do the fewest pre-processing/filtering to have a
+                # valid box coordinates
+                x1 = int(x1)
+                y1 = int(y1)
+                x2 = math.ceil(x2)
+                y2 = math.ceil(y2)
+
+                x1 = min(w, max(0, x1))
+                x2 = min(w, max(0, x2))
+                y1 = min(h, max(0, y1))
+                y2 = min(h, max(0, y2))
+
+                if y2 <= y1 or x2 <= x1:
+                    continue
+                r['rect'] = [x1, y1, x2, y2]
+                all_idx.append(idx_image)
+                yield label_key + '${}'.format(i), json_dump([r])
+    if out_data == None:
+        out_data = '{}_{}'.format(image_data,
+                hash_sha1(label_tsv)[-5:])
+    out_dataset = TSVDataset(out_data)
+    if op.isdir(out_dataset._data_root):
+        logging.info('{} exists'.format(out_dataset._data_root))
+        return out_data
+    out_dataset.write_data(gen_rows(), out_split, 'label')
+    tsv_writer(((0, i) for i in all_idx),
+            out_dataset.get_shuffle_file(out_split))
+    write_to_file(dataset.get_data(image_split), out_dataset.get_data(out_split
+        + 'X'))
+    readme_file = op.join(out_dataset._data_root, 'readme.yaml')
+
+    write_to_yaml_file(input_argument, readme_file)
+
+    expand_nested_splitX(out_data, out_split)
+
+    return out_data
 
 if __name__ == '__main__':
     from qd.qd_common import parse_general_args

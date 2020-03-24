@@ -155,6 +155,8 @@ def remote_python_run(func, kwargs, ssh_cmd, cmd_prefix=''):
 import matplotlib
 matplotlib.use(\'Agg\')
 if __name__ == '__main__':
+    from qd.qd_common import init_logging
+    init_logging()
     from {} import {}
     {}()
     '''.format(func_module, func.__name__, func.__name__)

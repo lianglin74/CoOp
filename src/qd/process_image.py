@@ -228,9 +228,14 @@ def draw_bb(im, all_rect, all_label,
                 font_scale,
                 font_thickness)
 
-def save_image(im, file_name):
+def save_image(im, file_name, quality=None):
     ensure_directory(os.path.dirname(file_name))
-    return cv2.imwrite(file_name, im)
+    if quality is None:
+        return cv2.imwrite(file_name, im)
+    else:
+        return cv2.imwrite(file_name, im, [int(cv2.IMWRITE_JPEG_QUALITY),
+            quality])
+
 
 def load_image(file_name):
     return cv2.imread(file_name)

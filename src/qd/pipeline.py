@@ -151,9 +151,7 @@ def try_inject_submit_info(job_info):
     db.insert_one('ongoingjob', **job_info)
 
 def philly_func_run(func, param, **submit_param):
-    from qd.philly import create_multi_philly_client
-    client = create_multi_philly_client(**submit_param)
-    philly_client = client.select_client_for_submit()
+    philly_client = create_philly_client(**submit_param)
     if 'data' in param.get('param', {}):
         ensure_upload_data_for_gpu_jobs(param['param']['data'], philly_client)
         # TODO: the following only uploads data to blob. implement to upload to
@@ -208,6 +206,15 @@ def except_to_update_classification_loss(param):
     else:
         return True
 
+def get_pred_file(full_expid, test_data, **kwargs):
+    param = {
+            'full_expid': full_expid,
+            'test_data': test_data,
+            }
+    param.update(kwargs)
+    pip = load_pipeline(**param)
+    result = pip._get_predict_file()
+    return result
 
 def except_to_update_random_scale_min(param):
     if dict_has_path(param, 'INPUT$FIXED_SIZE_AUG$RANDOM_SCALE_MIN'):
@@ -289,13 +296,10 @@ def generate_expid(param):
             ('classification_loss_type', '',
                 except_to_update_classification_loss),
             ('dataset_type', ''),
-            ('SOLVER$LR_POLICY', 'LRP', except_to_update_lr_policy),
             ('SOLVER$WARMUP_ITERS', 'Warm'),
             ('MODEL$ROI_BOX_HEAD$BOUNDINGBOX_LOSS_TYPE', '', except_to_update_bb_loss_type),
             ('MODEL$RESNETS$STEM_FUNC', '', {'default_value': 'StemWithFixedBatchNorm'}),
             ('MODEL$RESNETS$TRANS_FUNC', '', {'default_value': 'BottleneckWithFixedBatchNorm'}),
-            ('init_model_only', (None, 'Continue')),
-            ('MODEL$RESNETS$USE_SE', ('SE', None)),
             ('SOLVER$GAMMA', 'Gamma'),
             ('use_apex_ddp', ('ADDP', None)),
             ('SOLVER$STEPS', 'S'),
@@ -388,7 +392,11 @@ def generate_expid(param):
                     continue
                 action_type = setting['action_type']
                 if action_type == 'keyword':
-                    infos.append('{}{}'.format(setting['non_default_hint'], pk))
+                    if isinstance(pk, tuple) or isinstance(pk, list):
+                        infos.append('{}{}'.format(setting['non_default_hint'],
+                            '.'.join(map(str, pk))))
+                    else:
+                        infos.append('{}{}'.format(setting['non_default_hint'], pk))
                 elif action_type == 'bool':
                     infos.append(setting['non_default_hint'])
                 else:
@@ -475,7 +483,7 @@ def pipeline_train_eval_multi(all_test_data, param, **kwargs):
     init_logging()
     curr_param = copy.deepcopy(param)
     if len(all_test_data) > 0:
-        curr_param.update(all_test_data[0])
+        dict_update_nested_dict(curr_param, all_test_data[0])
     pip = create_pipeline(curr_param)
     pip.ensure_train()
     param['full_expid'] = pip.full_expid

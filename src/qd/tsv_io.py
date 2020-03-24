@@ -638,6 +638,8 @@ def tsv_writer(values, tsv_file_name, sep='\t'):
     tsv_lineidx_file_tmp = tsv_lineidx_file + '.tmp'
     import sys
     is_py2 = sys.version_info.major == 2
+    if not is_py2:
+        sep = sep.encode()
     with open(tsv_file_name_tmp, 'wb') as fp, open(tsv_lineidx_file_tmp, 'w') as fpidx:
         assert values is not None
         for value in values:
@@ -645,8 +647,9 @@ def tsv_writer(values, tsv_file_name, sep='\t'):
             if is_py2:
                 v = sep.join(map(lambda v: v.encode('utf-8') if isinstance(v, unicode) else str(v), value)) + '\n'
             else:
-                v = sep.join(map(lambda v: v.decode() if type(v) == bytes else str(v), value)) + '\n'
-                v = v.encode()
+                value = map(lambda v: v if type(v) == bytes else str(v).encode(),
+                        value)
+                v = sep.join(value) + b'\n'
             fp.write(v)
             fpidx.write(str(idx) + '\n')
             idx = idx + len(v)

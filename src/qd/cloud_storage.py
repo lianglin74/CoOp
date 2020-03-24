@@ -49,21 +49,25 @@ def get_to_copy_file_for_qdoutput(src_path, dest_path):
     # upload all the files under src_path
     to_copy = []
     all_src_file = glob.glob(op.join(src_path, '*'))
+    exclude_suffix = ['txt', 'zip']
     for f in all_src_file:
-        if op.isfile(f):
+        if op.isfile(f) and not any(f.endswith(s) for s in exclude_suffix):
             to_copy.append((f, op.join(dest_path, op.basename(f))))
 
     # for the model and the tested files, only upload the best
     all_src_file = glob.glob(op.join(src_path, 'snapshot',
         'model_iter_*.caffemodel'))
+    all_src_file.extend(glob.glob(op.join(src_path, 'snapshot',
+        'model_iter_*.pt')))
     all_iter = [parse_iteration(f) for f in all_src_file]
     max_iters = max(all_iter)
     need_copy_files = [f for f, i in zip(all_src_file, all_iter) if i == max_iters]
     dest_snapshot = op.join(dest_path, 'snapshot')
     for f in need_copy_files:
         to_copy.append((f, op.join(dest_snapshot, op.basename(f))))
-        f = f.replace('.caffemodel', '.solverstate')
-        to_copy.append((f, op.join(dest_snapshot, op.basename(f))))
+        if f.endswith('.caffemodel'):
+            f = f.replace('.caffemodel', '.solverstate')
+            to_copy.append((f, op.join(dest_snapshot, op.basename(f))))
     return to_copy
 
 def blob_upload(src, dst, c=None):
@@ -359,8 +363,12 @@ class CloudStorage(object):
             need_download_blobs.remove(t)
         need_download_blobs = [t for t in need_download_blobs
             if not t.endswith('.tmp')]
-        for f in tqdm(need_download_blobs):
-            target_f = f.replace(src_path, target_folder)
+        f_target_f = [(f, f.replace(src_path, target_folder)) for f in
+            need_download_blobs]
+        f_target_f = [(f, target_f) for f, target_f in f_target_f if not op.isfile(target_f)]
+
+
+        for f, target_f in tqdm(f_target_f):
             if not op.isfile(target_f):
                 if len(f) > 0:
                     logging.info('download {} to {}'.format(f, target_f))

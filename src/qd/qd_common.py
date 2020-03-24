@@ -208,11 +208,11 @@ def float_tolorance_equal(d1, d2, check_order=True):
         else:
             return d1 == d2
     elif type(d1) is np.ndarray:
-        try:
-            return np.abs(d1[:] - d2[:]).sum() < 1e-5 * np.abs(d1[:]).sum()
-        except:
-            logging.info('size might not be the same; d1 = {}; d2 = {}'.format(d1.shape, d2.shape))
+        if not float_tolorance_equal(d1.shape, d2.shape, check_order=True):
             return False
+        return np.absolute(d1 - d2).sum() <= 1e-5 * np.absolute(d1).sum()
+    elif type(d1) in [np.float64]:
+        return np.absolute(d1 - d2).sum() <= 1e-5 * np.absolute(d1).sum()
     else:
         import torch
         if type(d1) is torch.Tensor:
@@ -310,7 +310,7 @@ def compile_by_docker(src_zip, docker_image, dest_zip):
 def zip_qd(out_zip):
     ensure_directory(op.dirname(out_zip))
     cmd = ['zip',
-            '-yrv',
+            '-uyrv',
             out_zip,
             '*',
             '-x',
@@ -381,8 +381,10 @@ def limited_retry_agent(num, func, *args, **kwargs):
     for i in range(num):
         try:
             return func(*args, **kwargs)
-        except:
-            logging.info('fails: tried {}-th time'.format(i + 1))
+        except Exception as e:
+            logging.info('fails with \n{}: tried {}-th time'.format(
+                e,
+                i + 1))
             import time
             print_trace()
             if i == num - 1:
@@ -411,11 +413,13 @@ def get_current_time_as_str():
 
 def iter_swap_param_simple(swap_params):
     if isinstance(swap_params, dict):
-        swap_params = [(k, v) for k, v in swap_params.items()]
+        swap_params = [[k, v] for k, v in swap_params.items()]
     num = len(swap_params)
+    for p in swap_params:
+        if type(p[1]) is not list and type(p[1]) is not tuple:
+            p[1] = [p[1]]
     counts = [len(p[1]) for p in swap_params]
     assert all(c > 0 for c in counts)
-    assert all(type(p[1]) is list or type(p[1]) is tuple for p in swap_params)
     idx = [0] * num
 
     while True:
@@ -433,14 +437,16 @@ def iter_swap_param_simple(swap_params):
                 if i == 0:
                     return
 
-@deprecated('use iter_swap_param_simple')
+@deprecated('use iter_swap_param_simple without passing complex key')
 def iter_swap_param(swap_params):
     if isinstance(swap_params, dict):
         swap_params = [(k, v) for k, v in swap_params.items()]
     num = len(swap_params)
+    for p in swap_params:
+        if type(p[1]) is not list and type(p[1]) is not tuple:
+            p[1] = [p[1]]
     counts = [len(p[1]) for p in swap_params]
     assert all(c > 0 for c in counts)
-    assert all(type(p[1]) is list or type(p[1]) is tuple for p in swap_params)
     idx = [0] * num
 
     while True:
@@ -561,7 +567,8 @@ def cmd_run(list_cmd, return_output=False, env=None,
 
 def parallel_imap(func, all_task, num_worker=16):
     if num_worker > 0:
-        from multiprocessing import Pool
+        #from multiprocessing import Pool
+        from pathos.multiprocessing import Pool
         m = Pool(num_worker)
         result = []
         for x in tqdm(m.imap(func, all_task), total=len(all_task)):
@@ -621,6 +628,27 @@ def url_to_file_by_curl(url, fname, bytes_start=None, bytes_end=None):
     else:
         raise NotImplementedError
 
+def url_to_bytes(url):
+    try:
+        fp = urlopen(url, timeout=30)
+        buf = fp.read()
+        real_url = fp.geturl()
+        if real_url != url and (not real_url.startswith('https') or
+                real_url.replace('https', 'http') != url):
+            logging.info('new url = {}; old = {}'.format(fp.geturl(), url))
+            # the image gets redirected, which means the image is not available
+            return None
+        return buf
+    except HTTPError as err:
+        logging.error("url: {}; error code {}; message: {}".format(
+            url, err.code, err.msg))
+        return None
+    except:
+        import traceback
+        logging.error("url: {}; unknown {}".format(
+            url, traceback.format_exc()))
+        return None
+
 def url_to_str(url):
     try:
         fp = urlopen(url, timeout=30)
@@ -667,8 +695,12 @@ def str_to_image(buf):
     im = cv2.imdecode(image, cv2.IMREAD_COLOR)
     return im
 
+def bytes_to_image(bs):
+    image = np.asarray(bytearray(bs), dtype='uint8')
+    return cv2.imdecode(image, cv2.IMREAD_COLOR)
+
 def url_to_image(url):
-    buf = url_to_str(url)
+    buf = url_to_bytes(url)
     if buf is None:
         return None
     else:
@@ -756,6 +788,9 @@ def request_by_browser(url):
     driver = webdriver.Chrome(options=chrome_options)
     driver.get(url)
     soup = bs4.BeautifulSoup(driver.page_source, features='lxml')
+    # if we return immediately, the page_source might not be ready
+    time.sleep(1)
+    soup = bs4.BeautifulSoup(driver.page_source, features='lxml')
     return soup
 
 def iter_bing_visual_search(query_url, origin_url=True):
@@ -765,35 +800,40 @@ def iter_bing_visual_search(query_url, origin_url=True):
     #format_str += '&count=10'
     bing_url = format_str.format(query_url)
     soup = request_by_browser(bing_url)
-    for i, container in enumerate(soup.find_all(class_='richImage relImg')):
-        # one container has one image and one caption container. we will
-        # extract the image and the caption, which might be helpful in the
-        # future
-        info = {'rank': i}
-        # original url
-        if origin_url:
-            imgs = container.find_all(class_='richImgLnk')
-            if len(imgs) == 1:
-                img = imgs[0]
-                url = 'http://www.bing.com/images/search' + img.attrs['href']
-                result = request_by_browser(url)
-                imgs = result.find_all(alt='See the source image')
+    html_keywords = ['richImage relImg', 'richImage relProd flyout']
+    alts = ['See related image detail', 'See related product detail']
+    caption_classes = ['span', 'a']
+    for html_key_word, alt, caption_class in zip(html_keywords, alts, caption_classes):
+        for i, container in enumerate(soup.find_all(class_= html_key_word)):
+            # one container has one image and one caption container. we will
+            # extract the image and the caption, which might be helpful in the
+            # future
+            info = {'rank': i}
+            info['html_keyword'] = html_key_word
+            # original url
+            if origin_url:
+                imgs = container.find_all(class_='richImgLnk')
                 if len(imgs) == 1:
                     img = imgs[0]
-                    url = img.attrs['src']
-                    info['url'] = url
+                    url = 'http://www.bing.com/images/search' + img.attrs['href']
+                    result = request_by_browser(url)
+                    imgs = result.find_all(alt='See the source image')
+                    if len(imgs) == 1:
+                        img = imgs[0]
+                        url = img.attrs['src']
+                        info['url'] = url
 
-        # bing cache image
-        imgs = container.find_all('img', alt='See related image detail')
-        if len(imgs) == 1:
-            bing_cache_url = 'http://www.bing.com' + imgs[0].attrs['src']
-            info['bing_cache_url'] = bing_cache_url
+            # bing cache image
+            imgs = container.find_all('img', alt=alt)
+            if len(imgs) == 1:
+                bing_cache_url = 'http://www.bing.com' + imgs[0].attrs['src']
+                info['bing_cache_url'] = bing_cache_url
 
-        captions = container.find_all('span', class_='tit')
-        if len(captions) == 1:
-            cap = captions[0]
-            info['caption'] = cap.text
-        yield info
+            captions = container.find_all(caption_class, class_='tit')
+            if len(captions) == 1:
+                cap = captions[0]
+                info['caption'] = cap.text
+            yield info
 
 def scrape_bing_general(query_term, depth):
     '''
@@ -1539,10 +1579,23 @@ def ensure_directory(path):
         assert op.isdir(op.abspath(path)), path
 
 def parse_pattern(pattern, s):
+    result = parse_pattern_as_is(pattern, s)
+    if result is None:
+        return
+    return [float(g) for g in result]
+
+def parse_pattern_as_is(pattern, s):
     result = re.search(pattern, s)
     if result is None:
         return result
-    return [float(g) for g in result.groups()]
+    return [g for g in result.groups()]
+
+def iter_match_document(pattern, fname):
+    for line in read_lines(fname):
+        result = parse_pattern_as_is(pattern, line)
+        if result is None:
+            continue
+        yield result
 
 def parse_yolo_log(log_file):
     pattern = 'loss_xy: ([0-9, .]*); loss_wh: ([0-9, .]*); '
@@ -2026,11 +2079,15 @@ class FileProgressingbar:
     def update(self):
         self.pbar.update(self.fileobj.tell())
 
-def encoded_from_img(im, quality=None):
+def encoded_from_img(im, quality=None, save_type=None):
+    if save_type is None:
+        save_type = 'jpg'
+    assert save_type in ['jpg', 'png']
     if quality:
-        x = cv2.imencode('.jpg', im, (cv2.IMWRITE_JPEG_QUALITY, quality))[1]
+        x = cv2.imencode('.{}'.format(save_type), im,
+                (cv2.IMWRITE_JPEG_QUALITY, quality))[1]
     else:
-        x = cv2.imencode('.jpg', im)[1]
+        x = cv2.imencode('.{}'.format(save_type), im)[1]
     return base64.b64encode(x)
 
 def encode_image(im, quality=None):
@@ -2040,6 +2097,9 @@ def encode_image(im, quality=None):
         x = cv2.imencode('.jpg', im)[1]
     return x.tobytes()
 
+def is_valid_image(im):
+    return im is not None and all(x != 0 for x in im.shape)
+
 def img_from_base64(imagestring):
     try:
         jpgbytestring = base64.b64decode(imagestring)
@@ -2048,6 +2108,14 @@ def img_from_base64(imagestring):
         return r
     except:
         return None;
+
+def img_from_bytes(jpgbytestring):
+    try:
+        nparr = np.frombuffer(jpgbytestring, np.uint8)
+        r = cv2.imdecode(nparr, cv2.IMREAD_COLOR);
+        return r
+    except:
+        return None
 
 def img_from_base64_ignore_rotation(str_im):
     jpgbytestring = base64.b64decode(str_im)
@@ -2264,13 +2332,19 @@ def plot_distribution(x, y, color=None, fname=None):
         plt.show()
 
 def run_if_not_cached(func, *args, **kwargs):
+    force = False
+    if '__force' in kwargs:
+        if kwargs['__force']:
+            force = True
+        del kwargs['__force']
+
     import pickle as pkl
-    key = hash_sha1(pkl.dumps(OrderedDict({'arg': args, 'kwargs': kwargs, 'func_name':
-        func.__name__})))
+    key = hash_sha1(pkl.dumps(OrderedDict({'arg': pformat(args), 'kwargs':
+        pformat(kwargs), 'func_name': func.__name__})))
     cache_folder = op.expanduser('./output/run_if_not_cached/')
     cache_file = op.join(cache_folder, key)
 
-    if op.isfile(cache_file):
+    if op.isfile(cache_file) and not force:
         logging.info('loading {}'.format(cache_file))
         return pkl.loads(read_to_buffer(cache_file))
     else:
@@ -2288,6 +2362,8 @@ def convert_to_command_line(param, script):
     return result
 
 def print_table(a_to_bs, all_key=None, latex=False, **kwargs):
+    if len(a_to_bs) == 0:
+        return
     if not latex:
         all_line = get_table_print_lines(a_to_bs, all_key)
         logging.info('\n{}'.format('\n'.join(all_line)))
@@ -2563,7 +2639,9 @@ def build_speed_tree(component_speeds):
 
 def get_vis_str(component_speeds):
     roots = build_speed_tree(component_speeds)
-    assert len(roots) == 1
+    if len(roots) == 0:
+        return ''
+    assert len(roots) == 1, roots
     root = roots[0]
     for n in root.iter_search_nodes():
         n.global_avg_in_ms = round(1000. * n.global_avg, 1)
@@ -2775,6 +2853,15 @@ class DummyCfg(object):
     def clone(self):
         return
 
+def get_frame_info():
+    import inspect
+    frame = inspect.currentframe()
+    frames = inspect.getouterframes(frame)
+    frame = frames[1].frame
+    args, _, _, vs = inspect.getargvalues(frame)
+    info = {i: vs[i] for i in args}
+    return info
+
 def print_frame_info():
     import inspect
     frame = inspect.currentframe()
@@ -2797,7 +2884,8 @@ def merge_speed_info(speed_yamls, out_yaml):
 
 def merge_speed_vis(vis_files, out_file):
     from qd.qd_common import ensure_copy_file
-    ensure_copy_file(vis_files[0], out_file)
+    if len(vis_files) > 0 and op.isfile(vis_files[0]):
+        ensure_copy_file(vis_files[0], out_file)
 
 def merge_dict_to_cfg(dict_param, cfg):
     """merge the key, value pair in dict_param into cfg
@@ -2821,6 +2909,74 @@ def merge_dict_to_cfg(dict_param, cfg):
     trim_dict(trimed_param, cfg)
     from yacs.config import CfgNode
     cfg.merge_from_other_cfg(CfgNode(trimed_param))
+
+def execute_func(info):
+    # info = {'from': module; 'import': func_name, 'param': dict}
+    from importlib import import_module
+    modules = import_module(info['from'])
+    return getattr(modules, info['import'])(**info['param'])
+
+def detect_error_codes(log_file):
+    all_line = read_to_buffer(log_file).decode().split('\n')
+    error_codes = []
+    for _, line in enumerate(all_line):
+        if "raise RuntimeError('NaN encountered!')" in line:
+            error_codes.append('NaN')
+    return list(set(error_codes))
+
+def insensitive_glob(pattern):
+    def either(c):
+        return '[%s%s]' % (c.lower(), c.upper()) if c.isalpha() else c
+    return glob.glob(''.join(map(either, pattern)))
+
+def list_dir(folder):
+    return [f for f in os.listdir(folder) if op.isdir(op.join(folder, f))]
+
+def replace_place_holder(p, place_holder):
+    if isinstance(p, dict):
+        for k, v in p.items():
+            if type(v) == str and v.startswith('$'):
+                p[k] = place_holder[v]
+            else:
+                replace_place_holder(v, place_holder)
+    elif isinstance(p, list) or isinstance(p, tuple):
+        for i, x in enumerate(p):
+            if isinstance(x, str) and x.startswith('$'):
+                p[i] = place_holder[x]
+            else:
+                replace_place_holder(x, place_holder)
+
+def execute_pipeline(all_processor):
+    only_processors = [p for p in all_processor if p.get('only')]
+    need_check_processors = only_processors if len(only_processors) > 0 else all_processor
+    result = []
+    place_holder = {}
+    for p in need_check_processors:
+        if p.get('ignore', False):
+            #result.append(None)
+            continue
+        replace_place_holder(p, place_holder)
+        #if p.get('create_1cls_det') == 'create_1cls_det':
+            #import ipdb;ipdb.set_trace(context=15)
+        if p.get('force', False):
+            r = run_if_not_cached(execute_func, p['execute'],
+                    __force=True)
+        else:
+            r = run_if_not_cached(execute_func, p['execute'])
+        if 'output' in p:
+            place_holder['$' + p['output']] = r
+        else:
+            if r is not None:
+                result.append((p, r))
+    return result
+
+def remove_empty_keys_(ds):
+    keys = set([k for d in ds for k in d])
+    empty_keys = [k for k in keys if all(d.get(k) is None for d in ds)]
+    for k in empty_keys:
+        for d in ds:
+            if k in d:
+                del d[k]
 
 if __name__ == '__main__':
     init_logging()

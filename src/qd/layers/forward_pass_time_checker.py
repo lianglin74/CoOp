@@ -28,6 +28,7 @@ class MeanSigmaMetricLogger(object):
             result.append({'name': name,
                 'global_avg': mean_meter.global_avg,
                 'median': mean_meter.median,
+                'count': mean_meter.count,
                 'sigma': key_to_sigma[name]})
         return result
 
@@ -78,7 +79,9 @@ class ForwardPassTimeChecker(torch.nn.Module):
 
         result = self.module(*args, **kwargs)
         if self.skip <= 0:
-            for m, c in self.module_costs:
+            module_to_costs = list_to_dict(self.module_costs, 0)
+            for m, cs in module_to_costs.items():
+                c = sum(cs)
                 name = self.module_to_name[m]
                 self.meters.update(**{name: c})
         else:
