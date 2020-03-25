@@ -1,0 +1,34 @@
+#- - param_template: YoloV2PtPipeline
+  #- net: darknet19_448
+    #expid_prefix: YoloV2Pt2
+    #basemodel: ./output/Tax1300V14.4_0.0_0.0_darknet19_448_C_Init.best_model6933_maxIter.10eEffectBatchSize128LR7580_bb_only_yolov2pt/snapshot/model_iter_139900.pt
+    #num_extra_convs: 2
+    #effective_batch_size: 128
+    #max_iter: 10e
+    #pipeline_type: YoloV2PtPipeline
+    #yolo_train_session_param$data_augmentation$box_data_param$max_trials: 50
+    #yolo_train_session_param$data_augmentation$box_data_param$max_boxes: 1000
+    #yolo_train_session_param$use_maskrcnn_sampler: true
+    #
+- - param_template: YoloV2PtPipeline
+    data: product_SKU110K
+  - test_input_size: 800
+
+#- - param_template: YoloV2PtPipeline
+  #- net: darknet19_448
+    ##expid_prefix: YBM
+    #expid_prefix: YM
+    ##basemodel: ./output/Tax1300V14.4_0.0_0.0_darknet19_448_C_Init.best_model6933_maxIter.10eEffectBatchSize128LR7580_bb_only_yolov2pt/snapshot/model_iter_139900.pt
+    ##basemodel: ./output/GeneralODCaffeModelToYoloByMask/snapshot/model_iter_0.pt
+    ##basemodel: ./output/GeneralODCaffeModelToYoloByMask/snapshot/0_seen_image.pt
+    ##basemodel: ./models/pytorch/darknet_3extraconv.pt
+    #basemodel: ./output/imagenet_models/snapshot/darknet_3extraconv.pt
+
+    ##basemodel: ./output/darknet19_yolo_by_mask/snapshot/model_iter_0.pt
+    #num_extra_convs: 2
+    #effective_batch_size: 128
+    #max_iter: 10e
+    #pipeline_type: YoloV2PtPipeline
+    ##yolo_train_session_param$data_augmentation$box_data_param$max_trials: 50
+    ##yolo_train_session_param$data_augmentation$box_data_param$max_boxes: 1000
+    ##yolo_train_session_param$use_maskrcnn_sampler: true

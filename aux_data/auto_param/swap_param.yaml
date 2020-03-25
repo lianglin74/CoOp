@@ -1,0 +1,26 @@
+- pipeline_type:
+    - MaskRCNNPipeline
+  net:
+      #- e2e_faster_rcnn_R_34_FPN_fast_tb
+      #- e2e_faster_rcnn_R_34_FPN_1x_tb
+      #- e2e_faster_rcnn_R_50_FPN_1x_tb
+      #- e2e_faster_rcnn_X_101_32x8d_FPN_1x_tb
+      #- e2e_faster_rcnn_X_101_32x8d_FPN_1x_tb_SE
+    - e2e_faster_rcnn_X_152_32x8d_FPN_1x_tb
+    #- retinanet_R-50-FPN_1x
+    #- retinanet_R-50-FPN_P5_1x
+    #- retinanet_R-101-FPN_1x
+    #- retinanet_X_101_32x8d_FPN_1x
+  max_iter:
+    - 10e
+      #- 20e
+      #- 40e
+  #base_lr:
+    #- 0.02
+    #- 0.01
+  #SOLVER$WEIGHT_DECAY:
+    #- 1e-4
+    #- 5e-5
+    #- 1e-5
+    #- 5e-6
+

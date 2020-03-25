@@ -1,0 +1,237 @@
+- - data: coco2017Full
+  - evaluate_method: coco_box
+- - data: OpenImageV5C
+  - evaluate_method: neg_aware_gmap
+    apply_nms_gt: false
+- - data: TaxOI5CV1_1_5k_28
+    net: e2e_faster_rcnn_R_50_FPN_1x
+    param_template: maskrcnn_benchmark
+  - base_lr: 0.02
+    effective_batch_size: 16
+    images_per_gpu: 4
+    #init_full_expid: TaxOI5CV1_1_5k_27_e2e_faster_rcnn_R_50_FPN_1x_M_basemodel9cc37_RemoveEmptyFalse_BS256_MaxIter19628_LR0.08_IBCE0.1_0.9_1_ClsOnly_MultiHot_WD2e-05_RGB_Inpbilinear
+    max_iter: 1884350
+    MaskTSVDataset$multi_hot_label: True
+    MODEL$BACKBONE$FREEZE_CONV_BODY_AT: 0
+    bgr2rgb: True
+    MODEL$FPN$INTERPOLATE_MODE: bilinear
+    SOLVER$WEIGHT_DECAY: 0.00002
+- - data: TaxOI5CV1_1_5k_with_bb
+    net: e2e_faster_rcnn_R_50_FPN_1x
+    param_template: maskrcnn_benchmark
+  - base_lr: 0.02
+    effective_batch_size: 16
+    images_per_gpu: 4
+    max_iter: 1884350
+    MaskTSVDataset$multi_hot_label: True
+
+- - data: TaxOI5CV1_1_5k_27
+    net: e2e_faster_rcnn_R_50_FPN_1x
+    param_template: maskrcnn_benchmark
+  - base_lr: 0.002
+    effective_batch_size: 16
+    images_per_gpu: 4
+    init_full_expid: TaxOI5CV1_1_5k_27_e2e_faster_rcnn_R_50_FPN_1x_M_basemodel9cc37_RemoveEmptyFalse_BS256_MaxIter19628_LR0.08_IBCE0.1_0.9_1_ClsOnly_MultiHot_WD2e-05_RGB_Inpbilinear
+    max_iter: 314058
+    MaskTSVDataset$multi_hot_label: True
+    MODEL$BACKBONE$FREEZE_CONV_BODY_AT: 0
+    bgr2rgb: True
+    MODEL$FPN$INTERPOLATE_MODE: bilinear
+    SOLVER$WEIGHT_DECAY: 0.00002
+
+- - data: TaxOI5CV1_1_5k_27
+    net: e2e_faster_rcnn_R_50_FPN_1x
+    param_template: maskrcnn_cls_only
+  - base_lr: 0.02
+    effective_batch_size: 16
+    images_per_gpu: 4
+    #basemodel: ./output/OpenImageV5C_e2e_faster_rcnn_R_50_FPN_1x_M_Xi/snapshot/model_iter_0000001.pt.remove_bkg0.1.pt
+    basemodel: ./output/OpenImageV5C_e2e_faster_rcnn_R_50_FPN_1x_M_Xi/snapshot/model_iter_0000001.pt.remove_bkg0.01.pt
+    max_iter: 314058
+    opt_cls_only: True
+    MaskTSVDataset$multi_hot_label: True
+    bgr2rgb: True
+    MODEL$FPN$INTERPOLATE_MODE: bilinear
+    SOLVER$WEIGHT_DECAY: 0.00002
+
+- - param_template: maskrcnn_cls_only
+    net: e2e_faster_rcnn_R_50_FPN_1x
+  - base_lr: 0.02
+    effective_batch_size: 16
+    images_per_gpu: 4
+    #basemodel: ./output/OpenImageV5C_e2e_faster_rcnn_R_50_FPN_1x_M_Xi/snapshot/model_iter_0000001.pt.remove_bkg0.1.pt
+    basemodel: ./output/OpenImageV5C_e2e_faster_rcnn_R_50_FPN_1x_M_Xi/snapshot/model_iter_0000001.pt.remove_bkg0.01.pt
+    max_iter: 314058
+    opt_cls_only: True
+    MaskTSVDataset$multi_hot_label: True
+    bgr2rgb: True
+    MODEL$FPN$INTERPOLATE_MODE: bilinear
+
+- - param_template: maskrcnn_cls_only
+    net: e2e_faster_rcnn_X_152_32x8d_FPN_1x
+  - base_lr: 0.0025
+    effective_batch_size: 4
+    max_iter: 314058
+    basemodel: ./output/OpenImageV5C_e2e_faster_rcnn_X_152_32x8d_FPN_1x_M_Xi/snapshot/model_iter_0000001.pt.remove_bkg0.01.pt
+    #init_full_expid: TaxOI5CV1_1_5k_27_e2e_faster_rcnn_X_152_32x8d_FPN_1x_M_basemodele4e28_RemoveEmptyFalse_BS32_MaxIter39257_LR0.0025_IBCE0.1_0.9_1_ClsOnly_MultiHot_NoARG_WD2e-05_RGB_Inpbilinear
+    opt_cls_only: True
+    MaskTSVDataset$multi_hot_label: True
+    bgr2rgb: True
+    MODEL$FPN$INTERPOLATE_MODE: bilinear
+    images_per_gpu: 1
+    SOLVER$WEIGHT_DECAY: 0.00002
+
+- - param_template: maskrcnn_benchmark
+    data: coco2017Full
+    net: e2e_faster_rcnn_R_34_FPN_fast_tb
+  - base_lr: 0.02
+    effective_batch_size: 16
+    images_per_gpu: 4
+    max_iter: 90000
+
+- - data: TaxVehicleV1_1_with_bb
+    net: e2e_faster_rcnn_R_34_FPN_fast_tb
+  - base_lr: 0.02
+    effective_batch_size: 16
+    images_per_gpu: 4
+    max_iter: 20e
+
+- - data: TaxOI5CV1_1_5k_with_bb
+    net: e2e_faster_rcnn_X_101_32x8d_FPN_1x
+    with_dcn: True
+    param_template: maskrcnn_benchmark
+  - basemodel: output/TaxOI5CV1_1_5k_with_bb_e2e_faster_rcnn_X_101_32x8d_FPN_1x_M_RemoveEmptyFalse_BS32_MaxIter90000000_LR0.02_IBCE0.1_0.9_1_DCN_MultiHot_Gamma1.0/snapshot/model_0032500.pth
+    base_lr: 0.04
+    bgr2rgb: False
+    effective_batch_size: 64
+    MaskTSVDataset$multi_hot_label: True
+    max_iter: 471087
+    images_per_gpu: 2
+
+- - data: TaxOI5CV1_1_5k_with_bb
+    net: e2e_faster_rcnn_X_101_32x8d_FPN_1x_tb
+    with_dcn: true
+    param_template: maskrcnn_benchmark
+  - base_lr: 0.01
+    effective_batch_size: 8
+    images_per_gpu: 2
+    max_iter: 3768672
+    MaskTSVDataset$multi_hot_label: True
+    MODEL$FPN$INTERPOLATE_MODE: bilinear
+
+
+- - data: TaxOI5CV1_1_5k_with_bb
+    net: e2e_faster_rcnn_X_101_32x8d_FPN_1x
+    param_template: maskrcnn_benchmark
+  - base_lr: 0.08
+    bgr2rgb: False
+    effective_batch_size: 128
+    images_per_gpu: 2
+    MaskTSVDataset$multi_hot_label: True
+    max_iter: 235543
+
+- - data: TaxOI5CV1_1_5k_with_bb
+    net: e2e_faster_rcnn_X_101_32x8d_FPN_1x
+    param_template: maskrcnn_continous
+  - basemodel: output/TaxOI5CV1_1_5k_with_bb_e2e_faster_rcnn_X_101_32x8d_FPN_1x_M_BS32_MaxIter90000000_LR0.04_IBCE0.1_0.9_1_MultiHot_Gamma1.0/snapshot/model_0085000.pth
+    base_lr: 0.04
+    effective_batch_size: 32
+    MaskTSVDataset$multi_hot_label: True
+    max_iter: 942175
+    images_per_gpu: 2
+
+- - data: TaxOI5CV1_1_5k_with_bb
+    net: e2e_faster_rcnn_R_101_FPN_1x
+    param_template: maskrcnn_continous
+    with_dcn: True
+  - basemodel: output/TaxOI5CV1_1_5k_with_bb_e2e_faster_rcnn_R_101_FPN_1x_M_BS32_MaxIter90000000_LR0.04_IBCE0.1_0.9_1_DCN_MultiHot_Gamma1.0/snapshot/model_iter_0995000.pt
+    base_lr: 0.04
+    MaskTSVDataset$multi_hot_label: True
+    effective_batch_size: 32
+    continous_extra_iter:
+        - 5
+        - 150000
+        - 75000
+    images_per_gpu: 2
+
+- - data: TaxOI5CV1_1_5k_with_bb
+    net: e2e_faster_rcnn_X_152_32x8d_FPN_1x_tb
+    MODEL$RESNETS$USE_SE: True
+  - init_full_expid: imagenet2012_e2e_faster_rcnn_X_152_32x8d_FPN_1x_tb_CM_basemodel_BS1024_MaxIter120e_LR0.4_single_StepLR30e_Freeze0_SE
+    images_per_gpu: 1
+    base_lr: 0.0025
+    effective_batch_size: 4
+    max_iter: 3768700
+    bgr2rgb: False
+    MODEL$FPN$INTERPOLATE_MODE: bilinear
+    SOLVER$WEIGHT_DECAY: 0.00002
+
+- - data: TaxOI5CV1_1_5k_with_bb
+    net: e2e_faster_rcnn_X_101_32x8d_FPN_1x_tb
+    MODEL$RESNETS$USE_SE: True
+  - init_full_expid: imagenet2012_e2e_faster_rcnn_X_101_32x8d_FPN_1x_tb_CM_basemodel_BS1024_MaxIter120e_LR0.4_single_StepLR30e_Freeze0_SE
+    bgr2rgb: False
+    images_per_gpu: 2
+    effective_batch_size: 128
+    base_lr: 0.02
+    max_iter: 235543
+    MaskTSVDataset$multi_hot_label: True
+
+
+- - data: TaxOI5CV2_0_Man.Woman
+    net: e2e_faster_rcnn_R_50_FPN_1x
+  - basemodel: output/OpenImageV5C_e2e_faster_rcnn_R_50_FPN_1x_M_Xi/snapshot/model_iter_0000001.pt.TaxOI5CV2_0_Man.Woman.bkg.pt
+    MODEL$FPN$INTERPOLATE_MODE: bilinear
+    base_lr: 0.002
+    SOLVER$WEIGHT_DECAY: 0.00002
+
+- - data: TaxOI5CV2_0_Man.Woman
+    net: e2e_faster_rcnn_R_50_FPN_1x
+  - basemodel: output/TaxOI5CV1_1_5k_with_bb_e2e_faster_rcnn_R_50_FPN_1x_M_RemoveEmptyFalse_BS16_MaxIter942175_LR0.02_IBCE0.1_0.9_1_MultiHot/snapshot/model_iter_0942175.pt.TaxOI5CV2_0_Man.Woman.bkg.pt
+    base_lr: 0.002
+
+- - data: TaxOI5CV1_1_5k_with_bb
+    net: e2e_faster_rcnn_R_101_FPN_1x
+    param_template: maskrcnn_continous
+  - basemodel: output/TaxOI5CV1_1_5k_with_bb_e2e_faster_rcnn_R_101_FPN_1x_M_BS32_MaxIter90000000_LR0.04_IBCE0.1_0.9_1_MultiHot_Gamma1.0/snapshot/model_iter_2247500.pt
+    base_lr: 0.04
+    MaskTSVDataset$multi_hot_label: True
+    effective_batch_size: 32
+    continous_extra_iter:
+        - 5
+        - 150000
+        - 75000
+
+- - param_template: maskrcnn_benchmark
+  - bgr2rgb: True # this is bug and we'd better always set it True
+
+- - data: TaxOI5CV1_1_5k_with_bb
+  - MaskTSVDataset$multi_hot_label: True
+
+- - data: TaxOI5CV1_3_with_bb
+    net: retinanet_X_101_32x8d_FPN_1x
+  - base_lr: 0.0025
+    images_per_gpu: 1
+    effective_batch_size: 4
+    max_iter: 3768700
+
+- - param_template: maskrcnn_benchmark
+    net: retinanet_R-50-FPN_1x
+  - base_lr: 0.005
+    effective_batch_size: 8
+    images_per_gpu: 2
+
+- - param_template: maskrcnn_benchmark
+    net: retinanet_R-50-FPN_1x
+    data: TaxOI5CV1_1_5k_with_bb
+  - max_iter: 1884350
+    MODEL$FPN$INTERPOLATE_MODE: bilinear
+
+- - param_template: maskrcnn_benchmark
+    net: retinanet_R-50-FPN_1x
+    data: coco2017Full
+  - max_iter: 180000
+
+- - data: voc20
+    param_template: maskrcnn_benchmark
+  - max_iter: 9000

@@ -1,0 +1,433 @@
+# 1. $A is a place-holder, which can be referenced in default
+# 2. the string can be a reg expression
+
+#- condition:
+    #MODEL$RPN$PRE_NMS_TOP_N_TRAIN: $A
+  #default:
+    #MODEL$RPN$PRE_NMS_TOP_N_TEST: $A
+    #MODEL$RPN$POST_NMS_TOP_N_TRAIN: $A
+    #MODEL$RPN$POST_NMS_TOP_N_TEST: $A
+    #MODEL$RPN$FPN_POST_NMS_TOP_N_TRAIN: $A
+    #MODEL$RPN$FPN_POST_NMS_TOP_N_TEST: $A
+
+- condition:
+    pipeline_type: fb_moco
+  default:
+    expid_prefix: MoCo
+- condition:
+    pipeline_type: YoloByMask
+  default:
+      - condition:
+          data: MarsA
+        default:
+          train_version: 2
+      - condition:
+          test_data: MarsA
+        default:
+          version: 2
+      - condition:
+          data: MarsB
+        default:
+          train_version: 2
+      - condition:
+          test_data: MarsB
+        default:
+          version: 2
+      - condition:
+          data: TaxMarsMultiProductV1_1_with_bb
+        default:
+          use_treestructure: True
+      - condition:
+          data: TaxMarsMultiProductV1_2_with_bb
+        default:
+          use_treestructure: True
+
+- condition:
+    pipeline_type: YoloByMask
+  default:
+    net: darknet19_448
+    num_extra_convs: 2
+    effective_batch_size: 128
+    max_iter: 10e
+    pipeline_type: YoloV2PtPipeline
+    #yolo_train_session_param$data_augmentation$box_data_param$max_trials: 50
+    #yolo_train_session_param$data_augmentation$box_data_param$max_boxes: 1000
+    #yolo_train_session_param$use_maskrcnn_sampler: true
+    ## the following model is for Yolo pipeline
+    #basemodel: ./output/Tax1300V14.4_0.0_0.0_darknet19_448_C_Init.best_model6933_maxIter.10eEffectBatchSize128LR7580_bb_only_yolov2pt/snapshot/model_iter_139900.pt
+    # this is for yolo by mask pipelnie
+    basemodel: ./output/GeneralODCaffeModelToYoloByMask/snapshot/model_iter_0.pt
+    #basemodel: ./output/GeneralODCaffeModelToYoloByMask/snapshot/0_seen_image.pt
+    #basemodel: ./models/pytorch/darknet_3extraconv.pt
+    #basemodel: ./output/imagenet_models/snapshot/darknet_3extraconv.pt
+    expid_prefix: YM
+
+- condition:
+    test_data: OpenImageV5C
+    test_split: train
+  default:
+    ignore_evaluate: true
+    MODEL$ROI_HEADS$DETECTIONS_PER_IMG: 1000
+    MODEL$ROI_HEADS$SCORE_THRESH: 0.2
+- condition:
+    test_data: OpenImage5M_480
+    test_split: train
+  default:
+    ignore_evaluate: true
+    MODEL$ROI_HEADS$DETECTIONS_PER_IMG: 1000
+    MODEL$ROI_HEADS$SCORE_THRESH: 0.2
+- condition:
+    env$cluster: eu
+  default:
+    env$run_type: aml
+- condition:
+    env$cluster: au
+  default:
+    env$run_type: aml
+- condition:
+    env$cluster: ca
+  default:
+    env$run_type: aml
+
+- condition:
+    env$cluster: sc2
+  default:
+    env$run_type: philly
+
+- condition:
+    param_template: hnms
+  default:
+      - condition:
+          full_expid: CARPK_e2e_faster_rcnn_R_50_FPN_.*
+        default:
+          MODEL$RPN$POST_NMS_TOP_N_TEST: 2000
+          MODEL$RPN$FPN_POST_NMS_TOP_N_TEST: 4000
+      - condition:
+          full_expid: TaxCrowdHuman_with_bb_e2e_faster_rcnn_R_50_FPN_1x_tb.*
+        default:
+          MODEL$RPN$POST_NMS_TOP_N_TEST: 2000
+          MODEL$RPN$FPN_POST_NMS_TOP_N_TEST: 4000
+      - condition:
+          full_expid: 'TaxCrowdHuman_with_bb_retinanet_R-50.*'
+        default:
+            TEST$DETECTIONS_PER_IMG: 1000
+            MODEL$RETINANET$INFERENCE_TH: 0.0001
+
+- condition:
+      env$run_type: local
+  default:
+      test_batch_size: 2
+      env$num_gpu: 1
+
+- condition:
+      env$run_type: remote
+  default:
+      env$num_gpu: 4
+
+- condition:
+    pipeline_type: Detectron2Pipeline
+  default:
+      - condition:
+          env$run_type: debug
+        default:
+          env$num_gpu: 1
+          test_max_iter: 10
+          ignore_evaluate: true
+
+- condition:
+      pipeline_type: MaskRCNNPipeline
+  default:
+      - condition:
+          data: product_det_20200107
+        default:
+          MaskTSVDataset$version: 1
+      - condition:
+          # in this case, normally we'd like to collect the precise BN stats
+          base_lr: 0
+          sync_bn: true
+        default:
+          zero_num_tracked: true
+          bn_momentum: null
+      - condition:
+          data: Tax1300V14_5_with_bb
+        default:
+          MODEL$ROI_BOX_HEAD$CLASSIFICATION_LOSS: tree
+          MODEL$CLS_AGNOSTIC_BBOX_REG: true
+          MODEL$ROI_HEADS$NMS_ON_MAX_CONF_AGNOSTIC: true
+      - condition:
+            env$run_type: debug
+        default:
+            effective_batch_size: 2
+            images_per_gpu: 2
+            #force_train: True
+      - condition:
+          env$run_type: philly
+          effective_batch_size: 32
+        default:
+          env$num_gpu: 8
+      - condition:
+          env$run_type: philly
+          effective_batch_size: 64
+        default:
+          env$num_gpu: 16
+      - condition:
+          env$run_type: aml
+        default:
+          env$num_gpu: 4
+      - condition:
+          env$run_type: philly
+        default:
+          env$num_gpu: 4
+      - condition:
+          test_data: product_SKU110K
+          net: .*faster_rcnn.*
+        default:
+          MODEL$RPN$PRE_NMS_TOP_N_TEST: 12000
+          MODEL$ROI_HEADS$DETECTIONS_PER_IMG: 1000
+          MODEL$ROI_HEADS$SCORE_THRESH: 0.0001
+      - condition:
+          data: .*CrowdHuman.*
+          net: .*faster_rcnn.*
+        default:
+          MODEL$ROI_HEADS$DETECTIONS_PER_IMG: 1000
+          MODEL$ROI_HEADS$SCORE_THRESH: 0.0001
+      - condition:
+          data: .*CrowdHuman.*
+          net: .*retinanet.*
+        default:
+          TEST$DETECTIONS_PER_IMG: 1000
+          MODEL$RETINANET$INFERENCE_TH: 0.0001
+      - condition:
+          data: MarsA
+        default:
+          basemodel: output/Tax1300V14.4_0.0_0.0_with_bb_e2e_faster_rcnn_R_34_FPN_fast_tb_M_RemoveEmptyFalse_BS16_MaxIter20e_LR0.01_RGB/snapshot/model_iter_2238413.pt
+      - condition:
+          MODEL$RPN$NMS_THRESH: $A
+        default:
+          MODEL$RPN$NMS_POLICY$THRESH: $A
+      - condition:
+          MODEL$RPN$NMS_POLICY$THRESH: $A
+        default:
+          MODEL$RPN$NMS_THRESH: $A
+
+      - condition:
+          data: O365
+        default:
+          MaskTSVDataset$remove_images_without_annotations: False
+          evaluate_method: coco_box
+      - condition:
+          data: Tax1300V14.4_0.0_0.0_with_bb
+        default:
+          MaskTSVDataset$remove_images_without_annotations: False
+      - condition:
+          data: .*OI5C.*
+        default:
+          MaskTSVDataset$remove_images_without_annotations: False
+      - condition:
+          data: OpenImageV5C
+        default:
+          MaskTSVDataset$remove_images_without_annotations: False
+    # base lr
+      - condition:
+          data: O365
+          net: e2e_faster_rcnn_R_34_FPN_fast_tb
+        default:
+          base_lr: 0.01 # 0.02 -> NaN
+          # data: O365 and openimage
+      - condition:
+          data: OpenImageV5C
+          net: e2e_faster_rcnn_R_34_FPN_fast_tb
+        default:
+          base_lr: 0.005
+
+      - condition:
+          net: e2e_faster_rcnn_R_34_FPN_1x_tb
+        default:
+          base_lr: 0.01 # 0.02 -> NaN
+          # for O365, and openimage
+
+      - condition:
+          net: e2e_faster_rcnn_X_152_32x8d_FPN_1x_tb_SE
+          env$num_gpu: 4
+        default:
+          base_lr: 0.005
+          effective_batch_size: 4
+
+      - condition:
+            net: e2e_faster_rcnn_X_152_32x8d_FPN_1x_tb
+            MODEL$RESNETS$USE_SE: True
+        default:
+            init_full_expid: imagenet2012_e2e_faster_rcnn_X_152_32x8d_FPN_1x_tb_CM_basemodel_BS1024_MaxIter120e_LR0.4_single_StepLR30e_Freeze0_SE
+            images_per_gpu: 1
+            base_lr: 0.0025
+            effective_batch_size: 4
+            MODEL$FPN$INTERPOLATE_MODE: bilinear
+            SOLVER$WEIGHT_DECAY: 0.00002
+
+      - condition:
+          net: e2e_faster_rcnn_X_152_32x8d_FPN_1x_tb
+        default:
+          base_lr: 0.01
+          effective_batch_size: 8
+      - condition:
+            data: $A
+            MODEL$ROI_BOX_HEAD$CLASSIFICATION_LOSS: tree
+        default:
+            MODEL$ROI_BOX_HEAD$TREE_0_BKG: ./data/$A/tree_with_bkg.txt
+            MODEL$ROI_BOX_HEAD$CLASSIFICATION_ACTIVATE: tree
+      - condition:
+            INPUT$USE_FIXED_SIZE_AUGMENTATION: true
+        default:
+            INPUT$FIXED_SIZE_AUG$JITTER: 0.
+            INPUT$FIXED_SIZE_AUG$RANDOM_SCALE_MIN: 1.
+            INPUT$FIXED_SIZE_AUG$RANDOM_SCALE_MAX: 1.5
+            DATALOADER$ASPECT_RATIO_GROUPING: false
+
+- condition:
+      pipeline_type: MaskRCNNPipeline
+  default:
+      bgr2rgb: True
+      effective_batch_size: 16
+      expid_prefix: M
+      log_step: 100
+
+- condition:
+    test_data: MarsA
+  default:
+    test_version: 2
+
+- condition:
+    test_data: product_SKU110K
+  default:
+    evaluate_method: coco_box
+- condition:
+    data: coco2017Tiny
+  default:
+    evaluate_method: coco_box
+- condition:
+    test_data: coco2017Tiny
+  default:
+    evaluate_method: coco_box
+
+- condition:
+    test_data: product_SKU110K
+    evaluate_method: coco_box
+  default:
+    coco_eval_max_det: 1000
+- condition:
+    full_expid: MarsA.*
+  default:
+    test_data: MarsA
+    test_split: test
+    test_version: 2
+- condition:
+    full_expid: MarsA_e2e_faster_rcnn_R.*
+  default:
+    MODEL$ROI_HEADS$DETECTIONS_PER_IMG: 1000
+    MODEL$ROI_HEADS$SCORE_THRESH: 0.0001
+- condition:
+    full_expid: CARPK.*
+  default:
+    test_data: CARPK
+    test_split: test
+- condition:
+    full_expid: voc20_.*
+  default:
+    test_data: voc20
+    test_split: test
+- condition:
+    full_expid: product_SKU110K.*
+  default:
+    test_data: product_SKU110K
+    test_split: test
+- condition:
+    full_expid: TaxCrowdHuman_with_bb.*
+  default:
+    test_data: TaxCrowdHumanTestWithDiff
+    test_split: test
+- condition:
+    full_expid: coco2017Full.*
+  default:
+    test_data: coco2017Full
+    test_split: test
+
+- condition:
+    full_expid: .*retinanet.*
+    test_data: product_SKU110K
+  default:
+    TEST$DETECTIONS_PER_IMG: 1000
+    MODEL$RETINANET$INFERENCE_TH: 0.0001
+    MODEL$RETINANET$NMS_POLICY$THRESH: 0.5
+    MODEL$RETINANET$PRE_NMS_TOP_N: 10000
+
+- condition:
+    MODEL$RETINANET$NMS_POLICY$NUM2: 1
+    MODEL$RETINANET$NMS_POLICY$THRESH: $A
+  default:
+    MODEL$RETINANET$NMS_POLICY$THRESH2: $A
+
+- condition:
+    full_expid: .*retinanet.*
+    test_data: CARPK
+  default:
+    TEST$DETECTIONS_PER_IMG: 1000
+    MODEL$RETINANET$INFERENCE_TH: 0.0001
+    MODEL$RETINANET$NMS_POLICY$THRESH: 0.5
+    MODEL$RETINANET$PRE_NMS_TOP_N: 10000
+
+- condition:
+    full_expid: .*e2e_faster_rcnn_R_.*
+    test_data: CARPK
+  default:
+    MODEL$ROI_HEADS$DETECTIONS_PER_IMG: 1000
+    MODEL$ROI_HEADS$SCORE_THRESH: 0.0001
+
+- condition:
+    full_expid: .*e2e_faster_rcnn_R_.*
+    test_data: product_SKU110K
+  default:
+    MODEL$ROI_HEADS$DETECTIONS_PER_IMG: 1000
+    MODEL$ROI_HEADS$SCORE_THRESH: 0.0001
+
+- condition:
+    net: .*retinanet.*
+    test_data: CARPK
+  default:
+    TEST$DETECTIONS_PER_IMG: 1000
+    MODEL$RETINANET$INFERENCE_TH: 0.0001
+
+- condition:
+    MODEL$RETINANET$NMS_TH: $A
+  default:
+    MODEL$RETINANET$NMS_POLICY$THRESH: $A
+
+- condition:
+    MODEL$RETINANET$NMS_POLICY$THRESH: $A
+  default:
+    MODEL$RETINANET$NMS_TH: $A
+
+- condition:
+    MODEL$RPN$NMS_POLICY$ALPHA: $A
+  default:
+    MODEL$RPN$NMS_POLICY$GAMMA: $A
+- condition:
+    MODEL$RPN$NMS_POLICY$ALPHA2: $A
+  default:
+    MODEL$RPN$NMS_POLICY$GAMMA2: $A
+- condition:
+    MODEL$ROI_HEADS$NMS_POLICY$ALPHA: $A
+  default:
+    MODEL$ROI_HEADS$NMS_POLICY$GAMMA: $A
+- condition:
+    MODEL$ROI_HEADS$NMS_POLICY$ALPHA2: $A
+  default:
+    MODEL$ROI_HEADS$NMS_POLICY$GAMMA2: $A
+- condition:
+    MODEL$RETINANET$NMS_POLICY$ALPHA: $A
+  default:
+    MODEL$RETINANET$NMS_POLICY$GAMMA: $A
+- condition:
+    MODEL$RETINANET$NMS_POLICY$ALPHA2: $A
+  default:
+    MODEL$RETINANET$NMS_POLICY$GAMMA2: $A
+
