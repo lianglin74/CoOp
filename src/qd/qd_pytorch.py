@@ -50,8 +50,44 @@ except:
 import time
 import re
 import glob
-import torch.nn.functional as F
+from torchvision.transforms import functional as F
+import cv2
+import math
 
+
+def detection_evalation(data, split, pred):
+    from qd.deteval import deteval_iter
+    dataset = TSVDataset(data)
+    evaluate_file = pred + '.report'
+    deteval_iter(
+            dataset.iter_data(split, 'label',
+                version=0),
+            pred,
+            report_file=evaluate_file)
+    ensure_create_evaluate_meta_file(evaluate_file)
+
+def visualize_maskrcnn_input(images, targets):
+    import torch
+    images = images.tensors.cpu()
+    scale = [0.229, 0.224, 0.225]
+    scale = torch.tensor(scale)
+    images = images * scale[None, :, None, None]
+    mean = torch.tensor([0.485, 0.456, 0.406])
+    images = images + mean[None, :, None, None]
+    images *= 255.
+    images = images[:, [2, 1, 0], :, :]
+    images = images.to(torch.uint8)
+    images = images.permute(0, 2, 3, 1).numpy()
+    from qd.process_image import show_images
+    from qd.process_image import draw_rects
+    #show_image(images[0, :])
+    ims = []
+    for i, t in enumerate(targets):
+        rects = [{'rect': r, 'class': '1'} for r in t.bbox.tolist()]
+        im = images[i]
+        im = draw_rects(rects, im)
+        ims.append(im)
+    show_images(ims, 1, len(ims))
 
 def adapt_convbn_weight(weight, running_mean,
         curr_scale, curr_mean):
@@ -842,7 +878,10 @@ class TorchTrain(object):
                 'base_lr': 0.1,
                 'dataset_type': 'single',
                 'max_iter': 10,
-                'weight_decay': 0.0005,
+                # the default value was 5e-4, which is the default for yolo. We
+                # add the default as 5e-4 in yolo_by_mask, and set it 1e-4 for
+                # classification.
+                'weight_decay': 1e-4,
                 'effective_batch_size': 256,
                 'pretrained': False,
                 'dist_url_tcp_port': 23456,
@@ -856,6 +895,8 @@ class TorchTrain(object):
                 'coco_eval_max_det': 100,
                 'train_crop_size': 224,
                 'test_crop_size': 224,
+                'momentum': 0.9,
+                'scheduler_type': 'step',
                 }
 
         assert 'batch_size' not in kwargs, 'use effective_batch_size'
@@ -985,10 +1026,13 @@ class TorchTrain(object):
         init_random_seed(self.random_seed)
         self._initialized = True
 
+    def get_train_transform(self):
+        return get_train_transform(self.bgr2rgb,
+                    crop_size=self.train_crop_size)
+
     def get_transform(self, stage):
         if stage == 'train':
-            transform = get_train_transform(self.bgr2rgb,
-                    crop_size=self.train_crop_size)
+            transform = self.get_train_transform()
         else:
             assert stage == 'test'
             resize_size = 256 * self.test_crop_size // 224
@@ -1193,14 +1237,22 @@ class TorchTrain(object):
 
     def get_optimizer(self, model):
         optimizer = torch.optim.SGD(model.parameters(), self.base_lr,
-                                    momentum=0.9,
-                                    weight_decay=1e-4)
+                                    momentum=self.momentum,
+                                    weight_decay=self.weight_decay)
         return optimizer
 
     def get_lr_scheduler(self, optimizer, last_epoch=-1):
-        scheduler = torch.optim.lr_scheduler.StepLR(optimizer,
-                step_size=self.parse_iter(self.step_lr),
-                last_epoch=last_epoch)
+        if self.scheduler_type == 'step':
+            scheduler = torch.optim.lr_scheduler.StepLR(optimizer,
+                    step_size=self.parse_iter(self.step_lr),
+                    last_epoch=last_epoch)
+        elif self.scheduler_type == 'multi_step':
+            scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
+                    milestones=[self.parse_iter(i) for i in self.stageiter],
+                    gamma=0.1,
+                    last_epoch=last_epoch)
+        else:
+            raise NotImplementedError(self.scheduler_type)
         return scheduler
 
     def train(self):

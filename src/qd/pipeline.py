@@ -30,7 +30,11 @@ from qd.qd_common import try_once
 
 
 def get_all_test_data(exp):
-    pattern_to_test_datas = load_from_yaml_file('./aux_data/exp/pattern_to_test_datas.yaml')
+    fname = './aux_data/exp/pattern_to_test_datas.yaml'
+    if op.isfile(fname):
+        pattern_to_test_datas = load_from_yaml_file(fname)
+    else:
+        pattern_to_test_datas = []
     result = make_by_pattern_result(exp, pattern_to_test_datas)
     if result is None:
         result = [{'test_data': exp, 'test_split': 'test'}]

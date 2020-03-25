@@ -17,6 +17,8 @@ from mtorch.caffetorch import Slice, SoftmaxWithLoss, EuclideanLoss
 from mtorch.reshape import Reshape
 from mtorch.region_target import RegionTarget
 from mtorch.softmaxtree_loss import SoftmaxTreeWithLoss
+import math
+from qd.qd_common import print_frame_info
 
 
 def _list_collate(batch):
@@ -80,7 +82,7 @@ def freeze_parameters(modules):
 class StandardYoloPredictModel(nn.Module):
     def __init__(self, model, predictor):
         super(StandardYoloPredictModel, self).__init__()
-        self.model = model
+        self.module = model
         self.predictor = predictor
 
     def forward(self, im_info):
@@ -88,10 +90,10 @@ class StandardYoloPredictModel(nn.Module):
         for im, h, w in im_info:
             im = im.unsqueeze_(0)
             im = im.float()
-            if next(self.model.parameters()).is_cuda:
+            if next(self.parameters()).is_cuda:
                 im = im.cuda()
             with torch.no_grad():
-                features = self.model(im)
+                features = self.module(im)
             prob, bbox = self.predictor(features, torch.Tensor((h, w)))
             result.append({'prob': prob,
                 'bbox': bbox,
@@ -288,6 +290,59 @@ class RegionTargetPt(nn.Module):
             ", seen_images={}".format(self.seen_images.item()) if self.seen_images.item() else ""
         )
 
+class NegativeSelectiveLoss(nn.Module):
+    def __init__(self, max_iter, loss_weight, num_select_exp,
+            entropy_weight_exp):
+        super().__init__()
+        print_frame_info()
+        self.register_buffer('curr_iter', torch.tensor(0, dtype=torch.float))
+        self.max_iter = max_iter
+        self.loss_weight = loss_weight
+        self.num_select_exp = num_select_exp
+        self.entropy_weight_exp = entropy_weight_exp
+
+    def forward(self, pred, neg_target):
+        self.curr_iter += 1
+        num_image = pred.shape[0]
+        pred = pred.view(-1)
+        neg_target = neg_target.view(-1)
+
+        neg_idx = torch.nonzero(neg_target == 0)
+        progress_iter = self.curr_iter / self.max_iter
+        display = (self.curr_iter % 20) == 0
+        messages = []
+        if display:
+            messages.append('{}/{}={}'.format(self.curr_iter, self.max_iter,
+                progress_iter))
+        num_select_factor = progress_iter ** self.num_select_exp
+        num_select = (neg_idx.numel() * torch.sin(num_select_factor * math.pi / 2.)).long()
+        if display:
+            messages.append('num_select = {}'.format(num_select))
+        if num_select == 0:
+            loss = torch.tensor(0, device=pred.device, dtype=pred.dtype, requires_grad=True)
+            return loss
+        select_idx_in_idx = torch.randperm(len(neg_idx))[:num_select]
+        neg_idx = neg_idx[select_idx_in_idx]
+
+        pos_avg = pred[neg_target > 0].mean().detach()
+
+        if display:
+            messages.append('pos_avg = {}'.format(pos_avg))
+
+        pred = pred[neg_idx]
+
+        entropy_weight_factor = progress_iter ** self.entropy_weight_exp
+        entropy_weight = progress_iter ** entropy_weight_factor
+        loss = (1 - entropy_weight) * (pred * pred).sum() / 2. / num_image
+
+        entropy = -(pred * torch.log((pred + 10**-5) / (pos_avg + 10**-5)) + \
+                (1 - pred) * torch.log((1 - pred + 10**-5) / (1 - pos_avg + 10**-5))).sum()
+        loss += entropy_weight * entropy / num_image
+        if display:
+            logging.info('; '.join(messages))
+
+        return loss * self.loss_weight
+
 class RegionTargetLoss(nn.Module):
     """Abstract class for constructing different kinds of RegionTargetLosses
     Parameters:
@@ -312,8 +367,12 @@ class RegionTargetLoss(nn.Module):
                  object_scale=5.0, noobject_scale=1.0, coord_scale=1.0,
                  anchor_aligned_images=12800, ngpu=1, seen_images=0,
                  valid_norm_xywhpos=False, use_pt_rt=False,
-                 opt_anchor=False):
-        from qd.qd_common import print_frame_info
+                 opt_anchor=False,
+                 neg_selective_loss=False,
+                 max_iter=None,
+                 num_select_exp=None,
+                 entropy_weight_exp=None,
+                 ):
         print_frame_info()
         super(RegionTargetLoss, self).__init__()
         self.num_classes = num_classes
@@ -349,7 +408,13 @@ class RegionTargetLoss(nn.Module):
         self.xy_loss = EuclideanLoss(loss_weight=xy_scale)
         self.wh_loss = EuclideanLoss(loss_weight=wh_scale)
         self.o_obj_loss = EuclideanLoss(loss_weight=object_scale)
-        self.o_noobj_loss = EuclideanLoss(loss_weight=noobject_scale)
+        if neg_selective_loss:
+            self.o_noobj_loss = NegativeSelectiveLoss(max_iter=max_iter,
+                    loss_weight=noobject_scale,
+                    num_select_exp=num_select_exp,
+                    entropy_weight_exp=entropy_weight_exp)
+        else:
+            self.o_noobj_loss = EuclideanLoss(loss_weight=noobject_scale)
         reshape_axis = 1
         reshape_num_axes = 1
         self.reshape_conf = Reshape(self.shape, reshape_axis, reshape_num_axes)
@@ -482,6 +547,7 @@ class YoloByMask(MaskClassificationPipeline):
             'opt_anchor_lr_mult': 1.,
             'max_detections_per_image': -1,
             'train_version': 0,
+            'weight_decay': 5e-4,
             })
         self.num_train_images = None
 
@@ -589,6 +655,20 @@ class YoloByMask(MaskClassificationPipeline):
                 pin_memory=True,
                 collate_fn=_list_collate)
 
+    def predict_one(self, cv_im):
+        h, w = cv_im.shape[: 2]
+        model = self._get_load_model_demo()
+        from qd.layers import ForwardPassTimeChecker
+        model = ForwardPassTimeChecker(model)
+        from mtorch.augmentation import TestAugmentation
+        transform = TestAugmentation(test_input_size=self.test_input_size)
+        img = cv_im.transpose([2, 0, 1])
+        im = transform()({'image': img})['image']
+
+        im = im.to(self.device)
+        output = model([(im, h, w)])[0]
+        return self.create_rects_from_output(output)
+
     def get_train_model(self):
         assert self.num_extra_convs == 2
         extra_yolo2extraconv_param = {}
@@ -609,6 +689,10 @@ class YoloByMask(MaskClassificationPipeline):
             freeze_parameters_by_name(model, self.fixed_param)
         target_param = {
                 'num_classes': len(self.get_labelmap()),
+                'neg_selective_loss': self.neg_selective_loss,
+                'max_iter': self.max_iter,
+                'num_select_exp': self.num_select_exp,
+                'entropy_weight_exp': self.entropy_weight_exp,
                 }
         target_param['biases'] = self.anchors
         if self.rt_param is not None:
@@ -685,7 +769,10 @@ class YoloByMask(MaskClassificationPipeline):
         checkpoint = torch_load(model_file)
         load_state_dict(model, checkpoint['model'])
         # check if the anchor size is the same
-        anchor = checkpoint['model']['module.criterion.region_target.biases']
+        key = ('criterion.region_target.biases'
+                if 'criterion.region_target.biases' in checkpoint['model']
+                else 'module.criterion.region_target.biases')
+        anchor = checkpoint['model'][key]
         anchor = anchor.data.view(model.predictor.yolo_bboxs.biases.data.shape)
         diff = (model.predictor.yolo_bboxs.biases.data - anchor).abs().sum()
         if diff != 0:
@@ -695,20 +782,24 @@ class YoloByMask(MaskClassificationPipeline):
                 anchor.data))
             model.predictor.yolo_bboxs.biases.data = anchor.data
 
+    def create_rects_from_output(self, info):
+        bbox, prob = info['bbox'], info['prob']
+        h, w = info['h'], info['w']
+        bbox = bbox.cpu().numpy()
+        prob = prob.cpu().numpy()
+
+        assert bbox.shape[-1] == 4
+        bbox = bbox.reshape(-1, 4)
+        prob = prob.reshape(-1, prob.shape[-1])
+        from mmod.detection import result2bblist
+        result = result2bblist((h, w), prob, bbox, self.get_labelmap(),
+                thresh=self.thresh,
+                obj_thresh=self.obj_thresh)
+        return result
+
     def predict_output_to_tsv_row(self, output, keys):
         for info, key in zip(output, keys):
-            bbox, prob = info['bbox'], info['prob']
-            h, w = info['h'], info['w']
-            bbox = bbox.cpu().numpy()
-            prob = prob.cpu().numpy()
-
-            assert bbox.shape[-1] == 4
-            bbox = bbox.reshape(-1, 4)
-            prob = prob.reshape(-1, prob.shape[-1])
-            from mmod.detection import result2bblist
-            result = result2bblist((h, w), prob, bbox, self.get_labelmap(),
-                    thresh=self.thresh,
-                    obj_thresh=self.obj_thresh)
+            result = self.create_rects_from_output(info)
             yield key, json_dump(result)
 
     def _get_test_normalize_module(self):

@@ -2978,6 +2978,15 @@ def remove_empty_keys_(ds):
             if k in d:
                 del d[k]
 
+def max_iter_mult(m, factor):
+    if isinstance(m, int):
+        return int(m * factor)
+    elif isinstance(m, str):
+        assert m.endswith('e')
+        return '{}e'.format(int(float(m[:-1]) * factor))
+    else:
+        raise NotImplementedError
+
 if __name__ == '__main__':
     init_logging()
     kwargs = parse_general_args()
