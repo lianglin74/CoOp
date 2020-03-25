@@ -553,6 +553,119 @@ def pipeline_demo(param, image_path):
     pip = load_pipeline(**param)
     pip.demo(image_path)
 
+def platform_run(env, func, **kwargs):
+    run_type, num_gpu = env['run_type'], env['num_gpu']
+    param = kwargs.get('param', {})
+    all_test_data = kwargs.get('all_test_data', [])
+    if run_type in ['debug', 'local']:
+        func(**kwargs)
+    elif run_type.startswith('philly'):
+        env = copy.deepcopy(env)
+        del env['run_type']
+        del env['num_gpu']
+        extra_philly_param = env
+        dry_run = run_type == 'philly_dry'
+        result = philly_func_run(func,
+                {'all_test_data': all_test_data,
+                 'param': param},
+                dry_run=dry_run,
+                num_gpu=num_gpu,
+                multi_process=True,
+                isDebug=False,
+                **extra_philly_param
+                )
+        return result
+    elif run_type == 'aml':
+        submit_param = copy.deepcopy(env)
+        submit_param.pop('run_type')
+        result = aml_func_run(func, kwargs, **submit_param)
+        from qd.gpucluster import create_aml_client
+        aml_client = create_aml_client(**submit_param)
+        aml_client.inject(result)
+        return result
+    elif run_type == 'remote':
+        submit_param = copy.deepcopy(env)
+        submit_param.pop('run_type')
+        from qd.batch_process import remote_run_func
+        remote_run_func(func,
+                is_mpi=submit_param.get('is_mpi', True),
+                availability_check=submit_param.get('availability_check', False),
+                all_test_data=all_test_data,
+                param=param,
+                )
+    elif run_type == 'save_config':
+        config = {'all_test_data': all_test_data,
+                'param': param,
+                'type': func.__name__}
+        if 'full_expid' in param:
+            full_expid = param['full_expid']
+        else:
+            full_expid = '{}_{}_{}'.format(param['data'], param['net'], param['expid'])
+        out_file = './aux_data/qd_pipeline_config/{}_{}.yaml'.format(
+                full_expid,
+                hash_sha1(config)[:5],
+            )
+        logging.info(out_file)
+        assert not op.isfile(out_file)
+        logging.info(pformat(config))
+        from qd.qd_common import write_to_yaml_file
+        write_to_yaml_file(config, out_file)
+
+def run_training_pipeline(swap_params):
+    from qd.pipelines.auto_param import AutoParam
+    from qd.qd_common import iter_swap_param
+    auto = AutoParam()
+    all_param_env = []
+
+    for param in iter_swap_param(swap_params):
+        param = copy.deepcopy(param)
+        auto.update_pipeline_param(param, param['env'])
+        all_param_env.append((param, param['env']))
+    logging.info(pformat(all_param_env))
+    result = []
+
+    for param, env in all_param_env:
+        if 'test_data' in param:
+            all_test_data = [{'test_data': param['test_data'],
+                'test_split': param.get('test_split', 'test')}]
+        elif 'all_test_data' in param:
+            all_test_data = param['all_test_data']
+            del param['all_test_data']
+        else:
+            all_test_data = get_all_test_data(param['data'])
+
+        logging.info(pformat(all_test_data))
+        r = pipeline_train_eval_platform(param, all_test_data, env)
+        result.append(r)
+
+    logging.info(pformat(result))
+    if len(result) > 0:
+        from qd.db import query_job_acc
+        query_job_acc(result)
+    return result
+
+def pipeline_train_eval_platform(param, all_test_data, env, **kwargs):
+    from qd.pipeline import pipeline_train_eval_multi
+    import random
+    import time
+    random.seed(time.time())
+
+    if param['pipeline_type'] == 'MaskRCNNPipeline':
+        from qd.process_tsv import populate_dataset_hw
+        populate_dataset_hw(param['data'], ['train'])
+        for test_data in all_test_data:
+            populate_dataset_hw(test_data['test_data'],
+                    [test_data['test_split']])
+
+    from qd.prep_dataset.build_tax_data import ensure_build_taxonomy
+    ensure_build_taxonomy(param['data'])
+    for t in all_test_data:
+        ensure_build_taxonomy(t['test_data'])
+
+    result = platform_run(env, pipeline_train_eval_multi, param=param,
+            all_test_data=all_test_data)
+    return result
+
 def test_model_pipeline(param):
     '''
     run the script by
