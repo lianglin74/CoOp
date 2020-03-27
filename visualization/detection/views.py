@@ -57,11 +57,12 @@ from qd_common import load_class_ap, worth_create
 from process_tsv import visualize_predict
 from process_tsv import visualize_predict_no_draw
 from process_tsv import get_class_count
-from process_tsv import visualize_box_no_draw
+from qd.process_tsv import visualize_box_no_draw
 from process_tsv import populate_dataset_details
 from qd_common import write_to_yaml_file, load_from_yaml_file
 from build_compare import build_side_by_side_compare
 import copy
+from qd.db import create_annotation_db
 
 init_logging()
 
@@ -509,6 +510,70 @@ def isfloat(value):
     except ValueError:
         return False
 
+def view_image_svg(request, data, split, version, label, start_id, min_conf,
+        max_conf):
+    curr_dir = os.curdir
+    os.chdir(get_qd_root())
+    start_id = int(float(start_id))
+    images = visualize_box_no_draw(data, split, version, label, start_id,
+            min_conf=min_conf, max_conf=max_conf)
+    all_type_to_rects = []
+    all_url = []
+    max_image_shown = 56
+    all_key = []
+    for i, (fname, origin, gt) in enumerate(images):
+        if i >= max_image_shown:
+            break
+        origin_html_path = save_image_in_static(origin, '{}/{}/{}/origin_{}.jpg'.format(data, split,
+            version,
+            hash_sha1(fname)))
+        all_key.append(fname)
+        all_url.append('/static/' + origin_html_path)
+        all_type_to_rects.append({'gt': gt })
+    os.chdir(curr_dir)
+
+    kwargs = copy.deepcopy(request.GET)
+    kwargs['start_id'] = str(max(0, start_id - max_image_shown))
+    previous_link = reverse('detection:view_image')
+    previous_link = previous_link + '?' + '&'.join(['{}={}'.format(k, kwargs[k]) for k in kwargs])
+    kwargs = copy.deepcopy(request.GET)
+    kwargs['start_id'] = str(start_id + len(all_type_to_rects))
+    next_link = reverse('detection:view_image')
+    next_link = next_link + '?' + '&'.join(['{}={}'.format(k, kwargs[k]) for k in kwargs])
+
+
+    from qd.tsv_io import TSVDataset
+    dataset = TSVDataset(data)
+    labelmap = [l for l in dataset.iter_data(split, 'labelmap', version)]
+    inverted = dataset.load_inverted_label(split, version=version)
+    label_count = [(k, len(ls)) for k, ls in inverted.items()]
+    label_count.insert(0, ('any', dataset.num_rows(split)))
+
+    context = {
+            'all_type_to_rects': json.dumps(all_type_to_rects),
+            'target_label': label,
+            'all_url': json.dumps(all_url),
+            'all_key': json.dumps(all_key),
+            'previous_link': previous_link,
+            'next_link': next_link,
+            'black_list': '',
+            'labelmap': json.dumps(labelmap),
+            'label_count' : json.dumps(label_count),
+            }
+
+    if any('\n' in r['class']
+            for t_to_rects in all_type_to_rects
+            for t, rects in t_to_rects.items()
+            for r in rects):
+        # in this case, we will not show the bar to show all labels
+        c = create_annotation_db()
+        key_to_existingjudge = {doc['key']: doc['judge'] for doc in c.iter_judge(
+            **{'key': {'$in': all_key}})}
+        context['key_to_existingjudge'] = json.dumps(key_to_existingjudge)
+        return render(request, 'detection/image_comment.html', context)
+    else:
+        #return render(request, 'detection/images_js2.html', context)
+        return render(request, 'detection/image_js_svg.html', context)
 
 def view_image_compare_test(request, data, split, version, label, start_id, min_conf=None):
     '''
@@ -1391,30 +1456,23 @@ def view_image(request):
     else:
         data = request.GET.get('data')
         split = request.GET.get('split')
-        key = None
-        key = request.GET.get('key')
-
-        min_conf = None
-        min_conf = request.GET.get('min_conf')
-        if min_conf != None:
-            min_conf = float(min_conf)
-
-        populate_dataset_details(data)
-
         if split == 'None':
             split = None
         version = request.GET.get('version')
         if version == 'None':
             version = None
-        version = int(version) if type(version) is str or \
-            type(version) is unicode else version
-        
+        else:
+            version = int(version)
+        version = int(version) if type(version) is str \
+                else version
         label = request.GET.get('label')
         start_id = request.GET.get('start_id')
-        
-        result = view_image_js(request, data, split, version, label, start_id, key, min_conf)
-        return result
+        min_conf = float(request.GET.get('min_conf', -1))
+        max_conf = float(request.GET.get('max_conf', 2))
 
+        result = view_image_svg(request, data, split, version, label, start_id,
+                min_conf, max_conf)
+        return result
 
 def get_data_sources_for_composite():
     datas = ['coco2017',
