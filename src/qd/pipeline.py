@@ -472,6 +472,9 @@ def create_pipeline(kwargs):
     elif pipeline_type == 'Detectron2Pipeline':
         from qd.pipelines.detectron2 import Detectron2Pipeline
         return Detectron2Pipeline(**kwargs)
+    elif pipeline_type == 'fb_moco':
+        from qd.pipelines.fb_moco import MocoPipeline
+        return MocoPipeline(**kwargs)
     else:
         raise NotImplementedError()
 
