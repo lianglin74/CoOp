@@ -121,8 +121,15 @@ class MaskClassificationPipeline(ModelPipeline):
                 start_iter=start_iter)
 
     def _get_data_loader(self, data, split, stage, shuffle=True, start_iter=0):
+        if stage == 'train':
+            dataset_type = self.dataset_type
+        elif self.test_dataset_type is None:
+            dataset_type = self.dataset_type
+        else:
+            dataset_type = self.test_dataset_type
         dataset = self._get_dataset(data, split, stage=stage,
-                labelmap=self.get_labelmap())
+                labelmap=self.get_labelmap(),
+                dataset_type=dataset_type)
 
         if self.distributed:
             from maskrcnn_benchmark.data import samplers
@@ -204,6 +211,10 @@ class MaskClassificationPipeline(ModelPipeline):
                         self.normalization_group_size), m.num_features))
         else:
             assert self.convert_bn is None, self.convert_bn
+        # assign a name to each module so that we can use it in each module to
+        # print debug information
+        for n, m in model.named_modules():
+            m.name_from_root = n
         return model
 
     def demo(self, image_path):
@@ -211,13 +222,19 @@ class MaskClassificationPipeline(ModelPipeline):
         cv_im = load_image(image_path)
         self.predict_one(cv_im)
 
+    def _get_load_model_demo(self):
+        if self.model is None:
+            model = self.get_test_model()
+            model_file = self._get_checkpoint_file()
+            self.load_test_model(model, model_file)
+            model = model.to(self.device)
+            self.model = model
+            model.eval()
+        return self.model
+
     def predict_one(self, cv_im):
-        model = self.get_test_model()
-        model_file = self._get_checkpoint_file()
-        self.load_test_model(model, model_file)
-        model = model.to(self.device)
+        model = self._get_load_model_demo()
         softmax_func = self._get_test_normalize_module()
-        model.eval()
         from qd.layers import ForwardPassTimeChecker
         model = ForwardPassTimeChecker(model)
         transform = self.get_transform('test')
@@ -234,8 +251,7 @@ class MaskClassificationPipeline(ModelPipeline):
         labelmap = self.get_labelmap()
         all_tag = [{'class': labelmap[i], 'conf': float(t)} for t, i in
                 zip(tops, top_indexes)]
-        from pprint import pformat
-        logging.info(pformat(all_tag))
+        return all_tag
 
     def get_test_model(self):
         model = self._get_model(pretrained=False,
