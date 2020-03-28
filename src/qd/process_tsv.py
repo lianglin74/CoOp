@@ -6520,6 +6520,24 @@ def flatten_labels_for_classification(image_data, image_split, label_tsv,
 
     return out_data
 
+def download_images_to_tsv(info, tsv_file, key='key'):
+    from qd.qd_common import url_to_bytes
+    from qd.qd_common import bytes_to_image
+    def processor(i):
+        bs = url_to_bytes(i['url'])
+        if bs is None:
+            return None
+        try:
+            im = bytes_to_image(bs)
+        except:
+            return None
+        if im is None:
+            return None
+        return i[key], json_dump([]), base64.b64encode(bs)
+    parallel_tsv_process(processor, info, tsv_file, num_process=16,
+            num_jobs=1024)
+
+
 if __name__ == '__main__':
     from qd.qd_common import parse_general_args
     init_logging()
