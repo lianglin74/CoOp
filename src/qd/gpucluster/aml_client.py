@@ -479,7 +479,7 @@ class AMLClient(object):
             mpi_config.process_count_per_node = 4
             node_count = num_gpu // 4
         if not self.multi_process:
-            mpi_config = None
+            mpi_config.process_count_per_node = 1
 
         if self.use_custom_docker:
             estimator10 = Estimator(
