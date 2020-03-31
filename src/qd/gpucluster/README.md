@@ -61,10 +61,6 @@
    # the following is related with the job submission. If you don't use the
    # submission utility here, you can set any value
 
-   # during job submission, aml-sdk will upload all data in this folder
-   source_directory: ./src/qd/gpucluster
-   # this is the entry point the AML will execute in the cluster
-   entry_script: aml_server.py
    config_param: 
        # the path here is relative to the azure blob container
        # where the zipped source code is
@@ -103,10 +99,6 @@
      # the following is related with the job submission. If you don't use the
      # submission utility here, you can set any value
 
-     # during job submission, aml-sdk will upload all data in this folder
-     source_directory: ./src/qd/gpucluster
-     # this is the entry point the AML will execute in the cluster
-     entry_script: aml_server.py
      config_param: 
         code_path:
             azure_blob_config_file: ./aux_data/configs/vigeastblob_account.yaml # the blob account information
