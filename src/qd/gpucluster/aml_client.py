@@ -9,6 +9,7 @@ from qd.qd_common import cmd_run
 from qd.qd_common import decode_general_cmd
 from qd.qd_common import ensure_directory
 from qd.qd_common import try_once
+from qd.qd_common import read_to_buffer
 from qd.cloud_storage import create_cloud_storage
 import copy
 
@@ -110,6 +111,7 @@ def create_aml_run(experiment, run_id):
         r = matched_runs[0]
     return r
 
+@try_once
 def download_run_logs(run_info, full=True):
     # Do not use r.get_all_logs(), which could be stuck. Use
     # wget instead by calling download_run_logs
@@ -190,7 +192,7 @@ class AMLClient(object):
     status_canceled = 'Canceled'
     def __init__(self, azure_blob_config_file, config_param, docker,
             datastore_name, aml_config, use_custom_docker,
-            compute_target, source_directory, entry_script,
+            compute_target, source_directory=None, entry_script='aml_server.py',
             with_log=True,
             env=None,
             multi_process=True,
@@ -203,7 +205,9 @@ class AMLClient(object):
         # do not change the datastore_name unless the storage account
         # information is changed
         self.datastore_name = datastore_name
-        self.source_directory = source_directory
+        if source_directory is not None:
+            logging.info('no need to specify the directory')
+        #self.source_directory = source_directory
         self.entry_script = entry_script
         # it does not matter what the name is
         if 'experiment_name' not in kwargs:
@@ -250,6 +254,10 @@ class AMLClient(object):
         self.use_custom_docker = use_custom_docker
         self._experiment = None
         self.multi_process = multi_process
+
+    @property
+    def source_directory(self):
+        return op.dirname(__file__)
 
     def get_data_blob_client(self):
         self.attach_data_store()
@@ -336,7 +344,9 @@ class AMLClient(object):
             if 'master_log' in info:
                 cmd_run(['tail', '-n', '100', info['master_log']])
             if info['status'] == self.status_failed:
-                detect_aml_error_message(info['appID'])
+                messages = detect_aml_error_message(info['appID'])
+                if messages is not None:
+                    info['result'] = ','.join(messages)
             logging.info(pformat(info))
             return [info]
 
@@ -359,6 +369,7 @@ class AMLClient(object):
             except:
                 cloud_blob = v['cloud_blob']
                 if v['storage_type'] == 'blob':
+                    logging.info('registering blob {}'.format(v['datastore_name']))
                     ds = Datastore.register_azure_blob_container(workspace=self.ws,
                                                                  datastore_name=v['datastore_name'],
                                                                  container_name=cloud_blob.container_name,
@@ -524,18 +535,18 @@ class AMLClient(object):
             if job_in_db['status'] == self.status_failed:
                 del appID_to_failed_job[job_in_db['appID']]
         for _, info in appID_to_failed_job.items():
-            self.query(info['appID'], with_log=True)
+            info.update(self.query(info['appID'], with_log=True)[0])
 
         update_cluster_job_db(all_info,
                 collection_name=collection_name)
 
-    def sync_code(self, random_id, compile_in_docker=False):
+    def sync_code(self, random_id, compile_in_docker=False, clean=True):
         random_qd = 'aml_quickdetection{}'.format(random_id)
         import os.path as op
         from qd.qd_common import get_user_name
         random_abs_qd = op.join('/tmp', get_user_name(),
                 '{}.zip'.format(random_qd))
-        if op.isfile(random_abs_qd):
+        if op.isfile(random_abs_qd) and clean:
             os.remove(random_abs_qd)
         logging.info('{}'.format(random_qd))
         from qd.qd_common import zip_qd
@@ -576,13 +587,25 @@ def detect_aml_error_message(app_id):
     import glob
     folders = glob.glob(op.join(get_log_folder(), '*{}'.format(app_id),
         'azureml-logs'))
+    error_codes = set()
     assert len(folders) == 1, 'not unique: {}'.format(', '.join(folders))
     folder = folders[0]
     has_nvidia_smi = False
-    from qd.qd_common import read_to_buffer
-    for log_file in glob.glob(op.join(folder, '70_driver_log*')):
+    for log_file in glob.glob(op.join(folder, '*')):
         all_line = read_to_buffer(log_file).decode().split('\n')
         for i, line in enumerate(all_line):
+            if "raise RuntimeError('NaN encountered!')" in line:
+                error_codes.add('NaN')
+            if 'RuntimeError: CUDA out of memory' in line:
+                error_codes.add('Mem')
+            if 'No module named' in line:
+                error_codes.add('ModuleErr')
+            if 'copy_if failed to synchronize' in line:
+                error_codes.add('copy_if')
+            if 'RuntimeError: connect() timed out' in line:
+                error_codes.add('connect')
+            if 'unhandled cuda error' in line:
+                error_codes.add('cuda')
             if 'Error' in line and \
                 'TrackUserError:context_managers.TrackUserError' not in line and \
                 'WARNING: Retrying' not in line:
@@ -591,6 +614,10 @@ def detect_aml_error_message(app_id):
                 end = min(i + 1, len(all_line))
                 logging.info(log_file)
                 logging.info('\n'.join(all_line[start: end]))
+            if 'Error response from daemon' in line:
+                error_codes.add('daemon')
+            if "AttributeError: module 'maskrcnn_benchmark._C'" in line:
+                error_codes.add('mask compile')
         # check how many gpus by nvidia-smi
         import re
         num_gpu = len([line for line in all_line if re.match('.*N/A.*Default', line) is
@@ -599,6 +626,8 @@ def detect_aml_error_message(app_id):
         if has_nvidia_smi and num_gpu != 4:
             logging.info(log_file)
             logging.info(num_gpu)
+    return list(error_codes)
+
 
 def monitor():
     from qd.db import create_annotation_db
@@ -711,14 +740,15 @@ def execute(task_type, **kwargs):
     elif task_type in ['qr']:
         c = create_aml_client(**kwargs)
         c.query(by_status=AMLClient.status_running)
-    elif task_type in ['init', 'initc']:
+    elif task_type in ['init', 'initc', 'initi', 'initic']:
         c = create_aml_client(**kwargs)
-        c.sync_code('')
-        if task_type=='initc':
+        clean = task_type in ['init', 'initc']
+        c.sync_code('', clean=clean)
+        if task_type in ['initc', 'initic']:
             # in this case, we first upload the raw code to unblock the job
             # submission. then we upload the compiled version to reduce the
             # overhead in aml running
-            c.sync_code('', compile_in_docker=True)
+            c.sync_code('', compile_in_docker=True, clean=clean)
     elif task_type == 'submit':
         c = create_aml_client(**kwargs)
         params = kwargs['remainders']
@@ -753,11 +783,13 @@ def execute(task_type, **kwargs):
             dest_client = create_aml_client(**kwargs)
         else:
             dest_client = client
+        result = []
         for partial_id in partial_ids:
             run_info = client.query(partial_id)[0]
-            dest_client.submit(run_info['cmd'],
-                    num_gpu=run_info['num_gpu'])
+            result.append(dest_client.submit(run_info['cmd'],
+                    num_gpu=run_info['num_gpu']))
             client.abort(run_info['appID'])
+        logging.info(pformat(result))
     elif task_type in ['s', 'summary']:
         m = create_aml_client(**kwargs)
         info = m.get_compute_status()
@@ -795,6 +827,8 @@ def parse_args():
                 'parse',
                 'init',
                 'initc', # init with compile
+                'initi', # incremental init
+                'initic' # incremental & compile
                 'blame', 'resubmit',
                 's', 'summary', 'i', 'inject'])
     parser.add_argument('-wl', dest='with_log', default=True, action='store_true')
