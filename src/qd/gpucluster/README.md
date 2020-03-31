@@ -136,6 +136,14 @@
    ```bash
    alias a='ipython --pdb src/qd/gpucluster/aml_client.py -- '
    ```
+   or (when the current folder is not quickdetection)
+   ```bash
+   alis a='python -m qd.gpucluster.aml_client '
+   ```
+   or
+   ```bash
+   alis a='AML_CONFIG_PATH=path_to_config python -m qd.gpucluster.aml_client '
+   ```
 
 ### Job Management
 1. How to query the job status
