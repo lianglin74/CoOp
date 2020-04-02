@@ -310,15 +310,29 @@ class CloudStorage(object):
         os.rename(local_path, origin_local_path)
         return data_url, url
 
-    def download_to_path(self, blob_name, local_path):
+    def download_to_path(self, blob_name, local_path,
+            max_connections=2):
         dir_path = op.dirname(local_path)
         from qd.qd_common import get_file_size
         if op.isfile(dir_path) and get_file_size(dir_path) == 0:
             os.remove(dir_path)
         ensure_directory(dir_path)
         tmp_local_path = local_path + '.tmp'
+        pbar = {}
+        def progress_callback(curr, total):
+            if len(pbar) == 0:
+                pbar['tqdm'] = tqdm(total=total, unit_scale=True)
+                pbar['last'] = 0
+                pbar['count'] = 0
+            pbar['count'] += 1
+            if pbar['count'] > 100:
+                pbar['tqdm'].update(curr - pbar['last'])
+                pbar['last'] = curr
+                pbar['count'] = 0
         self.block_blob_service.get_blob_to_path(self.container_name,
-                blob_name, tmp_local_path)
+                blob_name, tmp_local_path,
+                progress_callback=progress_callback,
+                max_connections=max_connections)
         os.rename(tmp_local_path, local_path)
 
     def download_to_stream(self, blob_name, s):
