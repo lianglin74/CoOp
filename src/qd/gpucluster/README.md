@@ -216,10 +216,6 @@
    a submit python train.py --data voc20
    ```
    Note
-   - By default, it uses `gpu_per_node` GPU with mpi as the distributed backend. That
-   means, the command will be executed four times with different environment
-   variables, which is highly recommended for distributed training. You can disable mpirun by setting `multi_process` as false. If
-   your compute has 8 gpus for each node, set `gpu_per_node` as 8.
    - If you want to use 8 GPU, run the command like
    ```bash
    a -n 8 submit python train.py --data voc20
