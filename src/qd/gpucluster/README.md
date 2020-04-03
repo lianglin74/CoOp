@@ -85,6 +85,9 @@
    #   experiment cannot be deleted in AML and it is hard to figure out the
    #   user name based on the experiment name or job ID
    experiment_name: your_alias
+   multi_process: true # if false, it only launches on process in each node
+   # used to calculate how many nodes are required based on the number of GPU requested
+   gpu_per_node: 4
    env:
        ENV_KEY: ENV_VALUE # specify any environment you want, the value: str
    ```
@@ -199,47 +202,35 @@
    ```
    Whenever you want your new code change took effect, you should run the above
    command.
-   To execute a command in AML, run teh following:
+   To execute a command in AML, run the following:
    ```bash
    a submit cmd
    ```
-   cmd is a string or a whitespace seperated string without quotes. What it
-   does
-   1. Upload all the source code in `aml.yaml:source_directory` to AML. Say, the
-      folder in AML is ROOT_AML
-   2. Make the current folder as `{ROOT_AML}` in AML
-   3. Run the following command in AML
-      ```bash
-      python {aml.yaml:entry_script} \
-          --code_path mount_point_for_config_param_code_path \
-          --data_folder mount_point_for_config_param_data_folder \
-          --model_folder mount_point_for_config_param_model_folder \
-          --output_folder mount_point_for_config_param_output_folder \
-          --cmd {cmd}
-      ```
-      If you are using the `aml_server.py` as the entry script. You can run any
-      shell command by `a submit`. For example,
-      - if you want to run `nvidia-smi` in
-      AML. The command is
-      ```bash
-      a submit nvidia-smi
-      ```
-      - If you want to run `python train.py --data voc20` in AML, the command
-      will be
-      ```bash
-      a submit python train.py --data voc20
-      ```
-      Note
-      - By default, it uses 4 GPU with mpi as the distributed backend. That
-      means, the command will be executed four times with different environment
-      variables.
-      - If you want to use 8 GPU, run the command like
-      ```bash
-      a -n 8 submit python train.py --data voc20
-      ```
-      `-n 8` should be placed before submit. Otherwise, it will think `-n 8` as
-      part of the cmd
-
+   - if you want to run `nvidia-smi` in AML. The command is
+   ```bash
+   a submit nvidia-smi
+   ```
+   - If you want to run `python train.py --data voc20` in AML, the command
+   will be
+   ```bash
+   a submit python train.py --data voc20
+   ```
+   Note
+   - By default, it uses `gpu_per_node` GPU with mpi as the distributed backend. That
+   means, the command will be executed four times with different environment
+   variables, which is highly recommended for distributed training. You can disable mpirun by setting `multi_process` as false. If
+   your compute has 8 gpus for each node, set `gpu_per_node` as 8.
+   - If you want to use 8 GPU, run the command like
+   ```bash
+   a -n 8 submit python train.py --data voc20
+   ```
+   `-n 8` should be placed before submit. Otherwise, it will think `-n 8` as
+   part of the cmd
+   - If `multi_process=true`, effectively it runs `mpirun --hostfile hostfile_contain_N_node_ips --npernode gpu_per_node cmd`
+       - the number of nodes x gpu_per_node == the number of gpu requested
+       - highly recommended for distributed training/inference
+   - If `multi_process=false`, effectively it runs `mpirun --hostfile hostfile_contain_N_node_ips --npernode 1 cmd`
+       - still, the number of nodes x gpu_per_node == the number of gpu requested
 
 ## Philly
 ### Installation
