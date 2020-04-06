@@ -1,4 +1,4 @@
-from qd.qd_pytorch import ModelPipeline
+from qd.qd_pytorch import TwoCropsTransform
 from qd.pipelines.classification_by_maskrcnn import MaskClassificationPipeline
 import os
 import sys
@@ -71,6 +71,7 @@ class MoCo(nn.Module):
         self.queue = nn.functional.normalize(self.queue, dim=0)
 
         self.register_buffer("queue_ptr", torch.zeros(1, dtype=torch.long))
+
         from qd.qd_common import get_mpi_size, get_mpi_rank
         self.mpi_size = get_mpi_size()
         self.mpi_rank = get_mpi_rank()
@@ -209,18 +210,6 @@ class MoCo(nn.Module):
         output = torch.cat(tensors_gather, dim=0)
         return output
 
-class TwoCropsTransform:
-    """Take two random crops of one image as the query and key."""
-
-    def __init__(self, base_transform):
-        self.base_transform = base_transform
-
-    def __call__(self, x):
-        q = self.base_transform(x)
-        k = self.base_transform(x)
-        return [q, k]
-
-
 class GaussianBlur(object):
     """Gaussian blur augmentation in SimCLR https://arxiv.org/abs/2002.05709"""
 
@@ -231,18 +220,6 @@ class GaussianBlur(object):
         sigma = random.uniform(self.sigma[0], self.sigma[1])
         x = x.filter(ImageFilter.GaussianBlur(radius=sigma))
         return x
-
-
-class MocoLoss(nn.Module):
-    def __init__(self, model, criterion):
-        super().__init__()
-        self.module = model
-        self.criterion = criterion
-
-    def forward(self, image, origin_target):
-        output, label = self.module(image[0], image[1])
-        loss = self.criterion(output, label)
-        return {'criterion_loss': loss}
 
 class MocoPipeline(MaskClassificationPipeline):
     def __init__(self, **kwargs):
@@ -268,7 +245,7 @@ class MocoPipeline(MaskClassificationPipeline):
                 }
 
         from qd.qd_common import max_iter_mult
-        curr_default['stageiter'] = [max_iter_mult(self.max_iter, self.max_iter * x // 200)
+        curr_default['stageiter'] = [max_iter_mult(self.max_iter, x / 200.)
                 for x in [120, 160]]
         self._default.update(curr_default)
 
@@ -280,7 +257,8 @@ class MocoPipeline(MaskClassificationPipeline):
         criterion = self._get_criterion()
         # we need wrap model output and criterion into one model, to re-use
         # maskrcnn trainer
-        model = MocoLoss(model, criterion)
+        from qd.layers.loss import UnsupervisedLoss
+        model = UnsupervisedLoss(model, criterion)
         return model
 
     def get_train_transform(self, start_iter=0):

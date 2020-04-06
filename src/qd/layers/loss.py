@@ -15,3 +15,14 @@ class ModelLoss(nn.Module):
         else:
             return {'criterion_loss': loss}
 
+class UnsupervisedLoss(nn.Module):
+    def __init__(self, model, criterion):
+        super().__init__()
+        self.module = model
+        self.criterion = criterion
+
+    def forward(self, image, origin_target):
+        output, label = self.module(image[0], image[1])
+        loss = self.criterion(output, label)
+        return {'criterion_loss': loss}
+

@@ -852,6 +852,65 @@ def calc_neg_aware_gmap(data, split, predict_file,
     result = convert_to_yaml_friendly(result)
     return result
 
+def get_precisie_bn_model_file(model_file):
+    return op.splitext(model_file)[0] + '.PreciseBN.pt'
+
+def freeze_all_parameters_except(model, freeze_all_except):
+    found = False
+    result = []
+    names = []
+    for n, m in model.named_modules():
+        if len(list(m.children())) > 0:
+            continue
+        if freeze_all_except in n:
+            assert not found
+            logging.info('not freeze: {}'.format(n))
+            found = True
+        else:
+            result.append(m)
+            names.append(n)
+    assert found
+    freeze_parameters(result)
+
+def freeze_parameters_by_last_name(model, last_fixed_param):
+    fixed_modules, names = get_all_module_need_fixed(model, last_fixed_param)
+    logging.info('fix the parameters of the following modules: {}'.format(
+        pformat(names)))
+    freeze_parameters(fixed_modules)
+
+def freeze_parameters(modules):
+    for m in modules:
+        for n, p in m.named_parameters():
+            p.requires_grad = False
+            if hasattr(m, 'name_from_root'):
+                logging.info('freeze param: {}.{}'.format(
+                    m.name_from_root,
+                    n))
+            else:
+                logging.info('freeze param: {}'.format(
+                    n))
+        from torch.nn import BatchNorm2d
+        if isinstance(m, BatchNorm2d):
+            m.eval()
+
+def get_all_module_need_fixed(model, last_fixed_param):
+    found = False
+    result = []
+    names = []
+    for n, m in model.named_modules():
+        if len(list(m.children())) > 0:
+            continue
+        if not found:
+            result.append(m)
+            names.append(n)
+            if last_fixed_param in n:
+                found = True
+                break
+        else:
+            assert last_fixed_param not in n
+    assert found
+    return result, names
+
 class TorchTrain(object):
     def __init__(self, **kwargs):
         if 'load_parameter' in kwargs and kwargs['load_parameter']:
@@ -897,6 +956,9 @@ class TorchTrain(object):
                 'test_crop_size': 224,
                 'momentum': 0.9,
                 'scheduler_type': 'step',
+                'train_transform': 'inception',
+                'cosine_warmup_iters': 500,
+                'cosine_warmup_factor': 1. / 3,
                 }
 
         assert 'batch_size' not in kwargs, 'use effective_batch_size'
@@ -923,6 +985,10 @@ class TorchTrain(object):
         self.mpi_size= get_mpi_size()
         self.mpi_local_rank = get_mpi_local_rank()
         self.mpi_local_size = get_mpi_local_size()
+        # we can set device_id = 0 always for debugging distributed & you only
+        # have 1 gpu
+        self.device_id = (self.mpi_local_rank if not
+                self.kwargs.get('debug_train') else 0)
 
         # the following two environements are used in init_dist_process if the
         # method is by env. we make sure the world is the same here
@@ -999,7 +1065,6 @@ class TorchTrain(object):
             import horovod.torch as hvd
             hvd.init()
             torch.cuda.set_device(hvd.local_rank())
-            assert hvd.local_rank() == self.mpi_local_rank
             assert hvd.rank() == self.mpi_rank
             assert hvd.size() == self.mpi_size
             assert hvd.local_size() == self.mpi_local_size
@@ -1011,7 +1076,7 @@ class TorchTrain(object):
                         'rank': self.mpi_rank,
                         'world_size': self.mpi_size}
                 # always set the device at the very beginning
-                torch.cuda.set_device(self.mpi_local_rank)
+                torch.cuda.set_device(self.device_id)
                 logging.info('init param: \n{}'.format(pformat(init_param)))
                 if not dist.is_initialized():
                     dist.init_process_group(**init_param)
@@ -1027,8 +1092,25 @@ class TorchTrain(object):
         self._initialized = True
 
     def get_train_transform(self):
-        return get_train_transform(self.bgr2rgb,
-                    crop_size=self.train_crop_size)
+        if self.train_transform == 'inception':
+            return get_train_transform(self.bgr2rgb,
+                        crop_size=self.train_crop_size)
+        elif self.train_transform == 'no_color':
+            normalize = get_data_normalize()
+            totensor = transforms.ToTensor()
+            all_trans = []
+            if self.bgr2rgb:
+                all_trans.append(BGR2RGB())
+            all_trans.extend([
+                transforms.ToPILImage(),
+                transforms.RandomResizedCrop(self.train_crop_size),
+                transforms.RandomHorizontalFlip(),
+                totensor,
+                normalize,])
+            data_augmentation = transforms.Compose(all_trans)
+            return data_augmentation
+        else:
+            raise NotImplementedError(self.train_transform)
 
     def get_transform(self, stage):
         if stage == 'train':
@@ -1116,7 +1198,7 @@ class TorchTrain(object):
             if self.mpi_local_size > 1:
                 if not self.use_hvd:
                     model = torch.nn.parallel.DistributedDataParallel(model,
-                            device_ids=[self.mpi_local_rank])
+                            device_ids=[self.device_id])
             else:
                 if not self.use_hvd:
                     model = torch.nn.parallel.DistributedDataParallel(model)
@@ -1236,9 +1318,22 @@ class TorchTrain(object):
                 raise ValueError('unknown init type = {}'.format(self.init_from['type']))
 
     def get_optimizer(self, model):
-        optimizer = torch.optim.SGD(model.parameters(), self.base_lr,
-                                    momentum=self.momentum,
-                                    weight_decay=self.weight_decay)
+        all_parameter = list(model.parameters())
+        parameters = list(filter(lambda p: p.requires_grad, all_parameter))
+        logging.info('#original param = {}; require grad = {}'.format(
+            len(all_parameter), len(parameters)))
+        if self.optimizer_type in [None, 'SGD', 'LARS']:
+            optimizer = torch.optim.SGD(parameters, self.base_lr,
+                                        momentum=self.momentum,
+                                        weight_decay=self.weight_decay)
+        elif self.optimizer_type in ['Adam']:
+            optimizer = torch.optim.Adam(parameters, self.base_lr,
+                                        weight_decay=self.weight_decay)
+        else:
+            raise NotImplementedError(self.optimizer_type)
+        if self.optimizer_type in ['LARS']:
+            from torchlars import LARS
+            optimizer = LARS(optimizer=optimizer, eps=1e-8, trust_coef=0.001)
         return optimizer
 
     def get_lr_scheduler(self, optimizer, last_epoch=-1):
@@ -1250,6 +1345,19 @@ class TorchTrain(object):
             scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
                     milestones=[self.parse_iter(i) for i in self.stageiter],
                     gamma=0.1,
+                    last_epoch=last_epoch)
+        elif self.scheduler_type == 'cosine':
+            from qd.opt.WarmupCosineAnnealingLR import WarmupCosineAnnealingLR
+            assert isinstance(self.max_iter, int)
+            scheduler = WarmupCosineAnnealingLR(optimizer,
+                    max_iter=self.max_iter,
+                    last_epoch=last_epoch,
+                    warmup_factor=self.cosine_warmup_factor,
+                    warmup_iters=self.parse_iter(self.cosine_warmup_iters)
+                    )
+        elif self.scheduler_type == 'cos':
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,
+                    T_max=self.max_iter,
                     last_epoch=last_epoch)
         else:
             raise NotImplementedError(self.scheduler_type)
@@ -1386,7 +1494,6 @@ class TorchTrain(object):
 
     def monitor_train(self):
         self._ensure_initialized()
-        assert self.max_epoch == None, 'use iteration'
         while True:
             self.standarize_intermediate_models()
             need_wait_models = self.pred_eval_intermediate_models()
@@ -1785,7 +1892,8 @@ def load_model_state_ignore_mismatch(model, init_dict):
 
     logging.info('number of param ignored = {}'.format(num_ignored))
 
-    model.load_state_dict(real_init_dict, strict=False)
+    result = model.load_state_dict(real_init_dict, strict=False)
+    logging.info('not initialized keys = {}'.format(result.missing_keys))
 
 if __name__ == '__main__':
     init_logging()

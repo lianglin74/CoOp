@@ -50,18 +50,29 @@ class MaskClassificationPipeline(ModelPipeline):
         logging.info('end amp init')
         return model, optimizer
 
+    def freeze_parameters(self, model):
+        if self.last_fixed_param:
+            from qd.qd_pytorch import freeze_parameters_by_last_name
+            freeze_parameters_by_last_name(self.last_fixed_param)
+        if self.freeze_all_except:
+            from qd.qd_pytorch import freeze_all_parameters_except
+            freeze_all_parameters_except(model, self.freeze_all_except)
+
     def train(self):
         device = torch.device('cuda')
         model = self.get_train_model()
+        self.freeze_parameters(model)
         model.to(device)
 
         optimizer = self.get_optimizer(model)
+        logging.info(optimizer)
 
         model, optimizer = self.init_apex_amp(model, optimizer)
 
         model = self._data_parallel_wrap(model)
 
         scheduler = self.get_lr_scheduler(optimizer)
+        logging.info(scheduler)
 
         save_to_disk = get_mpi_rank() == 0
         checkpointer = DetectronCheckpointer(
@@ -209,6 +220,29 @@ class MaskClassificationPipeline(ModelPipeline):
                     lambda m: isinstance(m, torch.nn.BatchNorm2d),
                     lambda m: GroupBatchNorm(get_normalize_groups(m.num_features, self.normalization_group,
                         self.normalization_group_size), m.num_features))
+        elif self.convert_bn == 'SBN':
+            if self.distributed:
+                model = replace_module(model,
+                        lambda m: isinstance(m, torch.nn.BatchNorm2d),
+                        lambda m: torch.nn.SyncBatchNorm(m.num_features,
+                            eps=m.eps,
+                            momentum=m.momentum,
+                            affine=m.affine,
+                            track_running_stats=m.track_running_stats))
+        elif self.convert_bn == 'CBN':
+            from qd.layers.batch_norm import ConvergingBatchNorm
+            model = replace_module(model,
+                    lambda m: isinstance(m, torch.nn.BatchNorm2d),
+                    lambda m: ConvergingBatchNorm(
+                        policy=self.cbn_policy,
+                        max_iter=self.max_iter,
+                        gamma=self.cbn_gamma,
+                        num_features=m.num_features,
+                        eps=m.eps,
+                        momentum=m.momentum,
+                        affine=True,
+                        track_running_stats=m.track_running_stats,
+                        ))
         else:
             assert self.convert_bn is None, self.convert_bn
         # assign a name to each module so that we can use it in each module to
