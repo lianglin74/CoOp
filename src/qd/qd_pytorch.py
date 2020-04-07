@@ -66,7 +66,18 @@ def detection_evalation(data, split, pred):
             report_file=evaluate_file)
     ensure_create_evaluate_meta_file(evaluate_file)
 
-def visualize_maskrcnn_input(images, targets):
+def print_module_param_grad(model):
+    info = []
+    for n, p in model.named_parameters():
+        if p.requires_grad:
+            info.append('name = {}, param = {}; grad = {}'.format(
+                n,
+                p.abs().mean(),
+                p.grad.abs().mean() if p.grad is not None else 0,
+                ))
+    logging.info('\n'.join(info))
+
+def visualize_maskrcnn_input(images, targets, show_box=True):
     import torch
     images = images.tensors.cpu()
     scale = [0.229, 0.224, 0.225]
@@ -83,9 +94,12 @@ def visualize_maskrcnn_input(images, targets):
     #show_image(images[0, :])
     ims = []
     for i, t in enumerate(targets):
-        rects = [{'rect': r, 'class': '1'} for r in t.bbox.tolist()]
+        labels = t.get_field('labels').tolist()
+        rects = t.bbox.tolist()
+        rects = [{'rect': r, 'class': str(l)} for r, l in zip(rects, labels)]
         im = images[i]
-        im = draw_rects(rects, im)
+        if show_box:
+            im = draw_rects(rects, im)
         ims.append(im)
     show_images(ims, 1, len(ims))
 
@@ -131,7 +145,7 @@ def load_scheduler_state(scheduler, state):
             # prefer the current scheduling parameters, except the last_epoch
             # or some other states which relies on the iteration.
             if k in ['milestones', 'warmup_factor', 'warmup_iters', 'warmup_method',
-                'base_lrs', 'gamma'] or float_tolorance_equal(curr, v):
+                'base_lrs', 'gamma', '_last_lr'] or float_tolorance_equal(curr, v):
                 continue
             elif k in ['last_epoch', '_step_count']:
                 logging.info('updating {} from {} to {}'.format(k,
@@ -921,6 +935,21 @@ def get_all_module_need_fixed(model, last_fixed_param):
     assert found
     return result, names
 
+def ensure_init_process_group(device_id=None):
+    if get_mpi_size() == 1:
+        return
+    if not dist.is_initialized():
+        dist_url = 'tcp://{}:{}'.format(get_master_node_ip(),
+                12345)
+        init_param = {'backend': 'nccl',
+                'init_method': dist_url,
+                'rank': get_mpi_rank(),
+                'world_size': get_mpi_size()}
+        if device_id is None:
+            device_id = get_mpi_local_rank()
+        torch.cuda.set_device(device_id)
+        dist.init_process_group(**init_param)
+
 class TorchTrain(object):
     def __init__(self, **kwargs):
         if 'load_parameter' in kwargs and kwargs['load_parameter']:
@@ -1167,7 +1196,11 @@ class TorchTrain(object):
 
     def _get_criterion(self):
         if self.dataset_type in ['single', 'crop']:
-            criterion = nn.CrossEntropyLoss().cuda()
+            if self.loss_type == 'NTXent':
+                from qd.layers.ntxent_loss import NTXentLoss
+                criterion = NTXentLoss(self.temperature)
+            else:
+                criterion = nn.CrossEntropyLoss().cuda()
         elif self.dataset_type == 'multi_hot':
             if self.loss_type == 'BCEWithLogitsLoss':
                 criterion = nn.BCEWithLogitsLoss().cuda()
