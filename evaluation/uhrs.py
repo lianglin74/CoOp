@@ -82,7 +82,8 @@ class UhrsTaskManager():
         if state == 1:
             return False
         if state == 0:
-            raise Exception("task id {} is disabled".format(task_id))
+            logging.info("task id {} is disabled".format(task_id))
+            return False
         return True
 
     def is_task_exist(self):
@@ -203,6 +204,8 @@ class UhrsTaskManager():
             return 91381
         elif task_group == "crowdsource_verify_tag":
             return 91759
+        elif task_group == "internal_verify_tag":
+            return 125330
         elif task_group == "test":
             return 88209
         elif task_group == "internal_verify_box":

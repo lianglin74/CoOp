@@ -13,7 +13,7 @@ import os.path as op
 from pprint import pformat
 import sys
 
-from qd.qd_common import calculate_iou
+from qd.qd_common import calculate_iou, json_dump
 from qd.tsv_io import TSVDataset, tsv_reader,tsv_writer
 from qd.db import BoundingBoxVerificationDB
 from qd.process_tsv import upload_image_to_blob
@@ -23,7 +23,8 @@ CFG_REQUIRED_FIELDS = "required"
 TASK_CONFIGS = {
     "uhrs_tag_verification": {CFG_IOU: 0, CFG_REQUIRED_FIELDS: ["class"]},
     "uhrs_bounding_box_verification": {CFG_IOU: 0.5, CFG_REQUIRED_FIELDS: ["class", "rect"]},
-    "uhrs_logo_verification": {CFG_IOU: 0.5, CFG_REQUIRED_FIELDS: ["class", "rect"]}
+    "uhrs_logo_verification": {CFG_IOU: 0.5, CFG_REQUIRED_FIELDS: ["class", "rect"]},
+    "uhrs_text_verification": {CFG_IOU: 0, CFG_REQUIRED_FIELDS: ["class"]},
 }
 
 def submit_to_verify(gt_dataset_name, gt_split, pred_file, collection_name,
@@ -54,6 +55,7 @@ def submit_to_verify(gt_dataset_name, gt_split, pred_file, collection_name,
 
     num_total_bboxes = 0
     num_verify = 0
+    num_in_gt = 0
     all_bb_tasks = []
 
     gt_iter = gt_dataset.iter_data(gt_split, t='label', version=gt_version)
@@ -81,6 +83,7 @@ def submit_to_verify(gt_dataset_name, gt_split, pred_file, collection_name,
                     is_in_gt = True
                     break
             if is_in_gt:
+                num_in_gt += 1
                 continue
 
             if "conf" not in bbox or conf_thres==0 or bbox["conf"] >= conf_thres:
@@ -98,7 +101,7 @@ def submit_to_verify(gt_dataset_name, gt_split, pred_file, collection_name,
                 })
 
     logging.info("#total bboxes: {}, #in gt: {}, #submit: {}"
-            .format(num_total_bboxes, num_total_bboxes-num_verify, num_verify))
+            .format(num_total_bboxes, num_in_gt, num_verify))
     cur_db = BoundingBoxVerificationDB(db_name = 'qd', collection_name = collection_name)
     cur_db.request_by_insert(all_bb_tasks)
 
@@ -144,9 +147,26 @@ def is_uhrs_consensus_correct(uhrs_res):
     return False
 
 
+def get_uhrs_detailed_judgment():
+    collection_name = 'uhrs_text_verification'
+    # query completed results
+    cur_db = BoundingBoxVerificationDB(db_name = 'qd', collection_name = collection_name)
+    data_split_to_key_rects, all_id = cur_db.get_completed_uhrs_result()
+    for data, split in data_split_to_key_rects.keys():
+        key2rects = collections.defaultdict(list)
+        for key, rect in data_split_to_key_rects[(data, split)]:
+            key2rects[key].append(rect)
+
+        outfile = op.join('data', data, 'uhrs',
+                '{}.uhrs.counts.tsv'.format(split))
+        out = []
+        for key, rects in key2rects.items():
+            out.append([key, json_dump(rects)])
+        tsv_writer(out, outfile)
+
+
 def ensure_build_dataset_to_verify(dataset_name, split, image_tsv=None,
         gt_label_tsv=None):
-    from qd.qd_common import json_dump
     img_fpath = 'data/uhrs_verify_tag_imagenet/Jian1570A2_base64.balance_min50.tsv'
     gt_fpath = 'data/uhrs_verify_tag_imagenet/Jian1570A2_base64.label.balance_min50.tsv'
     dataset_name = 'uhrs_verify_tag_imagenet'
@@ -209,7 +229,7 @@ def check_predict_format(data_type, predict_file, dataset_name, split, data_root
                     return False
         return True
 
-    if data_type == 'tagging':
+    if data_type in ['tagging', 'text']:
         required_fields = ['class']
     else:
         required_fields = ['class', 'rect']
@@ -248,6 +268,8 @@ def main():
         collection_name = 'uhrs_bounding_box_verification'
     elif args.type == 'logo':
         collection_name = 'uhrs_logo_verification'
+    elif args.type == 'text':
+        collection_name = 'uhrs_text_verification'
     else:
         raise ValueError('unknown data type: {}'.format(args.type))
 
@@ -288,4 +310,5 @@ if __name__ == "__main__":
     from qd.qd_common import init_logging
     init_logging()
     main()
+    #get_uhrs_detailed_judgment()
 
