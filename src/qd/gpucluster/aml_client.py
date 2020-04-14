@@ -10,6 +10,8 @@ from qd.qd_common import decode_general_cmd
 from qd.qd_common import ensure_directory
 from qd.qd_common import try_once
 from qd.qd_common import read_to_buffer
+from qd.qd_common import get_file_size, get_url_fsize
+from qd.qd_common import concat_files, try_delete
 from qd.cloud_storage import create_cloud_storage
 import copy
 
@@ -67,6 +69,8 @@ def parse_run_info(run, with_details=True,
     update_by_run_details(info, details)
     if with_log:
         all_log = download_run_logs(info, full=log_full)
+        if all_log is None:
+            all_log = []
         info['all_log_path'] = all_log
         master_logs = [l for l in all_log if l.endswith('70_driver_log_0.txt')]
         if len(master_logs) > 0:
@@ -131,10 +135,24 @@ def download_run_logs(run_info, full=True):
         target_file = op.join(log_folder, run_info['appID'], k)
         from qd.qd_common import url_to_file_by_wget
         from qd.qd_common import url_to_file_by_curl
-        if full:
+        url_fsize = get_url_fsize(v)
+        if full or url_fsize <= 1024 * 100:
             url_to_file_by_wget(v, target_file)
         else:
-            url_to_file_by_curl(v, target_file, -1024 * 100 )
+            if op.isfile(target_file):
+                start_size = get_file_size(target_file)
+                if start_size < url_fsize:
+                    extra_target_file = target_file + '.extra'
+                    try_delete(extra_target_file)
+                    end_size = min(url_fsize, start_size + 1024 * 100)
+                    url_to_file_by_curl(v, extra_target_file, start_size,
+                                        end_size)
+                    if op.isfile(extra_target_file):
+                        concat_files([target_file, extra_target_file], target_file)
+                        try_delete(extra_target_file)
+            else:
+                end_size = min(url_fsize, 1024 * 100)
+                url_to_file_by_curl(v, target_file, 0, end_size)
         all_log_file.append(target_file)
 
     log_status = {'status': run_info['status'],
@@ -149,7 +167,7 @@ def iter_active_runs(compute_target):
     workspace_client = WorkspaceClient(compute_target.workspace.service_context)
     return workspace_client.get_runs_by_compute(compute_target.name)
 
-def get_compute_status(compute_target):
+def get_compute_status(compute_target, gpu_per_node=4):
     info = {}
 
     info['running_node_count'] = compute_target.status.node_state_counts.running_node_count
@@ -157,10 +175,10 @@ def get_compute_status(compute_target):
     info['unusable_node_count'] = compute_target.status.node_state_counts.unusable_node_count
     info['max_node_count'] = compute_target.scale_settings.maximum_node_count
 
-    info['total_gpu'] = info['max_node_count'] * 4
+    info['total_gpu'] = info['max_node_count'] * gpu_per_node
     info['total_free_gpu'] = (info['max_node_count'] -
         info['unusable_node_count'] - info['running_node_count'] -
-        info['preparing_node_count']) * 4
+        info['preparing_node_count']) * gpu_per_node
     all_job_status = [j.status for j in iter_active_runs(compute_target)]
     info['num_running_job'] = len([j for j in all_job_status if j == 'Running'])
 
@@ -193,6 +211,7 @@ class AMLClient(object):
     def __init__(self, azure_blob_config_file, config_param, docker,
             datastore_name, aml_config, use_custom_docker,
             compute_target, source_directory=None, entry_script='aml_server.py',
+            gpu_per_node=4,
             with_log=True,
             env=None,
             multi_process=True,
@@ -202,6 +221,7 @@ class AMLClient(object):
         self.use_cli_auth = kwargs.get('use_cli_auth', False)
         self.aml_config = aml_config
         self.compute_target_name = compute_target
+        self.gpu_per_node = gpu_per_node
         # do not change the datastore_name unless the storage account
         # information is changed
         self.datastore_name = datastore_name
@@ -216,7 +236,7 @@ class AMLClient(object):
         else:
             self.experiment_name = kwargs['experiment_name']
         self.gpu_set_by_client = ('num_gpu' in kwargs)
-        self.num_gpu = kwargs.get('num_gpu', 4)
+        self.num_gpu = kwargs.get('num_gpu', self.gpu_per_node)
         self.docker = docker
 
         self.config_param = {p: {'azure_blob_config_file': azure_blob_config_file,
@@ -289,15 +309,14 @@ class AMLClient(object):
         return self._compute_target
 
     def get_cluster_status(self):
-        compute_status = get_compute_status(self.compute_target)
+        compute_status = get_compute_status(self.compute_target,
+                gpu_per_node=self.gpu_per_node)
 
         return compute_status
 
     @deprecated('use get_cluster_status')
     def get_compute_status(self):
-        compute_status = get_compute_status(self.compute_target)
-
-        return compute_status
+        return self.get_cluster_status()
 
     def abort(self, run_id):
         run = create_aml_run(self.experiment, run_id)
@@ -306,8 +325,26 @@ class AMLClient(object):
     def blame(self):
         print_topk_long_run_jobs(self.ws, 5)
 
+    def ssh(self, run_id):
+        job_info = self.query(run_id, with_log=False, with_details=False)[0]
+        node_list = self.compute_target.list_nodes()
+        target_nodes = [n for n in node_list if n.get('runId') == job_info['appID']]
+        user_name = self.compute_target.admin_username
+        #ssh user_name@public_ip -p port
+        ssh_commands = ['ssh {}@{} -p {}'.format(user_name,
+                                 n['publicIpAddress'],
+                                 n['port']) for n in target_nodes]
+        if len(ssh_commands) >= 1:
+            logging.info('all commands:\n{}'.format(pformat(ssh_commands)))
+            cmd_run(ssh_commands[0].split(' '),
+                    stdin=None,
+                    shell=True)
+        else:
+            logging.info('no node is found for the job of {}'.format(
+                job_info['appID']))
+
     def query(self, run_id=None, by_status=None, max_runs=None,
-            with_log=False):
+            with_log=False, with_details=None):
         if run_id is None:
             # all_run is ordered by created time, latest first
             all_run = list(self.experiment.get_runs())
@@ -322,9 +359,10 @@ class AMLClient(object):
                 valid_status = [self.status_running, self.status_queued]
                 if by_status:
                     valid_status.append(by_status)
-                with_details = r.status in valid_status
+                if with_details is None:
+                    wd = r.status in valid_status
                 parse_info = {}
-                parse_info = {'with_details': with_details,
+                parse_info = {'with_details': wd,
                               'with_log': self.with_log or with_log,
                               'log_full': False}
                 return parse_info
@@ -337,10 +375,12 @@ class AMLClient(object):
             return all_info
         else:
             r = create_aml_run(self.experiment, run_id)
+            if with_details is None:
+                with_details = True
             info = parse_run_info(r,
-                    with_details=True,
+                    with_details=with_details,
                     with_log=self.with_log or with_log,
-                    log_full=True)
+                    log_full=with_log)
             if 'master_log' in info:
                 cmd_run(['tail', '-n', '100', info['master_log']])
             if info['status'] == self.status_failed:
@@ -482,13 +522,13 @@ class AMLClient(object):
         mpi_config = MpiConfiguration()
         if num_gpu is None:
             num_gpu = self.num_gpu
-        if num_gpu <= 4:
+        if num_gpu <= self.gpu_per_node:
             mpi_config.process_count_per_node = num_gpu
             node_count = 1
         else:
-            assert (num_gpu % 4) == 0
-            mpi_config.process_count_per_node = 4
-            node_count = num_gpu // 4
+            assert (num_gpu % self.gpu_per_node) == 0
+            mpi_config.process_count_per_node = self.gpu_per_node
+            node_count = num_gpu // self.gpu_per_node
         if not self.multi_process:
             mpi_config.process_count_per_node = 1
 
@@ -721,6 +761,9 @@ class MultiAMLClient(object):
         client, partial_id = self.search_partial_id(partial_id)
         client.query(partial_id, **kwargs)
 
+    def ssh(self, partial_id):
+        client, partial_id = self.search_partial_id(partial_id)
+        client.ssh(partial_id)
 
 def execute(task_type, **kwargs):
     if task_type in ['q', 'query']:
@@ -737,6 +780,10 @@ def execute(task_type, **kwargs):
     elif task_type in ['qq']:
         c = create_aml_client(**kwargs)
         c.query(by_status=AMLClient.status_queued)
+    elif task_type in ['ssh']:
+        assert len(kwargs['remainders']) == 1
+        c = MultiAMLClient(**kwargs)
+        c.ssh(partial_id=kwargs['remainders'][0])
     elif task_type in ['qr']:
         c = create_aml_client(**kwargs)
         c.query(by_status=AMLClient.status_running)
@@ -763,10 +810,17 @@ def execute(task_type, **kwargs):
         c = create_aml_client(**kwargs)
         for full_expid in kwargs['remainders']:
             c.download_latest_qdoutput(full_expid)
-    elif task_type in ['upload_qddata', 'u']:
+    elif task_type in ['upload_qddata']:
         c = create_aml_client(**kwargs)
         for data in kwargs['remainders']:
             c.upload_qd_data(data)
+    elif task_type in ['u']:
+        c = create_aml_client(**kwargs)
+        for data in kwargs['remainders']:
+            if not data.startswith('output'):
+                c.upload_qd_data(data)
+            else:
+                c.upload_qd_output(data)
     elif task_type == 'blame':
         c = create_aml_client(**kwargs)
         c.blame()
