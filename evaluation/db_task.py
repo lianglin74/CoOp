@@ -128,6 +128,7 @@ def download_merge_correct_to_gt(collection_name, gt_dataset_name=None, gt_split
     # merge verified correct to ground truth
     from qd import process_tsv
     process_tsv.merge_uhrs_result_to_dataset(data_split_to_key_rects, tag_only=tag_only)
+    get_uhrs_detailed_judgment(data_split_to_key_rects=data_split_to_key_rects)
     all_gt_labels = []
     for data, split in all_data_split:
         dataset = TSVDataset(data)
@@ -147,11 +148,13 @@ def is_uhrs_consensus_correct(uhrs_res):
     return False
 
 
-def get_uhrs_detailed_judgment():
-    collection_name = 'uhrs_text_verification'
-    # query completed results
-    cur_db = BoundingBoxVerificationDB(db_name = 'qd', collection_name = collection_name)
-    data_split_to_key_rects, all_id = cur_db.get_completed_uhrs_result()
+def get_uhrs_detailed_judgment(collection_name=None,
+        data_split_to_key_rects=None):
+    if data_split_to_key_rects is None:
+        assert collection_name is not None
+        # query completed results
+        cur_db = BoundingBoxVerificationDB(db_name = 'qd', collection_name = collection_name)
+        data_split_to_key_rects, all_id = cur_db.get_completed_uhrs_result()
     for data, split in data_split_to_key_rects.keys():
         key2rects = collections.defaultdict(list)
         for key, rect in data_split_to_key_rects[(data, split)]:
