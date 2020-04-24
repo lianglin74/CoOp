@@ -25,8 +25,11 @@ def init_logging():
     )
 
 def unzip(zip_file, target_folder):
-    zip_ref = zipfile.ZipFile(zip_file, 'r')
-    zip_ref.extractall(path=target_folder)
+    # the linux command of unzip preserves teh time stamp, which would be
+    # helpful to reduce the time cost of compiling
+    cmd_run(['unzip', zip_file, '-d', target_folder])
+    #zip_ref = zipfile.ZipFile(zip_file, 'r')
+    #zip_ref.extractall(path=target_folder)
 
 def cmd_run(cmd, working_directory='./', succeed=False,
         return_output=False):
@@ -140,6 +143,15 @@ def monitor():
         import time
         time.sleep(60 * 30) # every 30 minutes
 
+class MonitoringProcess(object):
+    def __enter__(self):
+        if get_mpi_rank() == 0:
+            self.p = launch_monitoring_process()
+
+    def __exit__ (self, type, value, tb):
+        if get_mpi_rank() == 0:
+            terminate_monitoring_process(self.p)
+
 def terminate_monitoring_process(p):
     p.terminate()
     p.join()
@@ -159,9 +171,6 @@ def wrap_all(code_zip, code_root,
     cmd_run(['df', '-h'])
     cmd_run(['ls', '/dev'])
     cmd_run(['blobfuse', '-v'])
-
-    if get_mpi_rank() == 0:
-        p = launch_monitoring_process()
 
     lock_fd = acquireLock()
     logging.info('got the lock')
@@ -201,12 +210,10 @@ def wrap_all(code_zip, code_root,
     if type(command) is str:
         command = list(command.split(' '))
 
-    if len(command) > 0:
-        cmd_run(command, working_directory=code_root,
-                succeed=True)
-
-    if get_mpi_rank() == 0:
-        terminate_monitoring_process(p)
+    with MonitoringProcess():
+        if len(command) > 0:
+            cmd_run(command, working_directory=code_root,
+                    succeed=True)
 
 def get_mpi_local_rank():
     return int(os.environ.get('OMPI_COMM_WORLD_LOCAL_RANK', '0'))
