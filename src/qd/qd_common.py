@@ -1,4 +1,4 @@
-import ruamel.yaml as yaml
+import yaml
 from collections import OrderedDict
 import progressbar
 import json
@@ -59,6 +59,16 @@ def try_once(func):
         except Exception as e:
             logging.info('ignore error \n{}'.format(str(e)))
             print_trace()
+    return func_wrapper
+
+def master_process_run(func):
+    def func_wrapper(*args, **kwargs):
+        if get_mpi_rank() == 0:
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                logging.info('ignore error \n{}'.format(str(e)))
+                print_trace()
     return func_wrapper
 
 @try_once
@@ -404,9 +414,8 @@ def retry_agent(func, *args, **kwargs):
             time.sleep(5)
 
 def ensure_copy_folder(src_folder, dst_folder):
-    if op.isdir(dst_folder):
-        return
-    shutil.copytree(src_folder, dst_folder)
+    cmd_run('rsync -ravz {}/ {} --progress'.format(
+        src_folder, dst_folder).split(' '))
 
 def get_current_time_as_str():
     return datetime.now().strftime('%Y_%m_%d_%H_%M_%S')
@@ -623,10 +632,13 @@ def url_to_file_by_curl(url, fname, bytes_start=None, bytes_end=None):
         if bytes_start < 0:
             bytes_start = 0
     if bytes_end is None:
-        cmd_run(['curl', '-r', '{}-'.format(bytes_start),
+        # -f: if it fails, no output will be sent to output file
+        cmd_run(['curl', '-f', '-r', '{}-'.format(bytes_start),
             url, '--output', fname])
     else:
-        raise NotImplementedError
+        # curl: end is inclusive
+        cmd_run(['curl', '-f', '-r', '{}-{}'.format(bytes_start, bytes_end - 1),
+            url, '--output', fname])
 
 def url_to_bytes(url):
     try:
@@ -1308,11 +1320,15 @@ def generate_lineidx(filein, idxout):
     idxout_tmp = idxout + '.tmp'
     with open(filein, 'r') as tsvin, open(idxout_tmp,'w') as tsvout:
         fsize = os.fstat(tsvin.fileno()).st_size
-        fpos = 0;
+        fpos = 0
+        fbar_last_pos = 0
+        fbar = tqdm(total=fsize, unit_scale=True)
         while fpos!=fsize:
             tsvout.write(str(fpos)+"\n");
             tsvin.readline()
             fpos = tsvin.tell();
+            fbar.update(fpos - fbar_last_pos)
+            fbar_last_pos = fpos
     os.rename(idxout_tmp, idxout)
 
 def drop_second_batch_in_bn(net):
@@ -1948,13 +1964,11 @@ def write_to_yaml_file(context, file_name):
                 encoding='utf-8', allow_unicode=True)
 
 def load_from_yaml_str(s):
-    return yaml.load(s)
-    #return yaml.load(s, Loader=yaml.CLoader)
+    return yaml.load(s, Loader=yaml.FullLoader)
 
 def load_from_yaml_file(file_name):
     with open(file_name, 'r') as fp:
-        return yaml.load(fp)
-        #return yaml.load(fp, Loader=yaml.CLoader)
+        return yaml.load(fp, Loader=yaml.FullLoader)
 
 def write_to_file(contxt, file_name, append=False):
     p = os.path.dirname(file_name)
@@ -2081,15 +2095,27 @@ class FileProgressingbar:
     def update(self):
         self.pbar.update(self.fileobj.tell())
 
+def is_pil_image(image):
+    from PIL import Image
+    return isinstance(image, Image.Image)
+
 def encoded_from_img(im, quality=None, save_type=None):
     if save_type is None:
         save_type = 'jpg'
     assert save_type in ['jpg', 'png']
-    if quality:
-        x = cv2.imencode('.{}'.format(save_type), im,
-                (cv2.IMWRITE_JPEG_QUALITY, quality))[1]
+    if not is_pil_image(im):
+        if quality:
+            x = cv2.imencode('.{}'.format(save_type), im,
+                    (cv2.IMWRITE_JPEG_QUALITY, quality))[1]
+        else:
+            x = cv2.imencode('.{}'.format(save_type), im)[1]
     else:
-        x = cv2.imencode('.{}'.format(save_type), im)[1]
+        if save_type == 'jpg':
+            save_type = 'JPEG'
+        import io
+        x = io.BytesIO()
+        im.save(x, format=save_type)
+        x = x.getvalue()
     return base64.b64encode(x)
 
 def encode_image(im, quality=None):
@@ -2101,6 +2127,16 @@ def encode_image(im, quality=None):
 
 def is_valid_image(im):
     return im is not None and all(x != 0 for x in im.shape)
+
+def pilimg_from_base64(imagestring):
+    try:
+        from PIL import Image
+        import io
+        jpgbytestring = base64.b64decode(imagestring)
+        image = Image.open(io.BytesIO(jpgbytestring))
+        return image
+    except:
+        return None;
 
 def img_from_base64(imagestring):
     try:
@@ -2332,6 +2368,28 @@ def plot_distribution(x, y, color=None, fname=None):
         plt.close()
     else:
         plt.show()
+
+g_key_to_cache = {}
+def run_if_not_memory_cached(func, *args, **kwargs):
+    force = False
+    if '__force' in kwargs:
+        if kwargs['__force']:
+            force = True
+        del kwargs['__force']
+    if '__key' in kwargs:
+        key = kwargs.pop('__key')
+    else:
+        import pickle as pkl
+        key = hash_sha1(pkl.dumps(OrderedDict({'arg': pformat(args), 'kwargs':
+            pformat(kwargs), 'func_name': func.__name__})))
+    global g_key_to_cache
+
+    if key in g_key_to_cache and not force:
+        return g_key_to_cache[key]
+    else:
+        result = func(*args, **kwargs)
+        g_key_to_cache[key] = result
+        return result
 
 def run_if_not_cached(func, *args, **kwargs):
     force = False
@@ -2938,38 +2996,44 @@ def replace_place_holder(p, place_holder):
     if isinstance(p, dict):
         for k, v in p.items():
             if type(v) == str and v.startswith('$'):
-                p[k] = place_holder[v]
+                p[k] = place_holder[v[1:]]
             else:
                 replace_place_holder(v, place_holder)
     elif isinstance(p, list) or isinstance(p, tuple):
         for i, x in enumerate(p):
             if isinstance(x, str) and x.startswith('$'):
-                p[i] = place_holder[x]
+                p[i] = place_holder[x[1:]]
             else:
                 replace_place_holder(x, place_holder)
 
 def execute_pipeline(all_processor):
     only_processors = [p for p in all_processor if p.get('only')]
     need_check_processors = only_processors if len(only_processors) > 0 else all_processor
-    result = []
+    result = {}
+    result['process_result'] = []
     place_holder = {}
     for p in need_check_processors:
         if p.get('ignore', False):
-            #result.append(None)
             continue
         replace_place_holder(p, place_holder)
-        #if p.get('create_1cls_det') == 'create_1cls_det':
-            #import ipdb;ipdb.set_trace(context=15)
+        if 'execute_if_true_else_break' in p:
+            r = execute_func(p['execute_if_true_else_break'])
+            if not r:
+                result['result'] = 'prereq_failed'
+                break
         if p.get('force', False):
             r = run_if_not_cached(execute_func, p['execute'],
                     __force=True)
         else:
             r = run_if_not_cached(execute_func, p['execute'])
         if 'output' in p:
-            place_holder['$' + p['output']] = r
+            place_holder[p['output']] = r
         else:
             if r is not None:
-                result.append((p, r))
+                result['process_result'].append({'process_info': p, 'return': r})
+    result['place_holder'] = place_holder
+    if 'result' not in result:
+        result['result'] = 'pass'
     return result
 
 def remove_empty_keys_(ds):
