@@ -12,6 +12,7 @@ from qd.qd_common import try_once
 from qd.qd_common import read_to_buffer
 from qd.qd_common import get_file_size, get_url_fsize
 from qd.qd_common import concat_files, try_delete
+from qd.qd_common import dict_has_path
 from qd.cloud_storage import create_cloud_storage
 import copy
 
@@ -47,13 +48,16 @@ def update_by_run_details(info, details):
     if info['end_time'] is not None:
         d= (now - parse(info['end_time'])).total_seconds() / 3600
         info['elapsedFinished'] = round(d, 2)
-    if len(details['runDefinition']['arguments']) > 0:
+    if dict_has_path(details, 'runDefinition$arguments') and len(details['runDefinition']['arguments']) > 0:
         cmd = details['runDefinition']['arguments'][-1]
         info['cmd'] = cmd
         info['cmd_param'] = decode_general_cmd(cmd)
-    info['docker_image'] = details['runDefinition']['environment']['docker']['baseImage']
-    info['num_gpu'] = details['runDefinition']['mpi']['processCountPerNode'] * \
-            details['runDefinition']['nodeCount']
+    if dict_has_path(details, 'runDefinition$environment$docker$baseImage'):
+        info['docker_image'] = details['runDefinition']['environment']['docker']['baseImage']
+    if dict_has_path(details, 'runDefinition$mpi$processCountPerNode') and \
+            dict_has_path(details, 'runDefinition$nodeCount'):
+        info['num_gpu'] = details['runDefinition']['mpi']['processCountPerNode'] * \
+                details['runDefinition']['nodeCount']
     info['logFiles'] = details['logFiles']
 
 def parse_run_info(run, with_details=True,
@@ -82,13 +86,13 @@ def parse_run_info(run, with_details=True,
             from qd.qd_common import attach_log_parsing_result
             attach_log_parsing_result(info)
 
-    info['data_store'] = list(set([v['dataStoreName'] for k, v in
-        details['runDefinition']['dataReferences'].items()]))
+    if dict_has_path(details, 'runDefinition$dataReferences'):
+        info['data_store'] = list(set([v['dataStoreName'] for k, v in
+            details['runDefinition']['dataReferences'].items()]))
     logging.info(info['portal_url'])
 
     param_keys = ['data', 'net', 'expid', 'full_expid']
     for k in param_keys:
-        from qd.qd_common import dict_has_path
         if dict_has_path(info, 'cmd_param$param${}'.format(k)):
             v = info['cmd_param']['param'][k]
         else:
@@ -275,6 +279,9 @@ class AMLClient(object):
         self._experiment = None
         self.multi_process = multi_process
 
+    def __repr__(self):
+        return self.compute_target_name
+
     @property
     def source_directory(self):
         return op.dirname(__file__)
@@ -326,9 +333,14 @@ class AMLClient(object):
         print_topk_long_run_jobs(self.ws, 5)
 
     def ssh(self, run_id):
-        job_info = self.query(run_id, with_log=False, with_details=False)[0]
         node_list = self.compute_target.list_nodes()
-        target_nodes = [n for n in node_list if n.get('runId') == job_info['appID']]
+        import re
+        if re.match('[0-9]*\.[0-9]*\.[0-9]*\.[0-9]*', run_id):
+            target_nodes = [n for n in node_list if n.get('privateIpAddress') ==
+                            run_id]
+        else:
+            job_info = self.query(run_id, with_log=False, with_details=False)[0]
+            target_nodes = [n for n in node_list if n.get('runId') == job_info['appID']]
         user_name = self.compute_target.admin_username
         #ssh user_name@public_ip -p port
         ssh_commands = ['ssh {}@{} -p {}'.format(user_name,
@@ -340,16 +352,18 @@ class AMLClient(object):
                     stdin=None,
                     shell=True)
         else:
-            logging.info('no node is found for the job of {}'.format(
-                job_info['appID']))
+            logging.info('no node is found')
 
     def query(self, run_id=None, by_status=None, max_runs=None,
             with_log=False, with_details=None):
         if run_id is None:
             # all_run is ordered by created time, latest first
-            all_run = list(self.experiment.get_runs())
+            iter_run = self.experiment.get_runs()
             if max_runs:
-                all_run = all_run[: min(max_runs, len(all_run))]
+                all_run = [r for _, r in zip(range(max_runs), iter_run)]
+            else:
+                logging.info('enumerating all runs')
+                all_run = list(iter_run)
             if by_status:
                 assert by_status in [self.status_failed, self.status_queued,
                         self.status_running], "Unknown status: {}".format(by_status)
@@ -558,7 +572,7 @@ class AMLClient(object):
         return r.id
 
     def inject(self, run_id=None):
-        all_info = self.query(run_id)
+        all_info = self.query(run_id, max_runs=5000)
         from qd.db import update_cluster_job_db
         for info in all_info:
             if 'logFiles' in info:
@@ -770,7 +784,8 @@ def execute(task_type, **kwargs):
         if len(kwargs.get('remainders', [])) > 0:
             assert len(kwargs['remainders']) == 1
             c = MultiAMLClient(**kwargs)
-            c.query(partial_id=kwargs['remainders'][0])
+            c.query(partial_id=kwargs['remainders'][0],
+                    with_log=True, with_details=True)
         else:
             c = create_aml_client(**kwargs)
             c.query(max_runs=kwargs.get('max', None))
@@ -882,7 +897,7 @@ def parse_args():
                 'init',
                 'initc', # init with compile
                 'initi', # incremental init
-                'initic' # incremental & compile
+                'initic', # incremental & compile
                 'blame', 'resubmit',
                 's', 'summary', 'i', 'inject'])
     parser.add_argument('-wl', dest='with_log', default=True, action='store_true')
