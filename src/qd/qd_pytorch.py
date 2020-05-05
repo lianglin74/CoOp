@@ -15,6 +15,7 @@ from qd.qd_common import get_mpi_local_rank, get_mpi_local_size
 from qd.qd_common import parse_general_args
 from qd.qd_common import plot_to_file
 from qd.qd_common import ensure_remove_dir
+from qd.process_image import is_pil_image
 from collections import OrderedDict
 from qd.process_tsv import load_key_rects
 from qd.process_tsv import hash_sha1
@@ -53,17 +54,85 @@ import glob
 from torchvision.transforms import functional as F
 import cv2
 import math
+from qd.qd_common import is_hvd_initialized
 
 
-def detection_evalation(data, split, pred):
+@torch.no_grad()
+def concat_all_gather(tensor):
+    """
+    Performs all_gather operation on the provided tensors.
+    *** Warning ***: torch.distributed.all_gather has no gradient.
+    """
+    if get_mpi_size() == 1:
+        return tensor
+    if not is_hvd_initialized():
+        tensors_gather = [torch.ones_like(tensor)
+            for _ in range(get_mpi_size())]
+        torch.distributed.all_gather(tensors_gather, tensor, async_op=False)
+
+        output = torch.cat(tensors_gather, dim=0)
+        return output
+    else:
+        import horovod as hvd
+        output = hvd.torch.allgather(tensor)
+        return output
+
+@torch.no_grad()
+def broadcast(x):
+    if get_mpi_size() > 1:
+        if not is_hvd_initialized():
+            torch.distributed.broadcast(x, src=0)
+        else:
+            from horovod import hvd
+            hvd.torch.broadcast(x, src=0)
+
+@torch.no_grad()
+def batch_shuffle_ddp(x):
+    batch_size_this = x.shape[0]
+    x_gather = concat_all_gather(x)
+    batch_size_all = x_gather.shape[0]
+
+    num_gpus = batch_size_all // batch_size_this
+
+    # random shuffle index
+    idx_shuffle = torch.randperm(batch_size_all).cuda()
+
+    if get_mpi_size() > 1:
+        # broadcast to all gpus
+        broadcast(idx_shuffle)
+
+    # index for restoring
+    idx_unshuffle = torch.argsort(idx_shuffle)
+
+    # shuffled index for this gpu
+    idx_this = idx_shuffle.view(num_gpus, -1)[get_mpi_rank()]
+
+    return x_gather[idx_this], idx_unshuffle
+
+@torch.no_grad()
+def batch_unshuffle_ddp(x, idx_unshuffle):
+    batch_size_this = x.shape[0]
+    x_gather = concat_all_gather(x)
+    batch_size_all = x_gather.shape[0]
+
+    num_gpus = batch_size_all // batch_size_this
+
+    # restored index for this gpu
+    idx_this = idx_unshuffle.view(num_gpus, -1)[get_mpi_rank()]
+
+    return x_gather[idx_this]
+
+def detection_evalation(data, split, pred, ovthresh=[0.3,0.4,0.5]):
     from qd.deteval import deteval_iter
     dataset = TSVDataset(data)
     evaluate_file = pred + '.report'
     deteval_iter(
-            dataset.iter_data(split, 'label',
-                version=0),
-            pred,
-            report_file=evaluate_file)
+        dataset.iter_data(split, 'label',
+                          version=0),
+        pred,
+        report_file=evaluate_file,
+        ovthresh=ovthresh,
+    )
     ensure_create_evaluate_meta_file(evaluate_file)
 
 def print_module_param_grad(model):
@@ -99,9 +168,10 @@ def visualize_maskrcnn_input(images, targets, show_box=True):
         rects = [{'rect': r, 'class': str(l)} for r, l in zip(rects, labels)]
         im = images[i]
         if show_box:
-            im = draw_rects(rects, im)
+            im = draw_rects(rects, im, add_label=True)
         ims.append(im)
-    show_images(ims, 1, len(ims))
+    rows = int(math.ceil(len(ims) ** 0.5))
+    show_images(ims, rows, rows)
 
 def adapt_convbn_weight(weight, running_mean,
         curr_scale, curr_mean):
@@ -162,7 +232,6 @@ def synchronize():
     Helper function to synchronize (barrier) among all processes when
     using distributed training
     """
-    from qd.qd_common import is_hvd_initialized
     use_hvd = is_hvd_initialized()
     if not use_hvd:
         if not dist.is_available():
@@ -282,6 +351,469 @@ class TwoCropsTransform:
         q = self.base_transform(x)
         k = self.base_transform(x)
         return [q, k]
+
+class DictTransformCompose(object):
+    def __init__(self, transforms):
+        self.transforms = transforms
+
+    def __call__(self, dict_data):
+        for t in self.transforms:
+            dict_data = t(dict_data)
+        return dict_data
+
+    def __repr__(self):
+        format_string = self.__class__.__name__ + "("
+        for t in self.transforms:
+            format_string += "\n"
+            format_string += "    {0}".format(t)
+        format_string += "\n)"
+        return format_string
+
+def get_image_size(image):
+    if isinstance(image, np.ndarray):
+        return image.shape[1], image.shape[0]
+    elif is_pil_image(image):
+        return image.size
+    else:
+        raise NotImplementedError
+
+class DictTransformAffineResize(object):
+    def __init__(self, out_sizes,
+            degrees=(-10, 10),
+            scale=(.9, 1.1),
+            shear=(-2, 2),
+            border_value=(0., 0., 0.),
+            ):
+        self.out_sizes = [
+                (s, s)
+                if not (isinstance(s, tuple) or isinstance(s, list)) else s
+                for s in out_sizes]
+        self.degrees = degrees
+        self.scale = scale
+        self.shear = shear
+        self.border_value = border_value
+
+    def gen_out_size(self, dict_data):
+        size = self.out_sizes[dict_data['iteration'] % len(self.out_sizes)]
+        return size
+
+    def gen_angle(self, dict_data):
+        return random.random() * (self.degrees[1] - self.degrees[0]) + self.degrees[0]
+
+    def gen_scale(self):
+        return random.random() * (self.scale[1] - self.scale[0]) + self.scale[0]
+
+    def gen_shear_angle(self):
+        return random.random() * (self.shear[1] - self.shear[0]) + self.shear[0]
+
+    def gen_src2dst_info(self, dict_data):
+        origin_image = dict_data['image']
+        origin_width, origin_height = get_image_size(origin_image)
+
+        # 1. change the scale, so that it is aligned to the network input size
+        out_width, out_height = self.gen_out_size(dict_data)
+        if random.random() < 0.5:
+            align_scale = 1. * out_width / origin_width
+        else:
+            align_scale = 1. * out_height / origin_height
+        M_align = np.eye(3)
+        M_align[0, 0] = align_scale
+        M_align[1, 1] = align_scale
+        align_width = align_scale * origin_width
+        align_height = align_scale * origin_height
+
+        # 2. rotation and scale
+        M_rotate = np.eye(3)
+        random_angle = self.gen_angle(dict_data)
+        random_scale = self.gen_scale()
+        M_rotate[:2] = cv2.getRotationMatrix2D(angle=random_angle,
+                center=(align_width / 2, align_height / 2), scale=random_scale)
+
+        # 3. Shear
+        M_shear = np.eye(3)
+        shear_x_angle = self.gen_shear_angle()
+        M_shear[0, 1] = math.tan(shear_x_angle * math.pi / 180)
+        shear_y_angle = self.gen_shear_angle()
+        M_shear[1, 0] = math.tan(shear_y_angle * math.pi / 180)
+
+        # get the min_x, min_y, max_x, max_y for the whole image
+        M = M_shear @ M_rotate @ M_align
+        corners = np.ones((4, 3))
+        corners[0, :2] = (0, 0)
+        corners[1, :2] = (origin_width, 0)
+        corners[2, :2] = (0, origin_height)
+        corners[3, :2] = (origin_width, origin_height)
+        aug_corners = corners @ M.T # 4x3
+        aug_min_x = aug_corners[:, 0].min()
+        aug_min_y = aug_corners[:, 1].min()
+        aug_max_x = aug_corners[:, 0].max()
+        aug_max_y = aug_corners[:, 1].max()
+
+        # 4. random crop on the augmented images
+        aug_width = aug_max_x - aug_min_x
+        aug_height = aug_max_y - aug_min_y
+        delta_x = random.random() * (aug_width - out_width)
+        delta_y = random.random() * (aug_height - out_height)
+        origin_x = aug_min_x + delta_x
+        origin_y = aug_min_y + delta_y
+        M_crop = np.eye(3)
+        M_crop[0, 2] = -origin_x
+        M_crop[1, 2] = -origin_y
+
+        M = M_crop @ M
+
+        return {'matrix': M,
+                'out_width': out_width,
+                'out_height': out_height,
+                'angle': random_angle}
+
+    def wrap_box(self, targets, info):
+        '''
+        targets: Nx4 (x1y1x2y2)
+        '''
+        n = targets.shape[0]
+        points = targets
+        M = info['matrix']
+        width, height = info['out_width'], info['out_height']
+
+        # warp points
+        xy = np.ones((n * 4, 3))
+        xy[:, :2] = points[:, [0, 1, 2, 3, 0, 3, 2, 1]].reshape(n * 4, 2)  # x1y1, x2y2, x1y2, x2y1
+        xy = (xy @ M.T)[:, :2].reshape(n, 8)
+
+        # create new boxes
+        x = xy[:, [0, 2, 4, 6]]
+        y = xy[:, [1, 3, 5, 7]]
+        xy = np.concatenate((x.min(1), y.min(1), x.max(1), y.max(1))).reshape(4, n).T
+
+        # apply angle-based reduction
+        radians = info['angle'] * math.pi / 180
+        reduction = max(abs(math.sin(radians)), abs(math.cos(radians))) ** 0.5
+        x = (xy[:, 2] + xy[:, 0]) / 2
+        y = (xy[:, 3] + xy[:, 1]) / 2
+        w = (xy[:, 2] - xy[:, 0]) * reduction
+        h = (xy[:, 3] - xy[:, 1]) * reduction
+        xy = np.concatenate((x - w / 2, y - h / 2, x + w / 2, y + h / 2)).reshape(4, n).T
+
+        # reject warped points outside of image
+        x1 = np.clip(xy[:,0], 0, width)
+        y1 = np.clip(xy[:,1], 0, height)
+        x2 = np.clip(xy[:,2], 0, width)
+        y2 = np.clip(xy[:,3], 0, height)
+        boxes = np.concatenate((x1, y1, x2, y2)).reshape(4, n).T
+        return boxes
+
+    def wrap_image(self, image, info):
+        if isinstance(image, np.ndarray):
+            def gen_warp_image_flag():
+                if random.random() < 0.3:
+                    return cv2.INTER_NEAREST
+                else:
+                    return cv2.INTER_LINEAR
+            out_image = cv2.warpPerspective(image,
+                    info['matrix'],
+                    dsize=(info['out_width'], info['out_height']),
+                    flags=gen_warp_image_flag(),
+                    borderValue=self.border_value)  # BGR order borderValue
+        elif is_pil_image(image):
+            def gen_warp_image_flag():
+                # PIL.Image.LANCZOS is not valid for transform
+                r = random.random()
+                if r < 0.3:
+                    return PIL.Image.NEAREST
+                elif r > 0.7:
+                    return PIL.Image.BICUBIC
+                else:
+                    return PIL.Image.BILINEAR
+            import PIL
+            assert abs(info['matrix'][2, 0]) < 1e-5
+            assert abs(info['matrix'][2, 1]) < 1e-5
+            out_image = image.transform(size=(info['out_width'], info['out_height']),
+                    method=PIL.Image.AFFINE,
+                    data=np.linalg.inv(info['matrix']).flatten()[:6],
+                    resample=gen_warp_image_flag())
+        return out_image
+
+    def __call__(self, dict_data):
+        targets = dict_data['rects']
+        info = self.gen_src2dst_info(dict_data)
+        if targets is not None:
+            assert targets.mode == 'xyxy'
+            boxes = self.wrap_box(targets.bbox, info)
+            targets.bbox = boxes
+            valid_box = (boxes[:, 2] - boxes[:, 0] > 0) & (
+                    boxes[:, 3] - boxes[:, 1] > 0)
+            targets = targets[valid_box]
+            targets.size = (info['out_width'], info['out_height'])
+            dict_data['rects'] = targets
+
+        image = dict_data['image']
+        image = self.wrap_image(image, info)
+        dict_data['image'] = image
+        return dict_data
+
+class DictTransformMaskRandomHorizontalFlip(object):
+    def __init__(self, prob=0.5):
+        self.prob = prob
+
+    def __call__(self, dict_data):
+        image, target = dict_data['image'], dict_data['rects']
+        if random.random() < self.prob:
+            image = F.hflip(image)
+            target = target.transpose(0)
+            dict_data['image'] = image
+            dict_data['rects'] = target
+        return dict_data
+
+class DictTransformResizeCrop(object):
+    '''
+    - only used for training
+    - it first randomly select a crop size from all_crop_size
+    - then randomly resize the input image to a target size. Let (a, b) be the
+      original size; (c, d) be the crop  size. The scalar factor is randomly
+      chosen from min(c/a, d/b) to max(c/a, d/b).
+    - finally, we randomly crop a sub region.
+    '''
+    def __init__(self, all_crop_size):
+        self.all_crop_size = [c if
+                isinstance(c, list) or isinstance(c, tuple)
+                else (c, c)
+                for c in all_crop_size]
+
+    def get_size(self, image_size, iteration):
+        w, h = image_size
+        crop_w, crop_h = self.all_crop_size[iteration % len(self.all_crop_size)]
+        rw = 1. * crop_w / w
+        rh = 1. * crop_h / h
+        min_s = min(rw, rh)
+        max_s = max(rw, rh)
+        target_s = random.random() * (max_s - min_s) + min_s
+        target_w = int(target_s * w)
+        target_h = int(target_s * h)
+
+        return (target_h, target_w, crop_h, crop_w)
+
+    def __call__(self, dict_data):
+        image, target = dict_data['image'], dict_data['rects']
+        # we should not combine resize and crop here, since the resize will do
+        # some anti-aliassing trick which helps if we need to download to a
+        # large factor.
+        target_h, target_w, crop_h, crop_w = self.get_size(image.size, dict_data['iteration'])
+        image = F.resize(image, (target_h, target_w))
+        target = target.resize(image.size)
+
+        def random_offset(origin, crop):
+            if origin > crop:
+                return random.random() * (origin - crop)
+
+        top = int(random.random() * (target_h - crop_h))
+        left = int(random.random() * (target_w - crop_w))
+
+        image = image.crop((left, top, left + crop_w, top + crop_h))
+        target = target.crop((left, top, left + crop_w, top + crop_h))
+        target = target.clip_to_image(remove_empty=True)
+
+        dict_data['image'] = image
+        dict_data['rects'] = target
+        return dict_data
+
+class DictTransformMaskResize(object):
+    '''
+    maskrcnn-style resize
+    '''
+    def __init__(self, min_size, max_size, depends_on_iter=False):
+        if not isinstance(min_size, (list, tuple)):
+            min_size = (min_size,)
+        self.min_size = min_size
+        self.max_size = max_size
+        self.depends_on_iter = depends_on_iter
+
+    def get_size(self, image_size, iteration):
+        w, h = image_size
+        if self.depends_on_iter:
+            size = self.min_size[iteration % len(self.min_size)]
+        else:
+            size = random.choice(self.min_size)
+        max_size = self.max_size
+        if max_size is not None:
+            min_original_size = float(min((w, h)))
+            max_original_size = float(max((w, h)))
+            if max_original_size / min_original_size * size > max_size:
+                size = int(round(max_size * min_original_size / max_original_size))
+
+        if (w <= h and w == size) or (h <= w and h == size):
+            return (h, w)
+
+        if w < h:
+            ow = size
+            oh = int(size * h / w)
+        else:
+            oh = size
+            ow = int(size * w / h)
+
+        return (oh, ow)
+
+    def __call__(self, dict_data):
+        image, target = dict_data['image'], dict_data['rects']
+        size = self.get_size(image.size, dict_data['iteration'])
+        image = F.resize(image, size)
+        target = target.resize(image.size)
+        dict_data['image'] = image
+        dict_data['rects'] = target
+        return dict_data
+
+class DictTransformMaskToTensor(object):
+    def __call__(self, dict_data):
+        dict_data['image'] = F.to_tensor(dict_data['image'])
+        return dict_data
+
+class DictTransformMaskColorJitter(object):
+    def __init__(self,
+                 brightness=None,
+                 contrast=None,
+                 saturation=None,
+                 hue=None,
+                 adaptive=None,
+                 ):
+        self.brightness = brightness
+        self.contrast = contrast
+        self.saturation = saturation
+        self.hue = hue
+
+        self.adaptive = None if adaptive == '' else adaptive
+
+    def __call__(self, dict_data):
+        if self.brightness in [0, None] and \
+                self.contrast in [0, None] and \
+                self.saturation in [0, None] and \
+                self.hue in [0, None]:
+            # used for testing mode
+            return dict_data
+
+        if self.adaptive is None:
+            brightness = self.brightness
+            contrast = self.contrast
+            saturation = self.saturation
+            hue = self.hue
+        elif self.adaptive.startswith('sin'):
+            exp_factor = self.adaptive[len('sin'):]
+            exp_factor = 1 if exp_factor == '' else float(exp_factor)
+            theta = 1. * dict_data['iteration'] / dict_data['max_iter'] * math.pi
+            sin_th = math.sin(theta) ** exp_factor
+            brightness = self.brightness * sin_th
+            contrast = self.contrast * sin_th
+            saturation = self.saturation * sin_th
+            hue = self.hue * sin_th
+        color_jitter = torchvision.transforms.ColorJitter(
+            brightness=brightness,
+            contrast=contrast,
+            saturation=saturation,
+            hue=hue,)
+        dict_data['image'] = color_jitter(dict_data['image'])
+        return dict_data
+
+class DictTransformMaskNormalize(object):
+    def __init__(self, mean, std, to_bgr255=True):
+        self.mean = mean
+        self.std = std
+        self.to_bgr255 = to_bgr255
+
+    def __call__(self, dict_data):
+        image = dict_data['image']
+        if self.to_bgr255:
+            image = image[[2, 1, 0]] * 255
+        image = F.normalize(image, mean=self.mean, std=self.std)
+        dict_data['image'] = image
+        return dict_data
+
+class DictTransformCVImageBGR2RGB(object):
+    def __call__(self, dict_data):
+        im = dict_data['image']
+        dict_data['image'] = im[:, :, [2, 1, 0]]
+        return dict_data
+
+class DictTransformCVImageToTensor(object):
+    def __call__(self, dict_data):
+        im = dict_data['image']
+        dict_data['image'] = torchvision.transforms.functional.to_tensor(im)
+        return dict_data
+
+class DictTransformLabelMapIndex():
+    def __init__(self, data):
+        self.labelmap = TSVDataset(data).load_labelmap()
+        self.label2idx = {l: i for i, l in enumerate(self.labelmap)}
+
+    def __call__(self, dict_data):
+        dict_data['rect'] = [r for r in dict_data['rects'] if
+            r['class'] in self.label2idx]
+        for r in dict_data['rects']:
+            r['class_idx'] = self.label2idx[r['class']]
+        return dict_data
+
+class DictTransformCreateLabelCoordinatesTensor():
+    def __call__(self, dict_data):
+        class_idx = [r['class_idx'] for r in dict_data['rects']]
+        coordinates = [r['rect'] for r in dict_data['rects']]
+        class_idx = torch.tensor(class_idx).float().view((-1, 1))
+        coordinates = torch.tensor(coordinates)
+        dict_data['label_coordinates'] = torch.cat((class_idx, coordinates), dim=1)
+        return dict_data
+
+class DictTransformNormalizeRect():
+    def __call__(self, dict_data):
+        h, w = dict_data['h'], dict_data['w']
+        for r in dict_data['rects']:
+            x1, y1, x2, y2 = r['rect']
+            r['rect'] = [1. * x1 / w, 1. * y1 / h, 1. * x2 / w, 1. * y2 / h]
+        return dict_data
+
+class AttachIterationNumberBatchSampler(object):
+    def __init__(self, batch_sampler, start_iter, num_iters):
+        self.batch_sampler = batch_sampler
+        self.curr_iter = start_iter
+        self.max_iter = num_iters
+
+    def __iter__(self):
+        for batch in self.batch_sampler:
+            batch = [{'iteration': self.curr_iter,
+                      'idx': i,
+                      'max_iter': self.max_iter} for i in batch]
+            yield batch
+            self.curr_iter += 1
+
+    def __len__(self):
+        return len(self.batch_sampler)
+
+class TSVDatasetPt(Dataset):
+    def __init__(self, data, split, version=0, cache_policy=None,
+            transforms=None):
+        self.hw = TSVSplitProperty(data, split, 'hw', version, cache_policy)
+        self.image = TSVSplitProperty(data, split, t=None, cache_policy=cache_policy)
+        self.label = TSVSplitProperty(data, split, t='label', version=version,
+                cache_policy=cache_policy)
+        self.transforms = transforms
+
+    def __getitem__(self, index):
+        image_key, _, str_im = self.image[index]
+        im = img_from_base64(str_im)
+
+        label_key, str_rects = self.label[index]
+        rects = json.loads(str_rects)
+
+        hw_key, str_hw = self.hw[index]
+        h, w = map(int, str_hw.split(' '))
+
+        dict_data = {
+                'key': label_key,
+                'image': im,
+                'rects': rects,
+                'original_height': h,
+                'original_width': w,
+                }
+        if self.transforms:
+            dict_data = self.transforms(dict_data)
+        return dict_data
+
 class TSVSplitProperty(Dataset):
     '''
     one instance of this class mean one tsv file or one composite tsv, it could
@@ -367,6 +899,47 @@ class TSVSplitImage(TSVSplit):
             idx = self.label_to_idx.get(info[0]['class'], -1)
         label = torch.from_numpy(np.array(idx, dtype=np.int))
         return label
+
+class TSVSplitImageSoftAssign(object):
+    def __init__(self, data, split, temperature, transform):
+        self.image_tsv = TSVSplitProperty(data, split, t=None)
+        self.feature_tsv = TSVSplitProperty(data, split, t='feature_ptr')
+        self.feature_tsv = TSVFile(self.feature_tsv[0][0])
+        self.data = data
+        self.split = split
+        self.transform = transform
+        self._centers = None
+        self.temperature = temperature
+
+    @property
+    def centers(self):
+        if self._centers is None:
+            tsv = TSVSplitProperty(self.data, self.split, t='kmeans_center')
+            all_feat = []
+            for i in range(len(tsv)):
+                row = tsv[i]
+                feat = [float(r) for r in row]
+                all_feat.append(feat)
+            self._centers = torch.tensor(all_feat)
+        return self._centers
+
+    def __getitem__(self, idx):
+        image_row = self.image_tsv[idx]
+        im = img_from_base64(image_row[-1])
+        if self.transform is not None:
+            im = self.transform(im)
+        feat_row = self.feature_tsv[idx]
+        assert feat_row[0] == image_row[0]
+        feature = json.loads(feat_row[1])[0]['feature']
+        feature = torch.tensor(feature)
+        feature = torch.nn.functional.normalize(feature, dim=0)
+        sim = torch.matmul(self.centers, feature.view(-1, 1))
+        sim /= self.temperature
+        label = torch.nn.functional.softmax(sim.T, dim=1).squeeze()
+        return im, label, image_row[0]
+
+    def __len__(self):
+        return len(self.image_tsv)
 
 class TSVSplitCropImage(TSVSplitImage):
     def __getitem__(self, index):
@@ -485,15 +1058,61 @@ class BGR2RGB(object):
     def __call__(self, im):
         return im[:, :, [2, 1, 0]]
 
-def get_test_transform(bgr2rgb=False, resize_size=256, crop_size=224):
+class FixedPositionCrop(object):
+    def __init__(self, pos, size):
+        self.pos = pos
+        assert isinstance(size, int)
+        self.size = size
+
+        if self.pos == 'top_left':
+            self.get_pos = self.get_pos_for_top_left_crop
+        elif self.pos == 'top_right':
+            self.get_pos = self.get_pos_for_top_right_crop
+        elif self.pos == 'bottom_left':
+            self.get_pos = self.get_pos_for_bottom_left_crop
+        else:
+            assert self.pos == 'bottom_right'
+            self.get_pos = self.get_pos_for_bottom_right_crop
+
+    def get_pos_for_top_left_crop(self, img):
+        return (0, 0)
+    def get_pos_for_top_right_crop(self, img):
+        w, h = img.size
+        return (0, w - self.size)
+    def get_pos_for_bottom_left_crop(self, img):
+        w, h = img.size
+        return (h - self.size, 0)
+    def get_pos_for_bottom_right_crop(self, img):
+        w, h = img.size
+        return (h - self.size, w - self.size)
+
+    def __call__(self, img):
+        crop_top, crop_left = self.get_pos(img)
+        from torchvision.transforms.functional import crop
+        img = crop(img, crop_top, crop_left, self.size, self.size)
+        return img
+
+def create_crop_transform(crop_position, crop_size):
+    if crop_position is None:
+        crop_transform = transforms.CenterCrop(crop_size)
+    else:
+        crop_transform = FixedPositionCrop(crop_position, crop_size)
+    return crop_transform
+
+def get_test_transform(
+    bgr2rgb=False,
+    resize_size=256,
+    crop_size=224,
+    crop_position=None):
     normalize = get_data_normalize()
     all_trans = []
     if bgr2rgb:
         all_trans.append(BGR2RGB())
+    crop_transform = create_crop_transform(crop_position, crop_size)
     all_trans.extend([
             transforms.ToPILImage(),
             transforms.Resize(resize_size),
-            transforms.CenterCrop(crop_size),
+            crop_transform,
             transforms.ToTensor(),
             normalize,
             ])
@@ -950,6 +1569,49 @@ def ensure_init_process_group(device_id=None):
         torch.cuda.set_device(device_id)
         dist.init_process_group(**init_param)
 
+def all_gather(x):
+    if get_mpi_size() == 1:
+        return x
+    else:
+        with torch.no_grad():
+            all_x = [torch.zeros_like(x) for _ in range(get_mpi_size())]
+            # note, all_rep should be treated as constent, which means no grad
+            # will be propagated back through all_rep
+            torch.distributed.all_gather(all_x, x)
+        return torch.cat(all_x, dim=0)
+
+def all_gather_grad_curr(x):
+    if get_mpi_size() == 1:
+        return x
+    else:
+        with torch.no_grad():
+            all_x = [torch.zeros_like(x) for _ in range(get_mpi_size())]
+            # note, all_rep should be treated as constent, which means no grad
+            # will be propagated back through all_rep
+            torch.distributed.all_gather(all_x, x)
+        all_x[get_mpi_rank()] = x
+        return torch.cat(all_x, dim=0)
+
+class GaussianBlur(object):
+    # Implements Gaussian blur as described in the SimCLR paper
+    def __init__(self, kernel_size, min=0.1, max=2.0):
+        self.min = min
+        self.max = max
+        # kernel size is set to be 10% of the image height/width
+        self.kernel_size = kernel_size
+
+    def __call__(self, sample):
+        sample = np.array(sample)
+
+        # blur the image with a 50% chance
+        prob = np.random.random_sample()
+
+        if prob < 0.5:
+            sigma = (self.max - self.min) * np.random.random_sample() + self.min
+            sample = cv2.GaussianBlur(sample, (self.kernel_size, self.kernel_size), sigma)
+
+        return sample
+
 class TorchTrain(object):
     def __init__(self, **kwargs):
         if 'load_parameter' in kwargs and kwargs['load_parameter']:
@@ -1132,7 +1794,7 @@ class TorchTrain(object):
 
     def get_train_transform(self):
         if self.train_transform == 'inception':
-            return get_train_transform(self.bgr2rgb,
+            data_augmentation = get_train_transform(self.bgr2rgb,
                         crop_size=self.train_crop_size)
         elif self.train_transform == 'no_color':
             normalize = get_data_normalize()
@@ -1147,19 +1809,43 @@ class TorchTrain(object):
                 totensor,
                 normalize,])
             data_augmentation = transforms.Compose(all_trans)
-            return data_augmentation
+        elif self.train_transform == 'simclr':
+            normalize = get_data_normalize()
+            totensor = transforms.ToTensor()
+            all_trans = []
+            if self.bgr2rgb:
+                all_trans.append(BGR2RGB())
+            gaussian_kernel_size = int(0.1 * self.train_crop_size) // 2 * 2 + 1
+            color_jitter = transforms.ColorJitter(0.8, 0.8, 0.8, 0.2)
+            all_trans.extend([
+                transforms.ToPILImage(),
+                transforms.RandomResizedCrop(self.train_crop_size),
+                transforms.RandomHorizontalFlip(),
+                transforms.RandomApply([color_jitter], p=0.8),
+                transforms.RandomGrayscale(p=0.2),
+                GaussianBlur(kernel_size=gaussian_kernel_size),
+                totensor,
+                normalize,])
+            data_augmentation = transforms.Compose(all_trans)
         else:
             raise NotImplementedError(self.train_transform)
+
+        logging.info(data_augmentation)
+        return data_augmentation
 
     def get_transform(self, stage):
         if stage == 'train':
             transform = self.get_train_transform()
         else:
-            assert stage == 'test'
-            resize_size = 256 * self.test_crop_size // 224
-            transform = get_test_transform(self.bgr2rgb,
-                    resize_size=resize_size,
-                    crop_size=self.test_crop_size)
+            resize_size = self.test_resize_size
+            if resize_size is None:
+                assert stage == 'test'
+                resize_size = 256 * self.test_crop_size // 224
+            transform = get_test_transform(
+                self.bgr2rgb,
+                resize_size=resize_size,
+                crop_size=self.test_crop_size,
+                crop_position=self.test_crop_position)
         return transform
 
     def _get_dataset(self, data, split, stage, labelmap, dataset_type):
@@ -1174,6 +1860,11 @@ class TorchTrain(object):
                     transform=transform,
                     labelmap=labelmap,
                     cache_policy=self.cache_policy)
+        elif dataset_type == 'soft_assign':
+            return TSVSplitImageSoftAssign(data, split,
+                    transform=transform,
+                    temperature=self.temperature,
+                    )
         if dataset_type == 'crop':
             return TSVSplitCropImage(data, split,
                     version=0,
@@ -1201,6 +1892,9 @@ class TorchTrain(object):
                 criterion = NTXentLoss(self.temperature)
             else:
                 criterion = nn.CrossEntropyLoss().cuda()
+        elif self.dataset_type in ['soft_assign']:
+            from qd.layers.kl_div_logit_loss import KLDivLogitLoss
+            criterion = KLDivLogitLoss()
         elif self.dataset_type == 'multi_hot':
             if self.loss_type == 'BCEWithLogitsLoss':
                 criterion = nn.BCEWithLogitsLoss().cuda()
@@ -1211,6 +1905,8 @@ class TorchTrain(object):
         elif self.dataset_type == 'multi_hot_neg':
             assert self.loss_type == 'BCEWithLogitsNegLoss'
             criterion = BCEWithLogitsNegLoss()
+        else:
+            raise NotImplementedError
         return criterion
 
     def _get_checkpoint_file(self, epoch=None, iteration=None):
@@ -1232,6 +1928,14 @@ class TorchTrain(object):
             if model.fc.weight.shape[0] != num_class:
                 model.fc = nn.Linear(model.fc.weight.shape[1], num_class)
                 torch.nn.init.xavier_uniform_(model.fc.weight)
+            if self.moco_finetune_init_last_linear:
+                logging.info('moco fine-tune init last linear')
+                model.fc.weight.data.normal_(mean=0.0, std=0.01)
+                model.fc.bias.data.zero_()
+            if self.zero_init_last_linear:
+                logging.info('zero out last linear')
+                model.fc.weight.data.zero_()
+                model.fc.bias.data.zero_()
 
             return model
 
@@ -1365,10 +2069,30 @@ class TorchTrain(object):
         parameters = list(filter(lambda p: p.requires_grad, all_parameter))
         logging.info('#original param = {}; require grad = {}'.format(
             len(all_parameter), len(parameters)))
+        if self.bias_no_weight_decay:
+            parameters = []
+            for key, value in model.named_parameters():
+                if not value.requires_grad:
+                    continue
+                lr = self.base_lr
+                weight_decay = self.weight_decay
+                if "bias" in key:
+                    weight_decay = 0.
+                logging.info('{}: lr = {}; weight_decay = {}'.format(
+                    key, lr, weight_decay
+                ))
+                parameters += [{"params": [value], "lr": lr, "weight_decay": weight_decay}]
+
         if self.optimizer_type in [None, 'SGD', 'LARS']:
-            optimizer = torch.optim.SGD(parameters, self.base_lr,
+            optimizer = torch.optim.SGD(parameters,
+                                        self.base_lr,
                                         momentum=self.momentum,
-                                        weight_decay=self.weight_decay)
+                                        # this is default decay, and will be
+                                        # overwritten if we specified it in
+                                        # parameters.
+                                        weight_decay=self.weight_decay,
+                                        nesterov=self.sgd_nesterov,
+                                        )
         elif self.optimizer_type in ['Adam']:
             optimizer = torch.optim.Adam(parameters, self.base_lr,
                                         weight_decay=self.weight_decay)
@@ -1376,7 +2100,7 @@ class TorchTrain(object):
             raise NotImplementedError(self.optimizer_type)
         if self.optimizer_type in ['LARS']:
             from torchlars import LARS
-            optimizer = LARS(optimizer=optimizer, eps=1e-8, trust_coef=0.001)
+            optimizer = LARS(optimizer=optimizer)
         return optimizer
 
     def get_lr_scheduler(self, optimizer, last_epoch=-1):
@@ -1396,7 +2120,8 @@ class TorchTrain(object):
                     max_iter=self.max_iter,
                     last_epoch=last_epoch,
                     warmup_factor=self.cosine_warmup_factor,
-                    warmup_iters=self.parse_iter(self.cosine_warmup_iters)
+                    warmup_iters=self.parse_iter(self.cosine_warmup_iters),
+                    cosine_restart_after_warmup=self.cosine_restart_after_warmup
                     )
         elif self.scheduler_type == 'cos':
             scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,
@@ -1533,7 +2258,14 @@ class TorchTrain(object):
         if self.test_normalize_module != 'softmax':
             cc.append('NormBy{}'.format(self.test_normalize_module))
         if self.predict_extract:
-            cc.append('Extract{}'.format(self.predict_extract))
+            s = self.predict_extract
+            if isinstance(self.predict_extract, list):
+                s = '.'.join(self.predict_extract)
+            cc.append('Extract{}'.format(s))
+        if self.test_crop_position:
+            cc.append(self.test_crop_position)
+        if self.test_resize_size:
+            cc.append('r'.format(self.test_resize_size))
 
     def monitor_train(self):
         self._ensure_initialized()
@@ -1672,6 +2404,10 @@ class TorchTrain(object):
         return 5000
 
     def ensure_predict(self, epoch=None, iteration=None, model_file=None):
+        if self.ignore_predict:
+            logging.info('ignore to predict as instructed')
+            return
+
         # deprecate epoch and iteration. use model_file, gradually
         self._ensure_initialized()
         if epoch is not None or iteration is not None:
@@ -1781,11 +2517,14 @@ class TorchTrain(object):
             logging.info('skip because the rank {} != 0'.format(self.mpi_rank))
             return
 
-        if self.ignore_evaluate:
+        # if prediction is disabled, we will not proceed either.
+        if self.ignore_evaluate or self.ignore_predict:
             logging.info('ignore evaluate as instructed')
             return
 
-        self._ensure_initialized()
+        # not other rank will exit and initalizing distributed will not go
+        # through. No need to run initilaization here actually.
+        #self._ensure_initialized()
         if not predict_file:
             model_file = self._get_checkpoint_file(iteration=self.max_iter)
             predict_file = self._get_predict_file(model_file)
@@ -1815,6 +2554,7 @@ class TorchTrain(object):
                         version=self.test_version),
                     predict_file,
                     report_file=evaluate_file,
+                    ovthresh=self.ovthresh,
                     **self.kwargs)
         elif self.evaluate_method == 'coco_box':
             from qd.cocoeval import convert_gt_to_cocoformat
