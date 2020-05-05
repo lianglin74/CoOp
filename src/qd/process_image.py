@@ -8,6 +8,48 @@ from qd.qd_common import encoded_from_img
 import matplotlib.pyplot as plt
 from random import random
 import logging
+from qd.qd_common import is_pil_image
+
+def copy_make_border(im, top, bottom, left, right):
+    if is_pil_image(im):
+        w, h = im.size
+        w2 = w + left + right
+        h2 = top + bottom + h
+        from PIL import Image
+        im2 = Image.new('RGB', (w2, h2))
+        im2.paste(im, (left, top, left + w, top + h))
+        return im2
+    else:
+        im_squared = cv2.copyMakeBorder(im, top=top, bottom=bottom, left=left, right=right,
+                                borderType=cv2.BORDER_CONSTANT, value=(0, 0, 0))
+    return im_squared
+
+def im_rescale(im, target_size):
+    if is_pil_image(im):
+        w, h = im.size
+        if w > h:
+            if w == target_size:
+                return im, 1
+            w2 = target_size
+            h2 = (w2 * h + w - 1) // w
+            im_scale = 1. * w2 / w
+        else:
+            if h == target_size:
+                return im, 1
+            h2 = target_size
+            w2 = (h2 * w + h - 1) // h
+            im_scale = 1. * h2 / h
+        #im_resized = im.resize((w2, h2), PIL.Image.BILINEAR)
+        im_resized = im.resize((w2, h2))
+        return im_resized, im_scale
+    else:
+        im_size_max = max(im.shape[0:2])
+        if target_size == im_size_max:
+            return im, 1
+        im_scale = float(target_size) / float(im_size_max)
+        im_resized = cv2.resize(im, None, None, fx=im_scale, fy=im_scale,
+                                interpolation=cv2.INTER_LINEAR)
+        return im_resized, im_scale
 
 def gen_colors(num_real_classes):
     colors = []
@@ -15,15 +57,13 @@ def gen_colors(num_real_classes):
         colors.append(np.random.rand(3))
     return colors
 
-def draw_rects(rects, im=None, add_label=True):
+def draw_rects(rects, im=None, add_label=True, style=None):
     if im is None:
         im = np.zeros((1000, 1000, 3), dtype=np.uint8)
-    if add_label:
-        draw_bb(im, [r['rect'] for r in rects],
-                [r['class'] for r in rects])
-    else:
-        draw_bb(im, [r['rect'] for r in rects],
-                ['' for r in rects])
+    draw_bb(im, [r['rect'] for r in rects],
+            [r['class'] for r in rects],
+            draw_label=add_label,
+            style=style)
     return im
 
 def put_text(im, text, bottomleft=(0,100),
@@ -81,8 +121,10 @@ def show_net_input(data, label, max_image_to_show=None,
         else:
             show_image(all_image[i])
 
-def drawline(img,pt1,pt2,color,thickness=1,style='dotted',gap=10):
+def drawline(img,pt1,pt2,color,thickness=1,style='dotted',gap=None):
     dist =((pt1[0]-pt2[0])**2+(pt1[1]-pt2[1])**2)**.5
+    if gap is None:
+        gap = thickness * 3
     pts= []
     for i in  np.arange(0,dist,gap):
         r=i/dist
@@ -185,8 +227,8 @@ def draw_bb(im, all_rect, all_label,
                     (int(rect[2]), int(rect[3])),
                     color[label],
                     thickness=rect_thickness)
-            pass
         else:
+            assert style is None
             rectangle(im, (int(rect[0]), int(rect[1])),
                     (int(rect[2]), int(rect[3])), color[label],
                     thickness=rect_thickness)
@@ -243,9 +285,12 @@ def load_image(file_name):
 def show_image(im):
     show_images([im], 1, 1)
 
-def show_images(all_image, num_rows, num_cols,
+def show_images(all_image, num_rows=None, num_cols=None,
         titles=None):
     plt.figure(1)
+    if num_rows is None and num_cols is None:
+        num_rows = 1
+        num_cols = len(all_image)
 
     k = 0
     for i in range(num_rows):
@@ -259,7 +304,7 @@ def show_images(all_image, num_rows, num_cols,
             else:
                 # grey image
                 assert len(all_image[k].shape) == 2
-                plt.imshow(all_image[k])
+                plt.imshow(np.repeat(all_image[k][:, :, np.newaxis], 3, axis=2))
             if titles is not None:
                 plt.title(titles[k])
             k = k + 1
