@@ -6746,6 +6746,78 @@ def smart_resize(im, target_size):
             bottom=bottom, left=left, right=right)
     return im_squared, left, top, im_scale
 
+def kmeans_pred_to_dataX(data, split, k, feature_fname, out_data):
+    out_dataset = TSVDataset(out_data)
+    if op.isfile(out_dataset.get_labelmap_file()) and \
+            op.isfile(out_dataset.get_data(split + 'X')):
+        return out_data
+    dataset = TSVDataset(data)
+    iter_label = dataset.iter_data(split, 'label')
+    iter_pred = tsv_reader(feature_fname)
+    np_feature = None
+    num_rows = dataset.num_rows(split)
+    for i, (label_row, pred_row) in tqdm(enumerate(zip(iter_label, iter_pred))):
+        assert label_row[0] == pred_row[0]
+        f = json.loads(pred_row[-1])[0]['feature']
+        if np_feature is None:
+            np_feature = np.zeros((num_rows, len(f)), dtype=np.float32)
+        np_feature[i] = f
+    from libKMCUDA import kmeans_cuda
+    from sklearn.preprocessing import normalize
+    np_feature = normalize(np_feature, axis=1)
+    # there are some issues with multi-gpu. Thus setting device=1 which means to use
+    # gpu 0
+    init = 'kmeans++'
+    while True:
+        centroid, assignments = kmeans_cuda(np_feature,
+                                            k,
+                                            verbosity=1,
+                                            seed=6,
+                                            device=1,
+                                            init=init,
+                                            metric='cos',
+                                            )
+        unique_assignment, cluster_count = np.unique(assignments, return_counts=True)
+        if len(unique_assignment) == k:
+            logging.info('reached non-empty')
+            break
+        num_new = k - len(unique_assignment)
+        logging.info('adding {}'.format(num_new))
+        new_from_cluster_idx = np.argsort(cluster_count)[-num_new:]
+        cluster_idx = unique_assignment[new_from_cluster_idx]
+        feat_idx = [np.where(assignments == i)[0] for i in cluster_idx]
+        feat_idx = np.concatenate(feat_idx)
+        np.random.seed(6)
+        feat_idx = np.random.permutation(feat_idx)
+        new_cluster = np_feature[feat_idx[:num_new]]
+        new_cluster_idx = 0
+        for c in range(len(centroid)):
+            if np.isnan(centroid[c][0]):
+                centroid[c] = new_cluster[new_cluster_idx]
+                new_cluster_idx += 1
+        assert new_cluster_idx == len(new_cluster)
+        init = centroid
+    disk_assign = [int(i) for _, i in out_dataset.iter_data(split, 'label')]
+    for a, da in zip(assignments, disk_assign):
+        assert a == da
+    out_dataset.write_data(centroid, split, 'kmeans_center')
+    write_to_file(dataset.get_data(split),
+                  out_dataset.get_data(split + 'X'))
+    tsv_writer(((0, i) for i in range(num_rows)),
+               out_dataset.get_shuffle_file(split))
+    if op.isfile(out_dataset.get_labelmap_file()):
+        labelmap = out_dataset.load_labelmap()
+        assert len(labelmap) == k
+        for i, l in enumerate(labelmap):
+            assert l == str(i)
+    else:
+        tsv_writer(((i,) for i in range(k)), out_dataset.get_labelmap_file())
+    iter_label = dataset.iter_data(split, 'label')
+    tsv_writer(((l[0], int(a)) for l, a in zip(iter_label, assignments)),
+               out_dataset.get_data(split, 'label'))
+    tsv_writer([(feature_fname,)], out_dataset.get_data(split, 'feature_ptr'))
+    return out_data
+
 if __name__ == '__main__':
     from qd.qd_common import parse_general_args
     init_logging()
