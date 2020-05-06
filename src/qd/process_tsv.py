@@ -6746,33 +6746,16 @@ def smart_resize(im, target_size):
             bottom=bottom, left=left, right=right)
     return im_squared, left, top, im_scale
 
-def kmeans_pred_to_dataX(data, split, k, feature_fname, out_data):
-    out_dataset = TSVDataset(out_data)
-    if op.isfile(out_dataset.get_labelmap_file()) and \
-            op.isfile(out_dataset.get_data(split + 'X')):
-        return out_data
-    dataset = TSVDataset(data)
-    iter_label = dataset.iter_data(split, 'label')
-    iter_pred = tsv_reader(feature_fname)
-    np_feature = None
-    num_rows = dataset.num_rows(split)
-    for i, (label_row, pred_row) in tqdm(enumerate(zip(iter_label, iter_pred))):
-        assert label_row[0] == pred_row[0]
-        f = json.loads(pred_row[-1])[0]['feature']
-        if np_feature is None:
-            np_feature = np.zeros((num_rows, len(f)), dtype=np.float32)
-        np_feature[i] = f
-    from libKMCUDA import kmeans_cuda
+def kmeans(np_feature, k, seed=6):
     from sklearn.preprocessing import normalize
+    from libKMCUDA import kmeans_cuda
     np_feature = normalize(np_feature, axis=1)
-    # there are some issues with multi-gpu. Thus setting device=1 which means to use
-    # gpu 0
     init = 'kmeans++'
     while True:
         centroid, assignments = kmeans_cuda(np_feature,
                                             k,
                                             verbosity=1,
-                                            seed=6,
+                                            seed=seed,
                                             device=1,
                                             init=init,
                                             metric='cos',
@@ -6797,6 +6780,27 @@ def kmeans_pred_to_dataX(data, split, k, feature_fname, out_data):
                 new_cluster_idx += 1
         assert new_cluster_idx == len(new_cluster)
         init = centroid
+    return centroid, assignments
+
+def kmeans_pred_to_dataX(data, split, k, feature_fname, out_data):
+    out_dataset = TSVDataset(out_data)
+    if op.isfile(out_dataset.get_labelmap_file()) and \
+            op.isfile(out_dataset.get_data(split + 'X')):
+        return out_data
+    dataset = TSVDataset(data)
+    iter_label = dataset.iter_data(split, 'label')
+    iter_pred = tsv_reader(feature_fname)
+    np_feature = None
+    num_rows = dataset.num_rows(split)
+    for i, (label_row, pred_row) in tqdm(enumerate(zip(iter_label, iter_pred))):
+        assert label_row[0] == pred_row[0]
+        f = json.loads(pred_row[-1])[0]['feature']
+        if np_feature is None:
+            np_feature = np.zeros((num_rows, len(f)), dtype=np.float32)
+        np_feature[i] = f
+    # there are some issues with multi-gpu. Thus setting device=1 which means to use
+    # gpu 0
+    centroid, assignments = kmeans(np_feature, k)
     disk_assign = [int(i) for _, i in out_dataset.iter_data(split, 'label')]
     for a, da in zip(assignments, disk_assign):
         assert a == da
