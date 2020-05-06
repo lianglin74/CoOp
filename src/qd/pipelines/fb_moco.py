@@ -39,7 +39,7 @@ class MoCo(nn.Module):
     """
     def __init__(self, base_encoder, dim=128, K=65536, m=0.999, T=0.07,
                  mlp=False, mlp_bn=False, mlp_num=1,
-                 with_sim_clr=False):
+                 with_sim_clr=None, shuffle_bn=True):
         """
         dim: feature dimension (default: 128)
         K: queue size; number of negative keys (default: 65536)
@@ -56,14 +56,11 @@ class MoCo(nn.Module):
 
         # create the encoders
         # num_classes is the output fc dimension
-        self.encoder_q = base_encoder(num_classes=dim)
-        self.encoder_k = base_encoder(num_classes=dim)
-        # the purpose is to have a key with module, so that our classification
-        # module can load such model
-        self.module = self.encoder_q
+        encoder_q = base_encoder(num_classes=dim)
+        encoder_k = base_encoder(num_classes=dim)
 
         if mlp:  # hack: brute-force replacement
-            dim_mlp = self.encoder_q.fc.weight.shape[1]
+            dim_mlp = encoder_q.fc.weight.shape[1]
             def replace_fc(encoder):
                 module_list = []
                 for i in range(mlp_num):
@@ -73,12 +70,8 @@ class MoCo(nn.Module):
                     module_list.append(nn.ReLU())
                 module_list.append(encoder.fc)
                 encoder.fc = nn.Sequential(*module_list)
-            replace_fc(self.encoder_q)
-            replace_fc(self.encoder_k)
-
-        for param_q, param_k in zip(self.encoder_q.parameters(), self.encoder_k.parameters()):
-            param_k.data.copy_(param_q.data)  # initialize
-            param_k.requires_grad = False  # not update by gradient
+            replace_fc(encoder_q)
+            replace_fc(encoder_k)
 
         # create the queue
         self.register_buffer("queue", torch.randn(dim, K))
@@ -90,6 +83,39 @@ class MoCo(nn.Module):
         self.mpi_size = get_mpi_size()
         self.mpi_rank = get_mpi_rank()
         self._use_hvd = None
+        self.shuffle_bn = shuffle_bn
+
+        if not shuffle_bn:
+            logging.info('converting bn to sync-bn due to shuffle-bn is not '
+                         'enabled')
+            if self.mpi_size > 1:
+                from qd.qd_pytorch import replace_module
+                encoder_q = replace_module(encoder_q,
+                        lambda m: isinstance(m, torch.nn.BatchNorm2d) or
+                                       isinstance(m, torch.nn.BatchNorm1d),
+                        lambda m: torch.nn.SyncBatchNorm(m.num_features,
+                            eps=m.eps,
+                            momentum=m.momentum,
+                            affine=m.affine,
+                            track_running_stats=m.track_running_stats))
+                encoder_k = replace_module(encoder_k,
+                        lambda m: isinstance(m, torch.nn.BatchNorm2d) or
+                                       isinstance(m, torch.nn.BatchNorm1d),
+                        lambda m: torch.nn.SyncBatchNorm(m.num_features,
+                            eps=m.eps,
+                            momentum=m.momentum,
+                            affine=m.affine,
+                            track_running_stats=m.track_running_stats))
+
+        for param_q, param_k in zip(encoder_q.parameters(), encoder_k.parameters()):
+            param_k.data.copy_(param_q.data)  # initialize
+            param_k.requires_grad = False  # not update by gradient
+
+        self.encoder_q = encoder_q
+        self.encoder_k = encoder_k
+        # the purpose is to have a key with module, so that our classification
+        # module can load such model
+        self.module = self.encoder_q
 
     @property
     def use_hvd(self):
@@ -188,24 +214,37 @@ class MoCo(nn.Module):
         """
 
         # compute query features
-        q = self.encoder_q(im_q)  # queries: NxC
-        q = nn.functional.normalize(q, dim=1)
+        if self.with_sim_clr == 'qqk':
+            im = torch.cat([im_q, im_k], dim=0)
+            q = self.encoder_q(im)
+            q = nn.functional.normalize(q, dim=1)
+        else:
+            q = self.encoder_q(im_q)  # queries: NxC
+            q = nn.functional.normalize(q, dim=1)
 
         # compute key features
         with torch.no_grad():  # no gradient to keys
             self._momentum_update_key_encoder()  # update the key encoder
 
-            # shuffle for making use of BN
-            im_k, idx_unshuffle = self._batch_shuffle_ddp(im_k)
+            if self.shuffle_bn:
+                # shuffle for making use of BN
+                im_k, idx_unshuffle = self._batch_shuffle_ddp(im_k)
 
             k = self.encoder_k(im_k)  # keys: NxC
             k = nn.functional.normalize(k, dim=1)
 
-            # undo shuffle
-            k = self._batch_unshuffle_ddp(k, idx_unshuffle)
+            if self.shuffle_bn:
+                # undo shuffle
+                k = self._batch_unshuffle_ddp(k, idx_unshuffle)
 
         if self.with_sim_clr:
-            from qd.qd_pytorch import all_gather_grad_curr, all_gather
+            return self.forward_with_sim_clr(q, k)
+        else:
+            return self.forward_moco(q, k)
+
+    def forward_with_sim_clr(self, q, k):
+        from qd.qd_pytorch import all_gather_grad_curr, all_gather
+        if self.with_sim_clr == 'qk_queue':
             q = all_gather_grad_curr(q)
             k = all_gather(k)
             qk = torch.cat([q, k], dim=0)
@@ -222,9 +261,28 @@ class MoCo(nn.Module):
             label = torch.cat([label1, label2], dim=0)
 
             self._dequeue_and_enqueue(k, gather=False)
-            return sim, label
+        elif self.with_sim_clr == 'qqk':
+            # in this case, q is the feature from im_q and im_k by stacking.
+            assert q.shape[0] == 2 * k.shape[0]
+            assert not self.shuffle_bn, ('all gather does not support gradient '
+                                         'propagation, so it is better to use '
+                                         'sync-bn. here key encoder will also '
+                                         'use sync-bn')
+            qq = all_gather_grad_curr(q)
+            qq_queue = torch.cat([qq, self.queue.detach().T], dim=0)
+
+            sim = torch.matmul(qq, qq_queue.T)
+            sim /= self.T
+            bs = qq.shape[0] // 2
+            sim.fill_diagonal_(-float('inf'))
+            label1 = torch.arange(bs, bs + bs).to(sim.device)
+            label2 = torch.arange(bs).to(sim.device)
+            label = torch.cat([label1, label2], dim=0)
+            # k is only used for queue update.
+            self._dequeue_and_enqueue(k)
         else:
-            return self.forward_moco(q, k)
+            raise NotImplementedError
+        return sim, label
 
     def forward_moco(self, q, k):
         # compute logits
@@ -304,6 +362,7 @@ class MocoPipeline(MaskClassificationPipeline):
             'log_step': 100,
             'ignore_predict': True,
             'mlp_num': 1,
+            'shuffle_bn': True,
         }
 
         from qd.qd_common import max_iter_mult
@@ -321,7 +380,8 @@ class MocoPipeline(MaskClassificationPipeline):
             self.mlp,
             mlp_bn=self.mlp_bn,
             mlp_num=self.mlp_num,
-            with_sim_clr=self.with_sim_clr)
+            with_sim_clr=self.with_sim_clr,
+            shuffle_bn=self.shuffle_bn)
 
         criterion = self._get_criterion()
         # we need wrap model output and criterion into one model, to re-use
