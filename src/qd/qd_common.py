@@ -1964,11 +1964,11 @@ def write_to_yaml_file(context, file_name):
                 encoding='utf-8', allow_unicode=True)
 
 def load_from_yaml_str(s):
-    return yaml.load(s, Loader=yaml.FullLoader)
+    return yaml.load(s, Loader=yaml.UnsafeLoader)
 
 def load_from_yaml_file(file_name):
     with open(file_name, 'r') as fp:
-        return yaml.load(fp, Loader=yaml.FullLoader)
+        return yaml.load(fp, Loader=yaml.UnsafeLoader)
 
 def write_to_file(contxt, file_name, append=False):
     p = os.path.dirname(file_name)
@@ -3031,6 +3031,9 @@ def execute_pipeline(all_processor):
         else:
             if r is not None:
                 result['process_result'].append({'process_info': p, 'return': r})
+        if p.get('stop_after'):
+            logging.info('skip the rest since stop_after=True')
+            break
     result['place_holder'] = place_holder
     if 'result' not in result:
         result['result'] = 'pass'

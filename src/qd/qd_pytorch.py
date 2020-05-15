@@ -55,7 +55,20 @@ from torchvision.transforms import functional as F
 import cv2
 import math
 from qd.qd_common import is_hvd_initialized
+import PIL
 
+
+class GaussianBlur(object):
+    """Gaussian blur augmentation in SimCLR https://arxiv.org/abs/2002.05709"""
+
+    def __init__(self, sigma=[.1, 2.]):
+        self.sigma = sigma
+
+    def __call__(self, x):
+        from PIL import ImageFilter
+        sigma = random.uniform(self.sigma[0], self.sigma[1])
+        x = x.filter(ImageFilter.GaussianBlur(radius=sigma))
+        return x
 
 @torch.no_grad()
 def concat_all_gather(tensor):
@@ -341,15 +354,123 @@ class CompositeTSVFile():
         self.tsvs = [TSVFile(f, self.cache_policy) for f in load_list_file(self.list_file)]
         self.initialized = True
 
+class IoURandomResizedCrop(object):
+    def __init__(self, iou, size, scale=(0.08, 1.0), ratio=(3. / 4., 4. / 3.),
+                 interpolation=PIL.Image.BILINEAR):
+        if isinstance(size, tuple):
+            self.size = size
+        else:
+            self.size = (size, size)
+
+        self.interpolation = interpolation
+        self.scale = scale
+        self.ratio = ratio
+        self.iou = iou
+        self.not_found = 0
+
+    def __repr__(self):
+        return ('IoURandomResizedCrop(iou={}, size={}, scale={}, ratio={}, '
+                'interpolation={})'.format(self.iou,
+                                           self.size,
+                                           self.scale,
+                                           self.ratio,
+                                           self.interpolation))
+
+    def get_params(self, img, anchor=None):
+        """Get parameters for ``crop`` for a random sized crop.
+
+        Args:
+            img (PIL Image): Image to be cropped.
+            scale (tuple): range of size of the origin size cropped
+            ratio (tuple): range of aspect ratio of the origin aspect ratio cropped
+
+        Returns:
+            tuple: params (i, j, h, w) to be passed to ``crop`` for a random
+                sized crop.
+        """
+        width, height = img.size
+        area = height * width
+        scale = self.scale
+        ratio = self.ratio
+
+        for attempt in range(500):
+            target_area = random.uniform(*scale) * area
+            log_ratio = (math.log(ratio[0]), math.log(ratio[1]))
+            aspect_ratio = math.exp(random.uniform(*log_ratio))
+
+            w = int(round(math.sqrt(target_area * aspect_ratio)))
+            h = int(round(math.sqrt(target_area / aspect_ratio)))
+
+            if 0 < w <= width and 0 < h <= height:
+                i = random.randint(0, height - h)
+                j = random.randint(0, width - w)
+                if anchor is None:
+                    return i, j, h, w
+                else:
+                    from qd.qd_common import calculate_iou
+                    i1, j1, h1, w1 = anchor
+                    iou = calculate_iou([j, i, j + w, i + h],
+                                        [j1, i1, j1 + w1, i1 + h1])
+                    if iou > self.iou:
+                        return i, j, h, w
+        if anchor is not None:
+            if (self.not_found % 100) == 0:
+                logging.info('not found after 500 trials')
+            self.not_found += 1
+            return anchor
+
+        # Fallback to central crop
+        in_ratio = float(width) / float(height)
+        if (in_ratio < min(ratio)):
+            w = width
+            h = int(round(w / min(ratio)))
+        elif (in_ratio > max(ratio)):
+            h = height
+            w = int(round(h * max(ratio)))
+        else:  # whole image
+            w = width
+            h = height
+        i = (height - h) // 2
+        j = (width - w) // 2
+        return i, j, h, w
+
+    def __call__(self, img1, img2):
+        i1, j1, h1, w1 = self.get_params(img1)
+        i2, j2, h2, w2 = self.get_params(img2, anchor=[i1, j1, h1, w1])
+        img1 = F.resized_crop(img1, i1, j1, h1, w1, self.size, self.interpolation)
+        img2 = F.resized_crop(img2, i2, j2, h2, w2, self.size, self.interpolation)
+        return img1, img2
+
+class TwoCropsTransformX():
+    def __init__(self, aug1, aug_join, aug2):
+        self.aug1 = aug1
+        self.aug_join = aug_join
+        self.aug2 = aug2
+
+    def __repr__(self):
+        s = 'TwoCropsTransformX(aug1={}, aug_join={}, aug2={})'.format(
+            self.aug1, self.aug_join, self.aug2,
+        )
+        return s
+
+    def __call__(self, x):
+        y1 = self.aug1(x)
+        y2 = self.aug1(x)
+        y1, y2 = self.aug_join(y1, y2)
+        y1 = self.aug2(y1)
+        y2 = self.aug2(y2)
+        return [y1, y2]
+
 class TwoCropsTransform:
     """Take two random crops of one image as the query and key."""
 
-    def __init__(self, base_transform):
-        self.base_transform = base_transform
+    def __init__(self, first_transform, second_transform):
+        self.first_transform = first_transform
+        self.second_transform = second_transform
 
     def __call__(self, x):
-        q = self.base_transform(x)
-        k = self.base_transform(x)
+        q = self.first_transform(x)
+        k = self.second_transform(x)
         return [q, k]
 
 class DictTransformCompose(object):
@@ -525,7 +646,6 @@ class DictTransformAffineResize(object):
                     return PIL.Image.BICUBIC
                 else:
                     return PIL.Image.BILINEAR
-            import PIL
             assert abs(info['matrix'][2, 0]) < 1e-5
             assert abs(info['matrix'][2, 1]) < 1e-5
             out_image = image.transform(size=(info['out_width'], info['out_height']),
@@ -901,7 +1021,7 @@ class TSVSplitImage(TSVSplit):
         return label
 
 class TSVSplitImageSoftAssign(object):
-    def __init__(self, data, split, temperature, transform):
+    def __init__(self, data, split, temperature, transform, num_kmeans=None):
         self.image_tsv = TSVSplitProperty(data, split, t=None)
         self.feature_tsv = TSVSplitProperty(data, split, t='feature_ptr')
         self.feature_tsv = TSVFile(self.feature_tsv[0][0])
@@ -910,17 +1030,27 @@ class TSVSplitImageSoftAssign(object):
         self.transform = transform
         self._centers = None
         self.temperature = temperature
+        if num_kmeans in [0, None]:
+            num_kmeans = 1
+        self.num_kmeans = num_kmeans
 
     @property
     def centers(self):
         if self._centers is None:
-            tsv = TSVSplitProperty(self.data, self.split, t='kmeans_center')
-            all_feat = []
-            for i in range(len(tsv)):
-                row = tsv[i]
-                feat = [float(r) for r in row]
-                all_feat.append(feat)
-            self._centers = torch.tensor(all_feat)
+            all_centers = []
+            for v in range(self.num_kmeans):
+                tsv = TSVSplitProperty(
+                    self.data,
+                    self.split,
+                    t='kmeans_center',
+                    version=v)
+                all_feat = []
+                for i in range(len(tsv)):
+                    row = tsv[i]
+                    feat = [float(r) for r in row]
+                    all_feat.append(feat)
+                all_centers.append(torch.tensor(all_feat))
+            self._centers = all_centers
         return self._centers
 
     def __getitem__(self, idx):
@@ -933,8 +1063,9 @@ class TSVSplitImageSoftAssign(object):
         feature = json.loads(feat_row[1])[0]['feature']
         feature = torch.tensor(feature)
         feature = torch.nn.functional.normalize(feature, dim=0)
-        sim = torch.matmul(self.centers, feature.view(-1, 1))
-        sim /= self.temperature
+        sims = [torch.matmul(c, feature.view(-1, 1)) / self.temperature
+                for c in self.centers]
+        sim = torch.cat(sims, dim=1)
         label = torch.nn.functional.softmax(sim.T, dim=1).squeeze()
         return im, label, image_row[0]
 
@@ -1135,9 +1266,15 @@ def get_train_transform(bgr2rgb=False, crop_size=224):
     data_augmentation = transforms.Compose(all_trans)
     return data_augmentation
 
+def get_default_mean():
+    return [0.485, 0.456, 0.406]
+
+def get_default_std():
+    return [0.229, 0.224, 0.225]
+
 def get_data_normalize():
-    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225])
+    normalize = transforms.Normalize(mean=get_default_mean(),
+                                     std=get_default_std())
     return normalize
 
 class MultiHotCrossEntropyLoss(nn.Module):
@@ -1498,6 +1635,15 @@ def calc_neg_aware_gmap(data, split, predict_file,
 def get_precisie_bn_model_file(model_file):
     return op.splitext(model_file)[0] + '.PreciseBN.pt'
 
+def freeze_last_bn_stats(model, num_bn):
+    '''
+    weight and bias can be updated without problems here
+    '''
+    bn_layers = [m for n, m in model.named_modules() if isinstance(m, nn.BatchNorm2d)]
+    targets = bn_layers[-num_bn:]
+    for t in targets:
+        t.eval()
+
 def freeze_all_parameters_except(model, freeze_all_except):
     found = False
     result = []
@@ -1592,26 +1738,6 @@ def all_gather_grad_curr(x):
         all_x[get_mpi_rank()] = x
         return torch.cat(all_x, dim=0)
 
-class GaussianBlur(object):
-    # Implements Gaussian blur as described in the SimCLR paper
-    def __init__(self, kernel_size, min=0.1, max=2.0):
-        self.min = min
-        self.max = max
-        # kernel size is set to be 10% of the image height/width
-        self.kernel_size = kernel_size
-
-    def __call__(self, sample):
-        sample = np.array(sample)
-
-        # blur the image with a 50% chance
-        prob = np.random.random_sample()
-
-        if prob < 0.5:
-            sigma = (self.max - self.min) * np.random.random_sample() + self.min
-            sample = cv2.GaussianBlur(sample, (self.kernel_size, self.kernel_size), sigma)
-
-        return sample
-
 class TorchTrain(object):
     def __init__(self, **kwargs):
         if 'load_parameter' in kwargs and kwargs['load_parameter']:
@@ -1669,7 +1795,7 @@ class TorchTrain(object):
         self.expid = kwargs.get('expid', 'Unknown')
 
         self.full_expid = kwargs.get('full_expid',
-                '_'.join([self.data, self.net, self.expid]))
+                '_'.join(map(str, [self.data, self.net, self.expid])))
         self.output_folder = op.join('output', self.full_expid)
         self.test_data = kwargs.get('test_data', self.data)
         self.test_batch_size = kwargs.get('test_batch_size',
@@ -1827,6 +1953,21 @@ class TorchTrain(object):
                 totensor,
                 normalize,])
             data_augmentation = transforms.Compose(all_trans)
+        elif self.train_transform == 'aa':
+            normalize = get_data_normalize()
+            totensor = transforms.ToTensor()
+            all_trans = []
+            if self.bgr2rgb:
+                all_trans.append(BGR2RGB())
+            from qd.data_layer.autoaugmentation import ImageNetPolicy
+            all_trans.extend([
+                transforms.ToPILImage(),
+                transforms.RandomResizedCrop(self.train_crop_size),
+                transforms.RandomHorizontalFlip(),
+                ImageNetPolicy(),
+                totensor,
+                normalize,])
+            data_augmentation = transforms.Compose(all_trans)
         else:
             raise NotImplementedError(self.train_transform)
 
@@ -1837,15 +1978,19 @@ class TorchTrain(object):
         if stage == 'train':
             transform = self.get_train_transform()
         else:
-            resize_size = self.test_resize_size
-            if resize_size is None:
-                assert stage == 'test'
-                resize_size = 256 * self.test_crop_size // 224
-            transform = get_test_transform(
-                self.bgr2rgb,
-                resize_size=resize_size,
-                crop_size=self.test_crop_size,
-                crop_position=self.test_crop_position)
+            transform = self.get_test_transform()
+        logging.info(transform)
+        return transform
+
+    def get_test_transform(self):
+        resize_size = self.test_resize_size
+        if resize_size is None:
+            resize_size = 256 * self.test_crop_size // 224
+        transform = get_test_transform(
+            self.bgr2rgb,
+            resize_size=resize_size,
+            crop_size=self.test_crop_size,
+            crop_position=self.test_crop_position)
         return transform
 
     def _get_dataset(self, data, split, stage, labelmap, dataset_type):
@@ -1854,6 +1999,11 @@ class TorchTrain(object):
 
         transform = self.get_transform(stage)
 
+        return self.create_dataset_with_transform(data, split, stage, labelmap, dataset_type,
+                                   transform)
+
+    def create_dataset_with_transform(self, data, split, stage, labelmap, dataset_type,
+                       transform):
         if dataset_type == 'single':
             return TSVSplitImage(data, split,
                     version=0,
@@ -1864,6 +2014,7 @@ class TorchTrain(object):
             return TSVSplitImageSoftAssign(data, split,
                     transform=transform,
                     temperature=self.temperature,
+                    num_kmeans=self.heads,
                     )
         if dataset_type == 'crop':
             return TSVSplitCropImage(data, split,
@@ -1890,6 +2041,9 @@ class TorchTrain(object):
             if self.loss_type == 'NTXent':
                 from qd.layers.ntxent_loss import NTXentLoss
                 criterion = NTXentLoss(self.temperature)
+            elif self.loss_type == 'multi_ce':
+                from qd.layers.loss import MultiCrossEntropyLoss
+                criterion = MultiCrossEntropyLoss(weights=self.multi_ce_weights)
             else:
                 criterion = nn.CrossEntropyLoss().cuda()
         elif self.dataset_type in ['soft_assign']:
@@ -2096,6 +2250,10 @@ class TorchTrain(object):
         elif self.optimizer_type in ['Adam']:
             optimizer = torch.optim.Adam(parameters, self.base_lr,
                                         weight_decay=self.weight_decay)
+        elif self.optimizer_type in ['AdamW']:
+            optimizer = torch.optim.AdamW(parameters,
+                                          self.base_lr,
+                                          weight_decay=self.weight_decay)
         else:
             raise NotImplementedError(self.optimizer_type)
         if self.optimizer_type in ['LARS']:
@@ -2127,6 +2285,11 @@ class TorchTrain(object):
             scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,
                     T_max=self.max_iter,
                     last_epoch=last_epoch)
+        elif self.scheduler_type == 'ReduceLROnPlateau':
+            assert isinstance(self.max_iter, int)
+            patience = 3 * self.max_iter // self.effective_batch_size
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer, patience=patience, verbose=True)
         else:
             raise NotImplementedError(self.scheduler_type)
         return scheduler
@@ -2265,7 +2428,7 @@ class TorchTrain(object):
         if self.test_crop_position:
             cc.append(self.test_crop_position)
         if self.test_resize_size:
-            cc.append('r'.format(self.test_resize_size))
+            cc.append('r{}'.format(self.test_resize_size))
 
     def monitor_train(self):
         self._ensure_initialized()

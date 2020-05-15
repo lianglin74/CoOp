@@ -1617,9 +1617,10 @@ def ensure_create_inverted_tsv_for_each(args):
                 curr_labelmap.append(row[0])
         def gen_inverted_rows(inv):
             logging.info('re-orderring')
+            set_labelmap = set(curr_labelmap)
             for label in tqdm(inv):
-                assert label in curr_labelmap
-            for label in curr_labelmap:
+                assert label in set_labelmap
+            for label in tqdm(curr_labelmap):
                 i = inv[label] if label in inv else []
                 yield label, ' '.join(map(str, i))
         inverted_result = create_inverted_list(
@@ -6782,7 +6783,8 @@ def kmeans(np_feature, k, seed=6):
         init = centroid
     return centroid, assignments
 
-def kmeans_pred_to_dataX(data, split, k, feature_fname, out_data):
+def kmeans_pred_to_dataX(data, split, k, feature_fname, out_data,
+                         num_kmeans=1):
     out_dataset = TSVDataset(out_data)
     if op.isfile(out_dataset.get_labelmap_file()) and \
             op.isfile(out_dataset.get_data(split + 'X')):
@@ -6800,11 +6802,16 @@ def kmeans_pred_to_dataX(data, split, k, feature_fname, out_data):
         np_feature[i] = f
     # there are some issues with multi-gpu. Thus setting device=1 which means to use
     # gpu 0
-    centroid, assignments = kmeans(np_feature, k)
+    all_centroid, all_assignment = [], []
+    for i in range(num_kmeans):
+        centroid, assignments = kmeans(np_feature, k, seed=i + 9)
+        all_centroid.append(centroid)
+        all_assignment.append(assignments)
     disk_assign = [int(i) for _, i in out_dataset.iter_data(split, 'label')]
     for a, da in zip(assignments, disk_assign):
         assert a == da
-    out_dataset.write_data(centroid, split, 'kmeans_center')
+    for i, centroid in zip(range(num_kmeans), all_centroid):
+        out_dataset.write_data(centroid, split, 'kmeans_center', version=i)
     write_to_file(dataset.get_data(split),
                   out_dataset.get_data(split + 'X'))
     tsv_writer(((0, i) for i in range(num_rows)),
@@ -6817,10 +6824,37 @@ def kmeans_pred_to_dataX(data, split, k, feature_fname, out_data):
     else:
         tsv_writer(((i,) for i in range(k)), out_dataset.get_labelmap_file())
     iter_label = dataset.iter_data(split, 'label')
-    tsv_writer(((l[0], int(a)) for l, a in zip(iter_label, assignments)),
-               out_dataset.get_data(split, 'label'))
+    def gen_label():
+        for row in zip(iter_label, *all_assignment):
+            key = row[0][0]
+            label = '_'.join(map(str, [int(a) for a in row[1:]]))
+            yield key, json_dump([{'class': label}])
+    tsv_writer(gen_label(), out_dataset.get_data(split, 'label'))
     tsv_writer([(feature_fname,)], out_dataset.get_data(split, 'feature_ptr'))
     return out_data
+
+def create_compare_dataset(pred1, pred2, suffix1, suffix2, data, split, out_data):
+    out_dataset = TSVDataset(out_data)
+    dataset = TSVDataset(data)
+    tsv_writer([(dataset.get_data(split),)], out_dataset.get_data(split + 'X'))
+    tsv_writer(((0, i)  for i in range(dataset.num_rows(split)) for _ in
+                range(2)),
+               out_dataset.get_shuffle_file(split))
+    iter_pred1 = tsv_reader(pred1)
+    iter_pred2 = tsv_reader(pred2)
+    iter_gt = dataset.iter_data(split, 'label')
+    def gen_label_rows():
+        for row_gt, row_pred1, row_pred2 in zip(iter_gt, iter_pred1, iter_pred2):
+            assert row_gt[0] == row_pred1[0] == row_pred2[0]
+            rects_pred1 = json.loads(row_pred1[1])
+            rects_pred1 = [r for r in rects_pred1 if r['conf'] > 0.2]
+            rects_pred2 = json.loads(row_pred2[1])
+            rects_pred2 = [r for r in rects_pred2 if r['conf'] > 0.2]
+            yield row_gt[0] + suffix1, json_dump(rects_pred1)
+            yield row_gt[0] + suffix2, json_dump(rects_pred2)
+    out_dataset.write_data(gen_label_rows(), split, 'label')
+    expand_nested_splitX(out_data, split)
+    populate_dataset_details(out_data)
 
 if __name__ == '__main__':
     from qd.qd_common import parse_general_args
