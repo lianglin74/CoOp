@@ -852,7 +852,7 @@ def get_all_data_info2(name=None):
                 label_count_rows = dataset.iter_data(split, 'inverted.label.count', v)
                 label_count = [(r[0], int(r[1])) for r in label_count_rows]
                 label_count = sorted(label_count, key=lambda x: x[1])
-                valid_split_versions.append((split, v, [(i, l, c) for i, (l, c) in
+                valid_split_versions.append((split, v, "", [(i, l, c) for i, (l, c) in
                     enumerate(label_count)]))
                 v = v + 1
         name_splits_labels = [(name, valid_split_versions)]
