@@ -185,6 +185,8 @@ def get_compute_status(compute_target, gpu_per_node=4):
         info['preparing_node_count']) * gpu_per_node
     all_job_status = [j.status for j in iter_active_runs(compute_target)]
     info['num_running_job'] = len([j for j in all_job_status if j == 'Running'])
+    info['num_queued_jobs'] = len([j for j in all_job_status if j ==
+                                   AMLClient.status_queued])
 
     return info
 
@@ -401,6 +403,7 @@ class AMLClient(object):
                 messages = detect_aml_error_message(info['appID'])
                 if messages is not None:
                     info['result'] = ','.join(messages)
+            info['cluster'] = self.cluster
             logging.info(pformat(info))
             return [info]
 
@@ -525,8 +528,6 @@ class AMLClient(object):
         env.python.interpreter_path = '/opt/conda/bin/python'
         env.python.user_managed_dependencies = True
 
-        env.environment_variables['NCCL_TREE_THRESHOLD'] = '0'
-        env.environment_variables['NCCL_LL_THRESHOLD'] = '0'
 
         for k, v in self.env.items():
             assert type(v) is str
@@ -861,12 +862,8 @@ def execute(task_type, **kwargs):
         logging.info(pformat(result))
     elif task_type in ['s', 'summary']:
         m = create_aml_client(**kwargs)
-        info = m.get_compute_status()
+        info = m.get_cluster_status()
         logging.info(pformat(info))
-        inject_to_tensorboard(info)
-        from qd.db import inject_cluster_summary
-        info['cluster'] = 'aml'
-        inject_cluster_summary(info)
     elif task_type in ['monitor']:
         monitor()
     elif task_type in ['i', 'inject']:
