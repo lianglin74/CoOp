@@ -298,13 +298,16 @@ def show_images(all_image, num_rows=None, num_cols=None,
             if k >= len(all_image):
                 break
             plt.subplot(num_rows, num_cols, k + 1)
-            if len(all_image[k].shape) == 3:
-                plt.imshow(cv2.cvtColor(all_image[k],
-                    cv2.COLOR_BGR2RGB))
+            if is_pil_image(all_image[k]):
+                plt.imshow(np.asarray(all_image[k]))
             else:
-                # grey image
-                assert len(all_image[k].shape) == 2
-                plt.imshow(np.repeat(all_image[k][:, :, np.newaxis], 3, axis=2))
+                if len(all_image[k].shape) == 3:
+                    plt.imshow(cv2.cvtColor(all_image[k],
+                        cv2.COLOR_BGR2RGB))
+                else:
+                    # grey image
+                    assert len(all_image[k].shape) == 2
+                    plt.imshow(np.repeat(all_image[k][:, :, np.newaxis], 3, axis=2))
             if titles is not None:
                 plt.title(titles[k])
             k = k + 1

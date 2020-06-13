@@ -2542,11 +2542,27 @@ def calc_eta(days, hours):
 
 def attach_aml_maskrcnn_log_if_is(all_log, job_info):
     for log in reversed(all_log):
-        pattern = r'(.*),.* trainer\.py.*do_train\(\): eta: (.*) iter: [0-9]*  speed: ([0-9\.]*).*'
+        pattern = r'(.*),.* trainer\.py.*(?:do_train|do_train_dict)\(\): eta: (.*) iter: [0-9]*  speed: ([0-9\.]*).*'
         result = re.match(pattern, log)
         if result and result.groups():
             log_time, left, speed = result.groups()
             job_info['speed'] = speed
+            from dateutil.parser import parse
+            log_time = parse(log_time)
+            job_info['log_time'] = log_time
+            # log_time here is UTC. convert it to local time
+            d, h = parse_eta_in_hours(left)
+            job_info['left'] = '{}-{:.1f}h'.format(d, h)
+            job_info['eta'] = calc_eta(d, h)
+            return True
+    return False
+
+def attach_aml_detectron2_log_if_is(all_log, job_info):
+    for log in reversed(all_log):
+        pattern = r'(.*),.* events\.py.*eta: (.*) iter: [0-9]*.*'
+        result = re.match(pattern, log)
+        if result and result.groups():
+            log_time, left = result.groups()
             from dateutil.parser import parse
             log_time = parse(log_time)
             job_info['log_time'] = log_time
@@ -2596,6 +2612,8 @@ def attach_log_parsing_result(job_info):
     if attach_aml_maskrcnn_log_if_is(all_log, job_info):
         return
     if attach_philly_caffe_log_if_is(all_log, job_info):
+        return
+    if attach_aml_detectron2_log_if_is(all_log, job_info):
         return
 
 def print_offensive_folder(folder):
@@ -2878,15 +2896,17 @@ def inject_yolo_by_maskrcnn_log_to_board(fname, folder):
             wt.add_scalar(tag=k, scalar_value=loss_info[k],
                     global_step=loss_info['iteration'])
 
-def inject_maskrcnn_log_to_board(fname, folder):
-    keys = ['loss',
-            'loss_box_reg',
-            'loss_classifier',
-            'loss_objectness',
-            'loss_rpn_box_reg',
-            'time',
-            'data',
-            ]
+def inject_maskrcnn_log_to_board(fname, folder, keys=None):
+    if keys is None:
+        keys = ['loss',
+                'criterion_loss',
+                #'loss_box_reg',
+                #'loss_classifier',
+                #'loss_objectness',
+                #'loss_rpn_box_reg',
+                'time',
+                'data',
+                ]
     pattern = ''.join('.*{}: ([0-9\.]*) \(([0-9\.]*)\).*'.format(k)for k in keys)
     pattern = '.*iter: ([0-9]*) .*' + 'speed: ([0-9\.]*) images/sec' + pattern
     logging.info(pattern)
@@ -3055,6 +3075,20 @@ def max_iter_mult(m, factor):
         return '{}e'.format(int(float(m[:-1]) * factor))
     else:
         raise NotImplementedError
+
+def remove_empty_coco_style(rects, w, h):
+    rects = [r for r in rects if r.get('iscrowd', 0) == 0]
+    ret = []
+    for r in rects:
+        x1, y1, x2, y2 = r['rect']
+        x1 = min(w, max(0, x1))
+        x2 = min(w, max(0, x2))
+        y1 = min(h, max(0, y1))
+        y2 = min(h, max(0, y2))
+        if y2 > y1 and x2 > x1:
+            r['rect'] = [x1, y1, x2, y2]
+            ret.append(r)
+    return ret
 
 if __name__ == '__main__':
     init_logging()

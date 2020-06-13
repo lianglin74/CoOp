@@ -2176,6 +2176,25 @@ def try_json_parse(s):
     except ValueError:
         return s
 
+def iter_full_expid_pred(full_expid, predict_file, start_id, threshold):
+    test_data, test_data_split = parse_test_data(predict_file)
+    pred_tsv = TSVFile(op.join('output', full_expid, 'snapshot', predict_file))
+    num_total = len(pred_tsv)
+    while start_id < 0:
+        start_id += num_total
+    test_dataset = TSVDataset(test_data)
+    iter_image_gt = test_dataset.iter_data(test_data_split,
+                                       filter_idx=range(start_id, num_total))
+    for i, (image_key, str_gt, str_im) in enumerate(iter_image_gt):
+        pred_key, str_pred = pred_tsv[i]
+        assert pred_key == image_key
+        im = img_from_base64(str_im)
+        rects_pred = [r for r in json.loads(str_pred) if r['conf'] > threshold]
+        rects_gt = json.loads(str_gt)
+        if not isinstance(rects_gt, list):
+            rects_gt = [{'class': str(rects_gt)}]
+        yield image_key, im, rects_gt, rects_pred, -1
+
 def visualize_predict_no_draw(full_expid, predict_file, label, start_id,
         threshold):
     test_data, test_data_split = parse_test_data(predict_file)
@@ -5836,7 +5855,7 @@ def find_predict_file(report_file, all_predict):
             eval_keys = ['predict', 'tsv', 'coco_box', 'neg_aware_gmap', 'top1',
                     'noNMSGt', 'noNMSDet', 'noExpandDet', 'speed', 'MaxDet.*']
             p0 = ''.join(['(\.{})?'.format(k) for k in eval_keys])
-            pattern = '{}(\.v[0-9]*)?\.(report|yaml)'.format(p0)
+            pattern = '{}(\.v[0-9]*)?(\.0)?\.(report|yaml)'.format(p0)
             if re.match(pattern, rs):
                 assert not found
                 found = True
@@ -6709,6 +6728,53 @@ def smart_resize_dataset(data, input_size, out_data, resize_type='cv2',
     ensure_copy_file(dataset.get_labelmap_file(),
             out_dataset.get_labelmap_file())
     populate_dataset_hw(out_data)
+
+def smart_resize_lefttop(im, target_size, lower=True):
+    from qd.process_image import is_pil_image
+    if is_pil_image(im):
+        w, h = im.size
+    else:
+        h, w, c = im.shape
+    alpha = target_size / np.sqrt(h * w)
+    if lower:
+        height2 = int(alpha * h)
+        width2 = int(alpha * w)
+    else:
+        height2 = int(np.round(alpha * h))
+        width2 = int(np.round(alpha * w))
+    if h > w:
+        if lower:
+            input_height = height2 // 32 * 32
+            input_width = (input_height * w) // h // 32 * 32
+            im_scale = input_width / w
+        else:
+            input_height = (height2 + 31) // 32 * 32
+            input_width = ((input_height * w + h - 1) // h +
+                                        31) // 32 * 32
+    else:
+        if lower:
+            input_width = (width2) // 32 * 32
+            input_height = (input_width * h) // w // 32 * 32
+            im_scale = input_height / h
+        else:
+            input_width = (width2 + 31) // 32 * 32
+            input_height = ((input_width * h + w - 1) // w +
+                                        31) // 32 * 32
+
+    im_resized = cv2.resize(im, None, None, fx=im_scale, fy=im_scale,
+                            interpolation=cv2.INTER_LINEAR)
+    if is_pil_image(im_resized):
+        new_w, new_h = im_resized.size
+    else:
+        new_h, new_w = im_resized.shape[0:2]
+    left = 0
+    right = input_width - new_w - left
+    top = 0
+    bottom = input_height - new_h - top
+    from qd.process_image import copy_make_border
+    im_squared = copy_make_border(im_resized, top=top,
+            bottom=bottom, left=left, right=right)
+    return im_squared, im_scale
 
 def smart_resize(im, target_size):
     from qd.process_image import is_pil_image

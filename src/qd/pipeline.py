@@ -27,6 +27,11 @@ from qd.qd_common import dict_has_path, dict_get_path_value, dict_get_all_path
 from qd.qd_common import dict_update_nested_dict
 from qd.qd_common import dict_ensure_path_key_converted
 from qd.qd_common import try_once
+from qd.qd_common import iter_swap_param
+from qd.process_tsv import populate_dataset_hw
+from qd.batch_process import BatchProcess
+from qd.gpucluster import create_aml_client
+from qd.db import create_annotation_db
 
 
 def get_all_test_data(exp):
@@ -71,21 +76,25 @@ def ensure_upload_all_data(all_data, philly_client):
         dataset = TSVDataset(d)
         if any(dataset.has('train') and not dataset.has('train', 'hw')
                 for split in ['train', 'trainval', 'test']):
-            from qd.process_tsv import populate_dataset_details
-            populate_dataset_details(d, check_image_details=True)
+            from qd.process_tsv import ensure_labelmap_extract
+            ensure_labelmap_extract(d)
     need_to_upload_data = copy.deepcopy(all_data)
 
     for d in all_data:
         dataset = TSVDataset(d)
         for split in ['train', 'test', 'trainval']:
             splitx = split + 'X'
-            if op.isfile(dataset.get_data(splitx)):
+            if (op.isfile(dataset.get_data(splitx)) and
+                not op.isfile(dataset.get_data(d))):
                 data_sources = dataset.load_composite_source_data_split(split)
-                if len(data_sources) > 1:
-                    if not philly_client.qd_data_exists('{}/{}.tsv'.format(d, split)):
-                        convertcomposite_to_standard(d, split)
-                elif len(data_sources) == 1:
-                    need_to_upload_data.append(data_sources[0][0])
+                need_to_upload_data.extend([x[0] for x in data_sources])
+                # the logic of converting composite to standard should be
+                # outside of this function
+                #if len(data_sources) > 1:
+                    #if not philly_client.qd_data_exists('{}/{}.tsv'.format(d, split)):
+                        #convertcomposite_to_standard(d, split)
+                #elif len(data_sources) == 1:
+                    #need_to_upload_data.extend([x[0] for x in data_sources])
 
     for d in need_to_upload_data:
         # previously, we listed more than required datas to upload. some of
@@ -111,7 +120,8 @@ def ensure_upload_trained_model(param, aml_client):
 
 def aml_func_run(func, param, **submit_param):
     from qd.gpucluster import create_aml_client
-    aml_client = create_aml_client(**submit_param)
+    from qd.qd_common import run_if_not_memory_cached
+    aml_client = run_if_not_memory_cached(create_aml_client, **submit_param)
     all_data = []
     if 'data' in param.get('param', {}):
         from qd.pipeline import get_all_related_data_for_gpu_jobs
@@ -120,7 +130,10 @@ def aml_func_run(func, param, **submit_param):
     if 'all_test_data' in param:
         all_data.extend([test_data_info['test_data'] for test_data_info in
             param['all_test_data']])
-    ensure_upload_all_data(all_data, aml_client)
+    run_if_not_memory_cached(
+        ensure_upload_all_data,
+        all_data,
+        aml_client)
     if 'basemodel' in param.get('param', {}):
         ensure_upload_init_model(param['param'], aml_client)
     if 'param' in param:
@@ -150,7 +163,6 @@ def aml_func_run(func, param, **submit_param):
 
 @try_once
 def try_inject_submit_info(job_info):
-    from qd.db import create_annotation_db
     db = create_annotation_db()
     db.insert_one('ongoingjob', **job_info)
 
@@ -177,6 +189,11 @@ def philly_func_run(func, param, **submit_param):
     logging.info(extra_param)
     logging.info(philly_client.get_config_extra_param(extra_param))
     return philly_client.submit_without_sync(extra_param)
+
+def get_default_stageiter(param):
+    if param.get('net', '').startswith('e2e'):
+        max_iter = param.get('max_iter', 0)
+        return (6 * max_iter // 9, 8 * max_iter // 9)
 
 def except_to_update_for_stageiter(param):
     if param.get('net', '').startswith('e2e'):
@@ -276,9 +293,6 @@ def populate_expid(param):
 def generate_expid(param):
     dict_ensure_path_key_converted(param)
     config = load_from_yaml_file('./aux_data/configs/expid_generate.yaml')
-    default_param = {
-            'max_iter': 10000,
-            'effective_batch_size': 64}
 
     direct_add_value_keys = [
             # first value is the key, the second is the name in the folder; the
@@ -289,7 +303,6 @@ def generate_expid(param):
             ('yolo_train_session_param$data_augmentation', 'Aug',
                 except_to_update_for_data_augmentation),
             ('momentum', 'Momentum'),
-            ('stageiter', 'StageIter', except_to_update_for_stageiter),
             ('DTYPE', 'T', except_to_update_for_dtype),
             ('INPUT$FIXED_SIZE_AUG$INPUT_SIZE', 'In',
                 except_to_update_fixed_input_size),
@@ -316,13 +329,11 @@ def generate_expid(param):
             ('MODEL$RPN$MATCHER_TYPE', 'RpnM', lambda x: dict_get_path_value(x, 'MODEL$RPN$MATCHER_TYPE') == 'default'),
             ('MODEL$ROI_HEADS$MATCHER_TYPE', 'RoiM', lambda x: dict_get_path_value(x, 'MODEL$ROI_HEADS$MATCHER_TYPE') == 'default'),
             ('MODEL$ROI_HEADS$BG_IOU_THRESHOLD', 'RoiBG', lambda x: dict_get_path_value(x, 'MODEL$ROI_HEADS$BG_IOU_THRESHOLD') == 0.5),
-            ('MODEL$RPN$BG_IOU_THRESHOLD', 'RpnBG', lambda x: dict_get_path_value(x, 'MODEL$RPN$BG_IOU_THRESHOLD') == 0.3),
             ('yolo_train_session_param$use_maskrcnn_trainer', ('MT', None)),
             ('rt_param$valid_norm_xywhpos', ('VNXYWHPos', None)),
             ('rt_param$opt_anchor', ('OptA', None)),
             ('opt_anchor_lr_mult', 'AnchorLR', lambda x:
                     x['opt_anchor_lr_mult'] == 1),
-            ('MODEL$RPN$FG_IOU_THRESHOLD', 'RpnFGIoU', 0.7),
             ('MODEL$RPN$NMS_POLICY$THRESH', 'RpnNMS', 0.7),
             ('MODEL$RPN$ASPECT_RATIOS', 'RpnAR'),
             ('MODEL$RPN$PRE_NMS_TOP_N_TRAIN', 'RpnPreNms', 2000),
@@ -342,9 +353,6 @@ def generate_expid(param):
 
     if param['pipeline_type'] == 'MaskRCNNPipeline':
         non_expid_impact_keys.extend(['DATASETS', ''])
-
-    for k, v in viewitems(default_param):
-        assert k in param, 'set default outside'
 
     # we need to update expid so that the model folder contains the critical
     # param information
@@ -392,6 +400,12 @@ def generate_expid(param):
             if dict_has_path(param, k):
                 pk = dict_get_path_value(param, k)
                 default_value = setting['default']
+                if isinstance(default_value, dict) and \
+                        'from' in default_value and \
+                        'import' in default_value:
+                    default_value['param'] = {'param': param}
+                    from qd.qd_common import execute_func
+                    default_value = execute_func(default_value)
                 if pk == default_value:
                     continue
                 action_type = setting['action_type']
@@ -475,6 +489,15 @@ def create_pipeline(kwargs):
     elif pipeline_type == 'fb_moco':
         from qd.pipelines.fb_moco import MocoPipeline
         return MocoPipeline(**kwargs)
+    elif pipeline_type == 'sim_clr':
+        from qd.pipelines.sim_clr import SimCLRPipeline
+        return SimCLRPipeline(**kwargs)
+    elif isinstance(pipeline_type, dict):
+        from qd.qd_common import execute_func
+        info = copy.deepcopy(pipeline_type)
+        assert 'param' not in info
+        info['param'] = kwargs
+        return execute_func(info)
     else:
         raise NotImplementedError()
 
@@ -493,7 +516,8 @@ def pipeline_train_eval_multi(all_test_data, param, **kwargs):
         dict_update_nested_dict(curr_param, all_test_data[0])
     pip = create_pipeline(curr_param)
     pip.ensure_train()
-    param['full_expid'] = pip.full_expid
+    full_expid = pip.full_expid
+    param['full_expid'] = full_expid
     for test_data_info in all_test_data:
         curr_param = copy.deepcopy(param)
         dict_ensure_path_key_converted(test_data_info)
@@ -502,12 +526,12 @@ def pipeline_train_eval_multi(all_test_data, param, **kwargs):
         pip.ensure_predict()
         pip.ensure_evaluate()
 
-def pipeline_monitor_train(param, all_test_data, **kwargs):
+    return full_expid
+
+def pipeline_monitor_train(all_test_data, **kwargs):
     for test_data_info in all_test_data:
-        curr_param = copy.deepcopy(param)
         dict_ensure_path_key_converted(test_data_info)
-        dict_update_nested_dict(curr_param, test_data_info)
-        pip = load_pipeline(**curr_param)
+        pip = load_pipeline(**test_data_info)
         pip.monitor_train()
 
 def pipeline_continuous_train(param, all_test_data, **kwargs):
@@ -565,7 +589,7 @@ def platform_run(env, func, **kwargs):
     param = kwargs.get('param', {})
     all_test_data = kwargs.get('all_test_data', [])
     if run_type in ['debug', 'local']:
-        func(**kwargs)
+        return func(**kwargs)
     elif run_type.startswith('philly'):
         env = copy.deepcopy(env)
         del env['run_type']
@@ -586,7 +610,6 @@ def platform_run(env, func, **kwargs):
         submit_param = copy.deepcopy(env)
         submit_param.pop('run_type')
         result = aml_func_run(func, kwargs, **submit_param)
-        from qd.gpucluster import create_aml_client
         aml_client = create_aml_client(**submit_param)
         aml_client.inject(result)
         return result
@@ -594,7 +617,7 @@ def platform_run(env, func, **kwargs):
         submit_param = copy.deepcopy(env)
         submit_param.pop('run_type')
         from qd.batch_process import remote_run_func
-        remote_run_func(func,
+        return remote_run_func(func,
                 is_mpi=submit_param.get('is_mpi', True),
                 availability_check=submit_param.get('availability_check', False),
                 all_test_data=all_test_data,
@@ -620,7 +643,6 @@ def platform_run(env, func, **kwargs):
 
 def run_training_pipeline(swap_params):
     from qd.pipelines.auto_param import AutoParam
-    from qd.qd_common import iter_swap_param
     auto = AutoParam()
     all_param_env = []
 
@@ -658,7 +680,6 @@ def pipeline_train_eval_platform(param, all_test_data, env, **kwargs):
     random.seed(time.time())
 
     if param['pipeline_type'] == 'MaskRCNNPipeline':
-        from qd.process_tsv import populate_dataset_hw
         populate_dataset_hw(param['data'], ['train'])
         for test_data in all_test_data:
             populate_dataset_hw(test_data['test_data'],
@@ -672,6 +693,131 @@ def pipeline_train_eval_platform(param, all_test_data, env, **kwargs):
     result = platform_run(env, pipeline_train_eval_multi, param=param,
             all_test_data=all_test_data)
     return result
+
+def model_predict_pipeline(all_test_data,
+        env, func=pipeline_pred_eval):
+    if all_test_data is None:
+        full_expids = set([t['full_expid'] for t in all_test_data])
+        for full_expid in full_expids:
+            pip = load_pipeline(full_expid=full_expid)
+            all_test_data = get_all_test_data(pip.data)
+        logging.info(pformat(all_test_data))
+
+    if env['run_type'] == 'debug':
+        for t in all_test_data:
+            t['test_batch_size'] = 1
+            t['force_predict'] = True
+
+    return platform_run(env, func, all_test_data=all_test_data)
+
+def run_prediction_pipeline(swap_params, time_cost_test):
+    all_test_data = list(iter_swap_param(swap_params))
+    if any(t.get('monitor_train') for t in all_test_data):
+        assert all(t.get('monitor_train') for t in all_test_data)
+        monitor_train = True
+        for t in all_test_data:
+            del t['monitor_train']
+    else:
+        monitor_train = False
+    if time_cost_test:
+        for test_data in all_test_data:
+            test_data.update({
+                'ignore_evaluate': True,
+                #'test_mergebn': True,
+                })
+        #for test_data in all_test_data:
+            #test_data.update({
+                #'test_max_iter': 102,
+                ##'device': 'cpu',
+                ##'test_max_iter': 10,
+                #})
+        for test_data in all_test_data:
+            test_data['env']['num_gpu'] = 1
+            test_data['env']['run_type'] = 'local'
+
+    from qd.pipelines.auto_param import AutoParam
+    auto = AutoParam()
+    logging.info(len(all_test_data))
+
+    for test_data in all_test_data:
+        auto.update_pipeline_param(test_data, test_data['env'])
+        from qd.prep_dataset.build_tax_data import ensure_build_taxonomy
+        ensure_build_taxonomy(test_data['test_data'])
+        populate_dataset_hw(test_data['test_data'],
+                            [test_data['test_split']])
+
+    logging.info(pformat(all_test_data))
+    #return
+
+    func = pipeline_pred_eval
+    if monitor_train:
+        func = pipeline_monitor_train
+    if any(t['env']['run_type'] != 'remote' for t in all_test_data):
+        result = []
+        for test_data in all_test_data:
+            r = model_predict_pipeline(
+                    all_test_data=[test_data],
+                    env=test_data['env'],
+                    func=func,
+                    )
+            result.append(r)
+        logging.info(result)
+    else:
+        all_task = []
+        for test_data in all_test_data:
+            all_task.append({'all_test_data': [test_data]})
+            if dict_has_path(test_data, 'env$availability_check'):
+                avail_check = dict_get_path_value(test_data,
+                        'env$availability_check')
+            else:
+                avail_check = True
+        from qd.batch_process import get_resources, mpi_task_processor, task_processor
+        all_resource = get_resources()
+        if True:
+            l_task_processor = lambda resource, task: mpi_task_processor(resource, task,
+                    func)
+        else:
+            l_task_processor = lambda resource, task: task_processor(resource, task,
+                    func)
+        logging.info(pformat(all_task))
+        b = BatchProcess(all_resource, all_task, l_task_processor)
+        b._availability_check = avail_check
+        b.run()
+
+def is_pipeline_trained(full_expid):
+    try:
+        pip = load_pipeline(full_expid=full_expid)
+        if pip.is_train_finished():
+            return True
+        else:
+            return False
+    except Exception as ex:
+        logging.info(ex)
+        from qd.qd_common import print_trace
+        print_trace()
+        return False
+
+def get_last_model(full_expid):
+    pip = load_pipeline(full_expid=full_expid)
+    return pip._get_checkpoint_file()
+
+def update_current_cluster_status(clusters):
+    aml_clients = [create_aml_client(cluster=c) for c in clusters]
+    summary = list(map(lambda c: c.get_cluster_status(), aml_clients))
+    c = create_annotation_db()
+    for cluster, s in zip(clusters, summary):
+        from datetime import datetime
+        s['last_update_time'] = datetime.now()
+        c.update_one('current_cluster', {'cluster': cluster},
+                     update={'$set': s}, upsert=True)
+
+def insert_cluster_status(clusters):
+    aml_clients = [create_aml_client(cluster=c) for c in clusters]
+    summary = list(map(lambda c: c.get_cluster_status(), aml_clients))
+    c = create_annotation_db()
+    for cluster, s in zip(clusters, summary):
+        s['cluster'] = cluster
+        c.insert_one('cluster_status_summary', **s)
 
 def test_model_pipeline(param):
     '''
@@ -699,3 +845,4 @@ if __name__ == '__main__':
     function_name = kwargs['type']
     del kwargs['type']
     locals()[function_name](**kwargs)
+

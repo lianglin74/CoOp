@@ -69,8 +69,34 @@ def read_to_character(fp, c):
             result.append(s)
     return ''.join(result)
 
+class CompositeTSVFile():
+    def __init__(self, list_file, seq_file, cache_policy=False):
+        self.seq_file = seq_file
+        self.list_file = list_file
+        self.cache_policy = cache_policy
+        self.initialized = False
+        self.initialize()
+
+    def __getitem__(self, index):
+        idx_source, idx_row = self.seq[index]
+        return self.tsvs[idx_source].seek(idx_row)
+
+    def __len__(self):
+        return len(self.seq)
+
+    def initialize(self):
+        '''
+        this function has to be called in init function if cache_policy is
+        enabled. Thus, let's always call it in init funciton to make it simple.
+        '''
+        if self.initialized:
+            return
+        self.seq = [(int(idx_source), int(idx_row)) for idx_source, idx_row in
+                tsv_reader(self.seq_file)]
+        self.tsvs = [TSVFile(f, self.cache_policy) for f in load_list_file(self.list_file)]
+        self.initialized = True
+
 class TSVFile(object):
-    # TODO: close the pointer of _fp
     def __init__(self, tsv_file, cache_policy=None):
         self.tsv_file = tsv_file
         self.lineidx = op.splitext(tsv_file)[0] + '.lineidx'
@@ -84,9 +110,13 @@ class TSVFile(object):
 
         self._cache()
 
-    def __del__(self):
+    def close(self):
         if self._fp:
             self._fp.close()
+        self._lineidx = None
+
+    def __del__(self):
+        self.close()
 
     def __str__(self):
         return "TSVFile(tsv_file='{}')".format(self.tsv_file)
@@ -204,10 +234,15 @@ class TSVDataset(object):
             else:
                 proj_root = op.dirname(op.dirname(op.dirname(op.realpath(__file__))))
                 data_root = op.join(proj_root, 'data', name)
+        else:
+            data_root = op.join(data_root, name)
         self._data_root = op.relpath(data_root)
         self._fname_to_tsv = {}
 
         self._split_to_key_to_idx = {}
+
+    def __repr__(self):
+        return 'TSVDataset({})'.format(self.name)
 
     def __str__(self):
         return 'TSVDataset({})'.format(self.name)
@@ -630,6 +665,44 @@ def csv_writer(values, file_name):
     tsv_writer(values, file_name, sep=',')
     return
 
+def tsv_writers(all_values, tsv_file_names, sep='\t'):
+    # values: a list of [row1, row2]. each row goes to each tsv_file_name
+    for tsv_file_name in tsv_file_names:
+        ensure_directory(os.path.dirname(tsv_file_name))
+    tsv_lineidx_files = [os.path.splitext(tsv_file_name)[0] + '.lineidx'
+        for tsv_file_name in tsv_file_names]
+    tsv_file_name_tmps = [tsv_file_name + '.tmp' for tsv_file_name in
+            tsv_file_names]
+    tsv_lineidx_file_tmps = [tsv_lineidx_file + '.tmp' for tsv_lineidx_file in
+            tsv_lineidx_files]
+    sep = sep.encode()
+    fps = [open(tsv_file_name_tmp, 'wb') for tsv_file_name_tmp in
+            tsv_file_name_tmps]
+    fpidxs = [open(tsv_lineidx_file_tmp, 'w') for tsv_lineidx_file_tmp in
+            tsv_lineidx_file_tmps]
+    assert all_values is not None
+    idxs = [0 for _ in fps]
+    for values in all_values:
+        assert values is not None
+        for i, (value, fp, fpidx) in enumerate(zip(values, fps, fpidxs)):
+            value = map(lambda v: v if type(v) == bytes else str(v).encode(),
+                    value)
+            v = sep.join(value) + b'\n'
+            fp.write(v)
+            fpidx.write(str(idxs[i]) + '\n')
+            idxs[i] = idxs[i]+ len(v)
+    # the following might crash if there are two processes which are writing at
+    # the same time. One process finishes the renaming first and the second one
+    # will crash. In this case, we know there must be some errors when you run
+    # the code, and it should be a bug to fix rather than to use try-catch to
+    # protect it here.
+    for tsv_file_name_tmp, tsv_file_name in zip(tsv_file_name_tmps,
+            tsv_file_names):
+        os.rename(tsv_file_name_tmp, tsv_file_name)
+    for tsv_lineidx_file_tmp, tsv_lineidx_file in zip(tsv_lineidx_file_tmps,
+            tsv_lineidx_files):
+        os.rename(tsv_lineidx_file_tmp, tsv_lineidx_file)
+
 def tsv_writer(values, tsv_file_name, sep='\t'):
     ensure_directory(os.path.dirname(tsv_file_name))
     tsv_lineidx_file = os.path.splitext(tsv_file_name)[0] + '.lineidx'
@@ -800,6 +873,7 @@ def create_inverted_list(rows):
             curr_unique_with_bb_labels = []
             curr_unique_no_bb_labels = curr_unique_labels
             curr_unique_with_bb_verified_labels = set()
+            curr_unique_with_bb_noverified_labels = set()
         def update(unique_labels, inv):
             for l in unique_labels:
                 assert type(l) == str
@@ -837,10 +911,6 @@ def get_all_data_info2(name=None):
         return sorted(os.listdir('./data'))
     else:
         dataset = TSVDataset(name)
-        if not op.isfile(dataset.get_labelmap_file()):
-            return []
-        global_labelmap = None
-        labels = dataset.load_labelmap()
         valid_split_versions = []
         splits = ['train', 'trainval', 'test']
         for split in splits:
@@ -848,11 +918,13 @@ def get_all_data_info2(name=None):
             while True:
                 if not dataset.has(split, 'label', v):
                     break
-                labelmap = []
-                label_count_rows = dataset.iter_data(split, 'inverted.label.count', v)
-                label_count = [(r[0], int(r[1])) for r in label_count_rows]
-                label_count = sorted(label_count, key=lambda x: x[1])
-                valid_split_versions.append((split, v, "", [(i, l, c) for i, (l, c) in
+                if dataset.has(split, 'inverted.label.count', v):
+                    label_count_rows = dataset.iter_data(split, 'inverted.label.count', v)
+                    label_count = [(r[0], int(r[1])) for r in label_count_rows]
+                    label_count = sorted(label_count, key=lambda x: x[1])
+                else:
+                    label_count = []
+                valid_split_versions.append((split, v, [(i, l, c) for i, (l, c) in
                     enumerate(label_count)]))
                 v = v + 1
         name_splits_labels = [(name, valid_split_versions)]
