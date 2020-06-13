@@ -481,10 +481,12 @@ class PhillyVC(object):
             except Exception as e:
                 logging.info(str(e))
 
-    def query(self, valid_job_checker=None, my_own=True):
+    def query(self, job_id=None, valid_job_checker=None, my_own=True):
         all_job_info = self.query_all_job(my_own)
         if valid_job_checker is not None:
             all_job_info = [j for j in all_job_info if valid_job_checker(j)]
+        if job_id is not None:
+            all_job_info = [j for j in all_job_info if j['appID'].endswith(job_id)]
         if self.query_with_gpu:
             self.attach_gpu_utility([j for j in all_job_info if j['status'] ==
                     'Running'])
@@ -497,6 +499,10 @@ class PhillyVC(object):
                     continue
                 self.attach_log(job_info)
                 attach_log_parsing_result(job_info)
+        for job_info in all_job_info:
+            for e in job_info.get('errors', []):
+                if isinstance(e, dict) and e.get('errorLog') == 'RuntimeError: NaN encountered!':
+                    job_info['result'] = 'NaN'
         for j in all_job_info:
             j['appID-s'] = j['appID'][-5:]
         return all_job_info
@@ -522,7 +528,8 @@ class PhillyVC(object):
     def query_meta_data(self, job_ids):
         result = []
         for job_id in job_ids:
-            meta = json.loads(self.philly_job_meta(job_id))
+            meta = self.philly_job_meta(job_id)
+            meta = json.loads(meta)
             result.append(meta)
         return result
 
@@ -713,6 +720,11 @@ class PhillyVC(object):
         job_id = app_info['appID']
         result = self.philly_job_log(app_info)
         logging.info(result)
+        if app_info.get('status') == 'Failed':
+            from qd.qd_common import detect_error_codes
+            errors = detect_error_codes(self.get_log_file(app_info['appID']))
+            app_info['result'] = ','.join(errors)
+            logging.info('result = {}'.format(pformat(errors)))
 
         status = json.loads(self.philly_job_status(job_id))
 
@@ -816,6 +828,9 @@ class PhillyVC(object):
         else:
             return 'https://philly'
 
+    def get_log_file(self, appID):
+        return op.join('assets', appID, 'log.txt')
+
     def philly_job_log(self, job_info, logRev='latest'):
         job_id = job_info['appID']
         cmd_str = \
@@ -839,7 +854,7 @@ class PhillyVC(object):
         if result is not None:
             from qd.qd_common import write_to_file
             write_to_file(result,
-                    op.join('assets', job_info['appID'], 'log.txt'))
+                    self.get_log_file(job_info['appID']))
 
         return result
 
@@ -970,8 +985,8 @@ class PhillyVC(object):
         result_str = cmd_run(cmd, shell=True, return_output=True)
         return result_str
 
-    def inject(self, inject_collection='phillyjob'):
-        all_job_info = self.query()
+    def inject(self, job_id=None, inject_collection='phillyjob'):
+        all_job_info = self.query(job_id=job_id)
         from qd.db import update_cluster_job_db
         update_cluster_job_db(all_job_info, inject_collection)
 
@@ -1083,7 +1098,7 @@ class MultiPhillyVC(object):
 
         for s, c in zip(all_summary, self.clients):
             row = {}
-            row['usage'] = 100. * s['activeGpus'] / s['quota']
+            row['usage'] = 100. * s['activeGpus'] / (s['quota'] + 1)
             row['cluster'] = c.cluster
             table.append(row)
         print_table(table, ['cluster', 'usage'])
@@ -1391,8 +1406,14 @@ def execute(task_type, **kwargs):
     elif task_type in ['i', 'inject']:
         if not kwargs.get('with_log'):
             kwargs['with_log'] = True
-        m = create_multi_philly_client(**kwargs)
-        m.inject()
+        partial_ids = kwargs['remainders']
+        del kwargs['remainders']
+        m = create_philly_client(**kwargs)
+        if len(partial_ids) == 0:
+            m.inject()
+        else:
+            for i in partial_ids:
+                m.inject(job_id=i)
     else:
         assert 'Unknown {}'.format(task_type)
 

@@ -11,8 +11,8 @@ class ModelFactory:
         'EfficientNetB6': lambda num_classes: Classifier(EfficientNetB6(), num_classes),
         'EfficientNetB7': lambda num_classes: Classifier(EfficientNetB7(), num_classes),
         'MobileNetV2': lambda num_classes: Classifier(MobileNetV2(), num_classes),
-        'MobileNetV3': lambda num_classes: Classifier(MobileNetV3(), num_classes),
-        'MobileNetV3Small': lambda num_classes: Classifier(MobileNetV3Small(), num_classes),
+        'MobileNetV3': lambda num_classes, **kwargs: Classifier(MobileNetV3(**kwargs), num_classes),
+        'MobileNetV3Small': lambda num_classes, **kwargs: Classifier(MobileNetV3Small(**kwargs), num_classes),
         'ResNext14': lambda num_classes: Classifier(ResNext14(), num_classes),
         'ResNext26': lambda num_classes: Classifier(ResNext26(), num_classes),
         'ResNext50': lambda num_classes: Classifier(ResNext50(), num_classes),
@@ -131,11 +131,12 @@ class ModelFactory:
     }
 
     @staticmethod
-    def create(model_name, num_classes):
+    def create(model_name, num_classes, **kwargs):
         if model_name not in ModelFactory.PREDEFINED_MODELS:
             raise NotImplementedError(f"Unknown model name: {model_name}")
 
-        model = ModelFactory.PREDEFINED_MODELS[model_name](num_classes)
+        model = ModelFactory.PREDEFINED_MODELS[model_name](num_classes,
+                                                           **kwargs)
         model.reset_parameters()
 
         if model_name in ModelFactory.RECOMMENDED_INPUT_SIZES:

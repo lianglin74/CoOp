@@ -2,49 +2,8 @@ import math
 import torch
 import time
 from qd.qd_common import list_to_dict
+from qd.logger import MeanSigmaMetricLogger
 
-
-class MeanSigmaMetricLogger(object):
-    def __init__(self, delimiter="\t"):
-        from maskrcnn_benchmark.utils.metric_logger import MetricLogger
-        self.mean_meters = MetricLogger(delimiter=delimiter)
-        self.sq_meters = MetricLogger(delimiter=delimiter)
-
-    def update(self, **kwargs):
-        self.mean_meters.update(**kwargs)
-        self.sq_meters.update(**dict((k, v * v) for k, v in kwargs.items()))
-
-    def get_info(self):
-        key_to_sigma = {}
-        for k, v in self.mean_meters.meters.items():
-            mean = v.global_avg
-            mean_square = self.sq_meters.meters[k].global_avg
-            sigma = mean_square - mean * mean
-            sigma = math.sqrt(sigma)
-            key_to_sigma[k] = sigma
-
-        result = []
-        for name, mean_meter in self.mean_meters.meters.items():
-            result.append({'name': name,
-                'global_avg': mean_meter.global_avg,
-                'median': mean_meter.median,
-                'count': mean_meter.count,
-                'sigma': key_to_sigma[name]})
-        return result
-
-    def __str__(self):
-        result = self.get_info()
-
-        loss_str = []
-        for info in result:
-            loss_str.append(
-                    "{}: {:.4f} ({:.4f}+-{:.4f})".format(
-                        info['name'],
-                        info['median'],
-                        info['global_avg'],
-                        info['sigma'])
-            )
-        return self.mean_meters.delimiter.join(loss_str)
 
 class ForwardPassTimeChecker(torch.nn.Module):
     def __init__(self, module, skip=2):

@@ -18,20 +18,22 @@ from tqdm import tqdm
 import json
 import copy
 from qd.qd_common import max_iter_mult
-
+from pprint import pformat
 
 
 def update_by_condition_default_until_no_change(all_condition_default,
         param, place_holder=None, force=False):
     while True:
-        num_changed = update_by_condition_default(all_condition_default,
+        change_list = update_by_condition_default(all_condition_default,
                 param, place_holder, force=force)
-        if num_changed == 0:
+        if len(change_list) == 0:
             break
+        else:
+            logging.info(pformat(change_list))
 
 def update_by_condition_default(all_condition_default, param,
         place_holder=None, force=False):
-    num_changed = 0
+    change_list = []
     if isinstance(all_condition_default, dict):
         assert len(all_condition_default) == 2 and \
                 'condition' in all_condition_default and \
@@ -47,7 +49,7 @@ def update_by_condition_default(all_condition_default, param,
                         continue
                     if v == pv:
                         continue
-                    if re.match(v, pv) is not None:
+                    if isinstance(pv, str) and re.match(v, pv) is not None:
                         continue
                     return False
                 else:
@@ -73,22 +75,23 @@ def update_by_condition_default(all_condition_default, param,
                                 v = v.replace(p, place_holder[p])
                     if not force:
                         if dict_set_path_if_not_exist(param, k, v):
-                            num_changed += 1
+                            change_list.append((k, v))
                     else:
                         if not dict_has_path(param, k) or \
                                 dict_get_path_value(param, k) != v:
-                            num_changed += 1
+                            change_list.append((k, v))
                         dict_update_path_value(param, k, v)
             else:
-                num_changed += update_by_condition_default(default, param,
-                        place_holder, force)
+                change_list.extend(update_by_condition_default(default, param,
+                        place_holder, force))
     elif isinstance(all_condition_default, list):
         for condition_default in all_condition_default:
-            num_changed += update_by_condition_default(condition_default,
-                    param, place_holder=place_holder, force=force)
+            change_list.extend(update_by_condition_default(condition_default,
+                    param, place_holder=place_holder, force=force))
     else:
         raise NotImplementedError
-    return num_changed
+
+    return change_list
 
 def get_gt_closeness(data, split, net_input, version=None):
     dataset = TSVDataset(data)
@@ -229,18 +232,21 @@ class AutoParam(object):
             param['effective_batch_size'] = int(param['effective_batch_size']
                     * scale)
             from qd.pipelines.auto_param import max_iter_mult
-            param['max_iter'] = max_iter_mult(param['max_iter'], 1. / scale)
+            if isinstance(param['max_iter'], int):
+                # otherwise, it is epoch, and no need to update
+                param['max_iter'] = max_iter_mult(param['max_iter'], 1. / scale)
             param['base_lr'] *= scale
             param['env']['num_gpu'] = int(param['env']['num_gpu'] * scale)
             del param['scale']
 
         if 'init_full_expid' in param:
             init_full_expid = param['init_full_expid']
-            pip = load_pipeline(full_expid=init_full_expid)
-            base_model  = pip._get_checkpoint_file()
-            assert base_model
-            assert 'basemodel' not in param
-            param['basemodel'] = base_model
+            if init_full_expid:
+                pip = load_pipeline(full_expid=init_full_expid)
+                base_model  = pip._get_checkpoint_file()
+                assert base_model
+                assert 'basemodel' not in param
+                param['basemodel'] = base_model
             del param['init_full_expid']
 
         # in this funciton, remove most of the codes except this one
@@ -309,14 +315,17 @@ class AutoParam(object):
             #param['display'] = 1
             #param['force_train'] = True
 
-        if 'expid' not in param and 'pipeline_type' in param:
+        if 'expid' not in param and \
+                'pipeline_type' in param and \
+                'full_expid' not in param:
             from qd.pipeline import generate_expid
             expid = generate_expid(param)
             param['expid'] = expid
         if 'full_expid' not in param:
             ks = ['data', 'net', 'expid']
             if all(k in param for k in ks):
-                param['full_expid'] = '_'.join([param[k] for k in ks])
+                param['full_expid'] = '_'.join(
+                    map(str, [param[k] for k in ks]))
 
     def update_pipeline_param_for_maskrcnn_conti(self, param, env):
         defaults = [('init_model_only', False)]
@@ -609,7 +618,7 @@ class AutoParam(object):
         for k, v in default_param.items():
             set_if_not_exist(param, k, v)
 
-        if 'step_lr' not in param:
+        if 'step_lr' not in param and 'scheduler_type' not in param:
             if type(param['max_iter']) is str:
                 assert param['max_iter'].endswith('e')
                 param['step_lr'] = '{}e'.format(int(param['max_iter'][:-1]) // 4)

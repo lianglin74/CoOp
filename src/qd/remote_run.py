@@ -181,7 +181,7 @@ if __name__ == '__main__':
     scp(local_file, target_file, ssh_cmd)
     if len(cmd_prefix) > 0 and not cmd_prefix.endswith(' '):
         cmd_prefix = cmd_prefix + ' '
-    remote_run('cd {} && {}{} {}'.format(
+    return remote_run('cd {} && {}{} {}'.format(
         op.dirname(working_dir),
         cmd_prefix,
         'python',

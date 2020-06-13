@@ -20,7 +20,7 @@ def clone(x):
 
 def sumarize_data_by_float(x):
     if isinstance(x, torch.Tensor):
-        return float(x.abs().sum())
+        return float(x.abs().mean())
     elif isinstance(x, list):
         return sum([sumarize_data_by_float(sub) for sub in x])
     elif isinstance(x, tuple):

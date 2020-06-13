@@ -9,6 +9,7 @@ from collections import OrderedDict
 from collections import defaultdict
 import logging
 from tqdm import tqdm
+from qd.qd_common import print_table
 
 def create_mongodb_client():
     config = load_from_yaml_file('./aux_data/configs/mongodb_credential.yaml')
@@ -95,7 +96,8 @@ class AnnotationDB(object):
 
     def insert_one(self, collection_name, **kwargs):
         self.add_meta_data(kwargs)
-        self._qd['qd'][collection_name].insert_one(kwargs)
+        result = self._qd['qd'][collection_name].insert_one(kwargs)
+        return result
 
     def remove_phillyjob(self, **kwargs):
         self._phillyjob.delete_many(kwargs)
@@ -107,7 +109,7 @@ class AnnotationDB(object):
         return self._qd['qd'][doc_name].update_one(
                 query,
                 update,
-                **kwargs,
+                **kwargs
                 )
 
     def update_many(self, doc_name, query, update):
@@ -458,3 +460,79 @@ def update_cluster_job_db(all_job_info, collection_name='phillyjob'):
                 print_trace()
                 pass
 
+def query_job_acc(job_ids, key='appID', inject=False,
+        must_have_any_in_predict=None,
+        not_have_any_in_predict=None,
+                  metric_names=None):
+    c = create_annotation_db()
+    query_param = {key: {'$in': job_ids}}
+    jobs = list(c.iter_phillyjob(**query_param))
+    for j in jobs:
+        if all(k in j for k in ['data', 'net', 'expid']):
+            j['full_expid'] = '_'.join([str(j[k]) for k in ['data', 'net', 'expid']])
+    all_full_expid = []
+
+    for j in jobs:
+        if 'data' not in j:
+            full_expid = 'U'
+        else:
+            full_expid = '_'.join(map(str, [j['data'], j['net'], j['expid']]))
+        all_full_expid.append(full_expid)
+    all_key = ['appID', 'status', 'result', 'speed', 'left', 'eta',
+        'full_expid', 'num_gpu', 'mem_used', 'gpu_util']
+    all_key = [k for k in all_key if any(j.get(k) is not None for j in jobs)]
+    print_table(jobs, all_key=all_key)
+    if inject:
+        for full_expid in all_full_expid:
+            from qd.process_tsv import inject_accuracy_one
+            inject_accuracy_one(full_expid)
+
+    query_acc_by_full_expid(all_full_expid,
+                            must_have_any_in_predict=must_have_any_in_predict,
+                            not_have_any_in_predict=not_have_any_in_predict,
+                            metric_names=metric_names)
+
+def query_acc_by_full_expid(all_full_expid,
+        must_have_any_in_predict=None,
+        not_have_any_in_predict=None,
+        metric_names=None):
+    c = create_annotation_db()
+    acc = list(c.iter_acc(full_expid={'$in': all_full_expid}))
+    if metric_names is None:
+        metric_names = [
+        'all-all',
+        'overall$0.5$map',
+        'overall$-1$map',
+        'top1',
+        'global_avg']
+    acc = [a for a in acc if a['metric_name'] in metric_names]
+    if must_have_any_in_predict is not None:
+        acc = [a for a in acc if any(t in a['predict_file'] for t in
+            must_have_any_in_predict)]
+    if not_have_any_in_predict is not None:
+        acc = [a for a in acc if all(t not in a['predict_file'] for t in
+                not_have_any_in_predict)]
+    for a in acc:
+        del a['username']
+        del a['_id']
+        del a['create_time']
+        a['metric_value'] = round(a['metric_value'], 3)
+        del a['test_split']
+        del a['test_version']
+        del a['report_file']
+        del a['test_data']
+    from qd.qd_common import natural_key
+    def get_key(a):
+        x = natural_key(a['full_expid'])
+        x.append(a['predict_file'].split('.')[2])
+        x.append(a['metric_value'])
+        return tuple(x)
+
+    acc = sorted(acc, key=lambda a: (
+        natural_key(a['full_expid']),
+        a['predict_file'].split('.')[2], # test data
+        a['metric_value'],
+        ))
+    from qd.qd_common import remove_empty_keys_
+    remove_empty_keys_(acc)
+    print_table(acc)
