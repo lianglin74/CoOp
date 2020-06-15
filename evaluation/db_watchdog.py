@@ -58,6 +58,19 @@ class TagVerificationConfig():
     num_judgment = 4
     max_tasks_running = 100
 
+class TextVerificationConfig():
+    collection_name = "uhrs_text_verification"
+    honeypot = None
+    hp_type = "hp"
+    db_name='qd'
+    task_type = "VerifyImage"
+    uhrs_type = "internal_verify_tag"
+    num_tasks_per_hit = 10
+    num_hp_per_hit = 0
+    max_hits_per_file = 2000
+    num_judgment = 3
+    max_tasks_running = 10000
+
 def get_working_dir(db_name, collection_name):
     dirpath = op.join(tempfile.gettempdir(), "{}_{}".format(db_name, collection_name))
     qd_common.ensure_directory(dirpath)
@@ -131,6 +144,8 @@ def _gen_labels_for_bb_tasks(bb_tasks):
 def create_new_task(label_enumerator, urgent_level, args):
     # write task files
     outdir = get_working_dir(args.db_name, args.collection_name)
+    qd_common.ensure_remove_dir(outdir)
+    qd_common.ensure_directory(outdir)
     label_file = op.join(outdir, "label.tsv")
     tsv_io.tsv_writer(label_enumerator, label_file)
     task_files = generate_task.generate_task_files(
@@ -159,7 +174,8 @@ def analyze_completed_task(res_file):
 
 def main():
     qd_common.init_logging()
-    db_configs = [TagVerificationConfig(), VerificationConfig(), LogoVerificationConfig()]
+    db_configs = [TagVerificationConfig(), VerificationConfig(),
+            LogoVerificationConfig(), TextVerificationConfig()]
 
     while True:
         for config in db_configs:

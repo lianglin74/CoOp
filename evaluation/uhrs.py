@@ -19,6 +19,7 @@ class UhrsTaskManager():
     '''
     rootpath = os.path.dirname(os.path.realpath(__file__))
     UHRS_EXE = os.path.join(rootpath, "./UHRSDataCollection/bin/Release/UHRSDataCollection.exe")
+    MAX_TRIES = 5
 
     def __init__(self, task_log=None):
         self._task_log = task_log  # tsv file to store task id and name
@@ -34,7 +35,13 @@ class UhrsTaskManager():
     def block_worker(cls, worker_id):
         args = [cls.UHRS_EXE, "BlockSingleJudge",
                 "-judgeId", repr(int(worker_id))]
-        subprocess.check_call(args)
+        for i in range(cls.MAX_TRIES):
+            try:
+                subprocess.check_call(args)
+                break
+            except:
+                logging.info('fails, tried {} times'.format(i+1))
+                time.sleep(5)
 
     @classmethod
     def block_workers(cls, worker_id_file):
@@ -42,7 +49,13 @@ class UhrsTaskManager():
             raise Exception("file does not exist: {}".format(worker_id_file))
         args = [cls.UHRS_EXE, "BlockJudges",
                 "-filepath", worker_id_file]
-        subprocess.check_call(args)
+        for i in range(cls.MAX_TRIES):
+            try:
+                subprocess.check_call(args)
+                break
+            except:
+                logging.info('fails, tried {} times'.format(i+1))
+                time.sleep(5)
 
     @classmethod
     def upload_task(cls, task_group_id, filepath, num_judgment, consensus_thres=0.0, priority=1000):
@@ -69,7 +82,8 @@ class UhrsTaskManager():
         if state == 1:
             return False
         if state == 0:
-            raise Exception("task id {} is disabled".format(task_id))
+            logging.info("task id {} is disabled".format(task_id))
+            return False
         return True
 
     def is_task_exist(self):
@@ -190,6 +204,8 @@ class UhrsTaskManager():
             return 91381
         elif task_group == "crowdsource_verify_tag":
             return 91759
+        elif task_group == "internal_verify_tag":
+            return 125330
         elif task_group == "test":
             return 88209
         elif task_group == "internal_verify_box":
@@ -204,6 +220,14 @@ class UhrsTaskManager():
             return 117630
         else:
             raise Exception("Unknown task: {}".format(task_group))
+
+def upload_uhrs_tasks(upload_files, task_group_id, task_id_tsv, num_judgment=1):
+    from qd.tsv_io import tsv_writer
+    def gen_task_ids():
+        for upload_file in upload_files:
+            task_id = UhrsTaskManager.upload_task(task_group_id, upload_file, num_judgment=num_judgment)
+            yield task_group_id, task_id, upload_file
+    tsv_writer(gen_task_ids(), task_id_tsv)
 
 
 def test():

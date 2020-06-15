@@ -12,6 +12,8 @@ def get_all_py_obj():
                            'numel': obj.numel(),
                            'memory': obj.numel() * ele_length,
                            'shape': obj.shape})
+        else:
+            raise NotImplementedError
     return all_obj
 
 def get_total_memory(all_obj):

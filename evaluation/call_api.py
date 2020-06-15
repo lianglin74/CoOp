@@ -3,18 +3,25 @@ from __future__ import print_function
 from google.cloud import vision
 from google.cloud.vision import types
 
+import argparse
 import base64
 import copy
 import datetime
 import json
 import logging
 import os
+import os.path as op
+import requests
 import sys
 import time
 
 import _init_paths
 from evaluation import eval_utils
 from qd import qd_common, tsv_io
+from qd.qd_common import json_dump
+from qd.qd_common import image_url_to_bytes
+from qd.tsv_io import TSVDataset, tsv_reader, tsv_writer
+from qd.process_tsv import parallel_tsv_process
 
 def call_api(gt_config_file, det_type):
     """
@@ -59,6 +66,8 @@ def call_aws(imgfile, response_file, det_file, tag_file, key_col=0, img_col=2):
     client=boto3.client('rekognition')
     all_det = []
     all_tag = []
+    all_det_w_parent = []
+    all_tag_w_parent = []
     time_elapsed = 0
     num_imgs = 0
     with open(response_file, 'w') as fresponse:
@@ -77,44 +86,63 @@ def call_aws(imgfile, response_file, det_file, tag_file, key_col=0, img_col=2):
 
             img = qd_common.img_from_base64(cols[img_col])
             im_h, im_w, im_c = img.shape
-            res = post_process_aws(response, im_h, im_w)
+            tags, dets, tags_w_parent, dets_w_parent = post_process_aws(response, im_h, im_w)
 
-            all_det.append([imgkey, json.dumps([b for b in res if "rect" in b])])
-            all_tag.append([imgkey, json.dumps([b for b in res if "rect" not in b])])
-    tsv_io.tsv_writer(all_det, det_file)
-    tsv_io.tsv_writer(all_tag, tag_file)
+            all_det.append([imgkey, json.dumps(dets)])
+            all_tag.append([imgkey, json.dumps(tags)])
+            all_det_w_parent.append([imgkey, json.dumps(dets_w_parent)])
+            all_tag_w_parent.append([imgkey, json.dumps(tags_w_parent)])
+    tsv_io.tsv_writer(all_det_w_parent, det_file)
+    tsv_io.tsv_writer(all_tag_w_parent, tag_file)
+    tsv_io.tsv_writer(all_det, det_file+'_no_parent.tsv')
+    tsv_io.tsv_writer(all_tag, tag_file+'_no_parent.tsv')
     logging.info("#imgs: {}, avg time: {}s per image".format(num_imgs, time_elapsed/num_imgs))
 
 
-def post_process_aws(response, im_height, im_width, prop_parents=True):
+def post_process_aws(response, im_height, im_width):
     """
     Post-processes AWS response. If prop_parents==True, parents labels will
     be added into results
     """
-    all_res = []
-    if "Labels" not in response:
-        return all_res
-    for res in response["Labels"]:
+    tags = []
+    dets = []
+    tags_w_parent = []
+    dets_w_parent = []
+    def prop_parents(bboxes):
+        res = []
+        for bbox in bboxes:
+            res.append(copy.deepcopy(bbox))
+            for p in bbox["parents"]:
+                tmp = copy.deepcopy(bbox)
+                tmp["class"] = p["Name"]
+                res.append(tmp)
+        return res
+
+    for res in response.get("Labels", []):
         label = res["Name"]
-        cur_res = [{"class": label, "conf": res["Confidence"]/100.0}]  # tag
+        parents = res.get("Parents", [])
+        cur_tag = {"class": label,
+                "conf": res["Confidence"]/100.0,
+                "parents": parents}  # tag
+        tags.append(cur_tag)
         for inst in res.get("Instances", []):
             # detection
             top, left, height, width = inst["BoundingBox"]["Top"], inst["BoundingBox"]["Left"], \
                                        inst["BoundingBox"]["Height"], inst["BoundingBox"]["Width"]
-            cur_res.append({"class": label, "conf": inst["Confidence"]/100.0,
-                            "rect": [left*im_width, top*im_height, (left+width)*im_width, (top+height)*im_height]})
-        if prop_parents:
-            num_cur = len(cur_res)
-            for i in range(num_cur):
-                for p in res.get("Parents", []):
-                    tmp = copy.deepcopy(cur_res[i])
-                    tmp["class"] = p["Name"]
-                    cur_res.append(tmp)
-        all_res.extend(cur_res)
-    return all_res
+            bbox = {"class": label,
+                    "conf": inst["Confidence"]/100.0,
+                    "rect": [left*im_width, top*im_height,
+                        (left+width)*im_width, (top+height)*im_height],
+                    "parents": parents}
+            dets.append(bbox)
+
+    # propagate parent labels
+    tags_w_parent = prop_parents(tags)
+    dets_w_parent = prop_parents(dets)
+    return tags, dets, tags_w_parent, dets_w_parent
 
 
-def call_gcloud(imgfile, det_file, key_col=0, img_col=2, detection="object"):
+def call_gcloud(imgfile, det_file, key_col=0, img_col=2, detection="detection"):
     """
     Calls Google Could to get object detection results.
     https://cloud.google.com/vision/docs/detecting-objects
@@ -124,11 +152,13 @@ def call_gcloud(imgfile, det_file, key_col=0, img_col=2, detection="object"):
     """
     if not qd_common.worth_create(imgfile, det_file):
         return
+    if 'GOOGLE_APPLICATION_CREDENTIALS' not in os.environ:
+        os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = op.expanduser('~/auth/trialtest-eee4b10b60a8.json')
 
     client = vision.ImageAnnotatorClient()
-    time_elapsed = 0
-    num_imgs = 0
     def gen_rows():
+        num_imgs = 0
+        time_elapsed = 0
         for idx, cols in enumerate(tsv_io.tsv_reader(imgfile)):
             imgkey = cols[key_col]
             num_imgs += 1
@@ -137,7 +167,7 @@ def call_gcloud(imgfile, det_file, key_col=0, img_col=2, detection="object"):
                 img_arr = qd_common.img_from_base64(cols[img_col])
                 im_h, im_w, im_c = img_arr.shape
                 tic = time.time()
-                if detection == "object":
+                if detection == "detection":
                     resp = client.object_localization(image=img).localized_object_annotations
                     res = post_process_gcloud(resp, im_h, im_w)
                 elif detection == "logo":
@@ -158,8 +188,9 @@ def call_gcloud(imgfile, det_file, key_col=0, img_col=2, detection="object"):
                 res = []
             yield imgkey, qd_common.json_dump(res)
 
+        logging.info("#imgs: {}, avg time: {}s per image".format(num_imgs, time_elapsed/num_imgs))
+
     tsv_io.tsv_writer(gen_rows(), det_file)
-    logging.info("#imgs: {}, avg time: {}s per image".format(num_imgs, time_elapsed/num_imgs))
 
 
 def post_process_gcloud(response, im_height, im_width):
@@ -196,4 +227,352 @@ def post_process_gcloud_tag(response):
     for obj in response:
         all_res.append({"mid": obj.mid, "class": obj.description, "conf": obj.score})
     return all_res
+
+def call_cvapi(uri, is_b64=False, model='tag'):
+    """
+        uri could be: 1) base64 encoded image string, set is_b64=True.
+        2) file path.
+        3) url, starting with http
+    """
+    use_prod = False
+    if use_prod:
+        analyze_url = 'https://westus.api.cognitive.microsoft.com/vision/v2.0/models/celebrities/analyze'
+        headers = {
+            'Ocp-Apim-Subscription-Key': "ZTkwNTE2ZmQ4NThlNDVjMmFhNDMzMjRlZjBlOThlN2E=",
+            'Content-Type': 'application/octet-stream',
+        }
+    else:
+        analyze_url = 'https://vision-usw2-dev.westus2.cloudapp.azure.com/api/analyze'
+        headers = {
+            "Authorization":"Basic MmY2ODBkY2QzZDcxNDAxZDhmNTcxZGU5ODFiYmI1MzA=",
+            'Content-Type': 'application/octet-stream',
+        }
+    if model == 'tag':
+        v = 'Tags'
+    elif model == 'caption':
+        v = 'Description'
+    elif model == 'logo':
+        v = 'Brands'
+    elif model == 'detection':
+        v = 'Objects'
+    else:
+        raise ValueError('unknown target model {}'.format(model))
+    params = {'visualFeatures': v}
+
+    if is_b64:
+        data = base64.b64decode(uri)
+    elif uri.startswith('http'):
+        #data = image_url_to_bytes(uri)
+        #curl -k -X POST --data '{"url":"https://tse3.mm.bing.net/th?id=OIP.M9cfa7362b791260dbfbfbb2a5810a01eo2&pid=Api"}' -H "Content-Type:application/json" -H "Ocp-Apim-Subscription-Key:a9819f53e76b40099ac8aec16257f51d" "https://westus.api.cognitive.microsoft.com/vision/v2.0/models/celebrities/analyze"
+        #data = '{"url": "' + uri + '"}'
+        data = image_url_to_bytes(uri)
+    else:
+        assert op.isfile(uri)
+        with open(uri, 'rb') as fp:
+            data = fp.read()
+    response = requests.post(
+        analyze_url, headers=headers, params=params, data=data)
+    response.raise_for_status()
+
+    # The 'analysis' object contains various fields that describe the image. The most
+    # relevant caption for the image is obtained from the 'description' property.
+    analysis = response.json()
+
+    if model == 'tag':
+       tags = analysis['tags']
+       ret = []
+       for t in tags:
+        ret.append({'class': t['name'], 'conf': t['confidence']})
+    elif model == 'caption':
+        tags = analysis["description"]['tags']
+        ret = {'tags': tags}
+        caption_res = analysis["description"]["captions"]
+        if len(caption_res) > 0:
+            ret['caption'] = caption_res[0]["text"].capitalize()
+            ret['confidence'] = caption_res[0]["confidence"]
+        else:
+            #logging.info(str(analysis))
+            pass
+        ret = [ret]
+    elif model == 'logo':
+        ret = []
+        for it in analysis['brands']:
+            rect = it['rectangle']
+            x, y, w, h = rect['x'], rect['y'], rect['w'], rect['h']
+            ret.append({'class': it['name'], 'rect': [x, y, x+w, y+h], 'conf':
+                    it['confidence']})
+    elif model == 'detection':
+        ret = []
+        for it in analysis['objects']:
+            rect = it['rectangle']
+            x, y, w, h = rect['x'], rect['y'], rect['w'], rect['h']
+            bbox = {
+                'class': it['object'],
+                'rect': [x, y, x+w, y+h],
+                'conf': it['confidence'],
+                }
+            if 'parent' in it:
+                bbox['parent'] = it['parent']
+            ret.append(bbox)
+
+    return ret
+
+
+def _propagate_parent_labels_for_objects(bboxes):
+    res = []
+    for bbox in bboxes:
+        res.append(bbox)
+        rect = bbox['rect']
+        cur = bbox.get('parent', None)
+        while cur:
+            res.append({
+                'class': cur['object'],
+                'conf': cur['confidence'],
+                'rect': rect,
+                })
+            cur = cur.get('parent', None)
+    return res
+
+
+def propagate_parent_labels(infile, outfile):
+    def gen_rows():
+        for parts in tsv_reader(infile):
+            bboxes = json.loads(parts[1])
+            bboxes = _propagate_parent_labels_for_objects(bboxes)
+            yield parts[0], json.dumps(bboxes)
+    tsv_writer(gen_rows(), outfile)
+
+
+def call_cvapi_parallel(imgfile, key_col, img_col, model, outfile,
+        is_debug=False):
+    from qd.qd_common import limited_retry_agent
+    def row_proc(parts):
+        key = parts[key_col]
+        str_img = parts[img_col]
+        try:
+            res = limited_retry_agent(5, call_cvapi, str_img, is_b64=True,
+                        model=model)
+        except:
+            res = []
+        return key, json_dump(res)
+
+    num_proc = 0 if is_debug else 16
+    parallel_tsv_process(row_proc, imgfile, outfile, num_proc)
+
+    if model == 'detection':
+        det_file_no_parent = outfile + '_no_parent.tsv'
+        os.rename(outfile, det_file_no_parent)
+        propagate_parent_labels(det_file_no_parent, outfile)
+
+
+def call_clarifai(uri, is_b64, model):
+    """
+    uri could be: 1) base64 encoded image string, set is_b64=True.
+    2) file path.
+    3) url, starting with http
+    """
+    time.sleep(5)  # limit of 10 requests per second
+    if is_b64:
+        response = model.predict_by_base64(uri)
+    else:
+        if uri.startswith('http'):
+            response = model.predict_by_url(uri)
+        else:
+            assert op.isfile(uri)
+            response = model.predict_by_filename(uri)
+
+    tags = []
+    for it in response['outputs'][0]['data']['concepts']:
+        tags.append({'class': it['name'], 'conf': it['value']})
+    return tags
+
+
+def call_clarifai_parallel(imgfile, key_col, img_col, model, outfile,
+        is_debug=False, api_key=None):
+    from qd.qd_common import limited_retry_agent
+    from clarifai.rest import ClarifaiApp
+
+    if not api_key:
+        api_key_file = op.expanduser('~/auth/clarifai.json')
+        with open(api_key_file, 'r') as fp:
+            r = json.load(fp)
+        api_key = r['api_key']
+
+    app = ClarifaiApp(api_key=api_key)
+    model = app.public_models.general_model
+    if is_debug:
+        for parts in tsv_reader(imgfile):
+            key = parts[key_col]
+            str_img = parts[img_col]
+            res = call_clarifai(str_img, False, model)
+            print(res)
+            return
+
+    def row_proc(parts):
+        key = parts[key_col]
+        str_img = parts[img_col]
+        try:
+            res = limited_retry_agent(5, call_clarifai, str_img, False,
+                        model=model)
+        except:
+            res = []
+        return key, json_dump(res)
+
+    num_proc = 0 if is_debug else 16
+    parallel_tsv_process(row_proc, imgfile, outfile, num_proc)
+
+
+def test():
+    datas = [
+        ['GettyImages2k_with_bb', 'test'], ['linkedin1k_with_bb', 'test'],
+        ['MIT1K_with_bb', 'test'], ['Top100Instagram_with_bb', 'test'],
+        #['GettyImages2k', 'test'], ['linkedin1k', 'test'],
+        #['MIT1K-GUID', 'test'], ['Top100Instagram-GUID', 'test'],
+        #['OpenImageV4LogoTest', 'test'],['OpenImageV4LogoTest1', 'test'],
+        #['old_capeval_2k_test', 'test'],
+    ]
+    services = [
+        #'clarifai',
+        'google',
+        'amazon',
+        'microsoft',
+    ]
+    #target = 'tag'
+    #target = 'logo'
+    #target = 'caption'
+    target = 'detection'
+    if target == 'tag':
+        collection_name = 'uhrs_tag_verification'
+    elif target == 'detection':
+        collection_name = 'uhrs_bounding_box_verification'
+
+    for data, split in datas:
+        dirpath = op.join('data', data, 'api')
+        imgfile = op.join('data', data, '{}.tsv'.format(split))
+        urlfile = op.join('data', data, '{}.key.url.tsv'.format(split))
+        key_col = 0
+        img_col = 2
+        predict_files = []
+        for service in services:
+            outfile = op.join(dirpath, '{}.{}.tsv'.format(service,
+                        target))
+            predict_files.append(outfile)
+            if op.isfile(outfile):
+                logging.info('{} already exist'.format(outfile))
+                continue
+            if service == 'microsoft':
+                call_cvapi_parallel(imgfile, key_col, img_col, target,
+                        outfile, is_debug=False)
+            elif service == 'amazon':
+                response_file = op.join(dirpath, 'amazon.resp.tsv')
+                det_file = op.join(dirpath, 'amazon.detection.tsv')
+                tag_file = op.join(dirpath, 'amazon.tag.tsv')
+                call_aws(imgfile, response_file, det_file, tag_file, key_col,
+                        img_col)
+            elif service == 'google':
+                call_gcloud(imgfile, outfile, key_col, img_col,
+                        target)
+            elif service == 'clarifai':
+                assert target == 'tag'
+                call_clarifai_parallel(urlfile, 0, 1, target,
+                        outfile, is_debug=False)
+
+        from evaluation.db_task import submit_to_verify
+        for predict_file in predict_files:
+            submit_to_verify(data, split, predict_file, collection_name,
+                    conf_thres=0, gt_version=-1, is_urgent=True)
+
+
+def example():
+    uri = 'https://img.webmd.com/dtmcms/live/webmd/consumer_assets/site_images/article_thumbnails/other/cat_relaxing_on_patio_other/1800x1200_cat_relaxing_on_patio_other.jpg?resize=750px:*'
+    call_cvapi(uri, is_b64=False, model='detection')
+
+# Mircosoft
+#'objects': [{'confidence': 0.698,
+      #'object': 'cat',
+      #'parent': {'confidence': 0.901,
+                 #'object': 'mammal',
+                 #'parent': {'confidence': 0.906, 'object': 'animal'}},
+      #'rectangle': {'h': 452, 'w': 535, 'x': 213, 'y': 18}}],
+
+# Google
+#[mid: "/m/0bt9lr"
+#name: "Dog"
+#score: 0.8926925659179688
+#bounding_poly {
+  #normalized_vertices {
+    #x: 0.12090390175580978
+    #y: 0.5089559555053711
+  #}
+  #normalized_vertices {
+    #x: 0.8484238982200623
+    #y: 0.5089559555053711
+  #}
+  #normalized_vertices {
+    #x: 0.8484238982200623
+    #y: 0.9973958134651184
+  #}
+  #normalized_vertices {
+    #x: 0.12090390175580978
+    #y: 0.9973958134651184
+  #}
+#}
+#]
+
+
+def main():
+    from pprint import pformat
+    logging.info(pformat(sys.argv))
+
+    parser = argparse.ArgumentParser(description='Compare vision API with competitors')
+    parser.add_argument('--service', required=True, type=str,
+                        help='Choose from microsoft, google, amazon')
+    parser.add_argument('--target', required=True, type=str,
+                        help='Choose from tag, detection, logo')
+    parser.add_argument('--dataset', required=True, type=str,
+                        help='The name of evaluation dataset. See README.md for'
+                             'a list of available datasets')
+    parser.add_argument('--split', default='test', type=str,
+                        help='The split of evaluation dataset, default is test')
+    parser.add_argument('--outfile', required=True, type=str,
+                        help='The file path to save results')
+
+    args = parser.parse_args()
+
+    data_root = './data'
+    service = args.service
+    assert service in ['microsoft', 'google', 'amazon']
+    target = args.target
+    assert target in ['tag', 'detection', 'logo']
+    data = args.dataset
+    split = args.split
+    outfile = args.outfile
+
+    imgfile = op.join(data_root, data, '{}.tsv'.format(split))
+    key_col = 0
+    img_col = 2
+    if op.isfile(outfile):
+        logging.info('{} already exist'.format(outfile))
+        return
+    if service == 'microsoft':
+        call_cvapi_parallel(imgfile, key_col, img_col, target,
+                outfile, is_debug=False)
+    elif service == 'amazon':
+        dirpath = op.dirname(outfile)
+        response_file = op.join(dirpath, 'amazon.resp.tsv')
+        det_file = op.join(dirpath, 'amazon.detection.tsv')
+        tag_file = op.join(dirpath, 'amazon.tag.tsv')
+        call_aws(imgfile, response_file, det_file, tag_file, key_col,
+                img_col)
+    elif service == 'google':
+        call_gcloud(imgfile, outfile, key_col, img_col,
+                target)
+
+
+
+if __name__ == '__main__':
+    from qd.qd_common import init_logging
+    init_logging()
+    main()
+    #test()
 

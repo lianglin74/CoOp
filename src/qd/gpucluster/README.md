@@ -61,10 +61,6 @@
    # the following is related with the job submission. If you don't use the
    # submission utility here, you can set any value
 
-   # during job submission, aml-sdk will upload all data in this folder
-   source_directory: ./src/qd/gpucluster
-   # this is the entry point the AML will execute in the cluster
-   entry_script: aml_server.py
    config_param: 
        # the path here is relative to the azure blob container
        # where the zipped source code is
@@ -89,11 +85,59 @@
    #   experiment cannot be deleted in AML and it is hard to figure out the
    #   user name based on the experiment name or job ID
    experiment_name: your_alias
+   multi_process: true # if false, it only launches on process in each node
+   # used to calculate how many nodes are required based on the number of GPU requested
+   gpu_per_node: 4
+   env:
+       ENV_KEY: ENV_VALUE # specify any environment you want, the value: str
    ```
+   - This example only uses one blob for data access. If you want to use multiple
+     blobs, make those folder variables as dictionray. Here is an example
+     ```yaml
+     azure_blob_config_file: null # no need to specify
+     datastore_name: null # no need to specify
+     # used to initialize the workspace
+     aml_config: aux_data/aml/config.json 
+
+     # the following is related with the job submission. If you don't use the
+     # submission utility here, you can set any value
+
+     config_param: 
+        code_path:
+            azure_blob_config_file: ./aux_data/configs/vigeastblob_account.yaml # the blob account information
+            path: jianfw/code/quickdetection.zip # where the zipped source code is
+        data_folder:
+            azure_blob_config_file: ./aux_data/configs/vigeastblob_account.yaml # the blob account information
+            path: jianfw/data/qd_data # after the source code is unzipped, this folder will be as $ROOT/data
+        model_folder:
+            azure_blob_config_file: ./aux_data/configs/vigeastblob_account.yaml # the blob account information
+            path: jianfw/work/qd_models # this folder will be as $ROOT/models
+        output_folder:
+            azure_blob_config_file: ./aux_data/configs/vigeastblob_account.yaml # the blob account information
+            path: jianfw/work/qd_output # this folder will be as $ROOT/output
+     # if False, it will use AML's PyTorch estimator, which is not heavily tested here
+     use_custom_docker: true
+     # this is from AML admin. don't change it unless got notified
+     compute_target: NC24RSV3 
+     docker:
+         # the custom docker. If use_custom_docker is False, this will be ignored
+         image: amsword/setup:py36pt11 
+     experiment_name: your_alias
+     env:
+         ENV_KEY: ENV_VALUE # specify any environment you want, the value: str
+     ```
 
 6. Set an alias
    ```bash
    alias a='ipython --pdb src/qd/gpucluster/aml_client.py -- '
+   ```
+   or (when the current folder is not quickdetection)
+   ```bash
+   alis a='python -m qd.gpucluster.aml_client '
+   ```
+   or
+   ```bash
+   alis a='AML_CONFIG_PATH=path_to_config python -m qd.gpucluster.aml_client '
    ```
 
 ### Job Management
@@ -158,47 +202,31 @@
    ```
    Whenever you want your new code change took effect, you should run the above
    command.
-   To execute a command in AML, run teh following:
+   To execute a command in AML, run the following:
    ```bash
    a submit cmd
    ```
-   cmd is a string or a whitespace seperated string without quotes. What it
-   does
-   1. Upload all the source code in `aml.yaml:source_directory` to AML. Say, the
-      folder in AML is ROOT_AML
-   2. Make the current folder as `{ROOT_AML}` in AML
-   3. Run the following command in AML
-      ```bash
-      python {aml.yaml:entry_script} \
-          --code_path mount_point_for_config_param_code_path \
-          --data_folder mount_point_for_config_param_data_folder \
-          --model_folder mount_point_for_config_param_model_folder \
-          --output_folder mount_point_for_config_param_output_folder \
-          --cmd {cmd}
-      ```
-      If you are using the `aml_server.py` as the entry script. You can run any
-      shell command by `a submit`. For example,
-      - if you want to run `nvidia-smi` in
-      AML. The command is
-      ```bash
-      a submit nvidia-smi
-      ```
-      - If you want to run `python train.py --data voc20` in AML, the command
-      will be
-      ```bash
-      a submit python train.py --data voc20
-      ```
-      Note
-      - By default, it uses 4 GPU with mpi as the distributed backend. That
-      means, the command will be executed four times with different environment
-      variables.
-      - If you want to use 8 GPU, run the command like
-      ```bash
-      a -n 8 submit python train.py --data voc20
-      ```
-      `-n 8` should be placed before submit. Otherwise, it will think `-n 8` as
-      part of the cmd
-
+   - if you want to run `nvidia-smi` in AML. The command is
+   ```bash
+   a submit nvidia-smi
+   ```
+   - If you want to run `python train.py --data voc20` in AML, the command
+   will be
+   ```bash
+   a submit python train.py --data voc20
+   ```
+   Note
+   - If you want to use 8 GPU, run the command like
+   ```bash
+   a -n 8 submit python train.py --data voc20
+   ```
+   `-n 8` should be placed before submit. Otherwise, it will think `-n 8` as
+   part of the cmd
+   - If `multi_process=true`, effectively it runs `mpirun --hostfile hostfile_contain_N_node_ips --npernode gpu_per_node cmd`
+       - the number of nodes x gpu_per_node == the number of gpu requested
+       - highly recommended for distributed training/inference
+   - If `multi_process=false`, effectively it runs `mpirun --hostfile hostfile_contain_N_node_ips --npernode 1 cmd`
+       - still, the number of nodes x gpu_per_node == the number of gpu requested
 
 ## Philly
 ### Installation
@@ -263,10 +291,62 @@
    format is the same as AML's
    - `multi_process`: if it is true, it wil launch the script multiple times
    (the number of GPU times) and give each process different environement
-   variables so that you know which GPU to use.
+   variables so that you know which GPU to use. It is essentially to launch the
+   command with mpirun. If it is false, it will launch your command once.
    - `config_param`: tells where to find the code, data, output folder. If you
    want to use hdfs system to keep your data, specify the path started with
    /hdfs.
+
+   - This example only uses one blob for data access. If we want to use
+     multiple blobs, you can specify all blob information in blob_mount_info
+     ```
+      vc: input
+      cluster: wu1
+      #cluster: sc2
+      user_name: jianfw
+      password: null
+      blob_mount_info:
+          - blob_mount_point: /blob
+            azure_blob_config_file: ./aux_data/configs/vigeastblob_account.yaml
+            blob_fuse_options:
+                - '-o'
+                - "attr_timeout=240"
+                - "-o"
+                - "entry_timeout=240"
+                - "-o"
+                - "negative_timeout=120"
+                - "--log-level=LOG_WARNING"
+                - "-o"
+                - "allow_other"
+                - "--file-cache-timeout-in-seconds=10000000"
+          - blob_mount_point: /data_blob
+            azure_blob_config_file: ./aux_data/configs/vigblob_account.yaml
+            blob_fuse_options:
+                - '-o'
+                - 'ro' # read-only
+                - '-o'
+                - "attr_timeout=240"
+                - "-o"
+                - "entry_timeout=240"
+                - "-o"
+                - "negative_timeout=120"
+                - "--log-level=LOG_WARNING"
+                - "-o"
+                - "allow_other"
+                - "--file-cache-timeout-in-seconds=10000000"
+      multi_process: true
+      config_param:
+          #code_path: /hdfs/input/jianfw/code/quickdetection.zip
+          code_path: /blob/jianfw/code/quickdetection.zip
+          data_folder: /data_blob/jianfw/data/qd_data
+          #data_folder: /hdfs/input/jianfw/data/qd_data
+          model_folder: /blob/jianfw/work/qd_models
+          output_folder: /blob/jianfw/work/qd_output
+      docker:
+          image: philly/jobs/test/vig-qd-env
+          tag: py36ptnight
+     ```
+
 
 5. Set an alias
    ```bash

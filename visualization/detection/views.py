@@ -14,54 +14,55 @@ def get_qd_root():
 
 import os.path as op
 sys.path.append(op.join(get_qd_root(), 'scripts'))
-from tsv_io import tsv_reader
-from qd_common import write_to_file
-from process_tsv import TSVFile
-from process_tsv import ImageTypeParser
-from process_tsv import visualize_box
-from process_image import draw_bb, show_image, save_image
+from qd.tsv_io import tsv_reader
+from qd.qd_common import write_to_file
+from qd.process_tsv import TSVFile
+from qd.process_tsv import ImageTypeParser
+from qd.process_tsv import visualize_box
+from qd.process_image import draw_bb, show_image, save_image
 import base64
 # from yolotrain import CaffeWrapper
-from tsv_io import load_labels
-from process_tsv import update_confusion_matrix
+from qd.tsv_io import load_labels
+from qd.process_tsv import update_confusion_matrix
 from pprint import pformat
 import os
 # from yolotrain import get_confusion_matrix
-from qd_common import readable_confusion_entry
-from process_tsv import gt_predict_images
-from qd_common import get_target_images
-from tsv_io import get_all_data_info
-from tsv_io import get_all_data_info2
-from qd_common import get_all_model_expid
-from qd_common import get_parameters_by_full_expid
-from process_tsv import get_confusion_matrix_by_predict_file
-from qd_common import get_all_predict_files
-from qd_common import parse_data, parse_test_data
-from tsv_io import load_labelmap
-from process_tsv import gen_html_tree_view
-from qd_common import get_all_tree_data
-from qd_common import init_logging
+from qd.qd_common import readable_confusion_entry
+from qd.process_tsv import gt_predict_images
+from qd.qd_common import get_target_images
+from qd.tsv_io import get_all_data_info
+from qd.tsv_io import get_all_data_info2
+from qd.qd_common import get_all_model_expid
+from qd.qd_common import get_parameters_by_full_expid
+from qd.process_tsv import get_confusion_matrix_by_predict_file
+from qd.qd_common import get_all_predict_files
+from qd.qd_common import parse_data, parse_test_data
+from qd.tsv_io import load_labelmap
+from qd.process_tsv import gen_html_tree_view
+from qd.qd_common import get_all_tree_data
+from qd.qd_common import init_logging
 from django.http import HttpResponseRedirect
 from django.urls import reverse
 import cv2
 from django import template
 import json
-from process_tsv import build_taxonomy_impl
+from qd.process_tsv import build_taxonomy_impl
 import sys
 import traceback2 as traceback
 from .models import *
 import django.core.files
 import logging
 import uuid
-from qd_common import load_class_ap, worth_create
-from process_tsv import visualize_predict
-from process_tsv import visualize_predict_no_draw
-from process_tsv import get_class_count
-from process_tsv import visualize_box_no_draw
-from process_tsv import populate_dataset_details
-from qd_common import write_to_yaml_file, load_from_yaml_file
+from qd.qd_common import load_class_ap, worth_create
+from qd.process_tsv import visualize_predict
+from qd.process_tsv import visualize_predict_no_draw
+from qd.process_tsv import get_class_count
+from qd.process_tsv import visualize_box_no_draw
+from qd.process_tsv import populate_dataset_details
+from qd.qd_common import write_to_yaml_file, load_from_yaml_file
 from build_compare import build_side_by_side_compare
 import copy
+from qd.db import create_annotation_db
 
 init_logging()
 
@@ -139,7 +140,7 @@ class VisualizationDatabaseByFileSystem():
 def CreateVisualizationDatabase():
     try:
         # return VisualizationDatabaseByFileSystem()
-        from process_tsv import VisualizationDatabaseByMongoDB
+        from qd.process_tsv import VisualizationDatabaseByMongoDB
         MongoClient().admin.command('ismaster')
         logging.info('creating mongodb database')
         return VisualizationDatabaseByMongoDB()
@@ -406,8 +407,36 @@ def view_test_model(request, full_expid, predict_file):
     return render(request, 'detection/test_model.html',
                   context)
 
+_cache = {}
+def predict(full_expid, im):
+    if full_expid in _cache:
+        pip = _cache[full_expid]
+    else:
+        from qd.pipeline import load_pipeline
+        pip = load_pipeline(full_expid=full_expid)
+        _cache[full_expid] = pip
+    return pip.predict_one(im)
 
 def test_model(request):
+    # note: test_model_caffe works in caffe
+    assert request.method == 'POST'
+    coded = request.FILES['image_file'].read()
+    import numpy as np
+    nparr = np.frombuffer(coded, np.uint8)
+    im = cv2.imdecode(nparr, cv2.IMREAD_COLOR);
+    full_expid = request.POST['full_expid']
+    result = run_in_qd(predict, full_expid, im)
+    infos = []
+    info = {}
+    info['pred'] = result
+    infos.append(info)
+    import random
+    html_path = save_image_in_static(im, 'predict_request/{}.png'.format(int(1000 * random.random())))
+    context = {'all_type_to_rects': json.dumps(infos),
+            'all_url': json.dumps(['/static/' + html_path])}
+    return render(request, 'detection/images_js3.html', context)
+
+def test_model_caffe(request):
     assert request.method == 'POST'
     coded = request.FILES['image_file'].read()
     import cv2
@@ -509,6 +538,70 @@ def isfloat(value):
     except ValueError:
         return False
 
+def view_image_svg(request, data, split, version, label, start_id, min_conf,
+        max_conf):
+    curr_dir = os.curdir
+    os.chdir(get_qd_root())
+    start_id = int(float(start_id))
+    images = visualize_box_no_draw(data, split, version, label, start_id,
+            min_conf=min_conf, max_conf=max_conf)
+    all_type_to_rects = []
+    all_url = []
+    max_image_shown = 56
+    all_key = []
+    for i, (fname, origin, gt) in enumerate(images):
+        if i >= max_image_shown:
+            break
+        origin_html_path = save_image_in_static(origin, '{}/{}/{}/origin_{}.jpg'.format(data, split,
+            version,
+            hash_sha1(fname)))
+        all_key.append(fname)
+        all_url.append('/static/' + origin_html_path)
+        all_type_to_rects.append({'gt': gt })
+    os.chdir(curr_dir)
+
+    kwargs = copy.deepcopy(request.GET)
+    kwargs['start_id'] = str(max(0, start_id - max_image_shown))
+    previous_link = reverse('detection:view_image')
+    previous_link = previous_link + '?' + '&'.join(['{}={}'.format(k, kwargs[k]) for k in kwargs])
+    kwargs = copy.deepcopy(request.GET)
+    kwargs['start_id'] = str(start_id + len(all_type_to_rects))
+    next_link = reverse('detection:view_image')
+    next_link = next_link + '?' + '&'.join(['{}={}'.format(k, kwargs[k]) for k in kwargs])
+
+
+    from qd.tsv_io import TSVDataset
+    dataset = TSVDataset(data)
+    labelmap = [l for l in dataset.iter_data(split, 'labelmap', version)]
+    inverted = dataset.load_inverted_label(split, version=version)
+    label_count = [(k, len(ls)) for k, ls in inverted.items()]
+    label_count.insert(0, ('any', dataset.num_rows(split)))
+
+    context = {
+            'all_type_to_rects': json.dumps(all_type_to_rects),
+            'target_label': label,
+            'all_url': json.dumps(all_url),
+            'all_key': json.dumps(all_key),
+            'previous_link': previous_link,
+            'next_link': next_link,
+            'black_list': '',
+            'labelmap': json.dumps(labelmap),
+            'label_count' : json.dumps(label_count),
+            }
+
+    if any('\n' in r['class']
+            for t_to_rects in all_type_to_rects
+            for t, rects in t_to_rects.items()
+            for r in rects):
+        # in this case, we will not show the bar to show all labels
+        c = create_annotation_db()
+        key_to_existingjudge = {doc['key']: doc['judge'] for doc in c.iter_judge(
+            **{'key': {'$in': all_key}})}
+        context['key_to_existingjudge'] = json.dumps(key_to_existingjudge)
+        return render(request, 'detection/image_comment.html', context)
+    else:
+        #return render(request, 'detection/images_js2.html', context)
+        return render(request, 'detection/image_js_svg.html', context)
 
 def view_image_compare_test(request, data, split, version, label, start_id, min_conf=None):
     '''
@@ -1391,30 +1484,23 @@ def view_image(request):
     else:
         data = request.GET.get('data')
         split = request.GET.get('split')
-        key = None
-        key = request.GET.get('key')
-
-        min_conf = None
-        min_conf = request.GET.get('min_conf')
-        if min_conf != None:
-            min_conf = float(min_conf)
-
-        populate_dataset_details(data)
-
         if split == 'None':
             split = None
         version = request.GET.get('version')
         if version == 'None':
             version = None
-        version = int(version) if type(version) is str or \
-            type(version) is unicode else version
-        
+        else:
+            version = int(version)
+        version = int(version) if type(version) is str \
+                else version
         label = request.GET.get('label')
         start_id = request.GET.get('start_id')
-        
-        result = view_image_js(request, data, split, version, label, start_id, key, min_conf)
-        return result
+        min_conf = float(request.GET.get('min_conf', -1))
+        max_conf = float(request.GET.get('max_conf', 2))
 
+        result = view_image_svg(request, data, split, version, label, start_id,
+                min_conf, max_conf)
+        return result
 
 def get_data_sources_for_composite():
     datas = ['coco2017',

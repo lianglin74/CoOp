@@ -1,0 +1,142 @@
+<html>
+<head>
+    <script type="text/javascript" src="https://ajax.aspnetcdn.com/ajax/jQuery/jquery-1.8.2.min.js"></script>
+<script type="text/javascript">
+//////////////////////////////////// System functions. Used by legacy xplate submit & skip buttons. /////////////////////////////////////////////////
+function xPlate_GoForward() {
+   top.xPlate.saveAndForward();
+};
+function xPlate_Skip() {
+   top.xPlate.skipBatch();
+};
+function xPlate_GoBack() {
+   top.xPlate.saveAndBacks();
+};
+//////////////////////////////////// Callback functions. These are called from UHRS onto your hitapp. /////////////////////////////////////////////////
+function xPlate_Validate() {
+    // Called on save to determine if save can be processed.
+    var len = $('input:radio[name="rating"]:checked').size();
+    if (len == 0) {
+        alert("Empty rating. Please provide your rating first.");
+        return false;
+    }
+
+    len = $('input:checkbox[name="error"]:checked').size();
+    if (len == 0) {
+        alert("Please provide the error type.");
+        return false;
+    }
+    if (document.getElementById('error0').checked) {
+        if (len > 1) {
+            alert("Conflicts in your result.\n If there are no errors, select \"No error\". Otherwise, indicate the errors.");
+            return false;
+        }
+        if (document.getElementById('rating3').checked || document.getElementById('rating4').checked) {
+            alert("Conflicts in your result.\n \"Bad/Embrassing\" and \"No error\" selected at the same time.");
+            return false;
+        }
+    }
+    return true;
+};
+
+function xPlate_SubmitFeedback(appeal) {
+    if (appeal && document.getElementById('xPlate_audit_comment').value == "") {
+        alert("Please provide your comment first.");
+        return;
+    }
+    top.xPlate.submitJudgeFeedback(appeals);
+};
+function xPlate_SubmitAudit() {
+    if (document.getElementById('xPlate_audit_comment').value == "") {
+        alert("Please provide your comment first.");
+        return;
+    }
+    xPlate_GoForward();
+};
+// isFirstLoad = true for the initial loading of this Hit.
+// isFirstLoad = false if the Hit is being redisplayed to the judge (such as when review page is used, or RTAs being shown).
+function xPlate_OnLoad(isFirstLoad) {
+};
+//////////////////////////////////// End of system functions ///////////////////////////////////////////////
+
+</script>
+</head>
+<body style="width:100%;height:100%;margin:0px;overflow:auto">
+<style type="text/css">
+    fieldset {
+        padding: 0px;
+        border-radius:10px;
+        margin-bottom:10px;
+    }
+    input[type=radio] { vertical-align: middle; margin-left: 10px; margin-top:-2 }
+    tr:hover{
+        background:#EBF5FB;
+    }
+    label{
+        font-size: 16pt;
+    }
+    label:hover{
+        background:yellow;
+    }
+    input[type=radio]:hover {
+        background:yellow;
+    }
+    .highlight {
+        background:#f0f0f0;
+    }
+    .label_tag_score {
+        vertical-align: middle;
+        display: block;
+        //width:70px;
+    }
+    #collapseTrigger{
+        color:#fff;
+        display: block;
+        text-decoration: none;
+    }
+    input[type=submit] {
+        width: 40%;
+        margin-left: 30%;
+        margin-right: 30%;
+        height: 50px;
+        padding: 10px;
+        border-radius: 10px;
+        -moz-border-radius: 10px;
+        -webkit-border-radius: 10px
+    }
+</style>
+
+
+<h1>Image Caption Evaluation</h1>
+<img id="imageURL" src="{HTML(image_url)}"  style="max-height:900px;max-width:900px;height:auto;width:auto;" />
+<h2> {HTML(caption)} </h2>
+<h3> Please rate this caption: </h3>
+<label><input type="radio" id="rating1" name="rating" value="Rating1" onclick="top.xPlate.setJudgmentDataInt(1)">Excellent</label><br>
+<label><input type="radio" id="rating2" name="rating" value="Rating2" onclick="top.xPlate.setJudgmentDataInt(2)">OK</label><br>
+<label><input type="radio" id="rating3" name="rating" value="Rating3" onclick="top.xPlate.setJudgmentDataInt(3)">Bad</label><br>
+<label><input type="radio" id="rating4" name="rating" value="Rating4" onclick="top.xPlate.setJudgmentDataInt(4)">Embarrassing</label><br>
+<h3> What are the errors in the caption? </h3>
+<label><input type="checkbox" id="error0" name="error" value="Error0" onclick="top.xPlate.setJudgmentDataInt(0)">No error</label><br>
+<label><input type="checkbox" id="error1" name="error" value="Error1" onclick="top.xPlate.setJudgmentDataInt(1)">Gender or age error of people</label><br>
+<label><input type="checkbox" id="error2" name="error" value="Error2" onclick="top.xPlate.setJudgmentDataInt(2)">Grammar error with the caption sentence</label><br>
+<label><input type="checkbox" id="error3" name="error" value="Error3" onclick="top.xPlate.setJudgmentDataInt(3)">Single/plural/number errors</label><br>
+<label><input type="checkbox" id="error4" name="error" value="Error4" onclick="top.xPlate.setJudgmentDataInt(4)">Wrong objects</label><br>
+<label><input type="checkbox" id="error5" name="error" value="Error5" onclick="top.xPlate.setJudgmentDataInt(5)">Miss something in the image</label><br>
+<label><input type="checkbox" id="error6" name="error" value="Error6" onclick="top.xPlate.setJudgmentDataInt(6)">Other errors</label><br>
+<br>
+<div><input onclick="xPlate_GoForward();" value="Submit" type="submit" accesskey="s"/></div>
+
+<div id="instruction">
+    <h1>
+        Instruction
+    </h1>
+    <h4>
+        <q>Excellent</q>: the caption captures all the salient details of the image correctly.<br>
+        <q>OK</q>: it captures SOME of the salient details of the image correctly, and might have missed others.<br>
+        <q>Bad</q>: SOME of the salient details may be incorrect, enough to potentially mislead a blind user about the contents of the image. However, <b>bad</b> captions will still capture SOME salient details correctly.<br>
+        <q>Embarrassing</q>: the caption has gotten MOST if not ALL of the salient details wrong, and will definitely mislead a blind user about the contents of the image.<br>
+    </h4>
+</div>
+
+</body>
+</html>

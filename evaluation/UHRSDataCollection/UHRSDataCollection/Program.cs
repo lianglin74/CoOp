@@ -17,7 +17,7 @@ namespace CVUHRS
 {
     static class Program
     {
-        public static readonly int[] AllHitappIds = { 34524, 34872, 34879, 35716, 35851, 35852, 35853 };
+        public static readonly int[] AllHitappIds = { 35716, 35851 };
         public const string ServerAddress = @"prod.uhrs.playmsn.com";
 
         public static ManagementClient Management

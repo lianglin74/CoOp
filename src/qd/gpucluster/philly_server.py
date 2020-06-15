@@ -103,7 +103,12 @@ def compile_qd(folder):
 
     compile_file = 'compile.philly.sh'
     cmd_run(['chmod', '+x', op.join(folder, compile_file)])
-    cmd_run(['sudo', 'env', 'PATH={}'.format(path), './{}'.format(compile_file)],
+    #cmd_run(['sudo', 'env', 'PATH={}'.format(path), './{}'.format(compile_file)],
+            #working_directory=folder, succeed=False)
+
+    # in the context of sudo -i, the current folder will be changed to /root.
+    # so we need to use the full file path of compile_file
+    cmd_run(['./{}'.format(compile_file)],
             working_directory=folder, succeed=False)
 
 def update_ssh():

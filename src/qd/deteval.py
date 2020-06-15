@@ -138,8 +138,6 @@ def load_dets(filein, region_only=False):
                     retdict[label]=[]
                 retdict[label] += [ (key,rect['conf'],bbox)]
             #bar.update()
-    for label in retdict:
-        retdict[label] = sorted(retdict[label], key=lambda x:-x[1])
     return retdict;
 
 def load_dets_iter(rows, region_only=False):
@@ -564,6 +562,66 @@ def remove_negative_labels(truths):
     for l in neg_labels:
         del truths[l]
     return label_to_keys
+
+def set_correctness(dets, gts, ovthresh):
+    dets = sorted(dets, key=lambda x: -x['conf'])
+    dettag = set()
+    for det in dets:
+        bbox = det['rect']
+
+        # get overlaps with truth rectangles
+        overlaps = np.array([IoU(bbox, gtbox[1]) for gtbox in gts])
+        bbox_idx_max = np.argmax(overlaps)
+        for o in ovthresh:
+            if overlaps[bbox_idx_max] > o:
+                # if a detection hits a difficult gt_box, skip this detection
+                if gts[bbox_idx_max].get('diff', 0) != 0:
+                    continue
+                if (o, bbox_idx_max) not in dettag:
+                    det['overall'][o] = True
+                    dettag.add((o, bbox_idx_max))
+            else:
+                det['overall'][0] = False
+
+def deteval_parallel(truth, dets, precth=[0.8,0.9,0.95],
+        multiscale=False, ovthresh=[0.3,0.4,0.5],
+        classap=None, baselinefolder=None, report_file=None,
+        label_to_keys=None, **kwargs):
+    assert report_file, 'report_file must be specified'
+    if os.path.isfile(report_file) and \
+            not kwargs.get('force_evaluate', False) and \
+            not worth_create(dets, report_file):
+        logging.info('skip to evaluate (exists) {}'.format(report_file))
+        return report_file
+    assert not multiscale, 'Not implemented'
+
+    from qd.process_tsv import parallel_multi_tsv_process
+    def get_correct_row(rows):
+        (gt_key, gt_rects), (pred_key, pred_rects) = rows
+        assert gt_key == pred_key
+        gt_rects = json.loads(gt_rects)
+        pred_rects = json.loads(pred_rects)
+        from qd.qd_common import list_to_dict
+        cls_to_gts = list_to_dict([(g['class'], g) for g in gt_rects], 0)
+        cls_to_preds = list_to_dict([(p['class'], p) for p in pred_rects], 0)
+        for c, preds in cls_to_preds:
+            if c not in cls_to_gts:
+                for p in preds:
+                    p['overall'] = {}
+                    for t in ovthresh:
+                        p['overall'][t] = False
+            else:
+                gts = cls_to_gts[c]
+                set_correctness(preds, gts, ovthresh)
+        from qd.qd_common import json_dump
+        return gt_key, json_dump(pred_rects)
+
+    correct_tsv = report_file + '.correct.tsv'
+    parallel_multi_tsv_process(get_correct_row,
+            [truth, dets],
+            correct_tsv)
+
+    return report_file
 
 def deteval_iter(truth_iter, dets='', vocdets='', name='',
         precth=[0.8,0.9,0.95], multiscale=False, ovthresh=[0.3,0.4,0.5],

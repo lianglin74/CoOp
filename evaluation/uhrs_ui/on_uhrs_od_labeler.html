@@ -1,0 +1,819 @@
+<html>
+
+<head>
+    <script type="text/javascript" src="https://ajax.aspnetcdn.com/ajax/jQuery/jquery-1.8.2.min.js"></script>
+<style>
+.hidden
+{
+	display:none;
+}
+</style>
+
+</head>
+
+<body style="width:100%;height:100%;margin:0px;overflow:auto">
+
+<div style="display:none;">&nbsp;</div>
+<link href="https://ajax.googleapis.com/ajax/libs/jqueryui/1.10.3/themes/smoothness/jquery-ui.css" rel="stylesheet" /><script src="https://ajax.googleapis.com/ajax/libs/jquery/1.9.1/jquery.min.js"></script><script src="https://ajax.googleapis.com/ajax/libs/jqueryui/1.10.3/jquery-ui.js"></script>
+<div style="display:inline-block;vertical-align:top;">
+<div id="descript_obj_to_find"></div>
+<div id="obj_to_find"></div>
+<div id="bbox_annotator" style="display:inline-block">&nbsp;</div>
+</div>
+
+<div style="display:none;" id="instructionTextDrawBox">
+    <h1>
+        &nbsp;&nbsp;Draw a bounding box around <b>EVERY</b> instance of the specified object.
+    </h1>
+    <h3>
+        A good bounding box should be <font color="red"><u>tight</u></font> around <u>all the visible</u> part of <u>one</u> object.<br>
+        Do NOT draw multiple boxes around one object.<br>
+    </h3>
+    <h4>
+        Check <q>none</q> button if there is no image showing up and you see a message: invalid image URL.<br>
+        Check <q>none</q> button if the object is not present in the image.<br>
+        Check <q>Select All</q> if the full image represents the object<br>
+        Check <q>is a group</q> if there are more than 5 instances, and impossible to separate them, e.g., flowers
+    </h4>
+</div>
+
+<div type="hidden"><input id="input_content" value="{HTML(input_content)}" type="hidden"/></div>
+
+<div id ="right-pane" class="split split-horizontal">
+    <p id="button_paragraph"><input id="annotation_data" name="annotation_data" type="hidden" />
+    <input id="reset_button" type="button" value="reset" />
+    <input id="nothing_checkbox" name="no_objects" type="checkbox" value="none" accesskey="a"/> <label for="nothing_checkbox">none</label>
+    <input id="select_all_checkbox" name="select_all" type="checkbox" value="select all image" /> <label for="select_all_checkbox">select all image</label>
+    <input id="group_of_checkbox" name="group_of" type="checkbox" value="group of" /> <label for="group_of_checkbox">don't want to label</label>
+    <div><input onclick="xPlate_GoForward();" value="Submit" type="submit" accesskey="s"/>
+    <div id="instructionTextDiv">&nbsp;</div>
+    </div>
+</div>
+
+
+
+
+<style type="text/css">
+    fieldset {
+        padding: 0px;
+        border-radius:10px;
+        margin-bottom:10px;
+    }
+    input[type=radio] { vertical-align: middle; margin-left: 10px; margin-top:-2 }
+    tr:hover{
+        background:#EBF5FB;
+    }
+    label{
+        font-size: 30pt;
+    }
+    label:hover{
+        background:yellow;
+    }
+    input[type=radio]:hover {
+        background:yellow;
+    }
+    .highlight {
+        background:#f0f0f0;
+    }
+    .label_tag_score {
+        vertical-align: middle;
+        display: block;
+        //width:70px;
+    }
+    #collapseTrigger{
+        color:#fff;
+        display: block;
+        text-decoration: none;
+    }
+    input[type=submit] {
+        width: 40%;
+        margin-left: 30%;
+        margin-right: 30%;
+        height: 50px;
+        padding: 10px;
+        border-radius: 10px;
+        -moz-border-radius: 10px;
+        -webkit-border-radius: 10px
+    }
+</style>
+
+
+<script type="text/javascript">
+
+    // GLobal variable annotator
+    var annotator_obj;
+    var group_of = false;
+    // var RANDOM_INPUT = {"question_type": "VerifyImage", "image_url": "https://cogsimagestorage.blob.core.windows.net/detectortrain/256679c4-f699-4681-a876-298eec4550b7.jpg","objects_to_find": "path->to->root->tag1-long","bboxes":[{"class": "tag1-long", "rect":[52.70587158203125,0.0,1420.7355346679688,1546.4013671875]}]};    var preview = false;
+    // var RANDOM_INPUT = "{$expected_output$: [{$rect$: [0#0#20#20]}]# $objects_to_find$: $Example$# $image_url$: $http://a.fssta.com/content/dam/fsdigital/fscom/mlb/images/2015/01/06/010615-mlb-Randy-Johnson-dbacks-pi-mp.vresize.1200.675.high.46.jpg$# $image_key$: $Arizona_Diamondbacks_0$}";
+    var RANDOM_INPUT = '{"objects_to_find": "person", "image_url": "https://cogsimagestorage.blob.core.windows.net/detectortrain/2c6d96cc0ec5835e973be4ed8b163f1b83939a90.jpg", "bboxes":[{"class": "person", "rect": [10, 20, 70, 80], "color": [0, 255, 0]}, {"class": "person", "rect": [100, 200, 170, 280], "color": [0, 0, 255]}]}';
+    var preview = false;
+    var InputContent = "";
+
+    (function () {
+        var BBoxSelector;
+        BBoxSelector = (function () {
+            function BBoxSelector(image_frame, options) {
+                if (options == null) {
+                    options = {};
+                }
+                options.input_method || (options.input_method = "text");
+                this.image_frame = image_frame;
+                this.border_width = options.border_width || 2;
+                this.selector = $('<div class="bbox_selector"></div>');
+                this.selector.css({
+                    "border": this.border_width + "px dotted rgb(" + options.border_rgb_color.join(',') + ")",
+                    "position": "absolute"
+                });
+                this.image_frame.append(this.selector);
+                this.selector.css({
+                    "border-width": this.border_width
+                });
+                this.selector.hide();
+                this.create_label_box(options);
+            }
+            BBoxSelector.prototype.create_label_box = function (options) {
+                var label, _i, _len, _ref;
+                options.labels || (options.labels = ["object"]);
+                this.label_box = $('<div class="label_box"></div>');
+                this.label_box.css({
+                    "position": "absolute"
+                });
+                this.label_box.css({
+                    "z-index": "1000"
+                });
+                this.image_frame.append(this.label_box);
+                switch (options.input_method) {
+                    case 'select':
+                        if (typeof options.labels === "string") {
+                            options.labels = [options.labels];
+                        }
+                        this.label_input = $('<select class="label_input" name="label"></select>');
+                        this.label_box.append(this.label_input);
+                        this.label_input.append($('<option value>choose an item</option>'));
+                        _ref = options.labels;
+                        for (_i = 0, _len = _ref.length; _i < _len; _i++) {
+                            label = _ref[_i];
+                            this.label_input.append('<option value="' + label + '">' + label + '</option>');
+                        }
+                        this.label_input.change(function (e) {
+                            return this.blur();
+                        });
+                        break;
+                    case 'text':
+                        if (typeof options.labels === "string") {
+                            options.labels = [options.labels];
+                        }
+                        this.label_input = $('<input class="label_input" name="label" ' + 'type="text" value>');
+                        this.label_box.append(this.label_input);
+                        this.label_input.autocomplete({
+                            source: options.labels || [''],
+                            autoFocus: true
+                        });
+                        break;
+                    case 'fixed':
+                        if ($.isArray(options.labels)) {
+                            options.labels = options.labels[0];
+                        }
+                        this.label_input = $('<input class="label_input" name="label" type="text">');
+                        this.label_box.append(this.label_input);
+                        this.label_input.val(options.labels);
+                        break;
+                    default:
+                        throw 'Invalid label_input parameter: ' + options.input_method;
+                }
+                return this.label_box.hide();
+            };
+            BBoxSelector.prototype.crop = function (pageX, pageY) {
+                var point;
+                return point = {
+                    x: Math.min(Math.max(Math.round(pageX - this.image_frame.offset().left), 0), Math.round(this.image_frame.width() - 1)),
+                    y: Math.min(Math.max(Math.round(pageY - this.image_frame.offset().top), 0), Math.round(this.image_frame.height() - 1))
+                };
+            };
+            BBoxSelector.prototype.start = function (pageX, pageY) {
+                this.pointer = this.crop(pageX, pageY);
+                this.offset = this.pointer;
+                this.refresh();
+                this.selector.show();
+                $('body').css('cursor', 'crosshair');
+                return document.onselectstart = function () {
+                    return false;
+                };
+            };
+            BBoxSelector.prototype.update_rectangle = function (pageX, pageY) {
+                this.pointer = this.crop(pageX, pageY);
+                return this.refresh();
+            };
+            BBoxSelector.prototype.input_label = function (options) {
+                $('body').css('cursor', 'default');
+                document.onselectstart = function () {
+                    return true;
+                };
+                this.label_box.show();
+                return this.label_input.focus();
+            };
+            BBoxSelector.prototype.finish = function (options) {
+                var data;
+                this.label_box.hide();
+                this.selector.hide();
+                data = this.rectangle();
+                data.label = $.trim(this.label_input.val());
+                if (options.input_method !== 'fixed') {
+                    this.label_input.val('');
+                }
+                return data;
+            };
+            BBoxSelector.prototype.rectangle = function () {
+                var rect, x1, x2, y1, y2;
+                x1 = Math.min(this.offset.x, this.pointer.x);
+                y1 = Math.min(this.offset.y, this.pointer.y);
+                x2 = Math.max(this.offset.x, this.pointer.x);
+                y2 = Math.max(this.offset.y, this.pointer.y);
+                return rect = {
+                    left: x1,
+                    top: y1,
+                    width: x2 - x1 + 1,
+                    height: y2 - y1 + 1
+                };
+            };
+            BBoxSelector.prototype.refresh = function () {
+                var rect;
+                rect = this.rectangle();
+                this.selector.css({
+                    left: (rect.left - this.border_width) + 'px',
+                    top: (rect.top - this.border_width) + 'px',
+                    width: rect.width + 'px',
+                    height: rect.height + 'px'
+                });
+                return this.label_box.css({
+                    left: (rect.left - this.border_width) + 'px',
+                    top: (rect.top + rect.height + this.border_width) + 'px'
+                });
+            };
+            BBoxSelector.prototype.get_input_element = function () {
+                return this.label_input;
+            };
+            return BBoxSelector;
+        })();
+        this.BBoxAnnotator = (function () {
+            function BBoxAnnotator(options) {
+                var annotator;
+                annotator = this;
+                this.annotator_element = $(options.id || "#bbox_annotator");
+                this.border_width = options.border_width || 2;
+                this.border_rgb_color = options.border_rgb_color || [127,255,127];
+                this.show_label = options.show_label || (options.input_method !== "fixed");
+                this.image_frame = $('<div class="image_frame"></div>');
+                this.annotator_element.append(this.image_frame);
+                this.close_clicked = false;
+                this.clear_clicked = false;
+                this.image_element = new Image();
+                this.image_element.src = options.url;
+                this.image_width = null;
+                this.image_height = null;
+
+                this.image_element.onload = function () {
+                    annotator.image_width = annotator.image_element.width;
+                    annotator.image_height = annotator.image_element.height;
+                    options.width || (options.width = annotator.image_element.width);
+                    options.height || (options.height = annotator.image_element.height);
+                    annotator.annotator_element.css({
+                        "width": (options.width + annotator.border_width * 2) + 'px',
+                        "height": (options.height + annotator.border_width * 2) + 'px',
+                        "cursor": "crosshair"
+                    });
+                    annotator.image_frame.css({
+                        "background-image": "url('" + annotator.image_element.src + "')",
+                        "width": options.width + "px",
+                        "height": options.height + "px",
+                        "position": "relative"
+                    });
+                    options.border_rgb_color = annotator.border_rgb_color;
+                    annotator.selector = new BBoxSelector(annotator.image_frame, options);
+                    return annotator.initialize_events(annotator.selector, options);
+                };
+                this.image_element.onerror = function () {
+                    return annotator.annotator_element.text("Invalid image URL: " + options.url);
+                };
+                this.entries = [];
+                this.onchange = options.onchange;
+                this.group_of = false;
+            }
+            BBoxAnnotator.prototype.initialize_events = function (selector, options) {
+                var annotator, status;
+                status = 'free';
+                this.hit_menuitem = false;
+                annotator = this;
+                this.annotator_element.mousedown(function (e) {
+                    if (!annotator.hit_menuitem)
+                    {
+                        switch (status) {
+                            case 'free':
+                            case 'input':
+                                if (status === 'input' && annotator.close_clicked == false && annotator.clear_clicked == false) {
+                                    selector.get_input_element().blur();
+                                }
+                                if (e.which === 1 || annotator.close_clicked == true || annotator.clear_clicked == true) {
+                                    annotator.close_clicked = false;
+                                    annotator.clear_clicked = true;
+                                    selector.start(e.pageX, e.pageY);
+                                    status = 'hold';
+                                }
+                        }
+                    }
+                    annotator.hit_menuitem = false;
+                    return true;
+                });
+                $(window).mousemove(function (e) {
+                    switch (status) {
+                        case 'hold':
+                            selector.update_rectangle(e.pageX, e.pageY);
+                    }
+                    return true;
+                });
+                $(window).mouseup(function (e) {
+                    switch (status) {
+                        case 'hold':
+                            selector.update_rectangle(e.pageX, e.pageY);
+                            selector.input_label(options);
+                            status = 'input';
+                            if (options.input_method === 'fixed') {
+                                selector.get_input_element().blur();
+                            }
+                    }
+                    return true;
+                });
+                selector.get_input_element().blur(function (e) {
+                    var data;
+                    switch (status) {
+                        case 'input':
+                            data = selector.finish(options);
+                            if (data.label) {
+                                annotator.add_entry(data);
+                                if (annotator.onchange) {
+                                    annotator.onchange(annotator.entries);
+                                }
+                            }
+                            status = 'free';
+                    }
+                    return true;
+                });
+                selector.get_input_element().keypress(function (e) {
+                    switch (status) {
+                        case 'input':
+                            if (e.which === 13) {
+                                selector.get_input_element().blur();
+                            }
+                    }
+                    return e.which !== 13;
+                });
+                selector.get_input_element().mousedown(function (e) {
+                    return annotator.hit_menuitem = true;
+                });
+                selector.get_input_element().mousemove(function (e) {
+                    return annotator.hit_menuitem = true;
+                });
+                selector.get_input_element().mouseup(function (e) {
+                    return annotator.hit_menuitem = false;
+                });
+                return selector.get_input_element().parent().mousedown(function (e) {
+                    return annotator.hit_menuitem = true;
+                });
+            };
+            BBoxAnnotator.prototype.add_entry = function (entry, color_coding=null) {
+                var annotator, box_element, close_button, text_box;
+                entry['image_width'] = this.image_width;
+                entry['image_height'] = this.image_height;
+
+                this.entries.push(entry);
+                box_element = $('<div class="annotated_bounding_box"></div>');
+                if (color_coding == null) {
+                    color_coding = this.border_rgb_color;
+                }
+                box_element.appendTo(this.image_frame).css({
+                    "border": this.border_width + "px solid rgb(" + color_coding.join(',') + ")",
+                    "position": "absolute",
+                    "top": (entry.top - this.border_width) + "px",
+                    "left": (entry.left - this.border_width) + "px",
+                    "width": entry.width + "px",
+                    "height": entry.height + "px",
+                    "color": "rgb(127,255,127)",
+                    "font-family": "monospace",
+                    "font-size": "small"
+                });
+                close_button = $('<div></div>').appendTo(box_element).css({
+                    "position": "absolute",
+                    "top": "-8px",
+                    "right": "-8px",
+                    "width": "16px",
+                    "height": "0",
+                    "padding": "16px 0 0 0",
+                    "overflow": "hidden",
+                    "color": "#fff",
+                    "background-color": "#030",
+                    "border": "2px solid #fff",
+                    "-moz-border-radius": "18px",
+                    "-webkit-border-radius": "18px",
+                    "border-radius": "18px",
+                    "cursor": "pointer",
+                    "-moz-user-select": "none",
+                    "-webkit-user-select": "none",
+                    "user-select": "none",
+                    "text-align": "center"
+                });
+                $("<div></div>").appendTo(close_button).html('x').css({
+                    "display": "block",
+                    "text-align": "center",
+                    "width": "16px",
+                    "position": "absolute",
+                    "top": "-2px",
+                    "left": "0",
+                    "font-size": "16px",
+                    "line-height": "16px",
+                    "font-family": '"Helvetica Neue", Consolas, Verdana, Tahoma, Calibri, ' + 'Helvetica, Menlo, "Droid Sans", sans-serif'
+                });
+                text_box = $('<div></div>').appendTo(box_element).css({
+                    "overflow": "hidden"
+                });
+
+                if (this.show_label) {
+                    text_box.text(entry.label);
+                }
+                annotator = this;
+                box_element.hover((function (e) {
+                    return close_button.show();
+                }), (function (e) {
+                    return close_button.hide();
+                }));
+                close_button.mousedown(function (e) {
+                    return annotator.hit_menuitem = true;
+                });
+                close_button.click(function (e) {
+                    var clicked_box, index;
+                    clicked_box = close_button.parent(".annotated_bounding_box");
+                    index = clicked_box.prevAll(".annotated_bounding_box").length;
+                    clicked_box.detach();
+                    annotator.entries.splice(index, 1);
+                    annotator.close_clicked = true;
+                    return annotator.onchange(annotator.entries);
+                });
+                return close_button.hide();
+            };
+            BBoxAnnotator.prototype.clear_all = function (e) {
+                annotator = this;
+                annotator.clear_clicked = true;
+                $(".annotated_bounding_box").detach();
+                annotator.entries.splice(0);
+                console.log(JSON.stringify(this.entries));
+                return annotator.onchange(annotator.entries);
+            };
+
+            BBoxAnnotator.prototype.select_all = function (e) {
+                annotator = this;
+                annotator.clear_clicked = true;
+                $(".annotated_bounding_box").detach();
+                annotator.entries.splice(0);
+                rect = {
+                    left: 0,
+                    top: 0,
+                    width: annotator.image_width,
+                    height: annotator.image_height
+                };
+                var data = rect;
+                data.label = $.trim(annotator.selector.label_input.val());
+                annotator.add_entry(rect);
+                console.log(JSON.stringify(annotator.entries));
+                return annotator.onchange(annotator.entries);
+            };
+
+            BBoxAnnotator.prototype.group_of_change = function (e) {
+                annotator = this;
+                if (annotator.group_of == false)
+                {
+                    annotator.group_of = true;
+                }
+                else
+                {
+                    annotator.group_of = false;
+                }
+            };
+
+            BBoxAnnotator.prototype.render_previous = function (bboxes) {
+                annotator = this;
+                // json_arr = JSON.parse(bboxes);
+                bboxes.forEach(bbox =>
+                {
+                    if ('rect' in bbox) {
+                        rects = {
+                            left: bbox.rect[0],
+                            top: bbox.rect[1],
+                            width: bbox.rect[2] - bbox.rect[0],
+                            height: bbox.rect[3] - bbox.rect[1]
+                        };
+                        rects.label = bbox.class;
+                        var bbox_color = null;
+                        if ('color' in bbox) {
+                            bbox_color = bbox.color;
+                        }
+                        annotator.add_entry(rects,  color_coding = bbox_color);
+                    }
+                }
+                );
+                console.log(JSON.stringify(annotator.entries));
+                return annotator.onchange(annotator.entries);
+            };
+
+            return BBoxAnnotator;
+        })();
+    }).call(this);
+
+function parse_input(input) {
+    var ret;
+    try {
+        ret = JSON.parse(input);
+    }
+    catch (err) {
+        var new_input = input.replace(/\$/g, '"').replace(/#/g, ',');
+        ret = JSON.parse(new_input);
+    }
+    return ret;
+}
+
+function main() {
+    InputContent = document.getElementById('input_content').value;
+    if (InputContent.includes("input_content")) {
+        // preview mode
+        InputContent = RANDOM_INPUT;
+        preview = true;
+    }
+    InputContent = parse_input(InputContent);
+    var inputImage = InputContent["image_url"];
+    var imageTag = InputContent["objects_to_find"];
+
+    // Give instructions
+    $("#instructionTextDrawBox").contents().appendTo("#instructionTextDiv");
+
+    // Give object term to find
+    var link = document.createElement('a');
+    link.setAttribute('href','https://www.bing.com/images/search?q=' + imageTag.replace(/->/g, ' ')) + '&form=monitr';
+    link.setAttribute('target','_blank');
+    link.setAttribute('title', 'click to see example images of "' + imageTag + '"');
+
+    var label  = document.createElement('label');
+    label.innerText =  imageTag + " (click to see sample images)";
+
+    link.appendChild(label);
+    var decript_obj_to_find = document.createElement('h1');
+    var textnode = document.createTextNode("Object to label on this page: *" + imageTag + "*");         // Create a text node
+    decript_obj_to_find.appendChild(textnode);
+    document.getElementById("descript_obj_to_find").appendChild(decript_obj_to_find);
+    document.getElementById("obj_to_find").appendChild(link);
+
+    var inputMethod = "fixed";
+
+    //Set up result data
+    annotator_obj = new BBoxAnnotator({
+        url: inputImage,
+        input_method: inputMethod, // Can be one of ['text', 'select', 'fixed']
+        labels: imageTag, //["dress", "top", "skirt", "pants", "shoes"], // Label of the object.
+        border_width: 3.5,
+        border_rgb_color: [255, 0, 0],
+        onchange: function (entries) {
+            $("#annotation_data").val(JSON.stringify(entries));
+            if (entries.length > 0) {
+                $('#submitButton').prop('disabled', false);
+                document.getElementById("nothing_checkbox").checked = false;
+                if (preview == true) {
+                    console.log(JSON.stringify(entries));
+                }
+            }
+            else {
+                $('#submitButton').prop('disabled', true);
+            }
+        }
+    });
+    var oldBbox = [];
+    if ("bboxes" in InputContent) {
+        oldBbox = InputContent["bboxes"];
+    }
+    annotator_obj.render_previous(oldBbox);
+
+    // Initialize the reset button.
+    $("#reset_button").click(function (e) {
+        annotator_obj.clear_all();
+        document.getElementById("nothing_checkbox").checked = false;
+        document.getElementById("select_all_checkbox").checked = false;
+        document.getElementById("group_of_checkbox").checked = false;
+    });
+
+    $("#nothing_checkbox").click(function (e) {
+        var chk = document.getElementById("nothing_checkbox").checked;
+        if (chk) {
+            document.getElementById("select_all_checkbox").checked = false;
+            document.getElementById("group_of_checkbox").checked = false;
+            annotator_obj.group_of = false;
+            annotator_obj.clear_all();
+            $("#submitButton").removeAttr("disabled");
+        }
+        else {
+            $("#submitButton").attr("disabled", "disabled");
+        }
+    });
+
+    $("#select_all_checkbox").click(function (e) {
+        var chk = document.getElementById("select_all_checkbox").checked;
+        if (chk) {
+            alert('Existing bounding boxes will be removed and the whole image will be considered a bounding box');
+            annotator_obj.select_all();
+            $("#submitButton").removeAttr("disabled");
+        }
+        else {
+            annotator_obj.clear_all();
+            $("#submitButton").attr("disabled", "disabled");
+        }
+    });
+
+    $("#group_of_checkbox").click(function (e) {
+        var chk = document.getElementById("nothing_checkbox").checked;
+        if(chk)
+        {
+            alert('Cannot select "group of" and "none" together');
+            document.getElementById("group_of_checkbox").checked = false;
+            return;
+        }
+        else
+        {
+            annotator_obj.group_of_change();
+        }
+    });
+
+    // Disable the submission at the beginning.
+    $("#submitButton").attr("disabled", "disabled");
+    $("#submitButton").detach().appendTo("#button_paragraph");
+}
+
+function get_rect(bbox) {
+    var left = bbox["left"];
+    var right = bbox["left"] + bbox["width"];
+    var top = bbox["top"];
+    var bottom = bbox["top"] + bbox["height"];
+    return [left, top, right, bottom];
+}
+
+// Returns True if rect is close enough to any of rect in ref_rect_list
+function is_close_enough(rect, ref_rect_list, iou_thres) {
+    var ret = get_max_iou(rect, ref_rect_list);
+    if (ret[1] > iou_thres) {
+        return true;
+    }
+    else {
+        return false;
+    }
+}
+
+function get_max_iou(new_rect, rect_list) {
+    var max_iou = 0;
+    var max_indices = [];
+    for (var i=0; i<rect_list.length; ++i) {
+        var cur_iou = calculate_iou(new_rect, rect_list[i]);
+        if (cur_iou > max_iou) {
+            max_iou = cur_iou;
+            max_indices = [i];
+        }
+        else {
+            if (cur_iou == max_iou) {
+                max_indices.push(i);
+            }
+        }
+    }
+    return [max_indices, max_iou];
+}
+
+// rect: [left, top, right, bottom]
+function calculate_iou(rect1, rect2) {
+    // intersection part
+    var intersection_left = Math.max(rect1[0], rect2[0]);
+    var intersection_top = Math.max(rect1[1], rect2[1]);
+    var intersection_right = Math.min(rect1[2], rect2[2]);
+    var intersection_bottom = Math.min(rect1[3], rect2[3]);
+
+    if (intersection_right <= intersection_left || intersection_bottom <= intersection_top) {
+        return 0.0;
+    }
+    var w = Math.max(0.0, intersection_right-intersection_left+1);
+    var h = Math.max(0.0, intersection_bottom-intersection_top+1);
+    var intersection_area = w * h;
+    var bb1_area = calculate_bbox_area(rect1);
+    var bb2_area = calculate_bbox_area(rect2);
+
+    return intersection_area / (bb1_area + bb2_area - intersection_area);
+}
+
+function calculate_bbox_area(rect) {
+    return (rect[2] - rect[0] + 1) * (rect[3] - rect[1] + 1);
+}
+
+//////////////////////////////////// System functions. Used by legacy xplate submit & skip buttons. /////////////////////////////////////////////////
+function xPlate_OnLoad(isFirstLoad) {
+    main();
+};
+
+function xPlate_GoForward() {
+    var data = annotator_obj.entries;
+    var chk_none = document.getElementById("nothing_checkbox").checked;
+    var chk_all = document.getElementById("select_all_checkbox").checked;
+
+   if(annotator_obj.entries.length == 0)
+   {
+       if(!chk_none && !chk_all && !annotator_obj.group_of)
+        {
+            alert('No bounding box drawn, "none" is unchecked');
+            return;
+        }
+   }
+
+   // check if box is too small (perhaps spam)
+   for (var i=0; i<data.length; ++i) {
+        if (data[i]["width"]<10 || data[i]["height"]<10) {
+            alert("At least one of the boxes you draw is too small. Please reset and re-draw");
+            return;
+        }
+    }
+    // check duplicate boxes
+    for (var i=0; i<data.length-1; ++i) {
+        for (var j=i+1; j<data.length; ++j) {
+            if (calculate_iou(get_rect(data[i]), get_rect(data[j])) > 0.75) {
+                alert("Do not draw boxes too close to each other.");
+                return;
+            }
+        }
+    }
+    // check honey pot
+    if ("expected_output" in InputContent) {
+        var num_gt = InputContent["expected_output"].length;
+
+        if (data.length < num_gt) {
+            alert("You've missed " + (num_gt-data.length).toString() + " bounding box in the image");
+            return;
+        }
+        var data_rects = [];
+        for (var i=0; i<data.length; ++i) {
+            data_rects.push(get_rect(data[i]));
+        }
+        for (var i=0; i<num_gt; ++i) {
+            if (!is_close_enough(InputContent["expected_output"][i]["rect"], data_rects, 0.7)) {
+                alert("Mistakes detected in your answers. Please check again.")
+                return;
+            }
+        }
+
+    }
+
+   if(annotator_obj.group_of == true)
+   {
+    //    for (i=0; i<data.length; ++i) {
+    //        data[i]["IsGroupOf"] = 1;
+    //    }
+        data.push({"do_not_want_to_label": 1});
+   }
+
+   console.log('output',JSON.stringify(data));
+   top.xPlate.setJudgmentData('output',JSON.stringify(data));
+   top.xPlate.saveAndForward();
+};
+
+function xPlate_Skip() {
+   top.xPlate.skipBatch();
+};
+function xPlate_GoBack() {
+   top.xPlate.saveAndBacks();
+};
+//////////////////////////////////// Callback functions. These are called from UHRS onto your hitapp. /////////////////////////////////////////////////
+function xPlate_Validate() {
+        // Called on save to determine if save can be processed.
+        return true;
+};
+function xPlate_SubmitFeedback(appeal) {
+    if (appeal && document.getElementById('xPlate_audit_comment').value == "") {
+        alert("Please provide your comment first.");
+        return;
+    }
+    top.xPlate.submitJudgeFeedback(appeals);
+};
+function xPlate_SubmitAudit() {
+    if (document.getElementById('xPlate_audit_comment').value == "") {
+        alert("Please provide your comment first.");
+        return;
+    }
+    xPlate_GoForward();
+};
+
+main();
+
+//////////////////////////////////// End of system functions ///////////////////////////////////////////////
+
+</script>
+
+
+</body>
+</html>

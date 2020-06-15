@@ -19,20 +19,24 @@ from qd.tsv_io import tsv_reader, tsv_writer, TSVDataset
 from qd.process_image import draw_bb, save_image
 
 
-def get_wrong_pred(pred_file, gt_file, labelmap=None, outfile=None,
+def get_wrong_pred(pred_file, gt_data, gt_split, gt_version, labelmap=None, outfile=None,
                    min_conf=0.5, iou=0.5, gt_conf=0.0, region_only=False, num_samples=None):
     if labelmap:
         target_classes = set(cols[0].lower() for cols in read_from_file(labelmap))
     else:
         target_classes = None
     pred = DetectionFile(pred_file, conf_threshold=min_conf, labelmap=target_classes)
-    gt = DetectionFile(gt_file, conf_threshold=gt_conf, labelmap=target_classes)
+    #gt = DetectionFile(gt_file, conf_threshold=gt_conf, labelmap=target_classes)
+    gt_dataset = TSVDataset(gt_data)
 
     all_wrong_pred = []  # imgkey, pred_bboxes, gt_bboxes
     num_gt, num_pred, num_false_pos, num_missing = 0, 0, 0, 0
     for imgkey in pred:
         pred_bboxes = pred[imgkey]
-        gt_bboxes = gt[imgkey]
+        #gt_bboxes = gt[imgkey]
+        k, str_rects = gt_dataset.seek_by_key(imgkey, gt_split, 'label',
+                version=gt_version)
+        gt_bboxes = json.loads(str_rects)
         if region_only:
             for bbox in itertools.chain(pred_bboxes, gt_bboxes):
                 bbox["class"] = "entity"
@@ -128,10 +132,11 @@ def visualize_fp_fn_result(key_fp_fn_pred_gt_result, data, out_folder):
     dataset = TSVDataset(data)
     total = 0
     def img_key2fname(key):
-        fname = re.sub('[^0-9a-zA-Z.-_]+', '', key)
+        fname = re.sub('[^0-9a-zA-Z-_]+', '', key)
         if not fname.endswith('.jpg'):
             fname = fname + '.jpg'
         return fname
+    ensure_directory(out_folder)
 
     for key, str_false_pos, str_false_neg, str_pred, str_gt in \
         tqdm(tsv_reader(key_fp_fn_pred_gt_result)):
@@ -169,3 +174,24 @@ def visualize_fp_fn_result(key_fp_fn_pred_gt_result, data, out_folder):
         save_image(x, op.join(out_folder,
             data, img_key2fname(key)))
     logging.info(total)
+
+if __name__ == '__main__':
+    #full_expid = 'TaxLogoV1_7_with_bb_e2e_faster_rcnn_R_34_FPN_fast_tb_M_basemodel35271_BS16_MaxIter20e_LR0.01_RGB'
+    #predict_file = 'model_iter_0090952.pt.TaxLogoV5_brand1048Test4_with_bb.test.predict.tsv'
+    #test_data = 'TaxLogoV5_brand1048Test4_with_bb'
+    #test_split = 'test'
+    #test_version = 0
+
+    full_expid = 'TaxLogoV6_2_with_bb_e2e_faster_rcnn_R_34_FPN_fast_tb_M_basemodel35271_BS64_MaxIter20e_LR0.005_RGB'
+    predict_file = 'model_iter_0073548.pt.brand1048.test.predict.tsv'
+    test_data = 'brand1048'
+    test_split = 'test'
+    test_version = 4
+
+    pred_file = 'output/{}/snapshot/{}'.format(full_expid, predict_file)
+    gt_file = TSVDataset(test_data).iter_data(test_split, 'label', test_version)
+    outdir = '/mnt/gpu02_raid/xiaowh/tmp/'
+    outfile = op.join(outdir, 'tmp.tsv')
+    get_wrong_pred(pred_file, test_data, test_split, test_version, labelmap=None, outfile=outfile,
+                   min_conf=0.5, iou=0.5, gt_conf=0.0, region_only=False, num_samples=None)
+    visualize_fp_fn_result(outfile, test_data, outdir)

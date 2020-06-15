@@ -31,7 +31,7 @@ def tsv_rect_to_json_rect(rect, image_id, label_to_id=None, extra=1):
     return ann
 
 def convert_to_cocoformat(predict_tsv, predict_json, label_to_id=None,
-        key_to_id=None):
+        key_to_id=None, extra=1):
     rows = tsv_reader(predict_tsv)
     annotations = []
     from tqdm import tqdm
@@ -42,7 +42,8 @@ def convert_to_cocoformat(predict_tsv, predict_json, label_to_id=None,
             image_id = key_to_id[image_id]
         rects = json.loads(row[1])
         for rect in rects:
-            ann = tsv_rect_to_json_rect(rect, image_id, label_to_id)
+            ann = tsv_rect_to_json_rect(rect, image_id, label_to_id,
+                                        extra=extra)
             annotations.append(ann)
 
     write_to_file(json.dumps(annotations), predict_json)

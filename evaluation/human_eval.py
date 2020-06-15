@@ -25,6 +25,8 @@ parser = argparse.ArgumentParser(
 parser.add_argument('--config', default='./groundtruth/config.yaml', type=str,
                     help='''path to yaml config file of ground truth and predictions,
                     default is ./groundtruth/config.yaml''')
+parser.add_argument('--tag_only', action='store_true',
+                    help='Evaluate tag instead of detection results')
 parser.add_argument('--blacklist', default='', type=str,
                     help='''blacklist filename, blocking categories you don't
                     want to evaluate here''')
@@ -115,7 +117,7 @@ def eval_dataset(gt_config_file, dataset_name, iou_threshold,
     gt_tsv = DetectionFile(gt_file, blacklist=blacklist)
     gt = {}
     for imgkey in gt_tsv:
-        gt[imgkey] = [b for b in gt_tsv[imgkey] if "rect" in b]
+        gt[imgkey] = [b for b in gt_tsv[imgkey]]
     num_gt_per_class = collections.defaultdict(int)
     for imgkey in gt:
         for b in gt[imgkey]:
@@ -162,7 +164,7 @@ def eval_dataset(gt_config_file, dataset_name, iou_threshold,
 
 
 def draw_pr_curve(gt_config_file, dataset_name, iou_threshold,
-                  start_from_conf=0.3, blacklist=None):
+                  start_from_conf=0.3, blacklist=None, is_tag=False):
     """Draws precision recall curve for all models on the dataset
     """
     gt_cfg = GroundTruthConfig(gt_config_file)
@@ -171,7 +173,7 @@ def draw_pr_curve(gt_config_file, dataset_name, iou_threshold,
     gt = {}
     num_gt = 0
     for imgkey in gt_tsv:
-        gt[imgkey] = [b for b in gt_tsv[imgkey] if "rect" in b]
+        gt[imgkey] = [b for b in gt_tsv[imgkey]]
         num_gt += len(gt[imgkey])
 
     fig, ax = plt.subplots()
@@ -236,6 +238,10 @@ def draw_pr_curve(gt_config_file, dataset_name, iou_threshold,
 
 
 def main(args):
+    if args.tag_only:
+        args.iou_threshold = 0
+        logging.info('override IoU threshold for tagging')
+
     dataset_list = args.set
     if dataset_list is None:
         gt_cfg = GroundTruthConfig(args.config)

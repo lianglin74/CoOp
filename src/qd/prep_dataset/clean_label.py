@@ -9,7 +9,7 @@ import simplejson as json
 
 
 class RemoveSmall(object):
-    def __init__(self, ratio=1e-3):
+    def __init__(self, ratio=1e-4):
         self.ratio = ratio
 
     def __call__(self, param, info):
@@ -44,7 +44,7 @@ class TruncateInRange(object):
         return param
 
 class MergeColocate(object):
-    def __init__(self, iou_th=0.85):
+    def __init__(self, iou_th=0.95):
         self.iou_th = iou_th
 
     def __call__(self, param, info):
@@ -116,9 +116,9 @@ class CleanerCompose(object):
 
 def clean_label(data, split, version):
     cleaner = CleanerCompose([
-        RemoveSmall(),
         TruncateInRange(),
         MergeColocate(),
+        RemoveSmall(),
         #RemoveDuplicate(),
         ])
     process_label(data, split, version, cleaner)
@@ -138,6 +138,9 @@ class ReplaceIsGroupOfByTightness(object):
 
 def process_label(data, split, version, cleaner):
     assert isinstance(cleaner, CleanerCompose), 'we use its components to save debug info'
+    from qd.process_tsv import populate_dataset_details, populate_dataset_hw
+    populate_dataset_details(data)
+    populate_dataset_hw(data)
     dataset = TSVDataset(data)
     version = version
     if version == -1:
@@ -147,7 +150,7 @@ def process_label(data, split, version, cleaner):
     num_rows = dataset.num_rows(split)
     info = {}
     def gen_rows():
-        for i, (label_row, hw_row) in tqdm(enumerate(zip(label_iter, hw_iter)),
+        for _, (label_row, hw_row) in tqdm(enumerate(zip(label_iter, hw_iter)),
                 total=num_rows):
             label_key, str_label = label_row
             hw_key, str_hw = hw_row

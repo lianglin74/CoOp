@@ -12,6 +12,7 @@ class WarmupCosineAnnealingLR(torch.optim.lr_scheduler._LRScheduler):
         warmup_iters=500,
         warmup_method="linear",
         last_epoch=-1,
+        cosine_restart_after_warmup=False,
     ):
         if warmup_method not in ("constant", "linear"):
             raise ValueError(
@@ -23,7 +24,11 @@ class WarmupCosineAnnealingLR(torch.optim.lr_scheduler._LRScheduler):
         self.warmup_factor = warmup_factor
         self.warmup_iters = warmup_iters
         self.warmup_method = warmup_method
+        self.cosine_restart_after_warmup = cosine_restart_after_warmup
         super(WarmupCosineAnnealingLR, self).__init__(optimizer, last_epoch)
+
+        from qd.qd_common import print_frame_info
+        print_frame_info()
 
     def get_lr(self):
         warmup_factor = 1
@@ -38,11 +43,20 @@ class WarmupCosineAnnealingLR(torch.optim.lr_scheduler._LRScheduler):
                 for base_lr in self.base_lrs
             ]
         else:
-            return [
-                self.min_lr + (base_lr - self.min_lr) *
-                (1 + math.cos(math.pi * self.last_epoch / self.max_iter)) / 2
-                for base_lr in self.base_lrs
-            ]
+            if not self.cosine_restart_after_warmup:
+                return [
+                    self.min_lr + (base_lr - self.min_lr) *
+                    (1 + math.cos(math.pi * self.last_epoch / self.max_iter)) / 2
+                    for base_lr in self.base_lrs
+                ]
+            else:
+                return [
+                    self.min_lr + (base_lr - self.min_lr) *
+                    (1 + math.cos(math.pi * (self.last_epoch -
+                                             self.warmup_iters) /
+                                  (self.max_iter - self.warmup_iters))) / 2
+                    for base_lr in self.base_lrs
+                ]
 
 def create_warmup_cosine_annealing_lr(optimizer,
         T_max, warmup_factor, warmup_iters, warmup_method, last_epoch=-1):

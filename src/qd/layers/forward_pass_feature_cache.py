@@ -1,26 +1,26 @@
 import torch
 import logging
 from collections import OrderedDict
-from maskrcnn_benchmark.structures.bounding_box import BoxList
+#from maskrcnn_benchmark.structures.bounding_box import BoxList
 
 
-def clone(x):
-    if isinstance(x, torch.Tensor):
-        return x.cpu().clone().detach()
-    elif isinstance(x, list):
-        return [clone(sub) for i, sub in enumerate(x)]
-    elif isinstance(x, tuple):
-        return tuple(list(clone(sub) for i, sub in enumerate(x)))
-    elif isinstance(x, BoxList):
-        return x.to(torch.device('cpu')).copy_with_fields(x.fields())
-    else:
-        logging.info('unknown type and return directly {}'.format(
-            type(x)))
-        return x
+#def clone(x):
+    #if isinstance(x, torch.Tensor):
+        #return x.cpu().clone().detach()
+    #elif isinstance(x, list):
+        #return [clone(sub) for i, sub in enumerate(x)]
+    #elif isinstance(x, tuple):
+        #return tuple(list(clone(sub) for i, sub in enumerate(x)))
+    #elif isinstance(x, BoxList):
+        #return x.to(torch.device('cpu')).copy_with_fields(x.fields())
+    #else:
+        #logging.info('unknown type and return directly {}'.format(
+            #type(x)))
+        #return x
 
 def sumarize_data_by_float(x):
     if isinstance(x, torch.Tensor):
-        return float(x.abs().sum())
+        return float(x.abs().mean())
     elif isinstance(x, list):
         return sum([sumarize_data_by_float(sub) for sub in x])
     elif isinstance(x, tuple):

@@ -1,4 +1,4 @@
-import ruamel.yaml as yaml
+import yaml
 from collections import OrderedDict
 import progressbar
 import json
@@ -13,7 +13,7 @@ import numpy as np
 import logging
 import glob
 import re
-import tqdm
+from tqdm import tqdm
 try:
     from itertools import izip as zip
 except ImportError:
@@ -45,6 +45,7 @@ except ImportError:
     from urllib2 import urlopen, Request
     from urllib2 import HTTPError
 import copy
+from deprecated import deprecated
 
 
 def print_trace():
@@ -58,6 +59,16 @@ def try_once(func):
         except Exception as e:
             logging.info('ignore error \n{}'.format(str(e)))
             print_trace()
+    return func_wrapper
+
+def master_process_run(func):
+    def func_wrapper(*args, **kwargs):
+        if get_mpi_rank() == 0:
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                logging.info('ignore error \n{}'.format(str(e)))
+                print_trace()
     return func_wrapper
 
 @try_once
@@ -111,6 +122,11 @@ def find_float_tolorance_unequal(d1, d2):
     if all(isinstance(x, basestring) for x in [d1, d2]) or \
             all(type(x) is bool for x in [d1, d2]):
         if d1 != d2:
+            return ['0']
+        else:
+            return []
+    if type(d1) is int and type(d2) is int:
+        if d1 == d2:
             return []
         else:
             return ['0']
@@ -120,9 +136,7 @@ def find_float_tolorance_unequal(d1, d2):
             return []
         else:
             return ['0']
-    if type(d1) != type(d2):
-        return ['0']
-    if type(d1) in [dict, OrderedDict]:
+    if type(d1) in [dict, OrderedDict] and type(d2) in [dict, OrderedDict]:
         if len(d1) != len(d2):
             return ['0']
         path_d1 = dict_get_all_path(d1, with_type=True)
@@ -137,7 +151,7 @@ def find_float_tolorance_unequal(d1, d2):
                 for r in curr_result:
                     result.append(p + '$' + r)
         return result
-    elif type(d1) in [tuple, list]:
+    if type(d1) in [tuple, list] and type(d2) in [tuple, list]:
         if len(d1) != len(d2):
             return ['-1']
         result = []
@@ -146,11 +160,13 @@ def find_float_tolorance_unequal(d1, d2):
             for r in curr_result:
                 result.append('{}${}'.format(i, r))
         return result
+    if type(d1) != type(d2):
+        return ['0']
     else:
         import torch
         if type(d1) is torch.Tensor:
-            diff = (d1 - d2).abs().sum()
-            s = d1.abs().sum()
+            diff = (d1 - d2).float().abs().sum()
+            s = d1.float().abs().sum()
             if float(s) < 1e-5:
                 equal = diff < 1e-5
             else:
@@ -158,7 +174,6 @@ def find_float_tolorance_unequal(d1, d2):
             if equal:
                 return []
             else:
-                import ipdb;ipdb.set_trace(context=15)
                 return ['0']
         else:
             raise Exception('unknown type')
@@ -203,11 +218,11 @@ def float_tolorance_equal(d1, d2, check_order=True):
         else:
             return d1 == d2
     elif type(d1) is np.ndarray:
-        try:
-            return np.abs(d1[:] - d2[:]).sum() < 1e-5 * np.abs(d1[:]).sum()
-        except:
-            logging.info('size might not be the same; d1 = {}; d2 = {}'.format(d1.shape, d2.shape))
+        if not float_tolorance_equal(d1.shape, d2.shape, check_order=True):
             return False
+        return np.absolute(d1 - d2).sum() <= 1e-5 * np.absolute(d1).sum()
+    elif type(d1) in [np.float64]:
+        return np.absolute(d1 - d2).sum() <= 1e-5 * np.absolute(d1).sum()
     else:
         import torch
         if type(d1) is torch.Tensor:
@@ -305,7 +320,7 @@ def compile_by_docker(src_zip, docker_image, dest_zip):
 def zip_qd(out_zip):
     ensure_directory(op.dirname(out_zip))
     cmd = ['zip',
-            '-yrv',
+            '-uyrv',
             out_zip,
             '*',
             '-x',
@@ -329,11 +344,15 @@ def zip_qd(out_zip):
             '-x',
             '\*build/temp.linux-x86_64-3.6/\*',
             '-x',
+            '\*src/detectron2/datasets/\*',
+            '-x',
             '\*src/CCSCaffe/models/\*',
             '-x',
             '\*src/CCSCaffe/data/\*',
             '-x',
             '\*src/CCSCaffe/examples/\*',
+            '-x',
+            '\*src/detectron2/output\*',
             '-x',
             'aux_data/yolo9k/\*',
             '-x',
@@ -372,8 +391,10 @@ def limited_retry_agent(num, func, *args, **kwargs):
     for i in range(num):
         try:
             return func(*args, **kwargs)
-        except:
-            logging.info('fails: tried {}-th time'.format(i + 1))
+        except Exception as e:
+            logging.info('fails with \n{}: tried {}-th time'.format(
+                e,
+                i + 1))
             import time
             print_trace()
             if i == num - 1:
@@ -393,18 +414,48 @@ def retry_agent(func, *args, **kwargs):
             time.sleep(5)
 
 def ensure_copy_folder(src_folder, dst_folder):
-    if op.isdir(dst_folder):
-        return
-    shutil.copytree(src_folder, dst_folder)
+    cmd_run('rsync -ravz {}/ {} --progress'.format(
+        src_folder, dst_folder).split(' '))
 
 def get_current_time_as_str():
     return datetime.now().strftime('%Y_%m_%d_%H_%M_%S')
 
-def iter_swap_param(swap_params):
+def iter_swap_param_simple(swap_params):
+    if isinstance(swap_params, dict):
+        swap_params = [[k, v] for k, v in swap_params.items()]
     num = len(swap_params)
+    for p in swap_params:
+        if type(p[1]) is not list and type(p[1]) is not tuple:
+            p[1] = [p[1]]
     counts = [len(p[1]) for p in swap_params]
     assert all(c > 0 for c in counts)
-    assert all(type(p[1]) is list or type(p[1]) is tuple for p in swap_params)
+    idx = [0] * num
+
+    while True:
+        result = {}
+        for p, i in zip(swap_params, idx):
+            result[p[0]] = p[1][i]
+        yield result
+
+        for i in range(num - 1, -1, -1):
+            idx[i] = idx[i] + 1
+            if idx[i] < counts[i]:
+                break
+            else:
+                idx[i] = 0
+                if i == 0:
+                    return
+
+@deprecated('use iter_swap_param_simple without passing complex key')
+def iter_swap_param(swap_params):
+    if isinstance(swap_params, dict):
+        swap_params = [(k, v) for k, v in swap_params.items()]
+    num = len(swap_params)
+    for p in swap_params:
+        if type(p[1]) is not list and type(p[1]) is not tuple:
+            p[1] = [p[1]]
+    counts = [len(p[1]) for p in swap_params]
+    assert all(c > 0 for c in counts)
     idx = [0] * num
 
     while True:
@@ -523,6 +574,27 @@ def cmd_run(list_cmd, return_output=False, env=None,
         logging.info('finished the cmd run')
         return message.decode('utf-8')
 
+def parallel_imap(func, all_task, num_worker=16):
+    if num_worker > 0:
+        #from multiprocessing import Pool
+        from pathos.multiprocessing import Pool
+        m = Pool(num_worker)
+        result = []
+        for x in tqdm(m.imap(func, all_task), total=len(all_task)):
+            result.append(x)
+        # there are some error comes out from os.fork() and which says
+        # OSError: [Errno 24] Too many open files.
+        # self.pid = os.fork()
+        # here, we explicitly close the pool and see if it helps. note, this is
+        # not verified to work, if we still see that kind of error message, we
+        # need other solutions
+        m.close()
+        return result
+    else:
+        result = []
+        for t in all_task:
+            result.append(func(t))
+        return result
 
 def parallel_map(func, all_task, num_worker=16):
     if num_worker > 0:
@@ -560,10 +632,34 @@ def url_to_file_by_curl(url, fname, bytes_start=None, bytes_end=None):
         if bytes_start < 0:
             bytes_start = 0
     if bytes_end is None:
-        cmd_run(['curl', '-r', '{}-'.format(bytes_start),
+        # -f: if it fails, no output will be sent to output file
+        cmd_run(['curl', '-f', '-r', '{}-'.format(bytes_start),
             url, '--output', fname])
     else:
-        raise NotImplementedError
+        # curl: end is inclusive
+        cmd_run(['curl', '-f', '-r', '{}-{}'.format(bytes_start, bytes_end - 1),
+            url, '--output', fname])
+
+def url_to_bytes(url):
+    try:
+        fp = urlopen(url, timeout=30)
+        buf = fp.read()
+        real_url = fp.geturl()
+        if real_url != url and (not real_url.startswith('https') or
+                real_url.replace('https', 'http') != url):
+            logging.info('new url = {}; old = {}'.format(fp.geturl(), url))
+            # the image gets redirected, which means the image is not available
+            return None
+        return buf
+    except HTTPError as err:
+        logging.error("url: {}; error code {}; message: {}".format(
+            url, err.code, err.msg))
+        return None
+    except:
+        import traceback
+        logging.error("url: {}; unknown {}".format(
+            url, traceback.format_exc()))
+        return None
 
 def url_to_str(url):
     try:
@@ -611,8 +707,12 @@ def str_to_image(buf):
     im = cv2.imdecode(image, cv2.IMREAD_COLOR)
     return im
 
+def bytes_to_image(bs):
+    image = np.asarray(bytearray(bs), dtype='uint8')
+    return cv2.imdecode(image, cv2.IMREAD_COLOR)
+
 def url_to_image(url):
-    buf = url_to_str(url)
+    buf = url_to_bytes(url)
     if buf is None:
         return None
     else:
@@ -690,6 +790,62 @@ def scrape_bing_general_rich(query_term, depth):
             url_to_result[url] = rl
 
     return list(url_to_result.values())
+
+def request_by_browser(url):
+    from selenium.webdriver.chrome.options import Options
+    from selenium import webdriver
+    import bs4
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    driver = webdriver.Chrome(options=chrome_options)
+    driver.get(url)
+    soup = bs4.BeautifulSoup(driver.page_source, features='lxml')
+    # if we return immediately, the page_source might not be ready
+    time.sleep(1)
+    soup = bs4.BeautifulSoup(driver.page_source, features='lxml')
+    return soup
+
+def iter_bing_visual_search(query_url, origin_url=True):
+    format_str = 'http://www.bing.com/images/searchbyimage?FORM=IRSBIQ&cbir=sbi&imgurl={0}'
+    # the following two parameters are not valid
+    #format_str += '&first=100'
+    #format_str += '&count=10'
+    bing_url = format_str.format(query_url)
+    soup = request_by_browser(bing_url)
+    html_keywords = ['richImage relImg', 'richImage relProd flyout']
+    alts = ['See related image detail', 'See related product detail']
+    caption_classes = ['span', 'a']
+    for html_key_word, alt, caption_class in zip(html_keywords, alts, caption_classes):
+        for i, container in enumerate(soup.find_all(class_= html_key_word)):
+            # one container has one image and one caption container. we will
+            # extract the image and the caption, which might be helpful in the
+            # future
+            info = {'rank': i}
+            info['html_keyword'] = html_key_word
+            # original url
+            if origin_url:
+                imgs = container.find_all(class_='richImgLnk')
+                if len(imgs) == 1:
+                    img = imgs[0]
+                    url = 'http://www.bing.com/images/search' + img.attrs['href']
+                    result = request_by_browser(url)
+                    imgs = result.find_all(alt='See the source image')
+                    if len(imgs) == 1:
+                        img = imgs[0]
+                        url = img.attrs['src']
+                        info['url'] = url
+
+            # bing cache image
+            imgs = container.find_all('img', alt=alt)
+            if len(imgs) == 1:
+                bing_cache_url = 'http://www.bing.com' + imgs[0].attrs['src']
+                info['bing_cache_url'] = bing_cache_url
+
+            captions = container.find_all(caption_class, class_='tit')
+            if len(captions) == 1:
+                cap = captions[0]
+                info['caption'] = cap.text
+            yield info
 
 def scrape_bing_general(query_term, depth):
     '''
@@ -1164,11 +1320,15 @@ def generate_lineidx(filein, idxout):
     idxout_tmp = idxout + '.tmp'
     with open(filein, 'r') as tsvin, open(idxout_tmp,'w') as tsvout:
         fsize = os.fstat(tsvin.fileno()).st_size
-        fpos = 0;
+        fpos = 0
+        fbar_last_pos = 0
+        fbar = tqdm(total=fsize, unit_scale=True)
         while fpos!=fsize:
             tsvout.write(str(fpos)+"\n");
             tsvin.readline()
             fpos = tsvin.tell();
+            fbar.update(fpos - fbar_last_pos)
+            fbar_last_pos = fpos
     os.rename(idxout_tmp, idxout)
 
 def drop_second_batch_in_bn(net):
@@ -1435,10 +1595,23 @@ def ensure_directory(path):
         assert op.isdir(op.abspath(path)), path
 
 def parse_pattern(pattern, s):
+    result = parse_pattern_as_is(pattern, s)
+    if result is None:
+        return
+    return [float(g) for g in result]
+
+def parse_pattern_as_is(pattern, s):
     result = re.search(pattern, s)
     if result is None:
         return result
-    return [float(g) for g in result.groups()]
+    return [g for g in result.groups()]
+
+def iter_match_document(pattern, fname):
+    for line in read_lines(fname):
+        result = parse_pattern_as_is(pattern, line)
+        if result is None:
+            continue
+        yield result
 
 def parse_yolo_log(log_file):
     pattern = 'loss_xy: ([0-9, .]*); loss_wh: ([0-9, .]*); '
@@ -1777,9 +1950,12 @@ def unicode_representer(dumper, uni):
     node = yaml.ScalarNode(tag=u'tag:yaml.org,2002:str', value=uni)
     return node
 
-def dump_to_yaml_str(context):
+def dump_to_yaml_bytes(context):
     return yaml.dump(context, default_flow_style=False,
             encoding='utf-8', allow_unicode=True)
+
+def dump_to_yaml_str(context):
+    return dump_to_yaml_bytes(context).decode()
 
 def write_to_yaml_file(context, file_name):
     ensure_directory(op.dirname(file_name))
@@ -1788,18 +1964,21 @@ def write_to_yaml_file(context, file_name):
                 encoding='utf-8', allow_unicode=True)
 
 def load_from_yaml_str(s):
-    return yaml.load(s, Loader=yaml.CLoader)
+    return yaml.load(s, Loader=yaml.UnsafeLoader)
 
 def load_from_yaml_file(file_name):
     with open(file_name, 'r') as fp:
-        return yaml.load(fp, Loader=yaml.CLoader)
+        return yaml.load(fp, Loader=yaml.UnsafeLoader)
 
-def write_to_file(contxt, file_name):
+def write_to_file(contxt, file_name, append=False):
     p = os.path.dirname(file_name)
     ensure_directory(p)
     if type(contxt) is str:
         contxt = contxt.encode()
-    with open(file_name, 'wb') as fp:
+    flag = 'wb'
+    if append:
+        flag = 'ab'
+    with open(file_name, flag) as fp:
         fp.write(contxt)
 
 def load_list_file(fname):
@@ -1916,11 +2095,27 @@ class FileProgressingbar:
     def update(self):
         self.pbar.update(self.fileobj.tell())
 
-def encoded_from_img(im, quality=None):
-    if quality:
-        x = cv2.imencode('.jpg', im, (cv2.IMWRITE_JPEG_QUALITY, quality))[1]
+def is_pil_image(image):
+    from PIL import Image
+    return isinstance(image, Image.Image)
+
+def encoded_from_img(im, quality=None, save_type=None):
+    if save_type is None:
+        save_type = 'jpg'
+    assert save_type in ['jpg', 'png']
+    if not is_pil_image(im):
+        if quality:
+            x = cv2.imencode('.{}'.format(save_type), im,
+                    (cv2.IMWRITE_JPEG_QUALITY, quality))[1]
+        else:
+            x = cv2.imencode('.{}'.format(save_type), im)[1]
     else:
-        x = cv2.imencode('.jpg', im)[1]
+        if save_type == 'jpg':
+            save_type = 'JPEG'
+        import io
+        x = io.BytesIO()
+        im.save(x, format=save_type)
+        x = x.getvalue()
     return base64.b64encode(x)
 
 def encode_image(im, quality=None):
@@ -1930,6 +2125,19 @@ def encode_image(im, quality=None):
         x = cv2.imencode('.jpg', im)[1]
     return x.tobytes()
 
+def is_valid_image(im):
+    return im is not None and all(x != 0 for x in im.shape)
+
+def pilimg_from_base64(imagestring):
+    try:
+        from PIL import Image
+        import io
+        jpgbytestring = base64.b64decode(imagestring)
+        image = Image.open(io.BytesIO(jpgbytestring))
+        return image
+    except:
+        return None;
+
 def img_from_base64(imagestring):
     try:
         jpgbytestring = base64.b64decode(imagestring)
@@ -1938,6 +2146,14 @@ def img_from_base64(imagestring):
         return r
     except:
         return None;
+
+def img_from_bytes(jpgbytestring):
+    try:
+        nparr = np.frombuffer(jpgbytestring, np.uint8)
+        r = cv2.imdecode(nparr, cv2.IMREAD_COLOR);
+        return r
+    except:
+        return None
 
 def img_from_base64_ignore_rotation(str_im):
     jpgbytestring = base64.b64decode(str_im)
@@ -2045,6 +2261,9 @@ def dict_has_path(d, p, with_type=False):
 def dict_set_path_if_not_exist(param, k, v):
     if not dict_has_path(param, k):
         dict_update_path_value(param, k, v)
+        return True
+    else:
+        return False
 
 def dict_update_path_value(d, p, v):
     ps = p.split('$')
@@ -2150,14 +2369,42 @@ def plot_distribution(x, y, color=None, fname=None):
     else:
         plt.show()
 
+g_key_to_cache = {}
+def run_if_not_memory_cached(func, *args, **kwargs):
+    force = False
+    if '__force' in kwargs:
+        if kwargs['__force']:
+            force = True
+        del kwargs['__force']
+    if '__key' in kwargs:
+        key = kwargs.pop('__key')
+    else:
+        import pickle as pkl
+        key = hash_sha1(pkl.dumps(OrderedDict({'arg': pformat(args), 'kwargs':
+            pformat(kwargs), 'func_name': func.__name__})))
+    global g_key_to_cache
+
+    if key in g_key_to_cache and not force:
+        return g_key_to_cache[key]
+    else:
+        result = func(*args, **kwargs)
+        g_key_to_cache[key] = result
+        return result
+
 def run_if_not_cached(func, *args, **kwargs):
+    force = False
+    if '__force' in kwargs:
+        if kwargs['__force']:
+            force = True
+        del kwargs['__force']
+
     import pickle as pkl
-    key = hash_sha1(pkl.dumps(OrderedDict({'arg': args, 'kwargs': kwargs, 'func_name':
-        func.__name__})))
+    key = hash_sha1(pkl.dumps(OrderedDict({'arg': pformat(args), 'kwargs':
+        pformat(kwargs), 'func_name': func.__name__})))
     cache_folder = op.expanduser('./output/run_if_not_cached/')
     cache_file = op.join(cache_folder, key)
 
-    if op.isfile(cache_file):
+    if op.isfile(cache_file) and not force:
         logging.info('loading {}'.format(cache_file))
         return pkl.loads(read_to_buffer(cache_file))
     else:
@@ -2169,15 +2416,26 @@ def run_if_not_cached(func, *args, **kwargs):
 def convert_to_command_line(param, script):
     logging.info(pformat(param))
     x = copy.deepcopy(param)
-    from qd.qd_common import dump_to_yaml_str
     result = "python {} -bp {}".format(
             script,
-            base64.b64encode(dump_to_yaml_str(x)).decode())
+            base64.b64encode(dump_to_yaml_bytes(x)).decode())
     return result
 
-def print_table(a_to_bs, all_key=None):
-    all_line = get_table_print_lines(a_to_bs, all_key)
-    logging.info('\n{}'.format('\n'.join(all_line)))
+def print_table(a_to_bs, all_key=None, latex=False, **kwargs):
+    if len(a_to_bs) == 0:
+        return
+    if not latex:
+        all_line = get_table_print_lines(a_to_bs, all_key)
+        logging.info('\n{}'.format('\n'.join(all_line)))
+    else:
+        from qd.latex_writer import print_simple_latex_table
+        if all_key is None:
+            all_key = list(set(a for a_to_b in a_to_bs for a in a_to_b))
+            all_key = sorted(all_key)
+        x = print_simple_latex_table(a_to_bs,
+                all_key, **kwargs)
+        logging.info('\n{}'.format(x))
+        return x
 
 def get_table_print_lines(a_to_bs, all_key):
     if len(a_to_bs) == 0:
@@ -2187,7 +2445,7 @@ def get_table_print_lines(a_to_bs, all_key):
         all_key = []
         for a_to_b in a_to_bs:
             all_key.extend(a_to_b.keys())
-        all_key = list(set(all_key))
+        all_key = sorted(list(set(all_key)))
     all_width = [max([len(str(a_to_b.get(k, ''))) for a_to_b in a_to_bs] +
         [len(k)]) for k in all_key]
     row_format = ' '.join(['{{:{}}}'.format(w) for w in all_width])
@@ -2273,12 +2531,18 @@ def attach_philly_maskrcnn_log_if_is(all_log, job_info):
             delay = (now - log_time).total_seconds()
             d, h = parse_eta_in_hours(left)
             job_info['left'] = '{}-{:.1f}h({:.1f}s)'.format(d, h, delay)
+            job_info['eta'] = calc_eta(d, h)
             return True
     return False
 
+def calc_eta(days, hours):
+    from datetime import timedelta
+    x = datetime.now() + timedelta(days=days, hours=hours + 1)
+    return '{}/{}-{}'.format(x.month, x.day, x.hour)
+
 def attach_aml_maskrcnn_log_if_is(all_log, job_info):
     for log in reversed(all_log):
-        pattern = r'(.*),.* trainer\.py.*do_train\(\): eta: (.*) iter: [0-9]*  speed: ([0-9\.]*).*'
+        pattern = r'(.*),.* trainer\.py.*(?:do_train|do_train_dict)\(\): eta: (.*) iter: [0-9]*  speed: ([0-9\.]*).*'
         result = re.match(pattern, log)
         if result and result.groups():
             log_time, left, speed = result.groups()
@@ -2289,6 +2553,23 @@ def attach_aml_maskrcnn_log_if_is(all_log, job_info):
             # log_time here is UTC. convert it to local time
             d, h = parse_eta_in_hours(left)
             job_info['left'] = '{}-{:.1f}h'.format(d, h)
+            job_info['eta'] = calc_eta(d, h)
+            return True
+    return False
+
+def attach_aml_detectron2_log_if_is(all_log, job_info):
+    for log in reversed(all_log):
+        pattern = r'(.*),.* events\.py.*eta: (.*) iter: [0-9]*.*'
+        result = re.match(pattern, log)
+        if result and result.groups():
+            log_time, left = result.groups()
+            from dateutil.parser import parse
+            log_time = parse(log_time)
+            job_info['log_time'] = log_time
+            # log_time here is UTC. convert it to local time
+            d, h = parse_eta_in_hours(left)
+            job_info['left'] = '{}-{:.1f}h'.format(d, h)
+            job_info['eta'] = calc_eta(d, h)
             return True
     return False
 
@@ -2331,6 +2612,8 @@ def attach_log_parsing_result(job_info):
     if attach_aml_maskrcnn_log_if_is(all_log, job_info):
         return
     if attach_philly_caffe_log_if_is(all_log, job_info):
+        return
+    if attach_aml_detectron2_log_if_is(all_log, job_info):
         return
 
 def print_offensive_folder(folder):
@@ -2434,7 +2717,9 @@ def build_speed_tree(component_speeds):
 
 def get_vis_str(component_speeds):
     roots = build_speed_tree(component_speeds)
-    assert len(roots) == 1
+    if len(roots) == 0:
+        return ''
+    assert len(roots) == 1, roots
     root = roots[0]
     for n in root.iter_search_nodes():
         n.global_avg_in_ms = round(1000. * n.global_avg, 1)
@@ -2442,7 +2727,7 @@ def get_vis_str(component_speeds):
         s = sum([c.global_avg for c in n.children])
         n.unique_in_ms = round(1000. * (n.global_avg - s), 1)
     return root.get_ascii(attributes=
-        ['name', 'global_avg_in_ms', 'unique_in_ms'])
+        ['name', 'global_avg_in_ms', 'unique_in_ms', 'count'])
 
 def create_vis_net_file(speed_yaml, vis_txt):
     info = load_from_yaml_file(speed_yaml)
@@ -2580,35 +2865,82 @@ def releaseLock(locked_file_descriptor):
     ''' release exclusive lock file access '''
     locked_file_descriptor.close()
 
-def inject_maskrcnn_log_to_board(fname, folder, keys=None):
-    if not keys:
-        keys = ['loss_box_reg', 'loss_classifier', 'loss_objectness', 'loss_rpn_box_reg']
-    pattern = ''.join('.*{}: ([0-9]*\.[0-9]*) .*'.format(k)for k in keys)
-    pattern = '.*iter: ([0-9]*) ' + pattern
+def inject_yolo_by_maskrcnn_log_to_board(fname, folder):
+    keys = ['loss',
+            'cls',
+            'o_noobj',
+            'o_obj',
+            'wh',
+            'xy',
+            'time',
+            'data',
+            ]
+    pattern = ''.join('.*{}: ([0-9\.]*) \(([0-9\.]*)\).*'.format(k)for k in keys)
+    pattern = '.*iter: ([0-9]*) .*' + 'speed: ([0-9\.]*) images/sec' + pattern
     logging.info(pattern)
     all_loss = []
-    for line in read_to_buffer(fname).decode().split('\n'):
-        result = re.match(pattern, line)
-        if result is None:
-            continue
-        loss_info = {k: float(r) for r, k in zip(result.groups()[1:], keys)}
-        loss_info['iter'] = int(result.groups()[0])
-        all_loss.append(loss_info)
+    result = parse_nums(pattern, fname)
+    result_keys = ['iteration', 'speed']
+    for k in keys:
+        result_keys.append(k + '_medium')
+        result_keys.append(k + '_mean')
+    all_loss = [dict(zip(result_keys, r)) for r in result]
 
     logging.info(len(all_loss))
     from torch.utils.tensorboard import SummaryWriter
-    folder = op.join(folder, 'tensorboard')
-    ensure_remove_dir(folder)
     wt = SummaryWriter(log_dir=folder)
     for loss_info in all_loss:
-        for k in keys:
+        for k in result_keys:
+            if k == 'iteration':
+                continue
             wt.add_scalar(tag=k, scalar_value=loss_info[k],
-                    global_step=loss_info['iter'])
+                    global_step=loss_info['iteration'])
+
+def inject_maskrcnn_log_to_board(fname, folder, keys=None):
+    if keys is None:
+        keys = ['loss',
+                'criterion_loss',
+                #'loss_box_reg',
+                #'loss_classifier',
+                #'loss_objectness',
+                #'loss_rpn_box_reg',
+                'time',
+                'data',
+                ]
+    pattern = ''.join('.*{}: ([0-9\.]*) \(([0-9\.]*)\).*'.format(k)for k in keys)
+    pattern = '.*iter: ([0-9]*) .*' + 'speed: ([0-9\.]*) images/sec' + pattern
+    logging.info(pattern)
+    all_loss = []
+    result = parse_nums(pattern, fname)
+    result_keys = ['iteration', 'speed']
+    for k in keys:
+        result_keys.append(k + '_medium')
+        result_keys.append(k + '_mean')
+    all_loss = [dict(zip(result_keys, r)) for r in result]
+
+    logging.info(len(all_loss))
+    from torch.utils.tensorboard import SummaryWriter
+    wt = SummaryWriter(log_dir=folder)
+    for loss_info in all_loss:
+        for k in result_keys:
+            if k == 'iteration':
+                continue
+            wt.add_scalar(tag=k, scalar_value=loss_info[k],
+                    global_step=loss_info['iteration'])
 
 class DummyCfg(object):
     # provide a signature of clone(), used by maskrcnn checkpointer
     def clone(self):
         return
+
+def get_frame_info():
+    import inspect
+    frame = inspect.currentframe()
+    frames = inspect.getouterframes(frame)
+    frame = frames[1].frame
+    args, _, _, vs = inspect.getargvalues(frame)
+    info = {i: vs[i] for i in args}
+    return info
 
 def print_frame_info():
     import inspect
@@ -2625,6 +2957,138 @@ def print_frame_info():
             info.append('type({}) = {}'.format(i, type(vs[i])))
             continue
     logging.info('; '.join(info))
+
+def merge_speed_info(speed_yamls, out_yaml):
+    write_to_yaml_file([load_from_yaml_file(y) for y in speed_yamls
+        if op.isfile(y)], out_yaml)
+
+def merge_speed_vis(vis_files, out_file):
+    from qd.qd_common import ensure_copy_file
+    if len(vis_files) > 0 and op.isfile(vis_files[0]):
+        ensure_copy_file(vis_files[0], out_file)
+
+def merge_dict_to_cfg(dict_param, cfg):
+    """merge the key, value pair in dict_param into cfg
+
+    :dict_param: TODO
+    :cfg: TODO
+    :returns: TODO
+
+    """
+    def trim_dict(d, c):
+        """remove all the keys in the dictionary of d based on the existance of
+        cfg
+        """
+        to_remove = [k for k in d if k not in c]
+        for k in to_remove:
+            del d[k]
+        to_check = [(k, d[k]) for k in d if d[k] is dict]
+        for k, t in to_check:
+            trim_dict(t, getattr(c, k))
+    trimed_param = copy.deepcopy(dict_param)
+    trim_dict(trimed_param, cfg)
+    from yacs.config import CfgNode
+    cfg.merge_from_other_cfg(CfgNode(trimed_param))
+
+def execute_func(info):
+    # info = {'from': module; 'import': func_name, 'param': dict}
+    from importlib import import_module
+    modules = import_module(info['from'])
+    return getattr(modules, info['import'])(**info['param'])
+
+def detect_error_codes(log_file):
+    all_line = read_to_buffer(log_file).decode().split('\n')
+    error_codes = []
+    for _, line in enumerate(all_line):
+        if "raise RuntimeError('NaN encountered!')" in line:
+            error_codes.append('NaN')
+    return list(set(error_codes))
+
+def insensitive_glob(pattern):
+    def either(c):
+        return '[%s%s]' % (c.lower(), c.upper()) if c.isalpha() else c
+    return glob.glob(''.join(map(either, pattern)))
+
+def list_dir(folder):
+    return [f for f in os.listdir(folder) if op.isdir(op.join(folder, f))]
+
+def replace_place_holder(p, place_holder):
+    if isinstance(p, dict):
+        for k, v in p.items():
+            if type(v) == str and v.startswith('$'):
+                p[k] = place_holder[v[1:]]
+            else:
+                replace_place_holder(v, place_holder)
+    elif isinstance(p, list) or isinstance(p, tuple):
+        for i, x in enumerate(p):
+            if isinstance(x, str) and x.startswith('$'):
+                p[i] = place_holder[x[1:]]
+            else:
+                replace_place_holder(x, place_holder)
+
+def execute_pipeline(all_processor):
+    only_processors = [p for p in all_processor if p.get('only')]
+    need_check_processors = only_processors if len(only_processors) > 0 else all_processor
+    result = {}
+    result['process_result'] = []
+    place_holder = {}
+    for p in need_check_processors:
+        if p.get('ignore', False):
+            continue
+        replace_place_holder(p, place_holder)
+        if 'execute_if_true_else_break' in p:
+            r = execute_func(p['execute_if_true_else_break'])
+            if not r:
+                result['result'] = 'prereq_failed'
+                break
+        if p.get('force', False):
+            r = run_if_not_cached(execute_func, p['execute'],
+                    __force=True)
+        else:
+            r = run_if_not_cached(execute_func, p['execute'])
+        if 'output' in p:
+            place_holder[p['output']] = r
+        else:
+            if r is not None:
+                result['process_result'].append({'process_info': p, 'return': r})
+        if p.get('stop_after'):
+            logging.info('skip the rest since stop_after=True')
+            break
+    result['place_holder'] = place_holder
+    if 'result' not in result:
+        result['result'] = 'pass'
+    return result
+
+def remove_empty_keys_(ds):
+    keys = set([k for d in ds for k in d])
+    empty_keys = [k for k in keys if all(d.get(k) is None for d in ds)]
+    for k in empty_keys:
+        for d in ds:
+            if k in d:
+                del d[k]
+
+def max_iter_mult(m, factor):
+    if isinstance(m, int):
+        return int(m * factor)
+    elif isinstance(m, str):
+        assert m.endswith('e')
+        return '{}e'.format(int(float(m[:-1]) * factor))
+    else:
+        raise NotImplementedError
+
+def remove_empty_coco_style(rects, w, h):
+    rects = [r for r in rects if r.get('iscrowd', 0) == 0]
+    ret = []
+    for r in rects:
+        x1, y1, x2, y2 = r['rect']
+        x1 = min(w, max(0, x1))
+        x2 = min(w, max(0, x2))
+        y1 = min(h, max(0, y1))
+        y2 = min(h, max(0, y2))
+        if y2 > y1 and x2 > x1:
+            r['rect'] = [x1, y1, x2, y2]
+            ret.append(r)
+    return ret
 
 if __name__ == '__main__':
     init_logging()

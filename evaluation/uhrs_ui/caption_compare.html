@@ -1,0 +1,114 @@
+<html>
+<head>
+    <script type="text/javascript" src="https://ajax.aspnetcdn.com/ajax/jQuery/jquery-1.8.2.min.js"></script>
+<script type="text/javascript">
+//////////////////////////////////// System functions. Used by legacy xplate submit & skip buttons. /////////////////////////////////////////////////
+function xPlate_GoForward() {
+   top.xPlate.saveAndForward();
+};
+function xPlate_Skip() {
+   top.xPlate.skipBatch();
+};
+function xPlate_GoBack() {
+   top.xPlate.saveAndBacks();
+};
+//////////////////////////////////// Callback functions. These are called from UHRS onto your hitapp. /////////////////////////////////////////////////
+function xPlate_Validate() {
+    // Called on save to determine if save can be processed.
+    var len = $('input:radio[name="rating"]:checked').size();
+    if (len == 0) {
+        alert("Empty rating. Please provide your rating first.");
+        return false;
+    }
+
+    return true;
+};
+
+function xPlate_SubmitFeedback(appeal) {
+    if (appeal && document.getElementById('xPlate_audit_comment').value == "") {
+        alert("Please provide your comment first.");
+        return;
+    }
+    top.xPlate.submitJudgeFeedback(appeals);
+};
+function xPlate_SubmitAudit() {
+    if (document.getElementById('xPlate_audit_comment').value == "") {
+        alert("Please provide your comment first.");
+        return;
+    }
+    xPlate_GoForward();
+};
+// isFirstLoad = true for the initial loading of this Hit.
+// isFirstLoad = false if the Hit is being redisplayed to the judge (such as when review page is used, or RTAs being shown).
+function xPlate_OnLoad(isFirstLoad) {
+};
+//////////////////////////////////// End of system functions ///////////////////////////////////////////////
+
+</script>
+</head>
+<body style="width:100%;height:100%;margin:0px;overflow:auto">
+<style type="text/css">
+    fieldset {
+        padding: 0px;
+        border-radius:10px;
+        margin-bottom:10px;
+    }
+    input[type=radio] { vertical-align: middle; margin-left: 10px; margin-top:-2 }
+    tr:hover{
+        background:#EBF5FB;
+    }
+    label{
+        font-size: 16pt;
+    }
+    label:hover{
+        background:yellow;
+    }
+    input[type=radio]:hover {
+        background:yellow;
+    }
+    .highlight {
+        background:#f0f0f0;
+    }
+    .label_tag_score {
+        vertical-align: middle;
+        display: block;
+        //width:70px;
+    }
+    #collapseTrigger{
+        color:#fff;
+        display: block;
+        text-decoration: none;
+    }
+    input[type=submit] {
+        width: 40%;
+        margin-left: 30%;
+        margin-right: 30%;
+        height: 50px;
+        padding: 10px;
+        border-radius: 10px;
+        -moz-border-radius: 10px;
+        -webkit-border-radius: 10px
+    }
+</style>
+
+
+<h1>Image Caption Comparison</h1>
+<img id="imageURL" src="{HTML(image_url)}"  style="max-height:900px;max-width:900px;height:auto;width:auto;" />
+<h3> Please select which caption is better: </h3>
+<label><input type="radio" id="rating1" name="rating" value="Rating1" onclick="top.xPlate.setJudgmentDataInt(1)">{HTML(caption1)}</label><br>
+<label><input type="radio" id="rating2" name="rating" value="Rating2" onclick="top.xPlate.setJudgmentDataInt(2)">{HTML(caption2)}</label><br>
+<label><input type="radio" id="rating3" name="rating" value="Rating3" onclick="top.xPlate.setJudgmentDataInt(3)">equal</label><br>
+<br>
+<div><input onclick="xPlate_GoForward();" value="Submit" type="submit" accesskey="s"/></div>
+
+<div id="instruction">
+    <h1>
+        Instruction
+    </h1>
+    <h4>
+        The caption is BETTER if it captures more salient details of the image correctly<br>
+    </h4>
+</div>
+
+</body>
+</html>

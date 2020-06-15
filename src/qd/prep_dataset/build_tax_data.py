@@ -30,7 +30,8 @@ def ensure_build_taxonomy_vehiclev1_1():
             num_test=0,
             data='TaxVehicleV1_1',
             datas=datas,
-            max_image_per_label=10000000000)
+            max_image_per_label=10000000000,
+            )
 
     # test on trainval
     datas = [
@@ -46,7 +47,8 @@ def ensure_build_taxonomy_vehiclev1_1():
             data='TaxVehicleValV1_1',
             datas=datas,
             min_image_per_label=10000,
-            max_image_per_label=0)
+            max_image_per_label=0,
+            )
 
     datas = [
             {
@@ -780,6 +782,70 @@ def ensure_build_taxonomy_inside(data):
     else:
         raise Exception('unknown data = {}'.format(data))
 
+def ensure_build_taxonomy_marsproduct(data):
+    if data in ['TaxMarsProductV1_1',
+            'TaxMarsProductV1_1_with_bb']:
+        data = 'TaxMarsProductV1_1'
+        datas = [{
+            'name':       'MarsA',
+            'split_infos': [{'split': 'train', 'version': 2},],
+            'use_all': True
+            }]
+        build_taxonomy_impl(
+                get_taxonomy_path(data),
+                data=data,
+                num_test=0,
+                datas=datas,
+                max_image_per_label=10000000000,
+                )
+    elif data in ['TaxMarsProductV1_1Val',
+            'TaxMarsProductV1_1Val_with_bb']:
+        data = 'TaxMarsProductV1_1Val'
+        datas = [{
+            'name':       'MarsA',
+            'split_infos': [{'split': 'test', 'version': 2},],
+            'use_all': True
+            }]
+        build_taxonomy_impl(
+                get_taxonomy_path(data),
+                data=data,
+                datas=datas,
+                num_test=10000000000000000,
+                min_image_per_label=10000,
+                max_image_per_label=0,
+                )
+    elif data in ['TaxMarsProductV1_2',
+            'TaxMarsProductV1_2_with_bb']:
+        data = 'TaxMarsProductV1_2'
+        datas = [{
+            'name':       'MarsB',
+            'split_infos': [{'split': 'train', 'version': 2},],
+            'use_all': True
+            }]
+        build_taxonomy_impl(
+                get_taxonomy_path(data),
+                data=data,
+                num_test=0,
+                datas=datas,
+                max_image_per_label=10000000000,
+                )
+    elif data in ['TaxMarsProductV1_2Val',
+            'TaxMarsProductV1_2Val_with_bb']:
+        data = 'TaxMarsProductV1_2Val'
+        datas = [{
+            'name':       'MarsB',
+            'split_infos': [{'split': 'test', 'version': 2},],
+            'use_all': True
+            }]
+        build_taxonomy_impl(
+                get_taxonomy_path(data),
+                data=data,
+                datas=datas,
+                num_test=10000000000000000,
+                min_image_per_label=10000,
+                max_image_per_label=0,
+                )
+
 def ensure_build_taxonomy(data):
     if not data.startswith('Tax'):
         logging.info('skip because {} does not start with Tax'.format(data))
@@ -843,6 +909,22 @@ def ensure_build_taxonomy(data):
         ensure_build_taxonomy_oi4c(data)
     elif data.startswith('TaxVehicle'):
         ensure_build_taxonomy_vehicle(data)
+    elif data.startswith('Tax1300') or \
+            data.startswith('TaxCrowdHuman_with_bb'):
+        pass
+    elif data.startswith('TaxMarsProduct'):
+        ensure_build_taxonomy_marsproduct(data)
     else:
-        raise ValueError('unknown {}'.format(data))
+        from qd.qd_common import load_from_yaml_file
+        config = load_from_yaml_file('./aux_data/taxonomy_data/taxonomy_data.yaml')
+        from importlib import import_module
+        modules = import_module('qd.process_tsv')
+        # make sure that only one is matched
+        found = False
+        for c in config:
+            if data in c['data']:
+                assert not found
+                getattr(modules, c['func'])(**c['param'])
+                found = True
+
 

@@ -49,21 +49,25 @@ def get_to_copy_file_for_qdoutput(src_path, dest_path):
     # upload all the files under src_path
     to_copy = []
     all_src_file = glob.glob(op.join(src_path, '*'))
+    exclude_suffix = ['txt', 'zip']
     for f in all_src_file:
-        if op.isfile(f):
+        if op.isfile(f) and not any(f.endswith(s) for s in exclude_suffix):
             to_copy.append((f, op.join(dest_path, op.basename(f))))
 
     # for the model and the tested files, only upload the best
     all_src_file = glob.glob(op.join(src_path, 'snapshot',
         'model_iter_*.caffemodel'))
+    all_src_file.extend(glob.glob(op.join(src_path, 'snapshot',
+        'model_iter_*.pt')))
     all_iter = [parse_iteration(f) for f in all_src_file]
     max_iters = max(all_iter)
     need_copy_files = [f for f, i in zip(all_src_file, all_iter) if i == max_iters]
     dest_snapshot = op.join(dest_path, 'snapshot')
     for f in need_copy_files:
         to_copy.append((f, op.join(dest_snapshot, op.basename(f))))
-        f = f.replace('.caffemodel', '.solverstate')
-        to_copy.append((f, op.join(dest_snapshot, op.basename(f))))
+        if f.endswith('.caffemodel'):
+            f = f.replace('.caffemodel', '.solverstate')
+            to_copy.append((f, op.join(dest_snapshot, op.basename(f))))
     return to_copy
 
 def blob_upload(src, dst, c=None):
@@ -207,7 +211,9 @@ class CloudStorage(object):
                 bar[0] = tqdm(total=total, unit_scale=True)
             bar[0].update(curr - last[0])
             last[0] = curr
-
+        if target_file.startswith('/'):
+            logging.info('remove strarting slash for {}'.format(target_file))
+            target_file = target_file[1:]
         self.block_blob_service.create_blob_from_path(
                 self.container_name,
                 target_file,
@@ -265,7 +271,17 @@ class CloudStorage(object):
         cmd_run(cmd)
         return data_url, url
 
+    def az_download_all(self, remote_path, local_path):
+        all_blob_name = list(self.list_blob_names(remote_path))
+        all_blob_name = get_leaf_names(all_blob_name)
+        for blob_name in all_blob_name:
+            target_file = blob_name.replace(remote_path, local_path)
+            if not op.isfile(target_file):
+                self.az_download(blob_name, target_file,
+                        sync=False)
+
     def az_download(self, remote_path, local_path, sync=True, is_folder=False):
+        ensure_directory(op.dirname(local_path))
         origin_local_path = local_path
         local_path = local_path + '.tmp'
         ensure_directory(op.dirname(local_path))
@@ -294,15 +310,29 @@ class CloudStorage(object):
         os.rename(local_path, origin_local_path)
         return data_url, url
 
-    def download_to_path(self, blob_name, local_path):
+    def download_to_path(self, blob_name, local_path,
+            max_connections=2):
         dir_path = op.dirname(local_path)
         from qd.qd_common import get_file_size
         if op.isfile(dir_path) and get_file_size(dir_path) == 0:
             os.remove(dir_path)
         ensure_directory(dir_path)
         tmp_local_path = local_path + '.tmp'
+        pbar = {}
+        def progress_callback(curr, total):
+            if len(pbar) == 0:
+                pbar['tqdm'] = tqdm(total=total, unit_scale=True)
+                pbar['last'] = 0
+                pbar['count'] = 0
+            pbar['count'] += 1
+            if pbar['count'] > 100:
+                pbar['tqdm'].update(curr - pbar['last'])
+                pbar['last'] = curr
+                pbar['count'] = 0
         self.block_blob_service.get_blob_to_path(self.container_name,
-                blob_name, tmp_local_path)
+                blob_name, tmp_local_path,
+                progress_callback=progress_callback,
+                max_connections=max_connections)
         os.rename(tmp_local_path, local_path)
 
     def download_to_stream(self, blob_name, s):
@@ -345,12 +375,22 @@ class CloudStorage(object):
                     break
         for t in to_remove:
             need_download_blobs.remove(t)
-        for f in tqdm(need_download_blobs):
-            target_f = f.replace(src_path, target_folder)
+        need_download_blobs = [t for t in need_download_blobs
+            if not t.endswith('.tmp')]
+        f_target_f = [(f, f.replace(src_path, target_folder)) for f in
+            need_download_blobs]
+        f_target_f = [(f, target_f) for f, target_f in f_target_f if not op.isfile(target_f)]
+
+
+        for f, target_f in tqdm(f_target_f):
             if not op.isfile(target_f):
                 if len(f) > 0:
                     logging.info('download {} to {}'.format(f, target_f))
-                    self.download_to_path(f, target_f)
+                    try:
+                        self.az_download(f, target_f, sync=False)
+                    except:
+                        pass
+                    #self.download_to_path(f, target_f)
 
 if __name__ == '__main__':
     from qd.qd_common import init_logging

@@ -1,4 +1,5 @@
 import collections
+from datetime import datetime
 import json
 import logging
 import numpy as np
@@ -11,9 +12,10 @@ from evaluation.utils import load_escaped_json
 from qd.tsv_io import tsv_writer
 
 
-def analyze_draw_box_task(result_files, outfile_res, result_file_type="uhrs"):
+def analyze_draw_box_task(result_files, outfile_res, result_file_type="uhrs",
+            start_time=None):
     # load results
-    df_records = load_task_results(result_files, result_file_type)
+    df_records = load_task_results(result_files, result_file_type, start_time=start_time)
     url2ans_map = collections.defaultdict(list)
     labelset = set()
     for _, row in df_records.iterrows():
@@ -175,7 +177,7 @@ def get_consensus_answer(answers, consensus_threshold=0.5):
     return None
 
 
-def load_task_results(result_files, result_file_type):
+def load_task_results(result_files, result_file_type, start_time=None):
     logging.info('\n'.join(['Merging Labeling result file:{:s}\t'.format(a)
                             for a in result_files]))
     filtered_files = []
@@ -197,12 +199,24 @@ def load_task_results(result_files, result_file_type):
             results = results.append(pd.read_csv(resultfile, sep='\t'))
         logging.info('{:d} lines loaded.'.format(len(results)))
         df_records = results[['HitID', 'JudgeID', 'output',
-                              'input_content']].rename(
+                              'input_content', 'JudgmentSubmitTime']].rename(
                      columns={'HitID': 'HITId', 'JudgeID': 'WorkerId',
                               'output': 'Answer.output',
-                              'input_content': 'Input.input_content'})
+                              'input_content': 'Input.input_content',
+                              'JudgmentSubmitTime': 'submit_time'})
     else:
         raise Exception("invalid file type: {}".format(result_file_type))
+
+    if start_time is not None:
+        start = start_time.timestamp()
+        num_orig = len(df_records)
+        df_records = df_records[
+            df_records['submit_time'].map(
+                lambda t: datetime.strptime(t, '%m/%d/%Y %H:%M:%S %p'
+            ).timestamp()) >= start]
+
+        logging.info("Dropped {} rows before {}".format(num_orig - len(df_records), str(start_time)))
+
     return df_records
 
 
@@ -211,7 +225,7 @@ def parse_bbox(bbox):
     """
     if ('left' not in bbox):
         return {"SKIP": "", "class": "unknown"}
-      
+
     left = bbox["left"]
     left = np.clip(left, 0, bbox["image_width"])
     right = bbox["left"] + bbox["width"]
