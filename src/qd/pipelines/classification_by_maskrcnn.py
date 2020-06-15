@@ -171,7 +171,8 @@ class MaskClassificationPipeline(ModelPipeline):
                 from qd.opt.sampler import InfiniteSampler
                 sampler = InfiniteSampler(len(dataset))
             else:
-                from maskrcnn_benchmark.data import samplers
+                #from maskrcnn_benchmark.data import samplers
+                import qd.data_layer.samplers as samplers
                 sampler = samplers.DistributedSampler(dataset,
                         shuffle=shuffle,
                         length_divisible=self.batch_size)
@@ -193,7 +194,8 @@ class MaskClassificationPipeline(ModelPipeline):
                 batch_sampler = torch.utils.data.sampler.BatchSampler(
                     sampler, self.batch_size, drop_last=False
                 )
-                from maskrcnn_benchmark.data import samplers
+                #from maskrcnn_benchmark.data import samplers
+                import qd.data_layer.samplers as samplers
                 batch_sampler = samplers.IterationBasedBatchSampler(
                     batch_sampler, self.max_iter, start_iter
                 )
@@ -469,7 +471,8 @@ class MaskClassificationPipeline(ModelPipeline):
         softmax_func = self._get_test_normalize_module()
 
         model.eval()
-        from maskrcnn_benchmark.utils.metric_logger import MetricLogger
+        #from maskrcnn_benchmark.utils.metric_logger import MetricLogger
+        from qd.logger import MetricLogger
         meters = MetricLogger(delimiter="  ")
         if self.test_mergebn:
             from qd.layers import MergeBatchNorm
@@ -487,11 +490,10 @@ class MaskClassificationPipeline(ModelPipeline):
                 op.splitext(speed_yaml)[0] + '.vis.txt')
         logging.info(str(meters))
 
-        from maskrcnn_benchmark.utils.comm import is_main_process
         # we need to sync before merging all to make sure each rank finish its
         # own task
         synchronize()
-        if self.mpi_size > 1 and is_main_process():
+        if self.mpi_size > 1 and get_mpi_rank() == 0:
             from qd.process_tsv import concat_tsv_files
             cache_files = [self.get_rank_specific_tsv(predict_result_file, i)
                 for i in range(self.mpi_size)]
