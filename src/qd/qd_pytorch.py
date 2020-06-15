@@ -20,7 +20,7 @@ from collections import OrderedDict
 from qd.process_tsv import load_key_rects
 from qd.process_tsv import hash_sha1
 from qd.tsv_io import tsv_writer, tsv_reader
-from qd.tsv_io import TSVFile
+from qd.tsv_io import TSVFile, CompositeTSVFile
 from qd.tsv_io import TSVDataset
 from shutil import copyfile
 import os
@@ -56,6 +56,10 @@ import cv2
 import math
 from qd.qd_common import is_hvd_initialized
 import PIL
+from qd.torch_common import all_gather_grad_curr
+from qd.layers.loss import BCEWithLogitsNegLoss
+from qd.data_layer.dataset import TSVSplitProperty
+from qd.torch_common import synchronize
 
 
 class GaussianBlur(object):
@@ -161,7 +165,9 @@ def print_module_param_grad(model):
 
 def visualize_maskrcnn_input(images, targets, show_box=True):
     import torch
-    images = images.tensors.cpu()
+    if hasattr(images, 'tensors'):
+        images = images.tensors
+    images = images.cpu()
     scale = [0.229, 0.224, 0.225]
     scale = torch.tensor(scale)
     images = images * scale[None, :, None, None]
@@ -176,11 +182,11 @@ def visualize_maskrcnn_input(images, targets, show_box=True):
     #show_image(images[0, :])
     ims = []
     for i, t in enumerate(targets):
-        labels = t.get_field('labels').tolist()
-        rects = t.bbox.tolist()
-        rects = [{'rect': r, 'class': str(l)} for r, l in zip(rects, labels)]
         im = images[i]
         if show_box:
+            labels = t.get_field('labels').tolist()
+            rects = t.bbox.tolist()
+            rects = [{'rect': r, 'class': str(l)} for r, l in zip(rects, labels)]
             im = draw_rects(rects, im, add_label=True)
         ims.append(im)
     rows = int(math.ceil(len(ims) ** 0.5))
@@ -238,28 +244,6 @@ def load_scheduler_state(scheduler, state):
                 raise NotImplementedError('unknown {}'.format(k))
         else:
             scheduler.__dict__[k] = v
-
-def synchronize():
-    """
-    copied from maskrcnn_benchmark.utils.comm
-    Helper function to synchronize (barrier) among all processes when
-    using distributed training
-    """
-    use_hvd = is_hvd_initialized()
-    if not use_hvd:
-        if not dist.is_available():
-            return
-        if not dist.is_initialized():
-            return
-        world_size = dist.get_world_size()
-        if world_size == 1:
-            return
-        dist.barrier()
-    else:
-        from qd.qd_common import get_mpi_size
-        if get_mpi_size() > 1:
-            import horovod.torch as hvd
-            hvd.allreduce(torch.tensor(0), name='barrier')
 
 def compare_caffeconverted_vs_pt(pt2, pt1):
     state1 = torch.load(pt1)
@@ -325,34 +309,6 @@ class OrderedSampler(torch.utils.data.Sampler):
 
     def __len__(self):
         return len(self.idx)
-
-
-class CompositeTSVFile():
-    def __init__(self, list_file, seq_file, cache_policy=False):
-        self.seq_file = seq_file
-        self.list_file = list_file
-        self.cache_policy = cache_policy
-        self.initialized = False
-        self.initialize()
-
-    def __getitem__(self, index):
-        idx_source, idx_row = self.seq[index]
-        return self.tsvs[idx_source].seek(idx_row)
-
-    def __len__(self):
-        return len(self.seq)
-
-    def initialize(self):
-        '''
-        this function has to be called in init function if cache_policy is
-        enabled. Thus, let's always call it in init funciton to make it simple.
-        '''
-        if self.initialized:
-            return
-        self.seq = [(int(idx_source), int(idx_row)) for idx_source, idx_row in
-                tsv_reader(self.seq_file)]
-        self.tsvs = [TSVFile(f, self.cache_policy) for f in load_list_file(self.list_file)]
-        self.initialized = True
 
 class IoURandomResizedCrop(object):
     def __init__(self, iou, size, scale=(0.08, 1.0), ratio=(3. / 4., 4. / 3.),
@@ -464,9 +420,12 @@ class TwoCropsTransformX():
 class TwoCropsTransform:
     """Take two random crops of one image as the query and key."""
 
-    def __init__(self, first_transform, second_transform):
+    def __init__(self, first_transform, second_transform=None):
         self.first_transform = first_transform
-        self.second_transform = second_transform
+        self.second_transform = first_transform
+        assert first_transform is not None
+        if self.second_transform is None:
+            self.second_transform = first_transform
 
     def __call__(self, x):
         q = self.first_transform(x)
@@ -716,7 +675,7 @@ class DictTransformResizeCrop(object):
     def __call__(self, dict_data):
         image, target = dict_data['image'], dict_data['rects']
         # we should not combine resize and crop here, since the resize will do
-        # some anti-aliassing trick which helps if we need to download to a
+        # some anti-aliassing trick which helps if we need to downsample to a
         # large factor.
         target_h, target_w, crop_h, crop_w = self.get_size(image.size, dict_data['iteration'])
         image = F.resize(image, (target_h, target_w))
@@ -934,30 +893,6 @@ class TSVDatasetPt(Dataset):
             dict_data = self.transforms(dict_data)
         return dict_data
 
-class TSVSplitProperty(Dataset):
-    '''
-    one instance of this class mean one tsv file or one composite tsv, it could
-    be label tsv, or hw tsv, or image tsv
-    '''
-    def __init__(self, data, split, t, version=0, cache_policy=None):
-        dataset = TSVDataset(data)
-        if op.isfile(dataset.get_data(split, t, version)):
-            self.tsv = TSVFile(dataset.get_data(split, t, version),
-                    cache_policy)
-        else:
-            splitX = split + 'X'
-            list_file = dataset.get_data(splitX, t)
-            seq_file = dataset.get_shuffle_file(split)
-            self.tsv = CompositeTSVFile(list_file, seq_file, cache_policy)
-            assert version in [0, None]
-
-    def __getitem__(self, index):
-        row = self.tsv[index]
-        return row
-
-    def __len__(self):
-        return len(self.tsv)
-
 class TSVSplit(Dataset):
     '''
     prefer to use TSVSplitProperty, which is more general. One example is to
@@ -977,6 +912,92 @@ class TSVSplit(Dataset):
 
     def __len__(self):
         return len(self.tsv)
+
+class DictDAPlacing(object):
+    def __init__(self, all_crop_size, max_grid):
+        self.all_crop_size = [c if
+                isinstance(c, list) or isinstance(c, tuple)
+                else (c, c)
+                for c in all_crop_size]
+        self.max_grid = (max_grid, max_grid)
+        self.debug = True
+
+    def _get_grid(self):
+        grid_rows = random.randint(1, self.max_grid[0])
+        grid_cols = random.randint(max(1, grid_rows // 2),
+                                   min(grid_rows * 2, self.max_grid[1]))
+        if random.random() < 0.5:
+            t = grid_rows
+            grid_rows = grid_cols
+            grid_cols = t
+
+        return grid_rows, grid_cols
+
+    def __call__(self, dict_data):
+        crop_size = self.all_crop_size[dict_data['iteration'] % len(self.all_crop_size)]
+        canvas_transform = self.get_transform(crop_size)
+        # take the current image as the canvas
+        canvas = dict_data['image']
+        canvas = canvas_transform(canvas)
+
+        grid_rows, grid_cols = self._get_grid()
+
+        canvas_width, canvas_height = crop_size
+
+        grid_width = canvas_width // grid_cols
+        grid_height = canvas_height // grid_rows
+        rects = []
+        num_total = len(dict_data['dataset'])
+        for i in range(grid_rows):
+            for j in range(grid_cols):
+                scale = random.random() * (0.9 - 0.5) + 0.5
+                image_width = int(grid_width * scale)
+                image_height = int(grid_height * scale)
+
+                region_transform = self.get_transform((image_width,
+                    image_height))
+
+                offset_w = (int(random.random() * (grid_width - image_width)) +
+                    j * grid_width)
+
+                offset_h = (int(random.random() * (grid_height - image_height)) +
+                        i * grid_height)
+                random_idx = random.randint(0, num_total - 1)
+                im, anno = dict_data['dataset'].get_image_ann(random_idx)
+                assert len(anno) == 1
+                im = region_transform(im)
+                rect = (offset_w, offset_h,
+                    offset_w + image_width, offset_h + image_height)
+                rects.append({'rect': rect, 'class': anno[0]['class']})
+                canvas.paste(im, rect)
+        boxes = torch.tensor([r['rect'] for r in rects]).reshape(-1, 4)
+        from maskrcnn_benchmark.structures.bounding_box import BoxList
+        boxlist = BoxList(boxes, image_size=(canvas_width, canvas_height), mode='xyxy')
+        labels = torch.tensor([
+            dict_data['dataset'].label_to_idx[r['class']] + 1
+            for r in rects])
+        boxlist.add_field('labels', labels)
+        dict_data['image'] = canvas
+        dict_data['rects'] = boxlist
+        return dict_data
+
+    def get_transform(self, crop_size):
+        import torchvision.transforms as transforms
+        if isinstance(crop_size, int):
+            ratio = (3. / 4., 4. / 3.)
+        else:
+            # crop_size: w, h
+            crop_w, crop_h = crop_size
+            anchor_ratio = 1. * crop_w / crop_h
+            ratio = (3. / 4 * anchor_ratio, 4. / 3 * anchor_ratio)
+        all_trans = [
+            transforms.RandomResizedCrop(scale=(0.25, 1.0),
+                ratio=ratio,
+                size=crop_size[::-1]),
+            transforms.RandomHorizontalFlip(),
+            ]
+        data_augmentation = transforms.Compose(all_trans)
+        return data_augmentation
 
 class TSVSplitImage(TSVSplit):
     def __init__(self, data, split, version, transform=None,
@@ -1019,6 +1040,22 @@ class TSVSplitImage(TSVSplit):
             idx = self.label_to_idx.get(info[0]['class'], -1)
         label = torch.from_numpy(np.array(idx, dtype=np.int))
         return label
+
+class TSVSplitImageDict(TSVSplitImage):
+    def __init__(self, data, split, version, transform=None,
+            cache_policy=None, labelmap=None):
+        super().__init__(data, split, version, transform, cache_policy,
+                         labelmap)
+
+    def __getitem__(self, index):
+        key, str_label, str_im = super(TSVSplitImage, self).__getitem__(index)
+        img = img_from_base64(str_im)
+        label = self._tsvcol_to_label(str_label)
+        data = {'index': index, 'key': key,
+                'image': img, 'label': label}
+        if self.transform is not None:
+            data = self.transform(data)
+        return data
 
 class TSVSplitImageSoftAssign(object):
     def __init__(self, data, split, temperature, transform, num_kmeans=None):
@@ -1446,24 +1483,6 @@ def mean_remove(x):
     assert x.dim() == 2
     return x - x.mean(dim=0)
 
-class BCEWithLogitsNegLoss(nn.Module):
-    def __init__(self):
-        super(BCEWithLogitsNegLoss, self).__init__()
-
-    def forward(self, feature, target):
-        return bce_with_logits_neg_loss(feature, target)
-
-def bce_with_logits_neg_loss(feature, target):
-    target = target.float()
-    weight = torch.ones_like(target)
-    weight[target == -1] = 0
-    weight_sum = torch.sum(weight)
-    if weight_sum == 0:
-        return 0
-    else:
-        criterion = nn.BCEWithLogitsLoss(weight, reduction='sum')
-        loss = criterion(feature, target)
-        return torch.sum(loss) / weight_sum
 
 def multi_hot_cross_entropy(pred, soft_targets):
     assert ((soft_targets != 0) & (soft_targets != 1)).sum() == 0
@@ -1512,7 +1531,9 @@ def save_parameters(param, folder):
 
 def torch_save(t, f):
     ensure_directory(op.dirname(f))
-    torch.save(t, f)
+    tmp_f = f + '.tmp'
+    torch.save(t, tmp_f)
+    os.rename(tmp_f, f)
 
 def torch_load(filename):
     return torch.load(filename, map_location=lambda storage, loc: storage)
@@ -1726,18 +1747,6 @@ def all_gather(x):
             torch.distributed.all_gather(all_x, x)
         return torch.cat(all_x, dim=0)
 
-def all_gather_grad_curr(x):
-    if get_mpi_size() == 1:
-        return x
-    else:
-        with torch.no_grad():
-            all_x = [torch.zeros_like(x) for _ in range(get_mpi_size())]
-            # note, all_rep should be treated as constent, which means no grad
-            # will be propagated back through all_rep
-            torch.distributed.all_gather(all_x, x)
-        all_x[get_mpi_rank()] = x
-        return torch.cat(all_x, dim=0)
-
 class TorchTrain(object):
     def __init__(self, **kwargs):
         if 'load_parameter' in kwargs and kwargs['load_parameter']:
@@ -1751,42 +1760,48 @@ class TorchTrain(object):
 
         self.kwargs = kwargs
 
-        self._default = {'dist_backend': 'nccl',
-                'init_method_type': 'tcp',
-                'log_step': 100,
-                'evaluate_method': 'map',
-                'test_split': 'test',
-                'num_workers': 4,
-                'test_normalize_module': 'softmax',
-                'restore_snapshot_iter': -1,
-                'ovthresh': [-1],
-                'step_lr': 30,
-                'base_lr': 0.1,
-                'dataset_type': 'single',
-                'max_iter': 10,
-                # the default value was 5e-4, which is the default for yolo. We
-                # add the default as 5e-4 in yolo_by_mask, and set it 1e-4 for
-                # classification.
-                'weight_decay': 1e-4,
-                'effective_batch_size': 256,
-                'pretrained': False,
-                'dist_url_tcp_port': 23456,
-                'random_seed': 6,
-                'apply_nms_gt': True,
-                'cudnn_benchmark': False,
-                'use_hvd': False,
-                'device': 'cuda',
-                'test_mergebn': False,
-                'bgr2rgb': False, # this should be True, but set it False for back compatibility
-                'coco_eval_max_det': 100,
-                'train_crop_size': 224,
-                'test_crop_size': 224,
-                'momentum': 0.9,
-                'scheduler_type': 'step',
-                'train_transform': 'inception',
-                'cosine_warmup_iters': 500,
-                'cosine_warmup_factor': 1. / 3,
-                }
+        self._default = {
+            'dist_backend': 'nccl',
+            'init_method_type': 'tcp',
+            'log_step': 100,
+            'evaluate_method': 'map',
+            'test_split': 'test',
+            'num_workers': 4,
+            'test_normalize_module': 'softmax',
+            'restore_snapshot_iter': -1,
+            'ovthresh': [-1],
+            'step_lr': 30,
+            'base_lr': 0.1,
+            'dataset_type': 'single',
+            'max_iter': 10,
+            # the default value was 5e-4, which is the default for yolo. We
+            # add the default as 5e-4 in yolo_by_mask, and set it 1e-4 for
+            # classification.
+            'weight_decay': 1e-4,
+            'effective_batch_size': 256,
+            'pretrained': False,
+            'dist_url_tcp_port': 23456,
+            'random_seed': 6,
+            'apply_nms_gt': True,
+            'cudnn_benchmark': False,
+            'use_hvd': False,
+            'device': 'cuda',
+            'test_mergebn': False,
+            'bgr2rgb': False, # this should be True, but set it False for back compatibility
+            'coco_eval_max_det': 100,
+            'train_crop_size': 224,
+            'test_crop_size': 224,
+            'momentum': 0.9,
+            'scheduler_type': 'step',
+            'train_transform': 'inception',
+            'cosine_warmup_iters': 500,
+            'cosine_warmup_factor': 1. / 3,
+            'rms_alpha': 0.99,
+            'smooth_label_eps': 0.1,
+            'pred_tsv_to_json_extra': 1,
+            'mobilenetv3_dropout_ratio': 0.2,
+            'cutout_factor': 4,
+        }
 
         assert 'batch_size' not in kwargs, 'use effective_batch_size'
 
@@ -1922,6 +1937,26 @@ class TorchTrain(object):
         if self.train_transform == 'inception':
             data_augmentation = get_train_transform(self.bgr2rgb,
                         crop_size=self.train_crop_size)
+        elif self.train_transform == 'cutout':
+            normalize = get_data_normalize()
+            totensor = transforms.ToTensor()
+            color_jitter = transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4)
+            all_trans = []
+            if self.bgr2rgb:
+                all_trans.append(BGR2RGB())
+            from qd.data_layer.transform import ImageCutout
+            all_trans.extend([
+                transforms.ToPILImage(),
+                transforms.RandomResizedCrop(self.train_crop_size),
+                color_jitter,
+                transforms.RandomHorizontalFlip(),
+                totensor,
+                normalize,
+                transforms.RandomApply([ImageCutout(self.train_crop_size //
+                                                    self.cutout_factor)], p=0.5),
+            ])
+            data_augmentation = transforms.Compose(all_trans)
+
         elif self.train_transform == 'no_color':
             normalize = get_data_normalize()
             totensor = transforms.ToTensor()
@@ -1943,13 +1978,14 @@ class TorchTrain(object):
                 all_trans.append(BGR2RGB())
             gaussian_kernel_size = int(0.1 * self.train_crop_size) // 2 * 2 + 1
             color_jitter = transforms.ColorJitter(0.8, 0.8, 0.8, 0.2)
+            from qd.data_layer.transform import SimCLRGaussianBlur
             all_trans.extend([
                 transforms.ToPILImage(),
                 transforms.RandomResizedCrop(self.train_crop_size),
                 transforms.RandomHorizontalFlip(),
                 transforms.RandomApply([color_jitter], p=0.8),
                 transforms.RandomGrayscale(p=0.2),
-                GaussianBlur(kernel_size=gaussian_kernel_size),
+                SimCLRGaussianBlur(kernel_size=gaussian_kernel_size),
                 totensor,
                 normalize,])
             data_augmentation = transforms.Compose(all_trans)
@@ -1967,6 +2003,58 @@ class TorchTrain(object):
                 ImageNetPolicy(),
                 totensor,
                 normalize,])
+            data_augmentation = transforms.Compose(all_trans)
+        elif self.train_transform == 'rand_aug':
+            normalize = get_data_normalize()
+            totensor = transforms.ToTensor()
+            all_trans = []
+            if self.bgr2rgb:
+                all_trans.append(BGR2RGB())
+            from qd.data_layer.rand_augmentation import rand_augment_transform
+
+            # this is default
+            config_str = 'rand-m9-mstd0.5'
+            fillcolor = [0.5, 0.5, 0.5]
+            hparams = dict(
+                translate_const=int(self.train_crop_size * 0.45),
+                img_mean=tuple([min(255, round(255 * x)) for x in fillcolor]),
+            )
+
+            all_trans.extend([
+                transforms.ToPILImage(),
+                transforms.RandomResizedCrop(self.train_crop_size),
+                transforms.RandomHorizontalFlip(),
+                rand_augment_transform(config_str, hparams),
+                totensor,
+                normalize,])
+            data_augmentation = transforms.Compose(all_trans)
+        elif self.train_transform == 'rand_cut':
+            normalize = get_data_normalize()
+            totensor = transforms.ToTensor()
+            all_trans = []
+            if self.bgr2rgb:
+                all_trans.append(BGR2RGB())
+            from qd.data_layer.rand_augmentation import rand_augment_transform
+
+            # this is default
+            config_str = 'rand-m9-mstd0.5'
+            fillcolor = [0.5, 0.5, 0.5]
+            hparams = dict(
+                translate_const=int(self.train_crop_size * 0.45),
+                img_mean=tuple([min(255, round(255 * x)) for x in fillcolor]),
+            )
+
+            from qd.data_layer.transform import ImageCutout
+            all_trans.extend([
+                transforms.ToPILImage(),
+                transforms.RandomResizedCrop(self.train_crop_size),
+                transforms.RandomHorizontalFlip(),
+                rand_augment_transform(config_str, hparams),
+                totensor,
+                normalize,
+                transforms.RandomApply([ImageCutout(self.train_crop_size //
+                                                    self.cutout_factor)], p=0.5),
+            ])
             data_augmentation = transforms.Compose(all_trans)
         else:
             raise NotImplementedError(self.train_transform)
@@ -2010,6 +2098,12 @@ class TorchTrain(object):
                     transform=transform,
                     labelmap=labelmap,
                     cache_policy=self.cache_policy)
+        elif dataset_type == 'single_dict':
+            return TSVSplitImageDict(data, split,
+                    version=0,
+                    transform=transform,
+                    labelmap=labelmap,
+                    cache_policy=self.cache_policy)
         elif dataset_type == 'soft_assign':
             return TSVSplitImageSoftAssign(data, split,
                     transform=transform,
@@ -2037,13 +2131,28 @@ class TorchTrain(object):
             raise ValueError('unknown {}'.format(self.dataset_type))
 
     def _get_criterion(self):
-        if self.dataset_type in ['single', 'crop']:
+        if self.dataset_type in ['single', 'crop', 'single_dict']:
             if self.loss_type == 'NTXent':
                 from qd.layers.ntxent_loss import NTXentLoss
                 criterion = NTXentLoss(self.temperature)
+            elif self.loss_type == 'NTXentQueue':
+                from qd.layers.ntxent_loss import NTXentQueueLoss
+                criterion = NTXentQueueLoss(self.temperature,
+                                            self.queue_size,
+                                            self.out_dim,
+                                            self.queue_alpha,
+                                            alpha_max=self.queue_alpha_max,
+                                            alpha_policy=self.queue_alpha_policy,
+                                            max_iter=self.max_iter,
+                                            criterion_type=self.criterion_type,
+                                            denominator_ce_factor=self.denominator_ce_factor
+                                            )
             elif self.loss_type == 'multi_ce':
                 from qd.layers.loss import MultiCrossEntropyLoss
                 criterion = MultiCrossEntropyLoss(weights=self.multi_ce_weights)
+            elif self.loss_type == 'smooth_ce':
+                from qd.layers.loss import SmoothLabelCrossEntropyLoss
+                criterion = SmoothLabelCrossEntropyLoss(eps=self.smooth_label_eps)
             else:
                 criterion = nn.CrossEntropyLoss().cuda()
         elif self.dataset_type in ['soft_assign']:
@@ -2072,10 +2181,54 @@ class TorchTrain(object):
                 "model_iter_{:07d}.pt".format(iteration))
 
     def _get_model(self, pretrained, num_class):
-        if self.net in ['MobileNetV3']:
+        if self.net in ['MobileNetV3', 'MobileNetV3Small']:
             from qd.layers.mitorch_models import ModelFactory
-            model = ModelFactory.create(self.net, num_class)
+            model = ModelFactory.create(self.net,
+                                        num_class,
+                                        dropout_ratio=self.mobilenetv3_dropout_ratio)
             assert not pretrained
+            return model
+        elif self.net.startswith('efficientnet'):
+            if pretrained:
+                assert ValueError('not tested')
+                from efficientnet_pytorch import EfficientNet
+                model = EfficientNet.from_pretrained(
+                    self.net,
+                    num_class)
+            else:
+                from qd.layers import efficient_det
+                if self.efficient_net_simple_padding:
+                    efficient_det.g_simple_padding = True
+                else:
+                    efficient_det.g_simple_padding = False
+                from qd.layers.efficient_det import EfficientNet
+                model = EfficientNet.from_name(
+                    self.net,
+                    override_params={'num_classes': num_class})
+                assert not pretrained
+            return model
+        elif self.net.startswith('resnet'):
+            dict_data = {
+                'from': 'qd.layers.resnet',
+                'import': self.net,
+                'param': {
+                    'pretrained': self.pretrained,
+                    'stem_stride2': self.stem_stride2,
+                },
+            }
+            from qd.qd_common import execute_func
+            model = execute_func(dict_data)
+            if model.fc.weight.shape[0] != num_class:
+                model.fc = nn.Linear(model.fc.weight.shape[1], num_class)
+                torch.nn.init.xavier_uniform_(model.fc.weight)
+            if self.moco_finetune_init_last_linear:
+                logging.info('moco fine-tune init last linear')
+                model.fc.weight.data.normal_(mean=0.0, std=0.01)
+                model.fc.bias.data.zero_()
+            if self.zero_init_last_linear:
+                logging.info('zero out last linear')
+                model.fc.weight.data.zero_()
+                model.fc.bias.data.zero_()
             return model
         else:
             model = models.__dict__[self.net](pretrained=pretrained)
@@ -2219,10 +2372,9 @@ class TorchTrain(object):
                 raise ValueError('unknown init type = {}'.format(self.init_from['type']))
 
     def get_optimizer(self, model):
-        all_parameter = list(model.parameters())
-        parameters = list(filter(lambda p: p.requires_grad, all_parameter))
-        logging.info('#original param = {}; require grad = {}'.format(
-            len(all_parameter), len(parameters)))
+        from qd.opt.ema_optimizer import get_params_with_name
+        parameters = get_params_with_name(model)
+
         if self.bias_no_weight_decay:
             parameters = []
             for key, value in model.named_parameters():
@@ -2235,18 +2387,29 @@ class TorchTrain(object):
                 logging.info('{}: lr = {}; weight_decay = {}'.format(
                     key, lr, weight_decay
                 ))
-                parameters += [{"params": [value], "lr": lr, "weight_decay": weight_decay}]
+                parameters += [{"params": [value],
+                                "lr": lr,
+                                "weight_decay": weight_decay,
+                                'param_names': [key]}]
 
         if self.optimizer_type in [None, 'SGD', 'LARS']:
-            optimizer = torch.optim.SGD(parameters,
-                                        self.base_lr,
-                                        momentum=self.momentum,
-                                        # this is default decay, and will be
-                                        # overwritten if we specified it in
-                                        # parameters.
-                                        weight_decay=self.weight_decay,
-                                        nesterov=self.sgd_nesterov,
-                                        )
+            from qd.opt.sgd import SGDVerbose
+            optimizer = SGDVerbose(parameters,
+                                   self.base_lr,
+                                   momentum=self.momentum,
+                                   # this is default decay, and will be
+                                   # overwritten if we specified it in
+                                   # parameters.
+                                   weight_decay=self.weight_decay,
+                                   nesterov=self.sgd_nesterov,
+                                   )
+        elif self.optimizer_type == 'RMSprop':
+            optimizer = torch.optim.RMSprop(parameters,
+                                            self.base_lr,
+                                            momentum=self.momentum,
+                                            alpha=self.rms_alpha,
+                                            weight_decay=self.weight_decay,
+                                            )
         elif self.optimizer_type in ['Adam']:
             optimizer = torch.optim.Adam(parameters, self.base_lr,
                                         weight_decay=self.weight_decay)
@@ -2259,6 +2422,9 @@ class TorchTrain(object):
         if self.optimizer_type in ['LARS']:
             from torchlars import LARS
             optimizer = LARS(optimizer=optimizer)
+        if self.ema_optimizer:
+            from qd.opt.ema_optimizer import EMAOptimizer
+            optimizer = EMAOptimizer(optimizer=optimizer)
         return optimizer
 
     def get_lr_scheduler(self, optimizer, last_epoch=-1):
@@ -2409,9 +2575,16 @@ class TorchTrain(object):
             # is 1 or batch processing
             cc.append('BS{}'.format(self.test_batch_size))
             cc.append(self.device)
+            if self.device == 'cpu' and self.cpu_num_threads:
+                torch.set_num_threads(self.cpu_num_threads)
+                cc.append('thread{}'.format(self.cpu_num_threads))
+            if self.flush_denormal:
+                r = torch.set_flush_denormal(True)
+                assert r, 'not supported'
+                cc.append('flush_denormal')
         if self.pred_file_hint is not None:
             cc.append(self.pred_file_hint)
-        if self.test_crop_size != 224:
+        if self.test_crop_size != 224 and self.test_crop_size:
             cc.append('crop{}'.format(self.test_crop_size))
         cc.append('predict')
         cc.append('tsv')
@@ -2429,6 +2602,8 @@ class TorchTrain(object):
             cc.append(self.test_crop_position)
         if self.test_resize_size:
             cc.append('r{}'.format(self.test_resize_size))
+        if self.predict_ema_decay:
+            cc.append('ema{}'.format(self.predict_ema_decay))
 
     def monitor_train(self):
         self._ensure_initialized()
@@ -2672,6 +2847,9 @@ class TorchTrain(object):
             cc.append('v{}'.format(self.test_version))
         if self.coco_eval_max_det is not None and self.coco_eval_max_det != 100:
             cc.append('MaxDet{}'.format(self.coco_eval_max_det))
+        if self.pred_tsv_to_json_extra != 1 and \
+                self.evaluate_method == 'coco_box':
+            cc.append('{}'.format(self.pred_tsv_to_json_extra))
         cc.append('report')
         return '.'.join(cc)
 
@@ -2723,6 +2901,7 @@ class TorchTrain(object):
             from qd.cocoeval import convert_gt_to_cocoformat
             from qd.cocoeval import convert_to_cocoformat
             from qd.cocoeval import coco_eval_json
+            pred_tsv_to_json_extra = self.pred_tsv_to_json_extra
             gt_json = dataset.get_data(self.test_split, 'label.cocoformat',
                     version=self.test_version) + '.json'
             gt_iter = dataset.iter_data(self.test_split, 'label',
@@ -2730,11 +2909,15 @@ class TorchTrain(object):
 
             if not op.isfile(gt_json) or self.force_evaluate:
                 convert_gt_to_cocoformat(gt_iter, gt_json)
-
-            predict_json = predict_file + '.cocoformat.json'
+            if pred_tsv_to_json_extra == 1:
+                predict_json = predict_file + '.cocoformat.json'
+            else:
+                assert pred_tsv_to_json_extra == 0
+                predict_json = predict_file + '.cocoformat.0.json'
             is_empty = False
             if worth_create(predict_file, predict_json) or self.force_evaluate:
-                annotations = convert_to_cocoformat(predict_file, predict_json)
+                annotations = convert_to_cocoformat(predict_file, predict_json,
+                                                    extra=pred_tsv_to_json_extra)
                 if len(annotations) == 0:
                     is_empty = True
             else:
@@ -2829,17 +3012,22 @@ def load_model_state_ignore_mismatch(model, init_dict):
                 all(x == y for x, y in zip(a.shape, b.shape))
 
     num_ignored = 0
+    unique_key_in_init_dict = []
     for k in init_dict:
         if k in name_to_param and same_shape(init_dict[k], name_to_param[k]):
             real_init_dict[k] = init_dict[k]
         else:
-            logging.info('ignore {} in init model'.format(k))
+            unique_key_in_init_dict.append(k)
             num_ignored = num_ignored + 1
 
-    logging.info('number of param ignored = {}'.format(num_ignored))
+    logging.info('unique keys in pre-trained model = {}; total = {}'.format(
+        ','.join(unique_key_in_init_dict), len(unique_key_in_init_dict),
+    ))
 
     result = model.load_state_dict(real_init_dict, strict=False)
-    logging.info('not initialized keys = {}'.format(result.missing_keys))
+    logging.info('unique key (not initialized) in current model = {}'.format(
+        result.missing_keys,
+    ))
 
 if __name__ == '__main__':
     init_logging()

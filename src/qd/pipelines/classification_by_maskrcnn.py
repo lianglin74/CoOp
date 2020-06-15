@@ -7,21 +7,24 @@ from qd.qd_pytorch import ModelPipeline, torch_load
 from qd.layers.loss import ModelLoss
 from qd.qd_common import get_mpi_rank
 from qd.tsv_io import tsv_writer
-from maskrcnn_benchmark.utils.checkpoint import DetectronCheckpointer
-from maskrcnn_benchmark.utils.comm import synchronize
+from qd.opt.checkpoint import DetectronCheckpointer
+from qd.qd_pytorch import synchronize
 import shutil
 from qd.qd_common import DummyCfg
 import time
 from qd.qd_pytorch import replace_module
 from qd.layers.group_batch_norm import GroupBatchNorm, get_normalize_groups
+from qd.qd_common import json_dump
 
 
 class MaskClassificationPipeline(ModelPipeline):
     def __init__(self, **kwargs):
-        super(MaskClassificationPipeline, self).__init__(**kwargs)
+        super().__init__(**kwargs)
         self._default.update({
             'normalization_group': 32,
-            'normalization_group_size': None
+            'normalization_group_size': None,
+            'freeze_last_bn_stats': 0,
+            'predict_ema_decay': None,
             })
         self.step_lr = self.parse_iter(self.step_lr)
         self.max_iter = self.parse_iter(self.max_iter)
@@ -37,6 +40,10 @@ class MaskClassificationPipeline(ModelPipeline):
         criterion = self._get_criterion()
         # we need wrap model output and criterion into one model, to re-use
         # maskrcnn trainer
+        model = self.combine_model_criterion(model, criterion)
+        return model
+
+    def combine_model_criterion(self, model, criterion):
         model = ModelLoss(model, criterion)
         return model
 
@@ -53,10 +60,29 @@ class MaskClassificationPipeline(ModelPipeline):
     def freeze_parameters(self, model):
         if self.last_fixed_param:
             from qd.qd_pytorch import freeze_parameters_by_last_name
-            freeze_parameters_by_last_name(self.last_fixed_param)
+            freeze_parameters_by_last_name(model, self.last_fixed_param)
         if self.freeze_all_except:
             from qd.qd_pytorch import freeze_all_parameters_except
             freeze_all_parameters_except(model, self.freeze_all_except)
+        if self.freeze_last_bn_stats:
+            from qd.qd_pytorch import freeze_last_bn_stats
+            freeze_last_bn_stats(model, self.freeze_last_bn_stats)
+
+    def create_checkpointer(self, model, optimizer, scheduler):
+        save_to_disk = get_mpi_rank() == 0
+        if self.cfg is not None:
+            cfg = self.cfg
+        else:
+            cfg = DummyCfg()
+        checkpointer = DetectronCheckpointer(
+            cfg=cfg,
+            model=model,
+            optimizer=optimizer,
+            scheduler=scheduler,
+            save_dir=op.join(self.output_folder, 'snapshot'),
+            save_to_disk=save_to_disk,
+        )
+        return checkpointer
 
     def train(self):
         device = torch.device('cuda')
@@ -74,20 +100,12 @@ class MaskClassificationPipeline(ModelPipeline):
         scheduler = self.get_lr_scheduler(optimizer)
         logging.info(scheduler)
 
-        save_to_disk = get_mpi_rank() == 0
-        checkpointer = DetectronCheckpointer(
-            cfg=DummyCfg(),
-            model=model,
-            optimizer=optimizer,
-            scheduler=scheduler,
-            save_dir=op.join(self.output_folder, 'snapshot'),
-            save_to_disk=save_to_disk,
-        )
+        logging.info(model)
+
+        checkpointer = self.create_checkpointer(model, optimizer, scheduler)
 
         extra_checkpoint_data = checkpointer.load(self.basemodel,
                 model_only=True)
-
-        logging.info(model)
 
         arguments = {}
         arguments['iteration'] = 0
@@ -112,24 +130,81 @@ class MaskClassificationPipeline(ModelPipeline):
     def do_train(self, model, train_loader, optimizer, scheduler, checkpointer,
             arguments):
         device = torch.device('cuda')
-        from maskrcnn_benchmark.engine.trainer import do_train
-        do_train(
-            model=model,
-            data_loader=train_loader,
-            optimizer=optimizer,
-            scheduler=scheduler,
-            checkpointer=checkpointer,
-            device=device,
-            checkpoint_period=self.get_snapshot_steps(),
-            arguments=arguments,
-            log_step=self.log_step,
-            set_model_to_train=False,
-        )
+        if self.dict_trainer:
+            from qd.opt.trainer import do_train_dict
+            do_train_dict(
+                model=model,
+                data_loader=train_loader,
+                optimizer=optimizer,
+                scheduler=scheduler,
+                checkpointer=checkpointer,
+                device=device,
+                checkpoint_period=self.get_snapshot_steps(),
+                arguments=arguments,
+                log_step=self.log_step,
+            )
+        else:
+            from qd.opt.trainer import do_train
+            do_train(
+                model=model,
+                data_loader=train_loader,
+                optimizer=optimizer,
+                scheduler=scheduler,
+                checkpointer=checkpointer,
+                device=device,
+                checkpoint_period=self.get_snapshot_steps(),
+                arguments=arguments,
+                log_step=self.log_step,
+            )
+
+    def _get_old_check_point_file(self, i):
+        return op.join(self.output_folder, 'snapshot', 'model_{:07d}.pth'.format(i))
 
     def get_train_data_loader(self, start_iter=0):
         return self._get_data_loader(data=self.data,
                 split='train', stage='train',
                 start_iter=start_iter)
+
+    def get_sampler(self, dataset, stage, shuffle):
+        if self.distributed:
+            if stage == 'train' and self.infinite_sampler:
+                from qd.opt.sampler import InfiniteSampler
+                sampler = InfiniteSampler(len(dataset))
+            else:
+                from maskrcnn_benchmark.data import samplers
+                sampler = samplers.DistributedSampler(dataset,
+                        shuffle=shuffle,
+                        length_divisible=self.batch_size)
+        else:
+            if stage == 'train' and self.infinite_sampler:
+                from qd.opt.sampler import InfiniteSampler
+                sampler = InfiniteSampler(len(dataset), shuffle_at_init=shuffle)
+            else:
+                if shuffle:
+                    sampler = torch.utils.data.sampler.RandomSampler(
+                            dataset)
+                else:
+                    sampler = torch.utils.data.sampler.SequentialSampler(dataset)
+        return sampler
+
+    def get_train_batch_sampler(self, sampler, stage, start_iter):
+        if stage == 'train':
+            if not self.infinite_sampler:
+                batch_sampler = torch.utils.data.sampler.BatchSampler(
+                    sampler, self.batch_size, drop_last=False
+                )
+                from maskrcnn_benchmark.data import samplers
+                batch_sampler = samplers.IterationBasedBatchSampler(
+                    batch_sampler, self.max_iter, start_iter
+                )
+            else:
+                from qd.opt.sampler import InfiniteBatchSampler, MaxIterBatchSampler
+                batch_sampler = InfiniteBatchSampler(sampler, self.batch_size)
+                batch_sampler = MaxIterBatchSampler(
+                    batch_sampler,
+                    self.max_iter,
+                    start_iter)
+        return batch_sampler
 
     def _get_data_loader(self, data, split, stage, shuffle=True, start_iter=0):
         if stage == 'train':
@@ -142,30 +217,17 @@ class MaskClassificationPipeline(ModelPipeline):
                 labelmap=self.get_labelmap(),
                 dataset_type=dataset_type)
 
-        if self.distributed:
-            from maskrcnn_benchmark.data import samplers
-            sampler = samplers.DistributedSampler(dataset,
-                    shuffle=shuffle,
-                    length_divisible=self.batch_size)
-        else:
-            if shuffle:
-                sampler = torch.utils.data.sampler.RandomSampler(
-                        dataset)
-            else:
-                sampler = torch.utils.data.sampler.SequentialSampler(dataset)
+        sampler = self.get_sampler(dataset, stage, shuffle)
+
         if stage == 'train':
-            batch_sampler = torch.utils.data.sampler.BatchSampler(
-                sampler, self.batch_size, drop_last=False
-            )
-            from maskrcnn_benchmark.data import samplers
-            batch_sampler = samplers.IterationBasedBatchSampler(
-                batch_sampler, self.max_iter, start_iter
-            )
+            batch_sampler = self.get_train_batch_sampler(sampler, stage, start_iter)
+            logging.info('batch sampler = {}'.format(batch_sampler))
             loader = torch.utils.data.DataLoader(
                 dataset,
                 num_workers=self.num_workers,
                 pin_memory=True,
                 batch_sampler=batch_sampler,
+                collate_fn=self.train_collate_fn,
                 )
         else:
             loader = torch.utils.data.DataLoader(
@@ -174,6 +236,7 @@ class MaskClassificationPipeline(ModelPipeline):
                 batch_size=self.test_batch_size,
                 num_workers=self.num_workers,
                 pin_memory=True,
+                collate_fn=self.test_collate_fn,
                 )
         return loader
 
@@ -223,12 +286,23 @@ class MaskClassificationPipeline(ModelPipeline):
         elif self.convert_bn == 'SBN':
             if self.distributed:
                 model = replace_module(model,
-                        lambda m: isinstance(m, torch.nn.BatchNorm2d),
+                        lambda m: isinstance(m, torch.nn.BatchNorm2d) or
+                                       isinstance(m, torch.nn.BatchNorm1d),
                         lambda m: torch.nn.SyncBatchNorm(m.num_features,
                             eps=m.eps,
                             momentum=m.momentum,
                             affine=m.affine,
                             track_running_stats=m.track_running_stats))
+        #elif self.convert_bn == 'NSBN':
+            #if self.distributed:
+                #from qd.layers.batch_norm import NaiveSyncBatchNorm
+                #model = replace_module(model,
+                        #lambda m: isinstance(m, torch.nn.BatchNorm2d),
+                        #lambda m: NaiveSyncBatchNorm(m.num_features,
+                            #eps=m.eps,
+                            #momentum=m.momentum,
+                            #affine=m.affine,
+                            #track_running_stats=m.track_running_stats))
         elif self.convert_bn == 'CBN':
             from qd.layers.batch_norm import ConvergingBatchNorm
             model = replace_module(model,
@@ -245,6 +319,12 @@ class MaskClassificationPipeline(ModelPipeline):
                         ))
         else:
             assert self.convert_bn is None, self.convert_bn
+        if self.hswish2relu6:
+            from qd.layers.mitorch_models.modules.activation import HardSwish
+            model = replace_module(model,
+                    lambda m: isinstance(m,
+                                         HardSwish),
+                    lambda m: torch.nn.ReLU6(inplace=True))
         # assign a name to each module so that we can use it in each module to
         # print debug information
         for n, m in model.named_modules():
@@ -296,35 +376,82 @@ class MaskClassificationPipeline(ModelPipeline):
         return model
 
     def load_test_model(self, model, model_file):
+        if self.predict_ema_decay:
+            out_model_file = op.splitext(model_file)[0] + '.ema{}.pt'.format(self.predict_ema_decay)
+            if self.mpi_rank == 0 and not op.isfile(out_model_file):
+                param = torch_load(model_file)
+                from qd.opt.ema_optimizer import replace_ema_param
+                replace_ema_param(param, decay=self.predict_ema_decay)
+                from qd.qd_pytorch import torch_save
+                torch_save(param, out_model_file)
+            synchronize()
+            model_file = out_model_file
+
         checkpointer = DetectronCheckpointer(cfg=DummyCfg(),
                 model=model,
                 save_dir=self.output_folder)
         checkpointer.load(model_file)
 
+    def wrap_feature_extract(self, model):
+        from qd.layers.feature_extract import FeatureExtract
+        model = FeatureExtract(model, self.predict_extract)
+        return model
+
     def predict_iter(self, dataloader, model, softmax_func, meters):
         from tqdm import tqdm
         start = time.time()
-        for i, (inputs, _, keys) in tqdm(enumerate(dataloader),
+        if self.predict_extract:
+            model = self.wrap_feature_extract(model)
+        for i, data_from_loader in tqdm(enumerate(dataloader),
                 total=len(dataloader)):
+            is_dict_data = isinstance(data_from_loader, dict)
+            if not is_dict_data:
+                # this is the deprecated cases. Dictionary should be better for
+                # abstract
+                inputs, _, keys = data_from_loader
+            else:
+                inputs = data_from_loader
+                keys = data_from_loader
+
+            #logging.info('debugging')
+            #inputs = torch_load('/tmp/i')
+
             if self.test_max_iter is not None and i >= self.test_max_iter:
                 # this is used for speed test, where we only would like to run a
                 # few images
                 break
             meters.update(data=time.time() - start)
             start = time.time()
-            if not isinstance(inputs, list):
+            if is_dict_data:
+                for k in inputs:
+                    if hasattr(inputs[k], 'to'):
+                        inputs[k] = inputs[k].to(self.device)
+            elif hasattr(inputs, 'to'):
                 inputs = inputs.to(self.device)
             meters.update(input_to_cuda=time.time() - start)
             start = time.time()
             output = model(inputs)
             meters.update(model=time.time() - start)
             start = time.time()
-            if softmax_func is not None:
-                output = softmax_func(output)
-            meters.update(softmax=time.time() - start)
-            for row in self.predict_output_to_tsv_row(output, keys):
-                yield row
+            if self.predict_extract:
+                for row in self.feature_to_tsv_row(
+                    model.get_features(), self.predict_extract, keys):
+                    yield row
+            else:
+                if softmax_func is not None:
+                    output = softmax_func(output)
+                for row in self.predict_output_to_tsv_row(output, keys,
+                                                          dataloader=dataloader):
+                    yield row
+            meters.update(write=time.time() - start)
             start = time.time()
+
+    def feature_to_tsv_row(self, features, feature_names, keys):
+        for i, key in enumerate(keys):
+            info = []
+            for f, f_name in zip(features, feature_names):
+                info.append({'feature': f[i].tolist(), 'name': f_name})
+            yield key, json_dump(info)
 
     def predict(self, model_file, predict_result_file):
         if self.mpi_size > 1:
@@ -344,6 +471,9 @@ class MaskClassificationPipeline(ModelPipeline):
         model.eval()
         from maskrcnn_benchmark.utils.metric_logger import MetricLogger
         meters = MetricLogger(delimiter="  ")
+        if self.test_mergebn:
+            from qd.layers import MergeBatchNorm
+            model = MergeBatchNorm(model)
         from qd.layers import ForwardPassTimeChecker
         model = ForwardPassTimeChecker(model)
         tsv_writer(self.predict_iter(dataloader, model, softmax_func, meters),
@@ -397,7 +527,7 @@ class MaskClassificationPipeline(ModelPipeline):
         synchronize()
         return predict_result_file
 
-    def predict_output_to_tsv_row(self, output, keys):
+    def predict_output_to_tsv_row(self, output, keys, **kwargs):
         topk = 50
         if output.shape[1] < topk:
             topk = output.shape[1]
