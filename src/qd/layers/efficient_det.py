@@ -1112,8 +1112,8 @@ class Anchors(nn.Module):
         stride_idx_key = self.get_key('anchor_stride_index', image_shape)
 
         if anchor_key in self.buffer:
-            return {'stride_idx': self.buffer[stride_idx_key],
-                    'anchor': self.buffer[anchor_key]}
+            return {'stride_idx': self.buffer[stride_idx_key].detach(),
+                    'anchor': self.buffer[anchor_key].detach()}
 
         if dtype == torch.float16:
             dtype = np.float16
