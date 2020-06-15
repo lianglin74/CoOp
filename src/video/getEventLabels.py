@@ -18,18 +18,59 @@ def getVideoAndEventLabels(jsonFile, videoFileName):
 
     return ret, labelList
 
-def labelConverter(label):
-    if "dunk" in label:
+# For special format of json format. E.g., "cctvEventLabels.json"
+def getVideoAndEventLabelsCCTV(jsonFile, videoFileName):
+    ret = False
+    labelList = []
+
+    if jsonFile is None or not os.path.exists(jsonFile):
+        return ret, labelList
+    with open(jsonFile) as json_file:
+        data = json.load(json_file)
+
+        #import pdb; pdb.set_trace();
+
+        if videoFileName in data:            
+            timeLabelList = data[videoFileName]['actions']
+            ret = True
+            labelList = [ (timeConverter(v[1], v[2]), labelConverterCCTV(v[0])) for v in timeLabelList ]
+    
+    #labelList.reverse()
+
+    return ret, labelList
+
+def labelConverterCCTV(label):
+    if "BDunk" in label:
         return "dunk"
     else:
         return "shot"
 
+def labelConverter(label):
+    if "dunk" in label:
+        return "dunk"
+    else:
+        return "shot"     
+
+def timeConverter(t1, t2):
+    return (t1+t2)/2.0
+
 def testGetVideoAndEventLabels():
-    jsonFile = '/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/test/extracted/label/Project_all.aucvl'
+    jsonFile = '/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/test/extracted/label/Project_all_corrected_manual.aucvl'
     videoFileName = '1551538896210_sc99_01_q1.mp4'
     #path: /mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/validation/extracted/
 
     ret, labelList = getVideoAndEventLabels(jsonFile, videoFileName)
+
+    print(labelList)
+    #[(13.922896, 'shot'), (36.051405, 'shot'), (55.823736, 'shot'), (120.206053, 'shot'), (151.343382, 'shot')...
+
+def testGetVideoAndEventLabelsCCTV():
+    jsonFile = '/mnt/gpu02_raid/data/video/CCTV/cctvEventLabels.json'
+    #jsonFile = '/mnt/gpu02_raid/data/video/CCTV/test.json'
+    videoFileName = 'Beijing_guangdong_720P.mp4'
+    #path: /mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/validation/extracted/
+
+    ret, labelList = getVideoAndEventLabelsCCTV(jsonFile, videoFileName)
 
     print(labelList)
     #[(13.922896, 'shot'), (36.051405, 'shot'), (55.823736, 'shot'), (120.206053, 'shot'), (151.343382, 'shot')...
@@ -65,6 +106,7 @@ def test_writeNewJsonFileWithCorrectedTime_2():
     writeNewJsonFileWithCorrectedTime(oldJsonFile, newJsonFile, correctedLabels)
 
 if __name__ == "__main__":
-    #testGetVideoAndEventLabels()
+    testGetVideoAndEventLabels()
     #test_writeNewJsonFileWithCorrectedTime()
-    test_writeNewJsonFileWithCorrectedTime_2()
+    #test_writeNewJsonFileWithCorrectedTime_2()
+    testGetVideoAndEventLabelsCCTV()

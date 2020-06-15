@@ -736,7 +736,8 @@ def calculateF1andWriteRes(dir, odFileList, eventLabelJsonFile, textLabels = Fal
         if textLabels:
             true_results = getEventLabelsFromText(textLabelFolder + odFileName.replace('tsv', 'GTevents.txt'))
         else:
-            ret, true_results = getVideoAndEventLabels(eventLabelJsonFile, videoFileName)
+            #ret, true_results = getVideoAndEventLabels(eventLabelJsonFile, videoFileName)
+            ret, true_results = getVideoAndEventLabelsCCTV(eventLabelJsonFile, videoFileName)
         if ret: 
             allReports += "--Report for file: " + videoFileName + "\n"
 

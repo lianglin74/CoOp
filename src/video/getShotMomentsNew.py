@@ -6,7 +6,7 @@ from qd.tsv_io import tsv_reader, tsv_writer
 from qd.qd_common import calculate_iou
 
 from video.getShotMoments import f1Report,getEventLabelsFromText
-from video.getEventLabels import getVideoAndEventLabels, labelConverter
+from video.getEventLabels import getVideoAndEventLabels, getVideoAndEventLabelsCCTV
 from video.ballPositionPrediction import FreeFall
 from video.labelViewerForVideo import showImageWithLabels
 
@@ -703,7 +703,7 @@ class EventDetector(object):
         if DEBUGMODE:
             videoCap = cv2.VideoCapture(self.videoFile)
 
-		rowCnt = sum(1 for row in tqdm(tsv_reader(self.odTSVFile)))
+        rowCnt = sum(1 for row in tqdm(tsv_reader(self.odTSVFile)))
         
         for row in tqdm(tsv_reader(self.odTSVFile)):        
             curTime = self.imageCnt / self.frameRate
@@ -1767,7 +1767,8 @@ def calculateF1andWriteRes(odFileList, eventLabelJsonFile = "", textLabelFolder 
 
         checkResultsOverlap(pred_results)
         
-        ret, true_results = getVideoAndEventLabels(eventLabelJsonFile, videoFileName)
+        #ret, true_results = getVideoAndEventLabels(eventLabelJsonFile, videoFileName)
+        ret, true_results = getVideoAndEventLabelsCCTV(eventLabelJsonFile, videoFileName)
         if not ret:        
             ret, true_results = getEventLabelsFromText(textLabelFolder + odFileName.replace('tsv', 'GTevents.txt'))
 
@@ -1938,6 +1939,15 @@ def getTestingResults():
     eventLabelJsonFile = '/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/test/extracted/label/Project_all_corrected_manual.aucvl'
     calculateF1andWriteRes(odFileList, eventLabelJsonFile)
 
+# for CCTV videos
+def getCCTVTestingResults():
+    dir = "/mnt/gpu02_raid/data/video/CCTV/"
+    odFileList = "odFilelist.txt"
+    odFileList = read_file_to_list(dir + odFileList)
+    odFileList = [dir + f for f in odFileList]
+    eventLabelJsonFile = '/mnt/gpu02_raid/data/video/CCTV/cctvEventLabels.json'
+    calculateF1andWriteRes(odFileList, eventLabelJsonFile)
+
 def getMiguTestingResults():
     dir = "/mnt/gpu02_raid/data/video/CBA/CBA_demo_v3/"
     odFileList = "odFilelist.txt"
@@ -1970,9 +1980,10 @@ if __name__ == '__main__':
         elif sys.argv[1] == 'test':
             getTestingResults()
     else:
+        getCCTVTestingResults()
         #calculateF1andWriteRes_Clips()
 
-        getValidationResults()
+        #getValidationResults()
         #getTestingResults()
         #getMiguTestingResults()
         
