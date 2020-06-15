@@ -9,8 +9,9 @@ import sys
 skipSmallRectParm = 0
 skipPersonsParm = 0
 filterPersonsParm = 1
+skipBallParm = 0
 
-robustModeParm = 0
+robustModeParm = 1
 
 def preReadFrames(cap, numSeconds, startSecond, fps, robustMode = robustModeParm):
     startFrameIndex = int (fps * startSecond)
@@ -26,7 +27,7 @@ def preReadFrames(cap, numSeconds, startSecond, fps, robustMode = robustModeParm
     startFrameIndex = int(cap.get(cv2.CAP_PROP_POS_FRAMES)) 
 
     cacheFrames = []
-    totalFrames = numSeconds * fps
+    totalFrames = int(numSeconds * fps)
     for i in range(totalFrames):
         ret, frame = cap.read()
         if not ret:
@@ -60,7 +61,13 @@ def getFrameFromVideo(videoFileName, frameIndex):
     return frame
 
 def showFramesWithLabels(topDir, labelFileName, video_name, startSecond, endSecond = -1, writeImage=0):
-    id2Labels = getID2Labels(topDir + "/" + labelFileName)
+    labelFileName = topDir + "/" + labelFileName
+    video_name = topDir + "/" + video_name
+    coreShowFramesWithLabels(labelFileName, video_name, startSecond, endSecond = -1, writeImage=0)
+
+def coreShowFramesWithLabels(labelFileName, video_name, startSecond, endSecond = -1, writeImage=0):
+    topDir = os.path.dirname(labelFileName) + "/"
+    id2Labels = getID2Labels(labelFileName)
     print("len(id2Labels)", len(id2Labels))
     
     sepSign = "$"
@@ -75,8 +82,10 @@ def showFramesWithLabels(topDir, labelFileName, video_name, startSecond, endSeco
             "start_" + str(startSecond) + "-end_" + str(endSecond) + "/"
         if not os.path.exists(directory):
             os.makedirs(directory)
+    else:
+        directory = "./"    
 
-    cap = cv2.VideoCapture(topDir + "/" + video_name)
+    cap = cv2.VideoCapture(video_name)
     fps = getFPS(cap)
     totalFrames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     print("Total frame: ", totalFrames)
@@ -90,13 +99,15 @@ def showFramesWithLabels(topDir, labelFileName, video_name, startSecond, endSeco
     print("StartFrame: ", startFrame)
     print("EndFrame: ", endFrame)
 
-    startFrameIndex, cacheFrames = preReadFrames(cap, 10, startSecond, fps)
+    startFrameIndex, cacheFrames = preReadFrames(cap, endSecond - startSecond, startSecond, fps)
     print("Real startFrame: ", startFrameIndex)
     endFrame = startFrameIndex + len(cacheFrames) - 1
     print("Real endFrame: ", endFrame)
 
     i = startFrameIndex
     while i <= endFrame:
+        #print("--at beginning of a loop at i :", i)
+        
         # read frame
         # set initial frame  #set frame pos
         orgFrame = cacheFrames[i - startFrameIndex]
@@ -105,8 +116,12 @@ def showFramesWithLabels(topDir, labelFileName, video_name, startSecond, endSeco
         imageId = video_name + sepSign + str(i if labelIndexStartingFromZero else i + 1)
         #imageJPG = cv2.imencode('.jpg',frame)[1]
 
+        if imageId not in id2Labels:
+            imageId = os.path.basename(imageId)
+
         # get labels
         if imageId not in id2Labels:
+            print("imageID not found in label file", imageId)
             exit()
         else:
             labels = id2Labels[imageId]
@@ -115,38 +130,46 @@ def showFramesWithLabels(topDir, labelFileName, video_name, startSecond, endSeco
         #  print(labels)
         #  print(skipRects(labels))
 
-        frame = drawLabel(orgFrame, labels, skipSmallRect = skipSmallRectParm, skipPersons = skipPersonsParm, filterPersons = filterPersonsParm)
-        text = "Frame: " + str(i) + "; second: " + str(i / fps)
-        frame = cv2.putText(frame, text, (int(0), int(60)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 3)
+        showImageWithLabels(orgFrame, labels, imageId, i, fps, writeImage, directory)            
 
-        # Store this frame to an image
-        #my_video_name = video_name.split(".")[0]
-        if writeImage:
-            cv2.imwrite(directory + 'frame_'+str(i)+'.jpg', frame)
-
-        #cv2.namedWindow("Image", cv2.WINDOW_AUTOSIZE);
-        height, width = frame.shape[:2]
-        cv2.namedWindow('Image', cv2.WINDOW_NORMAL)
-        cv2.resizeWindow('Image', width, height)
-        cv2.imshow("Image", frame)
-
-        k = cv2.waitKeyEx(0)
-        if k == 65361 or k == 2424832:  # left
-            i -= 1
-        elif k == 65363 or k == 32 or k == 2555904:  # right or space
-            i += 1
-        elif k == 27 or k == 113:  # q or esc
-            exit()
-        elif k == 115: #"s" for saving image
-            #cv2.imwrite(topDir + imageId + '.jpg', frame)
-            cv2.imwrite(topDir + orgImageId + '.jpg', orgFrame)
-            
-        #else:
-        #  print("Key is", k)
+        # a better way to wait        
+        while 1:
+            ch = cv2.waitKey(0)
+            ch = chr(ch & 255)
+            if 'q' == ch or chr(27) == ch: #ESC
+                exit()
+            elif 'n' == ch or ' ' == ch or '.' == ch or '\r' == ch: #space and enter
+                i += 1
+                break
+            elif 'p' == ch or '\b' == ch or ',' == ch: #backspace
+                i -= 1
+                break
+            elif 's' == ch:
+                cv2.imwrite(topDir + orgImageId + '.jpg', orgFrame)                
+                print("Saving original frame ", orgImageId)
+            else:
+                print("The key pressed is: [{}]".format(ch))
+                print("Accepted key: { q for exit, n for next, p for previous }")
+        #print("Ending of loop at i :", i)
 
     cap.release()
 
+def showImageWithLabels(orgFrame, labels, imageKey, i, fps, writeImage, directory, skipSmallRect = skipSmallRectParm, skipPersons = skipPersonsParm, filterPersons = filterPersonsParm, skipBalls = skipBallParm):
+    frame = drawLabel(orgFrame, labels, skipSmallRect, skipPersons, filterPersons, skipBalls)
+    text = "Frame: " + str(i) + "; second: " + str(i / fps)
+    frame = cv2.putText(frame, text, (int(0), int(60)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 3)
+
+    # Store this frame to an image
+    #my_video_name = video_name.split(".")[0]
+    if writeImage:
+        cv2.imwrite(directory + imageKey +'.jpg', frame)
+
+    #cv2.namedWindow("Image", cv2.WINDOW_AUTOSIZE);
+    height, width = frame.shape[:2]
+    cv2.namedWindow('Image', cv2.WINDOW_NORMAL)
+    cv2.resizeWindow('Image', width, height)
+    cv2.imshow("Image", frame)
 
 def getID2Labels(labelFileName):
     t1 = tsv_reader(labelFileName)
@@ -173,7 +196,7 @@ def getFPS(cap):
 def areaOfRect(rect):
     return (rect[2] - rect[0]) * (rect[3] - rect[1])
 
-def drawLabel(image, labels, skipSmallRect = 0, skipPersons = 1, filterPersons = 1):
+def drawLabel(image, labels, skipSmallRect = 0, skipPersons = 1, filterPersons = 1, skipBalls = skipBallParm):
     if skipSmallRect:
         labels = skipRects(labels)
     showLabel = True
@@ -200,8 +223,10 @@ def drawLabel(image, labels, skipSmallRect = 0, skipPersons = 1, filterPersons =
         confidenceScore = v['conf']
         pos = (int(rect[2] + 3.0), int(rect[3] - 3.0))
         if (labelName == "backboard"):
-            pos = (int(rect[2] + 3.0), int(rect[1] + 3.0))
+            pos = (int(rect[2] + 3.0), int(rect[1] - 6.0))
         elif (labelName == "basketball"):
+            if skipBalls:
+                continue
             pos = (int(rect[2] + 3.0), int(rect[1] + 15.0))
         elif (labelName == "person"):
             if skipPersons or (filterPersons and (confidenceScore < confidenceThreshold or countPlayers >= playersThreshold)):
@@ -306,6 +331,11 @@ if __name__ == '__main__':
         labelFileName = os.path.basename(fullLabelFileName) 
         video_name = labelFileName.replace('.tsv', '.mp4')
         showFramesWithLabels(topDir, labelFileName, video_name, startSecond)
+    elif len(sys.argv) == 4:
+        fullLabelFileName = sys.argv[1]
+        video_name = sys.argv[2]
+        startSecond = float(sys.argv[3])
+        coreShowFramesWithLabels(fullLabelFileName, video_name, startSecond, endSecond = 3.9, writeImage=0)
     else:
         print("Missing arguments. Usage: python .\labelViewerForVideo.py <dir> <labelFileName> <videoFileName> <startTimeInSecond>")
         print('Example usage: python .\labelViewerForVideo.py /mnt/gpu02_raid/data/video/NBA/0001 NBA_0001_1.tsv NBA_0001_1.mkv 630')        

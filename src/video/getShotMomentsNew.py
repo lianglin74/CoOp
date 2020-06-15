@@ -1,13 +1,14 @@
 import cv2
 import json
-from qd import tsv_io
+#from qd import tsv_io
 from qd.process_tsv import onebb_in_list_of_bb
 from qd.tsv_io import tsv_reader, tsv_writer
 from qd.qd_common import calculate_iou
 
 from video.getShotMoments import f1Report,getEventLabelsFromText
-from video.getEventLabels import getVideoAndEventLabels, labelConverter
+from video.getEventLabels import getVideoAndEventLabels, getVideoAndEventLabelsCCTV
 from video.ballPositionPrediction import FreeFall
+from video.labelViewerForVideo import showImageWithLabels
 
 from tqdm import tqdm
 import numpy as np
@@ -17,11 +18,16 @@ import os
 import sys
 
 #Some parms not in classes:
-eventWindowToleranceInEvaluation = 1.0
+ShortClipMode=False
+eventWindowToleranceInEvaluation = 1.5 if ShortClipMode else 1.0
+DEBUGMODE = 0
+WriteDebugImages = 1
 
 def setDebug(frame):
-    if 0:
-        return frame > 5154 and frame < 5176
+    if DEBUGMODE:
+        startFrame = int(1.0 *25)
+        endFrame = startFrame + 75
+        return frame > startFrame  and frame < endFrame
     else:
         return False    
 
@@ -41,7 +47,7 @@ class Trajectory(object):
         self.eventPadding = 1.0
         
         # to filter out fake shots
-        self.highRecall = False
+        self.highRecall = 1 if ShortClipMode else False
         #Case: "BallOverlapRimOutSide_1":
         self.ballRimLateralDistanceThresh = 0.8 #unit: ball size
 
@@ -51,11 +57,22 @@ class Trajectory(object):
         self.dunkTimeWindow = 3.0
         self.personRimHeightConditionLoose = True
         self.dunkFrameLimit = 2
-        self.stationaryDistanceThresh = 0.5 #unit: ball size
+        self.stationaryDistanceThresh = 0.5 #unit: ball size        
         self.rimPersonLateralDistanceRatio = 1.5
+        #self.secondsFromIoaToDunkFinish = 0.2 #~5 frames for 25 fps
+        self.secondsFromIoaToDunkFinish = 0.4 #~10 frames for 25 fps
+        self.ballFullyAboveRimToleranceRatio = 0.2
+        self.ballTooHighRatio = 0.25
+        self.ballRimDistanceIncreaseRatio = 1.1
+
+        # to solve case: "WrongBallPositionDetected_1"
+        self.wrongBallToleranceFrames = 1
         
         # To solve the problem in case: Case "RimNotGood_1"
         self.ballEnlargeRatioForRim = 1.5        
+
+        # Not working well. Temporarily disabled. 
+        self.shiftBallByRimAnchor = False
 
         # for debugging purpose
         self.printMissingBallFrames = False
@@ -149,6 +166,8 @@ class Trajectory(object):
 
     def analyze(self):
         # filtering wrong object detection
+        # filter wrong balls
+        #filterOutlier(self.ballTraj, self.debug)
 
         # interpolate missing balls
 
@@ -157,20 +176,23 @@ class Trajectory(object):
         startTime = float(self.frameTraj[0]) / self.frameRate
         endTime = float(self.frameTraj[-1]) / self.frameRate        
         eventType = "shot"
-        ioaTime = "N/A"
+        self.ioaTime = "N/A"
         speed = "N/A"
         reason = "N/A"
 
         # check iou
         ioaIndex = findLastIndex(self.iouTraj, condition = lambda v : v > self.iouLowThresh)
+        
         if ioaIndex is None:
-            return shot, startTime, endTime, eventType, ioaTime, speed, reason
+            return shot, startTime, endTime, eventType, self.ioaTime, speed, reason
         
         firstIoaIndex = findFirstIndex(self.iouTraj, condition = lambda v : v > self.iouLowThresh)
 
         ioaValue = self.iouTraj[ioaIndex]
-        #ioaIndex, ioaValue = maxIndexVal(self.iouTraj)
-        self.ioaTime = float(self.frameTraj[ioaIndex]) / self.frameRate
+
+        maxIoaIndex, maxIoaValue = maxIndexVal(self.iouTraj)
+        
+        self.ioaTime = float(self.frameTraj[maxIoaIndex]) / self.frameRate
 
         # add padding time
         # case WrongBasketball_1:
@@ -192,7 +214,7 @@ class Trajectory(object):
             endTime = min(endTime, self.ioaTime + self.largestEventWindow / 2.0)
             startTime = startTime = max(startTime, self.ioaTime - self.largestEventWindow / 2.0)
 
-        if ioaValue > self.iouHighThresh and self.necessaryCondition1(ioaIndex):
+        if maxIoaValue > self.iouHighThresh and self.necessaryCondition1(maxIoaIndex):
             shot = True
             reason = 'highIou'
         elif ioaValue > self.iouLowThresh:
@@ -202,18 +224,32 @@ class Trajectory(object):
                     shot = True
                     reason = 'HighRecall'
                 else:
-                    if self.extraConditions(ioaIndex) and self.conditionBallOverRim(ioaIndex):
+                    if self.extraConditions(ioaIndex) and self.conditionBallOverRim(ioaIndex) is not None:
                         shot = True
                         reason = 'extraCond'
 
+        if not ShortClipMode and not shot: 
+            return shot, startTime, endTime, eventType, self.ioaTime, speed, reason
+            
+        if ShortClipMode and shot == False:
+            shot = True
+            reason = "always"
+            startTime = 0.1
+            endTime = 3.9
+            eventType = "shot"
+            self.ioaTime = 2.0
+        
         # get the most likely dunk person (for dunk detection)
         dunkFrameList = self.getDunkFrameList(firstIoaIndex)
-        if len(dunkFrameList) >= self.dunkFrameLimit:
+        # filter very possible wrong dunk
+        passDunkCheck = self.dunkNecessaryCondition_1(firstIoaIndex)     
+
+        if len(dunkFrameList) >= self.dunkFrameLimit and passDunkCheck:
             dunkTime = dunkFrameList[-1] / self.frameRate
             print("Finding a possible dunk at frame: ", dunkFrameList[-1], "; time: ", dunkTime)            
             #if abs(dunkTime - self.ioaTime) < self.dunkTimeWindow:
             eventType = "dunk"
-
+        
         # output the frames of the first missing ball
         if self.printMissingBallFrames and shot:
             self.writeMissingBallFrames()
@@ -233,16 +269,114 @@ class Trajectory(object):
                     print("Missing ball at frame: ", self.frameTraj[i], "Time: ", self.frameTraj[i]/self.frameRate, "Previous frame: rect: ", self.ballTraj[i  - 1][0]['rect'], 'conf: ', ballRects[0]['conf'])
                     return
 
-    def conditionBallOverRim(self, ioaIndex):
-        i = ioaIndex        
-        while i >= 0:
-            if objectExists(self.ballTraj[i]) and objectExists(self.rimTraj[i]) and self.ballTraj[i][0]['rect'][1] < self.rimTraj[i][0]['rect'][1]:
-                if self.debug:
-                    print("conditionBallOverRim return true")
-                
-                return True
-            i -= 1
+    def dunkNecessaryCondition_1(self, firstIoaIndex):
+        dunkFrames = int(self.secondsFromIoaToDunkFinish * self.frameRate) + 1
+        l = len(self.ballTraj)
+        # if ball goes too high than rim, then judge as non-dunk (this works for most CBA, but not NBA)
+        ballSize = getHeightOfObject(self.ballTraj[0][0])
+        if self.ballGoesTooHigh(0, min(firstIoaIndex + dunkFrames, l - 1), ballSize):
+            return False
+
+        firstIndexBallOverRim = self.ballFullyAboveRim(max(firstIoaIndex - self.wrongBallToleranceFrames, 0) , l -1)
+        if firstIndexBallOverRim is None:
+            return False
+
+        firstIndexBallWithInRimLaterally = self.ballFullyInRimLaterally(firstIndexBallOverRim, l -1)
+        if firstIndexBallWithInRimLaterally is None:
+            return False
+        
+        if self.debug:
+            #import pdb; pdb.set_trace()
+            print("find a frame where ball is roughly above rim: ", self.ballTraj[firstIndexBallWithInRimLaterally], self.rimTraj[firstIndexBallWithInRimLaterally])
+        
+        # 
+        i = firstIndexBallWithInRimLaterally
+        ballCenter = getCenterOfObject(self.ballTraj[i][0])
+        centerOfRim = getCenterOfObject(self.rimTraj[i][0])        
+        distanceOfBallToRim = ballCenter[1] - centerOfRim[1]
+        
+        # within a few frames, ball should be below rim
+        i += 1
+        upperLimit = min(i + dunkFrames, l - 1)
+        while i <= upperLimit:
+            if objectExists(self.ballTraj[i]) and objectExists(self.rimTraj[i]):
+                ballObj = self.ballTraj[i][0]
+                ballSize = getHeightOfObject(ballObj)
+                #if self.ballTraj[i][0]['rect'][1] + self.ballFullyAboveRimToleranceRatio * ballSize >  self.rimTraj[i][0]['rect'][1]:
+                if self.ballTraj[i][0]['rect'][1]  >  self.rimTraj[i][0]['rect'][3] - self.ballFullyAboveRimToleranceRatio * ballSize:
+                    if self.debug:
+                        print("find a frame where ball is almost fully below rim: ", self.ballTraj[i], self.rimTraj[i])
+                    return True
+            i += 1
+
         return False
+
+    def ballGoesTooHigh(self, startIndex, endIndex, ballSize):
+        i = startIndex      
+        while i <= endIndex:
+            if objectExists(self.ballTraj[i]) and objectExists(self.rimTraj[i]):
+                # if ball continue going higher, then return false                
+                if self.ballTraj[i][0]['rect'][3] < self.rimTraj[i][0]['rect'][1] - self.ballTooHighRatio * ballSize:
+                    return True
+            i += 1
+        return False
+
+    def ballFullyAboveRim(self, startIndex, endIndex):
+        i = startIndex        
+        # find first position where ball is higher than rim: 
+        while i <= endIndex:
+            if objectExists(self.ballTraj[i]) and objectExists(self.rimTraj[i]):
+                rimObj = self.rimTraj[i][0]
+                rimSize = min(getWidthOfObject(rimObj), getHeightOfObject(rimObj)) 
+                if self.ballTraj[i][0]['rect'][3] - self.ballFullyAboveRimToleranceRatio * rimSize < self.rimTraj[i][0]['rect'][1]:
+                    return i
+            i += 1
+        
+        return None
+
+    def ballRimLateralOverlap(self, x1Ball, x2Ball, x1Rim, x2Rim):
+        return x1Ball >= x1Rim and x2Ball <= x2Rim
+
+    def ballFullyInRimLaterally(self, startIndex, endIndex):
+        i = startIndex        
+        # find first position where ball is laterally within rim: 
+        while i <= endIndex:
+            if objectExists(self.ballTraj[i]) and objectExists(self.rimTraj[i]):
+                x1Ball = self.ballTraj[i][0]['rect'][0]
+                x2Ball = self.ballTraj[i][0]['rect'][2]
+                x1Rim = self.rimTraj[i][0]['rect'][0]
+                x2Rim = self.rimTraj[i][0]['rect'][2]
+
+                if self.ballRimLateralOverlap(x1Ball, x2Ball, x1Rim, x2Rim):
+                    return i
+            i += 1
+        
+        return None
+
+    def conditionBallOverRim(self, ioaIndex):
+        i = ioaIndex
+        ballOverRim = False
+        ballLateralOverlapRim = False       
+        while i >= 0:
+            if objectExists(self.ballTraj[i]) and objectExists(self.rimTraj[i]):
+                x1Ball = self.ballTraj[i][0]['rect'][0]
+                x2Ball = self.ballTraj[i][0]['rect'][2]
+                x1Rim = self.rimTraj[i][0]['rect'][0]
+                x2Rim = self.rimTraj[i][0]['rect'][2]
+
+                y1Ball = self.ballTraj[i][0]['rect'][1]
+                y1Rim =  self.rimTraj[i][0]['rect'][1]
+
+                if not ballOverRim and y1Ball  < y1Rim:
+                    ballOverRim = True
+                if not ballLateralOverlapRim and self.ballRimLateralOverlap(x1Ball, x2Ball, x1Rim, x2Rim):
+                    ballLateralOverlapRim = True
+
+                if ballOverRim and ballLateralOverlapRim:
+                    return i
+
+            i -= 1
+        return None
 
     def extraConditions(self, ioaIndex):
         l = len(self.ballTraj)
@@ -287,7 +421,7 @@ class Trajectory(object):
         i = ioaIndex
         l = len(self.ballTraj)
         while i < l:
-            if objectExists(self.ballTraj[i]) and objectExists(self.rimTraj[i]) and not self.ballAboveRim(self.ballTraj[i], self.rimTraj[i]):
+            if objectExists(self.ballTraj[i]) and objectExists(self.rimTraj[i]) and self.ballTraj[i][0]['rect'][3] > self.rimTraj[i][0]['rect'][3]:
                 if not usingDetectedBalls:
                     return i
                 elif i > 0 and objectExists(self.ballTraj[i-1]) and self.ballTraj[i][0]['conf'] != self.ballTraj[i - 1][0]['conf']:
@@ -360,11 +494,13 @@ class Trajectory(object):
         else:
             return False
 
-    def predictBallRects(self):
+    def predictBallRects(self, curRimObjList):
         prevBallObjs = self.ballTraj
+        
         l = len(prevBallObjs)
-        if l < 2 or not objectExists(prevBallObjs[l-1]) or not objectExists(prevBallObjs[l-2]):
-            return []
+        ballSpeedRatio = None
+        if not (l >= 2 and objectExists(prevBallObjs[l-1]) and objectExists(prevBallObjs[l-2]) and prevBallObjs[l-1][0]['class'] != 'dummy'):
+            return [], ballSpeedRatio
 
         widthOfBall = getWidthOfObject(prevBallObjs[l-1][0])
         heightOfBall = getHeightOfObject(prevBallObjs[l-1][0])
@@ -376,6 +512,18 @@ class Trajectory(object):
         x1, y1 = getCenterOfObject(prevBallObjs[l-2][0])
         x2, y2 = getCenterOfObject(prevBallObjs[l-1][0])
 
+        prevRimObjs = self.rimTraj
+        if self.shiftBallByRimAnchor and objectExists(curRimObjList) and objectExists(prevRimObjs[l-1]) and objectExists(prevRimObjs[l-2]):            
+            x1Rim, y1Rim = getCenterOfObject(prevRimObjs[l-2][0])
+            x2Rim, y2Rim = getCenterOfObject(prevRimObjs[l-1][0])
+            curRimObj = curRimObjList[0]
+            xRim, yRim = getCenterOfObject(curRimObj)
+
+            x1, y1  = adjustBallPosition(x1, y1, x1Rim, y1Rim, xRim, yRim)
+            x2, y2  = adjustBallPosition(x2, y2, x2Rim, y2Rim, xRim, yRim)
+
+        ballSpeedRatio = math.sqrt( (x2 - x1)**2 + (y2 - y1)**2 ) / max(widthOfBall, heightOfBall)
+
         x = 2 * x2 - x1
         y = 2 * y2 - y1
 
@@ -384,11 +532,17 @@ class Trajectory(object):
         dummyBallObj['rect'][1] = y - (heightOfBall) / 2
         dummyBallObj['rect'][2] = x + (widthOfBall) / 2
         dummyBallObj['rect'][3] = y + (heightOfBall) / 2
+        dummyBallObj['class'] = 'dummy'
 
         if self.debug:
             print('dummyBallObj: ', dummyBallObj)
 
-        return [dummyBallObj]
+        return [dummyBallObj], ballSpeedRatio
+
+def adjustBallPosition(x2, y2, x2Rim, y2Rim, xRim, yRim):
+    x2 += (xRim - x2Rim)
+    y2 += (yRim - y2Rim)
+    return x2, y2
 
 def maxIndexVal(values):
     max_index, max_value = max(enumerate(values), key=lambda p: p[1])
@@ -416,16 +570,96 @@ def findFirstIndex(myList, condition):
         i += 1
     return None
 
+def filterOutlier(objTraj, debug = 0):
+    # for each obj, calculate the movements
+    l = len(objTraj)
+
+    moveRatioList = []
+
+    assert(objectExists(objTraj[0]))
+    moveRatioList.append( [objTraj[0], 0] )
+
+    # get the move ratio for each existed frames
+    i = 1
+    cntFrame = 1
+    while i < l: 
+        if not objectExists(objTraj[i]):
+            cntFrame += 1
+        else:
+            moveRatio = calMoveRatio(objTraj[i], objTraj[i - cntFrame], cntFrame)
+            moveRatioList.append( [objTraj[i], moveRatio] )
+            cntFrame = 1        
+        i += 1
+
+    # calculate the moveSpeedRatio
+    numObjs = len(moveRatioList)
+    if numObjs == 1:
+        return    
+    # correct the first obj
+    moveRatioList[0][1] = moveRatioList[1][1]
+    j = 1
+    while j < numObjs - 1: 
+        moveRatioList[j][1] = min(moveRatioList[j][1], moveRatioList[j + 1][1])
+        j += 1
+    
+    # filtering the outlier by IQR method
+    data = [moveRatioList[j][1] for v in moveRatioList]
+    lower, upper = filterByIQR(data)
+
+    # starting the filtering
+    for obj in moveRatioList:
+        if (obj[1] > upper):
+            if debug: 
+                print("Remove outlier detection for obj: ", obj[0])
+            obj[0] = []    
+
+def filterByIQR(data):
+    from numpy import percentile
+    
+    # calculate interquartile range
+    q25, q75 = percentile(data, 25), percentile(data, 75)
+    iqr = q75 - q25
+    print('Percentiles: 25th=%.3f, 75th=%.3f, IQR=%.3f' % (q25, q75, iqr))
+    # calculate the outlier cutoff
+    cut_off = iqr * 1.5
+    lower, upper = q25 - cut_off, q75 + cut_off
+    # identify outliers
+    outliers = [x for x in data if x < lower or x > upper]
+    #print('Identified outliers:',  outliers)
+    # remove outliers
+    #outliers_removed = [x for x in data if x >= lower and x <= upper]
+    return lower, upper
+
+def calMoveRatio(objList1, objList2, cntFrame):
+    prevRectObj = objList1[0]
+    
+    widthOfObj = getWidthOfObject(prevRectObj)
+    heightOfObj = getHeightOfObject(prevRectObj)
+    
+    x1, y1 = getCenterOfObject(prevRectObj)
+    x2, y2 = getCenterOfObject(objList2[0])
+
+    moveSpeedRatio = math.sqrt( (x2 - x1)**2 + (y2 - y1)**2 ) / max(widthOfObj, heightOfObj) / cntFrame
+
+    return moveSpeedRatio
+
+
 class EventDetector(object):
     # Initializer / Instance attributes
     def __init__(self, odTSVFile, videoFile):
         # ---- Parameters ----
-        self.basketBallConfThresh = 0.5
+        self.basketBallConfThresh = 0.5        
+        self.detectBallWithLowThresh = True
+        self.basketBallConfLowThresh = 0.01
+        self.ballSearchRegionIOAThresh = 0.9
+        self.ballReDetectRegionRatio = 3.0
+        self.ballReDetectRegionRatio_2 = 5.0
+        self.predictMissingBall = True
+        self.ballSpeedToBallRatio = 2.0 #in two frames, ball movement cannot be larger than 2.0 * ball size. 
+
         self.rimConfThresh = 0.1
           #Case "WrongBasketball_2": needs rimConfThresh to be below 0.19. 
           #Case "RimNotGood_1": prefer rimConfThresh to be above 0.35
-
-        self.predictMissingBall = True
 
         self.backboardConfThresh = 0.1
         # When to start or end an event
@@ -436,6 +670,7 @@ class EventDetector(object):
         self.personThresh = 0.2
         self.ballEnlargeRatioForperson = 1.1
         self.stationaryDistanceThresh = 0.2
+        self.stationaryPersonAreaChangeRatio = 0.1 #percentage change
 
         # initialize
         self.odTSVFile = odTSVFile
@@ -465,7 +700,12 @@ class EventDetector(object):
         prevRects = {"ball": [], "rim": [], "backboard": [], "person": []}
         eventResults = []
 
-        for row in tqdm(tsv_reader(self.odTSVFile)):
+        if DEBUGMODE:
+            videoCap = cv2.VideoCapture(self.videoFile)
+
+        rowCnt = sum(1 for row in tqdm(tsv_reader(self.odTSVFile)))
+        
+        for row in tqdm(tsv_reader(self.odTSVFile)):        
             curTime = self.imageCnt / self.frameRate
             
             self.debug = setDebug(self.imageCnt)
@@ -486,22 +726,37 @@ class EventDetector(object):
             rimRects, backboardRects = self.updateRimBackboardRects(
                 rimRects, backboardRects, prevRects)
 
+            # if ball detected is far from last position, discarded it and use predicted location if possible
+            if eventStarted:
+                ballRects = self.verifyBallDetected(ballRects, prevRects['ball'])
+
+            # Add missing ball: for case: BallNotDetected_1:
+            if not objectExists(ballRects):                
+                if self.detectBallWithLowThresh:
+                    if self.debug:
+                        print("Before re-detecting ball rects:", ballRects)
+                    
+                    if len(prevRects["ball"]) > 0:
+                        ballRects = self.reDetectBallRects(trajectory, prevRects["ball"][0], rects, rimRects)
+
+                    if self.debug:
+                        print("After re-detecting ball rects:", ballRects)
+            
             # Add missing ball: for case: BallNotDetected_1:
             if not objectExists(ballRects):                
                 if self.predictMissingBall:
                     if self.debug:
                         print("Before adding ball rects:", ballRects)
 
-                    if len(prevRects["ball"]) > 0:
-                        ballRects = trajectory.predictBallRects()
+                    if len(prevRects["ball"]) > 0:                        
+                        ballRects, ballSpeedRatio = trajectory.predictBallRects(rimRects)
+                        if self.debug and eventStarted and ballSpeedRatio is not None and ballSpeedRatio > self.ballSpeedToBallRatio :
+                            print(" !! ball move too far: ", ballSpeedRatio)
 
                     if self.debug:
                         print("After adding ball rects:", ballRects)
+                        print("Ball movement ratio: ", ballSpeedRatio)
                 
-                prevRects["ball"] = []
-            else:
-                prevRects["ball"] = ballRects
-
             # Get the ball, rim pair with smallest distance if there are multiple balls or rims
             ballRects, rimRects = self.getClosestBallRimPair(ballRects, rimRects)
             if self.debug:
@@ -518,7 +773,7 @@ class EventDetector(object):
             filteredPersonRectsByMove = []
             if objectExists(rimRects):            
                 filteredPersonRectsByMove, filteredPersonRectsBySorting = self.filterPersonRects(rects, prevRects["person"], rimRects[0]['rect'], self.debug)                
-            prevRects["person"] = filteredPersonRectsBySorting
+            
             if self.debug:
                 print("filteredPersonRectsBySorting", filteredPersonRectsBySorting)
                 print("filteredPersonRectsByMove", filteredPersonRectsByMove)
@@ -531,6 +786,8 @@ class EventDetector(object):
             # Store the prev rects            
             prevRects["rim"] = rimRects
             prevRects["backboard"] = backboardRects
+            prevRects["ball"] = ballRects
+            prevRects["person"] = filteredPersonRectsBySorting
 
             # Check the relative positision of rim and ball
             #distanceBallToRim, ballAboveRim = getRelativePosition(rimBB, ballBB)
@@ -538,6 +795,10 @@ class EventDetector(object):
             # if debug, then store the images with rects to images
             #if self.debug:
             #    saveRectsToTSV(self.videoFile, self.imageCnt, backboardRects, rimRects, ballRects, filteredPersonRects)
+            if self.debug:
+                showAndWriteImageWithLabels(row[0], videoCap, self.frameRate, backboardRects, rimRects, ballRects, filteredPersonRectsByMove, labelIndexStartingFromOne = False, writeImage = WriteDebugImages)
+                if not WriteDebugImages:
+                    waitForKeys()
 
             # Update the event status: started or not (if started, record the trajectory; else, clear up)
             #   If distance < thresh for two or three frames (filtering out wrong labels), then started.
@@ -548,13 +809,14 @@ class EventDetector(object):
             if not eventStarted:                
                 eventStarted = self.checkWhetherEventStarted(endTimeRes, curTime, ballRects, rimRects)
                 if eventStarted:
+                    iou = trajectory.add(ballRects, rimRects, filteredPersonRectsByMove, self.imageCnt)
                     startTime = curTime
                     if self.debug:
                         print("Event started!")
             else:
                 iou = trajectory.add(ballRects, rimRects, filteredPersonRectsByMove, self.imageCnt)
                 
-                eventEnded = self.checkWhetherEventEnded(ballRects, rimRects, curTime, startTime, trajectory.shotDetectWindow)
+                eventEnded = True if self.imageCnt == rowCnt - 1 else self.checkWhetherEventEnded(ballRects, rimRects, curTime, startTime, trajectory.shotDetectWindow)
                 if (eventEnded):
                     if self.debug:
                         print("Event ended!")
@@ -568,9 +830,11 @@ class EventDetector(object):
                     # else: #doing nothing
                     trajectory.clear()
                 # else: #event going on, doing nothing
-
                 
             self.imageCnt += 1
+
+        if DEBUGMODE:
+            videoCap.release()
 
         return eventResults
 
@@ -598,27 +862,31 @@ class EventDetector(object):
             return None
 
     def getDistanceBalltoRim(self, ballRects, rimRects):
-        ballExists = objectExists(ballRects)
-        rimExists = objectExists(rimRects)
-
-        if ballExists and rimExists:            
-            rectClosestRim = rimRects[0]
-            ballCenter = getCenterOfObject(ballRects[0])
-            centerOfRim = getCenterOfObject(rectClosestRim)
-            return getDistanceOfTwoPoints(ballCenter, centerOfRim)
-        else:
-            return None
-
+        rectClosestRim = rimRects[0]
+        ballCenter = getCenterOfObject(ballRects[0])
+        centerOfRim = getCenterOfObject(rectClosestRim)
+        return getDistanceOfTwoPoints(ballCenter, centerOfRim)
+    
     def checkWhetherEventStarted(self, endTime, curTime, ballRects, rimRects):
         # To prevent wrong detection of ball and then start another event too early. 
         # Case "WrongBasketball_2". 
         if (curTime < endTime):
             return False; 
 
-        ballToRimDistance = self.getDistanceBalltoRim(ballRects, rimRects)
+        if not objectExists(ballRects) or not objectExists(rimRects): 
+            return False
+
+        rectClosestRim = rimRects[0]
+        ballCenter = getCenterOfObject(ballRects[0])
+        centerOfRim = getCenterOfObject(rectClosestRim)
+
+        if not isAbove(ballCenter, centerOfRim):
+            return False
+
+        ballToRimDistance = getDistanceOfTwoPoints(ballCenter, centerOfRim)
         widthRim = self.getWidthOfRim(rimRects)
 
-        if ballToRimDistance is not None and widthRim is not None and ballToRimDistance < self.distanceBallToRimThresh * widthRim:
+        if ballToRimDistance < self.distanceBallToRimThresh * widthRim:
             return True
         else:
             return False
@@ -634,6 +902,9 @@ class EventDetector(object):
         if curTime < startTime + shotDetectWindow:
             return False
 
+        if not objectExists(ballRects) or not objectExists(rimRects): 
+            return False
+
         ballToRimDistance = self.getDistanceBalltoRim(ballRects, rimRects)
         widthRim = self.getWidthOfRim(rimRects)
 
@@ -641,7 +912,7 @@ class EventDetector(object):
             print("ball Rim Distance: ", ballToRimDistance)
             print("Width of rim", widthRim)
 
-        if ballToRimDistance is not None and widthRim is not None and ballToRimDistance > self.distanceBallToRimThresh * widthRim:
+        if ballToRimDistance > self.distanceBallToRimThresh * widthRim:
             return True
         else:
             return False
@@ -666,6 +937,43 @@ class EventDetector(object):
             print("[Warning] image ",  self.imageCnt, ": backboard found, but no rim")
 
         return ballRects, rimRects, backboardRects
+    
+    def reDetectBallRects(self, trajectory, prevBallRect, rects, rimRects):        
+        ballRects = []
+        #predictedBallRectObj, _ = trajectory.predictBallRects(rimRects)
+        #if (objectExists(predictedBallRectObj)):
+        #    searchRect = enlargeRect(predictedBallRectObj[0]['rect'], self.ballReDetectRegionRatio)
+        #else:
+        searchRect = enlargeRect(prevBallRect['rect'], self.ballReDetectRegionRatio_2)
+        
+        for r in rects:
+            if r['class'] == 'basketball':
+                ballRect = r['rect']
+                if r['conf'] >= self.basketBallConfLowThresh and calculateIOA(ballRect, searchRect) > self.ballSearchRegionIOAThresh:
+                    ballRects.append(r)
+        if len(ballRects) > 1: 
+            ballRects = [ max(ballRects, key=lambda r: r['conf']) ]
+
+        return ballRects
+
+    def verifyBallDetected(self, ballRects, prevBallRects): 
+        if not objectExists(prevBallRects) or not objectExists(ballRects) or prevBallRects[0]['class'] == 'dummy':
+            return ballRects
+
+        prevBallRectObj = prevBallRects[0]
+        #getballSpeedRatio 
+        widthOfBall = getWidthOfObject(prevBallRectObj)
+        heightOfBall = getHeightOfObject(prevBallRectObj)
+        
+        x1, y1 = getCenterOfObject(prevBallRectObj)
+        x2, y2 = getCenterOfObject(ballRects[0])
+
+        ballSpeedRatio = math.sqrt( (x2 - x1)**2 + (y2 - y1)**2 ) / max(widthOfBall, heightOfBall)
+
+        if ballSpeedRatio > self.ballSpeedToBallRatio:
+            return []
+        else:
+            return ballRects
 
     # if backboard shows, but rim does not show; add rim;
     def updateRimBackboardRects(self, rimRects, backboardRects, prevRects):
@@ -701,14 +1009,16 @@ class EventDetector(object):
     
     def checkPersonMove(self, personRect, prevPersonRects, rimSize, debug = 0):        
         curCenter = getCenterOfObject(personRect)
+        curArea = areaOfRect(personRect['rect'])
         
         for pRect in prevPersonRects: 
             pCenter = getCenterOfObject(pRect)
+            pArea = areaOfRect(pRect['rect'])
             if debug:
                 print("comparing with: ", pRect)
                 print("Distance: ", getDistanceOfTwoPoints(curCenter, pCenter)) 
 
-            if getDistanceOfTwoPoints(curCenter, pCenter) < self.stationaryDistanceThresh * rimSize:
+            if getDistanceOfTwoPoints(curCenter, pCenter) < self.stationaryDistanceThresh * rimSize and (pArea - curArea) / curArea < self.stationaryPersonAreaChangeRatio:
                 return False
 
         return True   
@@ -741,6 +1051,40 @@ class EventDetector(object):
 
         return personRects
 
+def showAndWriteImageWithLabels(imageKey, videoCap, fps, backboardRects, rimRects, ballRects, filteredPersonRectsByMove, labelIndexStartingFromOne = False, writeImage = False):
+    frameIndex = int(imageKey.split('$')[1])
+    if labelIndexStartingFromOne:
+        frameIndex -= 1
+    
+    #get frame
+    # set frame pos
+    videoCap.set(cv2.CAP_PROP_POS_FRAMES, frameIndex)
+    # read frame
+    ret, frame = videoCap.read()
+    if not ret:
+        print("Exiting due to error in reading frame for ", imageKey)        
+        exit()
+    
+    rects = []
+    rects.extend(backboardRects)
+    rects.extend(rimRects)    
+    rects.extend(ballRects)
+    rects.extend(filteredPersonRectsByMove)
+    
+    showImageWithLabels(frame, rects, imageKey, frameIndex, fps, writeImage, './', skipSmallRect = 0, skipPersons = 0, filterPersons = 0, skipBalls = 0)
+    
+def waitForKeys():
+    while 1:
+        ch = cv2.waitKey(0)
+        ch = chr(ch & 255)
+        if 'q' == ch or chr(27) == ch: #ESC
+            exit()
+        elif 'n' == ch or ' ' == ch or '.' == ch or '\r' == ch: #space and enter            
+            break        
+        else:
+            print("The key pressed is: ", ch)
+            print("Accepted key: { q for exit, n for next }")
+            
 def objectExists(objRectList):
     return len(objRectList) > 0
 
@@ -1206,7 +1550,7 @@ def getShotStats(pred_results, true_results):
     while i < lp and j < lt:
         pRes = pred_results[i]
         tRes = true_results[j]
-        if tRes[0] < pRes[0]:
+        if tRes[0] < pRes[0] - eventWindowToleranceInEvaluation if ShortClipMode else 0:
             allTimePoints.append(tRes)
             y_pred.append( (nonShotLabel, None) )
             y_true.append( (shotLabel if treatingDunkAsShot else tRes[1], tRes) )
@@ -1423,9 +1767,114 @@ def calculateF1andWriteRes(odFileList, eventLabelJsonFile = "", textLabelFolder 
 
         checkResultsOverlap(pred_results)
         
-        ret, true_results = getVideoAndEventLabels(eventLabelJsonFile, videoFileName)
+        #ret, true_results = getVideoAndEventLabels(eventLabelJsonFile, videoFileName)
+        ret, true_results = getVideoAndEventLabelsCCTV(eventLabelJsonFile, videoFileName)
         if not ret:        
             ret, true_results = getEventLabelsFromText(textLabelFolder + odFileName.replace('tsv', 'GTevents.txt'))
+
+        if ret: 
+            allReports += "--Report for file: " + videoFileName + "\n"
+
+            print("----calculate F1 for file: ", predict_file)            
+            #print("True_results:", true_results)
+            #calculateF1(pred_results, true_results)
+
+            y_pred_combo, y_true_combo, allTimePoints, correctLabelsDict = getShotStats(pred_results, true_results)
+            #print(y_pred_combo)
+            #print(y_true_combo)
+
+            y_pred, y_pred_pointer = zip(*y_pred_combo)
+            y_true, y_true_pointer = zip(*y_true_combo)
+
+            confusionMatrixReport(y_pred, y_pred_pointer, y_true, y_true_pointer)
+
+            if writeAutoMLLabel or extraVideoSegments: 
+                falsePositiveRes = getFalsePositiveRes(allTimePoints)
+                #print("False Positive Results: ", falsePositiveRes)
+                negativeRes = getNegativeRes(allTimePoints)
+            
+            allCorrectLabels[videoFileName] = correctLabelsDict
+
+            overallPred.extend(y_pred)
+            overallTrue.extend(y_true)
+
+            allReports += f1Report(y_pred, y_true)
+        else:
+            print("!! cannot find label for video file: ", videoFileName)
+            exit()
+
+        # write events
+        writeToTSV(predict_file, pred_results)
+        #writeToTSV(predict_file, true_results, True)
+        if writeAutoMLLabel:
+            writeTrainingLabelsForAutoML(predict_file, true_results, timePoint = True)
+            writeTrainingLabelsForAutoML(predict_file, falsePositiveRes, timePoint = True, suffix = "fakeShot")
+            writeTrainingLabelsForAutoML(predict_file, negativeRes, timePoint = True, suffix = "nonShot")
+        if extraVideoSegments:
+            extractSegmentsForActionRecognition(predict_file, true_results, timePoint = True)
+            extractSegmentsForActionRecognition(predict_file, falsePositiveRes, timePoint = True)
+            extractSegmentsForActionRecognition(predict_file, negativeRes, timePoint = True)
+
+    print(allReports)
+    print("====F1 report for all the data: ")
+    f1Report(overallPred, overallTrue)
+    print(allCorrectLabels)
+
+
+def calculateF1andWriteRes_Clips(csvFile = 'train_noNBA.csv'):
+    topDir = "/raid/data/video/CBA/Labeled_Clips/"
+
+    import csv
+    video_list = []
+    with open(topDir + csvFile, 'r') as f:
+        reader = csv.reader(f)
+        video_list = list(reader)
+
+    ####
+
+    usingNewAlg = 1
+    # Used to write labels for GL autoML training
+    writeAutoMLLabel = False
+    # Used to extract video segments for 3D conv
+    extraVideoSegments = False
+    
+    #predict_file = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_chop/TSV/head350_prediction_1551538896210_sc99_01_q1.tsv"
+    #predict_file = "/mnt/gavin_ivm_server2_IRIS/ChinaMobile/Video/CBA/CBA_chop/prediction_1551538896210_sc99_01_q1.tsv"
+
+    overallPred = []
+    overallTrue = []
+    allReports = ""
+
+    allCorrectLabels = {}
+
+    for row in video_list:
+        fileName = row[0].replace("clips/", "detection_result/")
+        fileName = fileName.replace(".mp4", "_bbbp.tsv")
+        predict_file = topDir + fileName
+
+        videoFileName = topDir + row[0]
+        
+        if usingNewAlg:
+            eventDetector = EventDetector(predict_file, videoFileName)
+            pred_results = eventDetector.findEvent()
+        else:
+            from video.getShotMoments import findShot
+            pred_results = findShot(predict_file)
+        #pred_results = findShot(predict_file)
+
+        checkResultsOverlap(pred_results)
+        
+        ret = True
+        points = int(row[1])
+        if points != 2:
+            continue
+
+        print("----Processing file: ", predict_file)
+        print("video file: ", videoFileName)
+
+        currentLabel = 'dunk' if row[2] == 'dunk' else 'shot'
+
+        true_results = [(2.0, currentLabel)]
 
         if ret: 
             allReports += "--Report for file: " + videoFileName + "\n"
@@ -1490,6 +1939,15 @@ def getTestingResults():
     eventLabelJsonFile = '/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/test/extracted/label/Project_all_corrected_manual.aucvl'
     calculateF1andWriteRes(odFileList, eventLabelJsonFile)
 
+# for CCTV videos
+def getCCTVTestingResults():
+    dir = "/mnt/gpu02_raid/data/video/CCTV/"
+    odFileList = "odFilelist.txt"
+    odFileList = read_file_to_list(dir + odFileList)
+    odFileList = [dir + f for f in odFileList]
+    eventLabelJsonFile = '/mnt/gpu02_raid/data/video/CCTV/cctvEventLabels.json'
+    calculateF1andWriteRes(odFileList, eventLabelJsonFile)
+
 def getMiguTestingResults():
     dir = "/mnt/gpu02_raid/data/video/CBA/CBA_demo_v3/"
     odFileList = "odFilelist.txt"
@@ -1515,11 +1973,17 @@ def compareWithGoogleAutoML():
 
 
 if __name__ == '__main__':
-    if len(sys.argv) == 2 and sys.argv[1] == 'test':
-        odFile = 'odFilelist_test.txt'
-        getValidationResults(odFile)
+    if len(sys.argv) == 2:
+        if sys.argv[1] == 'valtest':
+            odFile = 'odFilelist_test.txt'
+            getValidationResults(odFile)
+        elif sys.argv[1] == 'test':
+            getTestingResults()
     else:
-        getValidationResults()
+        getCCTVTestingResults()
+        #calculateF1andWriteRes_Clips()
+
+        #getValidationResults()
         #getTestingResults()
         #getMiguTestingResults()
         

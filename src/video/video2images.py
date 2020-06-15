@@ -39,7 +39,8 @@ def writeAllFrames(videoFileFullPath, imagePath = None):
     
 def test_writeAllFrames():
     #videoFile = '/mnt/gpu02_raid/data/video/CBA/CBA_5_test_videos/validation/extracted/1551538896210_sc99_01_q3.mp4'
-    videoFile = '/mnt/gpu02_raid/data/video/CBA/eventDetection/videosForDunkDetection/train/dunk/NBA2-74_0.mp4'
+    #videoFile = '/mnt/gpu02_raid/data/video/CBA/eventDetection/videosForDunkDetection/train/dunk/NBA2-74_0.mp4'
+    videoFile = '/raid/gavin/data/6ef6d29b-729a-4071-8a99-e2ed9936a655.mp4'
     writeAllFrames(videoFile)
 
 def videos2Frames_byList():
@@ -54,6 +55,6 @@ def videos2Frames_byList():
         writeAllFrames(file)
 
 if __name__ == "__main__":
-    #test_writeAllFrames()
-    videos2Frames_byList()
+    test_writeAllFrames()
+    #videos2Frames_byList()
 
