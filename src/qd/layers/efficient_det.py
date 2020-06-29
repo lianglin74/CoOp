@@ -9,6 +9,7 @@ import math
 import itertools
 import collections
 from torchvision.ops import nms
+from qd.qd_common import print_frame_info
 
 
 GlobalParams = collections.namedtuple('GlobalParams', [
@@ -188,10 +189,6 @@ class SeparableConvBlock(nn.Module):
 
 
 class BiFPN(nn.Module):
-    """
-    modified by Zylo117
-    """
-
     def __init__(self, num_channels, conv_channels, first_time=False,
                  epsilon=1e-4, onnx_export=False, attention=True,
                  adaptive_up=False):
@@ -247,11 +244,18 @@ class BiFPN(nn.Module):
                 nn.BatchNorm2d(num_channels, momentum=0.01, eps=1e-3),
             )
 
-            self.p5_to_p6 = nn.Sequential(
-                Conv2dStaticSamePadding(conv_channels[2], num_channels, 1),
-                nn.BatchNorm2d(num_channels, momentum=0.01, eps=1e-3),
-                MaxPool2dStaticSamePadding(3, 2)
-            )
+            if len(conv_channels) == 3:
+                self.p5_to_p6 = nn.Sequential(
+                    Conv2dStaticSamePadding(conv_channels[2], num_channels, 1),
+                    nn.BatchNorm2d(num_channels, momentum=0.01, eps=1e-3),
+                    MaxPool2dStaticSamePadding(3, 2)
+                )
+            else:
+                assert len(conv_channels) == 4
+                self.p6_down_channel = nn.Sequential(
+                    Conv2dStaticSamePadding(conv_channels[3], num_channels, 1),
+                    nn.BatchNorm2d(num_channels, momentum=0.01, eps=1e-3),
+                )
             self.p6_to_p7 = nn.Sequential(
                 MaxPool2dStaticSamePadding(3, 2)
             )
@@ -318,9 +322,13 @@ class BiFPN(nn.Module):
 
     def _forward_fast_attention(self, inputs):
         if self.first_time:
-            p3, p4, p5 = inputs
+            if len(inputs) == 3:
+                p3, p4, p5 = inputs
+                p6_in = self.p5_to_p6(p5)
+            else:
+                p3, p4, p5, p6 = inputs
+                p6_in = self.p6_down_channel(p6)
 
-            p6_in = self.p5_to_p6(p5)
             p7_in = self.p6_to_p7(p6_in)
 
             p3_in = self.p3_down_channel(p3)
@@ -1034,8 +1042,11 @@ class EfficientNetD(nn.Module):
     modified by Zylo117
     """
 
-    def __init__(self, compound_coef, load_weights=False):
+    def __init__(self, compound_coef, load_weights=False,
+                 drop_connect_rate=None):
         super().__init__()
+        from qd.qd_common import print_frame_info
+        print_frame_info()
         model = EfficientNet.from_pretrained(f'efficientnet-b{compound_coef}', load_weights)
         del model._conv_head
         del model._bn1
@@ -1043,6 +1054,9 @@ class EfficientNetD(nn.Module):
         del model._dropout
         del model._fc
         self.model = model
+        if drop_connect_rate is None:
+            drop_connect_rate = self.model._global_params.drop_connect_rate
+        self.drop_connect_rate = drop_connect_rate
 
     def forward(self, x):
         x = self.model._conv_stem(x)
@@ -1055,7 +1069,7 @@ class EfficientNetD(nn.Module):
         #  and then apply it here.
         last_x = None
         for idx, block in enumerate(self.model._blocks):
-            drop_connect_rate = self.model._global_params.drop_connect_rate
+            drop_connect_rate = self.drop_connect_rate
             if drop_connect_rate:
                 drop_connect_rate *= float(idx) / len(self.model._blocks)
             x = block(x, drop_connect_rate=drop_connect_rate)
@@ -1075,7 +1089,6 @@ class Anchors(nn.Module):
 
     def __init__(self, anchor_scale=4., pyramid_levels=None, **kwargs):
         super().__init__()
-        from qd.qd_common import print_frame_info
         print_frame_info()
         self.anchor_scale = anchor_scale
 
@@ -1111,7 +1124,7 @@ class Anchors(nn.Module):
         anchor_key = self.get_key('anchor', image_shape)
         stride_idx_key = self.get_key('anchor_stride_index', image_shape)
 
-        if anchor_key in self.buffer:
+        if self.buffer is not None and anchor_key in self.buffer:
             return {'stride_idx': self.buffer[stride_idx_key].detach(),
                     'anchor': self.buffer[anchor_key].detach()}
 
@@ -1160,42 +1173,57 @@ class Anchors(nn.Module):
         anchor_boxes = np.vstack(boxes_all)
         anchor_stride_indices = torch.cat(all_idx_strides).to(image.device)
 
-        self.buffer[stride_idx_key] = anchor_stride_indices
 
         anchor_boxes = torch.from_numpy(anchor_boxes.astype(dtype)).to(image.device)
         anchor_boxes = anchor_boxes.unsqueeze(0)
 
-        # save it for later use to reduce overhead
-        self.buffer[anchor_key] = anchor_boxes
-
-        return {'stride_idx': self.buffer[stride_idx_key],
-                'anchor': self.buffer[anchor_key]}
+        if self.buffer is not None:
+            # save it for later use to reduce overhead
+            self.buffer[anchor_key] = anchor_boxes
+            self.buffer[stride_idx_key] = anchor_stride_indices
+        return {
+            'stride_idx': anchor_stride_indices,
+            'anchor': anchor_boxes,
+        }
 
     def get_key(self, hint, image_shape):
         return '{}_{}'.format(hint, '_'.join(map(str, image_shape)))
 
 class EffNetFPN(nn.Module):
-    def __init__(self, compound_coef=0):
+    def __init__(self, compound_coef=0, start_from=3):
         super().__init__()
 
         self.backbone_net = EfficientNetD(EfficientDetBackbone.backbone_compound_coef[compound_coef],
                                           load_weights=False)
+        if start_from == 3:
+            conv_channel_coef = EfficientDetBackbone.conv_channel_coef[compound_coef]
+        else:
+            conv_channel_coef = EfficientDetBackbone.conv_channel_coef2345[compound_coef]
+
         self.bifpn = nn.Sequential(
             *[BiFPN(EfficientDetBackbone.fpn_num_filters[compound_coef],
-                    EfficientDetBackbone.conv_channel_coef[compound_coef],
+                    conv_channel_coef,
                     True if _ == 0 else False,
                     attention=True if compound_coef < 6 else False,
                     adaptive_up=True)
               for _ in range(EfficientDetBackbone.fpn_cell_repeats[compound_coef])])
 
         self.out_channels = EfficientDetBackbone.fpn_num_filters[compound_coef]
+        self.start_from = start_from
+        assert self.start_from in [2, 3]
 
     def forward(self, inputs):
-        _, p3, p4, p5 = self.backbone_net(inputs)
+        if self.start_from == 3:
+            _, p3, p4, p5 = self.backbone_net(inputs)
 
-        features = (p3, p4, p5)
-        features = self.bifpn(features)
-        return features
+            features = (p3, p4, p5)
+            features = self.bifpn(features)
+            return features
+        else:
+            p2, p3, p4, p5 = self.backbone_net(inputs)
+            features = (p2, p3, p4, p5)
+            features = self.bifpn(features)
+            return features
 
 class EfficientDetBackbone(nn.Module):
     backbone_compound_coef = [0, 1, 2, 3, 4, 5, 6, 6]
@@ -1210,6 +1238,18 @@ class EfficientDetBackbone(nn.Module):
         5: [64, 176, 512],
         6: [72, 200, 576],
         7: [72, 200, 576],
+    }
+    conv_channel_coef2345 = {
+        # the channels of P2/P3/P4/P5.
+        0: [24, 40, 112, 320],
+        # to be determined for the following
+        1: [40, 112],
+        2: [48, 120],
+        3: [48, 136],
+        4: [56, 160],
+        5: [64, 176],
+        6: [72, 200],
+        7: [72, 200],
     }
     fpn_cell_repeats = [3, 4, 5, 6, 7, 7, 8, 8]
     def __init__(self, num_classes=80, compound_coef=0, load_weights=False,
@@ -1247,7 +1287,10 @@ class EfficientDetBackbone(nn.Module):
             del kwargs['anchor_scale']
         self.anchors = Anchors(anchor_scale=anchor_scale, **kwargs)
 
-        self.backbone_net = EfficientNetD(self.backbone_compound_coef[compound_coef], load_weights)
+        self.backbone_net = EfficientNetD(
+            self.backbone_compound_coef[compound_coef],
+            load_weights,
+            drop_connect_rate=kwargs.get('drop_connect_rate'))
 
     def freeze_bn(self):
         for m in self.modules():
@@ -1283,6 +1326,25 @@ def init_weights(model):
 
             if module.bias is not None:
                 module.bias.data.zero_()
+
+def calc_pair_iou_xyxy(pred, gt):
+    # a() [boxes, (x1, y1, x2, y2)]
+    # b() [boxes, (x1, y1, x2, y2)]
+
+    ax1, ay1, ax2, ay2 = pred[:, 0], pred[:, 1], pred[:, 2], pred[:, 3]
+    bx1, by1, bx2, by2 = gt[:, 0], gt[:, 1], gt[:, 2], gt[:, 3]
+    a = (ax2 - ax1) * (ay2 - ay1)
+    b = (bx2 - bx1) * (by2 - by1)
+    max_x1, _ = torch.max(torch.stack([ax1, bx1], dim=1), dim=1)
+    max_y1, _ = torch.max(torch.stack([ay1, by1], dim=1), dim=1)
+    min_x2, _ = torch.min(torch.stack([ax2, bx2], dim=1), dim=1)
+    min_y2, _ = torch.min(torch.stack([ay2, by2], dim=1), dim=1)
+    inter = (min_x2 > max_x1) * (min_y2 > max_y1)
+    inter = inter * (min_x2 - max_x1) * (min_y2 - max_y1)
+
+    union = a + b - inter
+    iou = inter / (union + 1e-5)
+    return iou
 
 def calc_iou(a, b):
     # a(anchor) [boxes, (y1, x1, y2, x2)]
@@ -1521,6 +1583,7 @@ class FocalLoss(nn.Module):
                  pos_iou_th=0.5,
                  cls_weight=1.,
                  reg_weight=1.,
+                 cls_target_on_iou=False,
                  ):
         super(FocalLoss, self).__init__()
         from qd.qd_common import print_frame_info
@@ -1529,8 +1592,12 @@ class FocalLoss(nn.Module):
         self.reg_loss_type = reg_loss_type
         self.regressBoxes = BBoxTransform()
         if cls_loss_type == 'FL':
-            from qd.layers.loss import FocalLossWithLogitsNegLoss
-            self.cls_loss = FocalLossWithLogitsNegLoss(alpha, gamma)
+            if cls_target_on_iou:
+                from qd.layers.loss import FocalLossWithLogitsNegSoftLoss
+                self.cls_loss = FocalLossWithLogitsNegSoftLoss(alpha, gamma)
+            else:
+                from qd.layers.loss import FocalLossWithLogitsNegLoss
+                self.cls_loss = FocalLossWithLogitsNegLoss(alpha, gamma)
         elif cls_loss_type == 'BCE':
             from qd.qd_pytorch import BCEWithLogitsNegLoss
             self.cls_loss = BCEWithLogitsNegLoss(reduction='sum')
@@ -1555,6 +1622,10 @@ class FocalLoss(nn.Module):
 
         self.cls_weight = cls_weight
         self.reg_weight = reg_weight
+
+        self.cls_target_on_iou = cls_target_on_iou
+        if self.cls_target_on_iou:
+            assert self.reg_loss_type == 'GIOU'
 
         self.buf = {}
 
@@ -1626,33 +1697,8 @@ class FocalLoss(nn.Module):
 
             assigned_annotations = bbox_annotation[IoU_argmax, :]
 
-            targets[positive_indices, :] = 0
-            targets[positive_indices, assigned_annotations[positive_indices, 4].long()] = 1
-
-            if debug:
-                if num_positive_anchors > 0:
-                    debug_info['pos_conf'].append(classification[
-                        positive_indices,
-                        assigned_annotations[positive_indices, 4].long()].mean())
-                debug_info['neg_conf'].append(classification[targets == 0].mean())
-                stride_idx = anchor_info['stride_idx']
-                positive_stride_idx = stride_idx[positive_indices]
-                pos_count_each_stride = torch.tensor(
-                    [(positive_stride_idx == i).sum() for i in range(5)])
-                if 'cum_pos_count_each_stride' not in self.buf:
-                    self.buf['cum_pos_count_each_stride'] = pos_count_each_stride
-                else:
-                    cum_pos_count_each_stride = self.buf['cum_pos_count_each_stride']
-                    cum_pos_count_each_stride += pos_count_each_stride
-                    self.buf['cum_pos_count_each_stride'] = cum_pos_count_each_stride
-
             #cls_loss = calculate_focal_loss(classification, targets, alpha,
                                             #gamma)
-            cls_loss = self.cls_loss(classification, targets)
-
-            cls_loss = cls_loss.sum() / torch.clamp(num_positive_anchors.to(dtype), min=1.0)
-            assert cls_loss == cls_loss
-            classification_losses.append(cls_loss)
 
             if positive_indices.sum() > 0:
                 assigned_annotations = assigned_annotations[positive_indices, :]
@@ -1689,8 +1735,7 @@ class FocalLoss(nn.Module):
                 elif self.reg_loss_type == 'GIOU':
                     curr_regression = regression[positive_indices, :]
                     curr_anchors = anchor[positive_indices]
-                    curr_pred_xyxy = self.regressBoxes(curr_anchors,
-                                                        curr_regression)
+                    curr_pred_xyxy = self.regressBoxes(curr_anchors, curr_regression)
                     regression_loss = 1.- calculate_giou(curr_pred_xyxy, assigned_annotations)
                     regression_loss = regression_loss.mean()
                     assert regression_loss == regression_loss
@@ -1698,14 +1743,51 @@ class FocalLoss(nn.Module):
                     raise NotImplementedError
                 regression_losses.append(regression_loss)
             else:
-                if torch.cuda.is_available():
-                    regression_losses.append(torch.tensor(0).to(dtype).cuda())
+                cls_loss = torch.tensor(0).to(dtype).to(device)
+                regression_losses.append(torch.tensor(0).to(dtype).to(device))
+                classification_losses.append(cls_loss)
+                continue
+
+            targets[positive_indices, :] = 0
+            if self.cls_target_on_iou:
+                with torch.no_grad():
+                    iou = calc_pair_iou_xyxy(curr_pred_xyxy, assigned_annotations[:, :4])
+                targets[positive_indices,
+                        assigned_annotations[:, 4].long()] = iou
+                if debug:
+                    debug_info['target_mean'].append(iou.mean())
+                    debug_info['target_min'].append(iou.min())
+                    debug_info['target_max'].append(iou.max())
+            else:
+                targets[positive_indices, assigned_annotations[:, 4].long()] = 1
+
+            if debug:
+                if num_positive_anchors > 0:
+                    debug_info['pos_conf'].append(classification[
+                        positive_indices,
+                        assigned_annotations[:, 4].long()].mean())
+                debug_info['neg_conf'].append(classification[targets == 0].mean())
+                stride_idx = anchor_info['stride_idx']
+                positive_stride_idx = stride_idx[positive_indices]
+                pos_count_each_stride = torch.tensor(
+                    [(positive_stride_idx == i).sum() for i in range(5)])
+                if 'cum_pos_count_each_stride' not in self.buf:
+                    self.buf['cum_pos_count_each_stride'] = pos_count_each_stride
                 else:
-                    regression_losses.append(torch.tensor(0).to(dtype))
+                    cum_pos_count_each_stride = self.buf['cum_pos_count_each_stride']
+                    cum_pos_count_each_stride += pos_count_each_stride
+                    self.buf['cum_pos_count_each_stride'] = cum_pos_count_each_stride
+
+            cls_loss = self.cls_loss(classification, targets)
+
+            cls_loss = cls_loss.sum() / torch.clamp(num_positive_anchors.to(dtype), min=1.0)
+            assert cls_loss == cls_loss
+            classification_losses.append(cls_loss)
+
         if debug:
             if len(debug_info) > 0:
-                logging.info('pos = {}; neg = {}, saved_ratio = {}/{}={:.1f}, '
-                             'stride_info = {}'
+                s1 = ('pos = {}, neg = {}, saved_ratio = {}/{}={:.1f}, '
+                             'stride_info = {}, '
                              .format(
                                  torch.tensor(debug_info['pos_conf']).mean(),
                                  torch.tensor(debug_info['neg_conf']).mean(),
@@ -1714,6 +1796,14 @@ class FocalLoss(nn.Module):
                                  1. * self.gt_saved_by_at_least / self.gt_total,
                                  self.buf['cum_pos_count_each_stride'],
                              ))
+                if 'target_mean' in debug_info:
+                    s2 = 'target_mean/min/max = {:.2f}/{:.2f}/{:.2f}'.format(
+                        torch.tensor(debug_info['target_mean']).mean(),
+                        torch.tensor(debug_info['target_mean']).min(),
+                        torch.tensor(debug_info['target_mean']).max(),
+                    )
+                    s1 += s2
+                logging.info(s1)
         return self.cls_weight * torch.stack(classification_losses).mean(dim=0, keepdim=True), \
                self.reg_weight * torch.stack(regression_losses).mean(dim=0, keepdim=True)
 
