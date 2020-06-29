@@ -9,6 +9,7 @@ from qd.qd_common import img_from_base64
 import cv2
 import json
 from qd.qd_pytorch import get_default_mean, get_default_std
+from qd.data_layer.transform import RemoveUselessKeys
 
 
 class EfficientDetDataset(object):
@@ -92,6 +93,26 @@ class Augmenter(object):
             sample['label'] = annots
 
         return sample
+
+def test_collater(data):
+    images = [b.pop('image') for b in data]
+    from torch.utils.data._utils.collate import default_collate
+    result = default_collate(data)
+    all_height_width = [i.shape[1:] for i in images]
+    if all(all_height_width[i] == all_height_width[0]
+           for i in range(1, len(all_height_width))):
+        result['image'] = torch.stack(images, 0)
+    else:
+        max_height = max([h for h, w in all_height_width])
+        max_width = max([w for h, w in all_height_width])
+        images2 = []
+        for im in images:
+            im2 = torch.zeros((im.shape[0], max_height, max_width),
+                                   dtype=im.dtype)
+            im2[:, :im.shape[1], :im.shape[2]] = im
+            images2.append(im2)
+        result['image'] = torch.stack(images2, 0)
+    return result
 
 def train_collater(data):
     imgs = [s['image'] for s in data]
@@ -292,13 +313,14 @@ class EfficientDetPipeline(MaskClassificationPipeline):
             'adaptive_up': False,
             'test_resize_type': 'smart_lower',
             'test_crop_size': None,
+            'cls_target_on_iou': False,
         }
         self._default.update(curr_default)
 
         self.input_sizes = [512, 640, 768, 896, 1024, 1280, 1280, 1536]
 
         self.train_collate_fn = train_collater
-        #self.test_collate_fn = test_collater
+        self.test_collate_fn = test_collater
 
     def get_train_transform(self):
         mean = get_default_mean()
@@ -341,6 +363,7 @@ class EfficientDetPipeline(MaskClassificationPipeline):
                 Normalizer(mean=mean, std=std),
                 Augmenter(),
                 resizer,
+                RemoveUselessKeys(),
             ])
         else:
             logging.info('deprecating')
@@ -351,12 +374,12 @@ class EfficientDetPipeline(MaskClassificationPipeline):
             # no need of HWC2CHWTest() since it has been done in train_collater
         return transform
 
-    def get_train_batch_sampler(self, sampler, stage, start_iter):
-        batch_sampler = super().get_train_batch_sampler(sampler, stage, start_iter)
-        from qd.qd_pytorch import AttachIterationNumberBatchSampler
-        batch_sampler = AttachIterationNumberBatchSampler(batch_sampler,
-                start_iter, self.max_iter)
-        return batch_sampler
+    #def get_train_batch_sampler(self, sampler, stage, start_iter):
+        #batch_sampler = super().get_train_batch_sampler(sampler, stage, start_iter)
+        #from qd.qd_pytorch import AttachIterationNumberBatchSampler
+        #batch_sampler = AttachIterationNumberBatchSampler(batch_sampler,
+                #start_iter, self.max_iter)
+        #return batch_sampler
 
     def append_predict_param(self, cc):
         super().append_predict_param(cc)
@@ -402,6 +425,7 @@ class EfficientDetPipeline(MaskClassificationPipeline):
                 Normalizer(mean=mean, std=std),
                 resizer,
                 HWC2CHWTest(),
+                RemoveUselessKeys(),
             ])
         else:
             raise ValueError('deprecated')
@@ -438,7 +462,9 @@ class EfficientDetPipeline(MaskClassificationPipeline):
                                      scales=self.anchors_scales,
                                      prior_prob=self.prior_prob,
                                      adaptive_up=self.adaptive_up,
-                                     anchor_scale=self.anchor_scale)
+                                     anchor_scale=self.anchor_scale,
+                                     drop_connect_rate=self.drop_connect_rate,
+                                     )
         return model
 
     def _get_criterion(self):
@@ -454,6 +480,7 @@ class EfficientDetPipeline(MaskClassificationPipeline):
                          pos_iou_th=self.pos_iou_th,
                          cls_weight=self.cls_weight,
                          reg_weight=self.reg_weight,
+                         cls_target_on_iou=self.cls_target_on_iou,
                          )
 
     def combine_model_criterion(self, model, criterion):
@@ -465,6 +492,9 @@ class EfficientDetPipeline(MaskClassificationPipeline):
         model = super().get_test_model()
         from qd.layers.efficient_det import InferenceModel
         model = InferenceModel(model)
+        #if self.dict_trainer:
+            #from qd.layers.forward_image_model import ForwardImageModel
+            #model = ForwardImageModel(model)
         return model
 
     def predict_output_to_tsv_row(self, outputs, inputs, **kwargs):
@@ -490,7 +520,6 @@ class EfficientDetPipeline(MaskClassificationPipeline):
             #from qd.process_image import draw_rects, show_image
             #draw_rects(rects, img)
             #show_image(img)
-            #import ipdb;ipdb.set_trace(context=15)
             yield key, json_dump(rects)
 
     def _get_test_normalize_module(self):

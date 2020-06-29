@@ -224,6 +224,12 @@ class MaskClassificationPipeline(ModelPipeline):
         if stage == 'train':
             batch_sampler = self.get_train_batch_sampler(sampler, stage, start_iter)
             logging.info('batch sampler = {}'.format(batch_sampler))
+            if self.dict_trainer:
+                from qd.data_layer.samplers import AttachIterationNumberBatchSampler
+                batch_sampler = AttachIterationNumberBatchSampler(
+                    batch_sampler,
+                    start_iter,
+                    self.max_iter)
             loader = torch.utils.data.DataLoader(
                 dataset,
                 num_workers=self.num_workers,
@@ -295,6 +301,14 @@ class MaskClassificationPipeline(ModelPipeline):
                             momentum=m.momentum,
                             affine=m.affine,
                             track_running_stats=m.track_running_stats))
+        elif self.convert_bn == 'FBN': # frozen batch norm
+            def set_eval_return(m):
+                m.eval()
+                return m
+            model = replace_module(model,
+                    lambda m: isinstance(m, torch.nn.BatchNorm2d) or
+                                   isinstance(m, torch.nn.BatchNorm1d),
+                    lambda m: set_eval_return(m))
         #elif self.convert_bn == 'NSBN':
             #if self.distributed:
                 #from qd.layers.batch_norm import NaiveSyncBatchNorm
@@ -536,6 +550,12 @@ class MaskClassificationPipeline(ModelPipeline):
         labelmap = self.get_labelmap()
         all_tops, all_top_indexes = output.topk(topk, dim=1,
                 largest=True, sorted=False)
+
+        if isinstance(keys, dict):
+            # here keys is the input, and we should always go here
+            keys = keys['key']
+        #else:
+            #logging.info('being deprecated')
 
         for key, tops, top_indexes in zip(keys, all_tops, all_top_indexes):
             all_tag = [{'class': labelmap[i], 'conf': float(t)} for t, i in
