@@ -6925,6 +6925,65 @@ def create_compare_dataset(pred1, pred2, suffix1, suffix2, data, split, out_data
     expand_nested_splitX(out_data, split)
     populate_dataset_details(out_data)
 
+def duplicate_balance_fg_classes(
+    data, split, version,
+    bkg_class, fg_ratio, fg_rel_class_ratio, out_data):
+    # some recommendation: fg_ratio = 0.3
+    # fg_rel_class_ratio: 0.1
+    info = get_frame_info()
+    populate_dataset_details(data)
+    out_dataset = TSVDataset(out_data)
+    if op.isfile(out_dataset.get_labelmap_file()):
+        logging.info('{} exists'.format(out_dataset))
+        return
+    dataset = TSVDataset(data)
+
+    # {label: list_of_idx}
+    label_to_idx = dataset.load_inverted_label(split, version)
+    # the number of images with unknown categories
+    unknown_count = len(label_to_idx[bkg_class])
+    # total number of images with product categories
+    product_count = sum([len(idx) for l, idx in label_to_idx.items()
+         if l != bkg_class])
+    # current ratio
+    curr_ratio = 1. * product_count / (product_count + unknown_count)
+    # we need to duplicate product images by dup_factor times
+    dup_factor = int(math.ceil(fg_ratio / curr_ratio))
+    # duplicate operations by duplicating the index
+    dup_label_to_idx = {l: idx * dup_factor for l, idx in label_to_idx.items()
+                        if l != bkg_class}
+    info['dup_factor'] = dup_factor
+    # calculate the average number of images for each category
+    from qd.qd_common import calc_mean
+    avg_count = calc_mean([len(idx) for l, idx in dup_label_to_idx.items()])
+    # based on the parameters, each category should have at_least_count images.
+    at_least_count = int(avg_count * fg_rel_class_ratio)
+    for l, idx in dup_label_to_idx.items():
+        if len(idx) < at_least_count:
+            info[l] = (len(idx), at_least_count)
+    # duplicate the images by duplicating the index
+    dup_label_to_idx = {l: idx
+                        if len(idx) >= at_least_count else idx * int(math.ceil(1. * at_least_count / len(idx)))
+                        for l, idx in dup_label_to_idx.items()
+                        }
+    # make the index as a list
+    final_idx = [i for _, idxs in dup_label_to_idx.items() for i in idxs]
+    final_idx.extend(label_to_idx[bkg_class])
+    # random shuffling
+    random.shuffle(final_idx)
+    # save it
+    tsv_writer(((0, i) for i in final_idx), out_dataset.get_shuffle_file(split))
+    assert op.isfile(dataset.get_data(split))
+    assert op.isfile(dataset.get_data(split, t='label', version=version))
+    tsv_writer([(dataset.get_data(split),)], out_dataset.get_data(split + 'X'))
+    tsv_writer([(dataset.get_data(split, t='label', version=version),)],
+               out_dataset.get_data(split + 'X', t='label'))
+    ensure_copy_file(dataset.get_labelmap_file(),
+                     out_dataset.get_labelmap_file())
+    out_dataset.write_data(info.items(), split, t='generate_info')
+
+    populate_dataset_details(out_data)
+
 if __name__ == '__main__':
     from qd.qd_common import parse_general_args
     init_logging()
