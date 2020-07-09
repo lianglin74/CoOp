@@ -143,9 +143,12 @@ class RandomResizeCrop(object):
     def __init__(self, all_crop_size, random_scale_factor=1.2):
         self.all_crop_size = all_crop_size
         self.random_scale_factor = random_scale_factor
+        self.visualize = False
 
     def __call__(self, sample):
-        #visualize(sample)
+        if self.visualize:
+            visualize(sample)
+
         if len(self.all_crop_size) == 1:
             crop_size = self.all_crop_size[0]
         else:
@@ -163,8 +166,27 @@ class RandomResizeCrop(object):
 
         image = cv2.resize(image, (resized_width, resized_height), interpolation=cv2.INTER_LINEAR)
 
-        top = int(random.random() * (resized_height - height))
-        left = int(random.random() * (resized_width - width))
+        for _ in range(50):
+            top = int(random.random() * (resized_height - crop_size))
+            left = int(random.random() * (resized_width - crop_size))
+            # try to make sure the image has at least one boxes
+            if len(annots) > 0:
+                new_annots = annots.copy()
+                new_annots[:, :4] *= scale
+                new_annots[:, 0] -= left
+                new_annots[:, 1] -= top
+                new_annots[:, 2] -= left
+                new_annots[:, 3] -= top
+                new_annots = new_annots.clip(0, crop_size)
+                valid = (new_annots[:, 2] > new_annots[:, 0]) & (
+                    new_annots[:, 3] > new_annots[:, 1])
+                new_annots = new_annots[valid, :]
+                if len(new_annots) > 0:
+                    break
+            else:
+                new_annots = annots
+                break
+
         new_image = np.zeros((crop_size, crop_size, 3))
         new_image_top = 0 if top > 0 else -top
         new_image_left = 0 if left > 0 else -left
@@ -173,19 +195,11 @@ class RandomResizeCrop(object):
             new_image[new_image_top:(new_image_top + real_crop.shape[0]),
                       new_image_left: (new_image_left + real_crop.shape[1])] = real_crop
 
-        annots[:, :4] *= scale
-        annots[:, 0] -= left
-        annots[:, 1] -= top
-        annots[:, 2] -= left
-        annots[:, 3] -= top
-        annots = annots.clip(0, crop_size)
-        valid = (annots[:, 2] > annots[:, 0]) & (annots[:, 3] > annots[:, 1])
-        annots = annots[valid, :]
-
-        #visualize({'image': new_image, 'label': annots})
+        if self.visualize:
+            visualize({'image': new_image, 'label': new_annots})
 
         sample['image'] = torch.from_numpy(new_image).to(torch.float32)
-        sample['label'] = torch.from_numpy(annots)
+        sample['label'] = torch.from_numpy(new_annots)
         sample['scale'] = scale
         sample['top'] = top
         sample['left'] = left
@@ -314,6 +328,7 @@ class EfficientDetPipeline(MaskClassificationPipeline):
             'test_resize_type': 'smart_lower',
             'test_crop_size': None,
             'cls_target_on_iou': False,
+            'random_scale_factor': 1.2,
         }
         self._default.update(curr_default)
 
@@ -332,6 +347,7 @@ class EfficientDetPipeline(MaskClassificationPipeline):
                 DecodeJsonLabelDict,
                 RemoveCrowdLabelDict,
                 RemoveSmallLabelDict,
+                CapBoxCount,
                 List2NumpyXYXYCLabelDict,
                 NpImageNorm01Dict,
                 Label2IndexDict,
@@ -346,7 +362,9 @@ class EfficientDetPipeline(MaskClassificationPipeline):
                 all_crop_size = [self.input_sizes[self.net]]
             logging.info(all_crop_size)
             if self.affine_resize == 'RC':
-                resizer = RandomResizeCrop(all_crop_size)
+                resizer = RandomResizeCrop(
+                    all_crop_size,
+                    random_scale_factor=self.random_scale_factor)
             else:
                 resizer = Resizer(all_crop_size)
             transform = transforms.Compose([
@@ -357,6 +375,7 @@ class EfficientDetPipeline(MaskClassificationPipeline):
                 DecodeJsonLabelDict(),
                 RemoveCrowdLabelDict(),
                 RemoveSmallLabelDict(),
+                CapBoxCount(),
                 Label2IndexDict(labelmap),
                 List2NumpyXYXYCLabelDict(),
 
@@ -366,6 +385,7 @@ class EfficientDetPipeline(MaskClassificationPipeline):
                 RemoveUselessKeys(),
             ])
         else:
+            raise ValueError
             logging.info('deprecating')
             transform = transforms.Compose([
                 Normalizer(mean=mean, std=std),

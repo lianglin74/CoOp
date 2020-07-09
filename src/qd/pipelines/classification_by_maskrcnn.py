@@ -463,6 +463,10 @@ class MaskClassificationPipeline(ModelPipeline):
             start = time.time()
 
     def feature_to_tsv_row(self, features, feature_names, keys):
+        if isinstance(feature_names, str):
+            feature_names = [feature_names]
+        if isinstance(keys, dict):
+            keys = keys['key']
         for i, key in enumerate(keys):
             info = []
             for f, f_name in zip(features, feature_names):

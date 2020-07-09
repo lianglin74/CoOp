@@ -5784,7 +5784,7 @@ def inject_accuracy_one(full_expid):
                 'test_version': test_version,
                 }
         predict_file = op.basename(predict_file)
-        if 'coco_box' in report_file:
+        if 'coco_box' in report_file or '.randomness.' in report_file:
             acc = load_from_yaml_file(report_file)
         elif '.neg_aware_gmap.' in report_file:
             acc = load_from_yaml_file(report_file)

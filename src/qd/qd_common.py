@@ -2603,7 +2603,9 @@ def attach_gpu_utility_from_log(all_log, job_info):
 
 def attach_log_parsing_result(job_info):
     # run unit test if modified
-    logs = job_info['latest_log']
+    logs = job_info.get('latest_log')
+    if logs is None:
+        return
     all_log = logs.split('\n')
     del job_info['latest_log']
     attach_gpu_utility_from_log(all_log, job_info)
@@ -3040,7 +3042,16 @@ def execute_pipeline(all_processor):
             r = execute_func(p['execute_if_true_else_break'])
             if not r:
                 result['result'] = 'prereq_failed'
+                result['failed_prereq'] = p['execute_if_true_else_break']
                 break
+        if p.get('continue_if_true_else_break'):
+            r = execute_func(p['execute'])
+            if not r:
+                result['result'] = 'prereq_failed'
+                result['failed_prereq'] = p['execute']
+                break
+            else:
+                continue
         if p.get('force', False):
             r = run_if_not_cached(execute_func, p['execute'],
                     __force=True)
@@ -3089,6 +3100,15 @@ def remove_empty_coco_style(rects, w, h):
             r['rect'] = [x1, y1, x2, y2]
             ret.append(r)
     return ret
+
+def join_hints(hints, sep='_'):
+    parts = []
+    for h in hints:
+        if isinstance(h, dict):
+            parts.append(hash_sha1(h['hint'])[-h['max']:])
+        else:
+            parts.append(str(h))
+    return sep.join(parts)
 
 if __name__ == '__main__':
     init_logging()
