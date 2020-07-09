@@ -6,7 +6,6 @@ import numpy as np
 import cv2
 import random
 from qd.qd_common import img_from_base64
-<<<<<<< HEAD
 import json
 
 
@@ -74,23 +73,6 @@ class ImageCutout(object):
         w_center = int(random.random() * width)
         side1 = size // 2
         side2 = size - side1
-=======
-
-
-class ImageCutout(object):
-    def __init__(self, size):
-        self.size = size
-
-    def __repr__(self):
-        return 'ImageCutout(size={})'.format(self.size)
-
-    def __call__(self, im):
-        depth, height, width = im.shape
-        h_center = int(random.random() * height)
-        w_center = int(random.random() * width)
-        side1 = self.size // 2
-        side2 = self.size - side1
->>>>>>> dffeca8... add utilities for data layer
         h1 = h_center - side1
         h2 = h_center + side2
         w1 = w_center - side1
@@ -368,3 +350,4 @@ class RandomResizedCropMultiSize(object):
 
 class ImageToImageDictTransform(ImageTransform2Dict):
     pass
+
