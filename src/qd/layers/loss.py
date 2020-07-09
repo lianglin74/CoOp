@@ -4,6 +4,38 @@ import logging
 from collections import OrderedDict
 
 
+class ExclusiveMultiHotCrossEntropyLoss(torch.nn.Module):
+    def __init__(self, factor):
+        super().__init__()
+        self.factor = factor
+
+    def forward(self, logits, target):
+        logits_exp = logits.exp()
+        numerator = (target * logits_exp).sum(dim=1)
+        denormenator = ((1. - target) * logits_exp).sum(dim=1)
+        loss = -numerator.log() + self.factor * denormenator.log()
+        return loss.mean()
+
+class ExclusiveCrossEntropyLoss(torch.nn.Module):
+    def __init__(self, factor):
+        super().__init__()
+        self.factor = factor
+        #self.iter = 0
+
+    def forward(self, logits, target):
+        #verbose = (self.iter % 10) == 0
+        #self.iter += 1
+        logits_exp = logits.exp()
+        pos = logits[torch.arange(len(logits_exp)), target]
+        #if verbose:
+            #import logging
+            #from qd.torch_common import describe_tensor
+            #logging.info('pos: {}'.format(describe_tensor(pos)))
+        exp_pos = logits_exp[torch.arange(len(logits_exp)), target]
+        exp_neg = logits_exp.sum(dim=1) - exp_pos
+        loss = -pos + self.factor * exp_neg.log()
+        return loss.mean()
+
 class FocalLossWithLogitsNegLoss(nn.Module):
     def __init__(self, alpha, gamma):
         super().__init__()
@@ -20,6 +52,36 @@ class FocalLossWithLogitsNegLoss(nn.Module):
 
         log_sigmoid_inv = torch.nn.functional.logsigmoid(-pred)
         loss += (target == 0) * (1 - self.alpha) * torch.pow(sigmoid_pred, self.gamma) * log_sigmoid_inv
+
+        return -loss
+
+class FocalLossWithLogitsNegSoftLoss(nn.Module):
+    def __init__(self, alpha, gamma):
+        super().__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+
+    def extra_repr(self):
+        return 'alpha={}, gamma={}'.format(self.alpha, self.gamma)
+
+    def forward(self, pred, target):
+        # the loss can be generalized as -weight * (\sigma(x) - target)^r *
+        # [target * log(sigma(x)) + (1 - target) * log(1 - sigma(x))]
+        # target == 0: means neg: target > 0 means positive; target < 0 means
+        # ignorable
+
+        weight = torch.zeros_like(target)
+        weight[target == 0] = 1. - self.alpha  # negative
+        weight[target > 1e-5] = self.alpha # positive
+
+        sigmoid_pred = pred.sigmoid()
+
+        log_sigmoid = torch.nn.functional.logsigmoid(pred)
+        log_sigmoid_inv = torch.nn.functional.logsigmoid(-pred)
+
+        coef = weight * torch.pow((sigmoid_pred - target).abs(), self.gamma)
+        loss = target * log_sigmoid + (1. - target) * log_sigmoid_inv
+        loss = (coef * loss).sum()
 
         return -loss
 
@@ -100,7 +162,11 @@ class ModelLoss(nn.Module):
         self.module = model
         self.criterion = criterion
 
-    def forward(self, data, target):
+    def forward(self, *args):
+        if len(args) == 2:
+            data, target = args
+        else:
+            data, target = args[0]['image'], args[0]['label']
         out = self.module(data)
         loss = self.criterion(out, target)
         if isinstance(loss, dict):
@@ -142,6 +208,36 @@ class MultiCrossEntropyLoss(nn.Module):
             w = self.weights[i]
             loss['loss_{}'.format(i)] = l * w
         return loss
+
+class DistilCrossEntropyLoss(nn.Module):
+    def __init__(self, gt_weight):
+        super().__init__()
+        self.gt_weight = gt_weight
+    def forward(self, feature, target):
+        with torch.no_grad():
+            softmax_feature = feature.softmax(dim=1)
+            gt_matrix = torch.zeros_like(feature)
+            gt_matrix.scatter_(dim=1, index=target.view(-1, 1), src=torch.tensor(1))
+            soft_target = (1. - self.gt_weight) * softmax_feature + self.gt_weight * gt_matrix
+        log_soft = nn.functional.log_softmax(feature, dim=1)
+        loss = nn.functional.kl_div(log_soft, soft_target, reduction='batchmean')
+        return loss
+
+class MultiHotCrossEntropyLoss(nn.Module):
+    def __init__(self):
+        super(MultiHotCrossEntropyLoss, self).__init__()
+
+    def forward(self, feature, target):
+        return multi_hot_cross_entropy(feature, target)
+
+def multi_hot_cross_entropy(pred, soft_targets):
+    assert ((soft_targets != 0) & (soft_targets != 1)).sum() == 0
+    logsoftmax = nn.LogSoftmax(dim=1)
+    target_sum = torch.sum(soft_targets)
+    if target_sum == 0:
+        return 0
+    else:
+        return torch.sum(-soft_targets * logsoftmax(pred)) / target_sum
 
 class SmoothLabelCrossEntropyLoss(nn.Module):
     def __init__(self, eps=0.1):

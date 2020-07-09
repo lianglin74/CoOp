@@ -682,7 +682,7 @@ class AutoParam(object):
 
         env['num_gpu'] = num_gpu
         default_param = {
-                'data': 'imagenet2012Full',
+                'data': 'imagenet2012',
                 'effective_batch_size': eb,
                 'max_iter': '120e',
                 'step_lr': '30e',
