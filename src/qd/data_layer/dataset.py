@@ -24,7 +24,7 @@ class TSVSplitProperty(Dataset):
     one instance of this class mean one tsv file or one composite tsv, it could
     be label tsv, or hw tsv, or image tsv
     '''
-    def __init__(self, data, split, t, version=0, cache_policy=None):
+    def __init__(self, data, split, t=None, version=0, cache_policy=None):
         from qd.tsv_io import TSVDataset
         dataset = TSVDataset(data)
         if op.isfile(dataset.get_data(split, t, version)):

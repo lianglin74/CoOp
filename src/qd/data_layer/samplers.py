@@ -3,7 +3,45 @@ import torch
 import torch.distributed as dist
 from torch.utils.data.sampler import Sampler
 from torch._six import int_classes as _int_classes
+from qd.qd_common import get_mpi_rank, get_mpi_size
 
+
+class AttachIterationNumberBatchSampler(object):
+    def __init__(self, batch_sampler, start_iter, num_iters):
+        self.batch_sampler = batch_sampler
+        self.curr_iter = start_iter
+        self.max_iter = num_iters
+
+    def __iter__(self):
+        for batch in self.batch_sampler:
+            batch = [{'iteration': self.curr_iter,
+                      'idx': i,
+                      'max_iter': self.max_iter} for i in batch]
+            yield batch
+            self.curr_iter += 1
+
+    def __len__(self):
+        return len(self.batch_sampler)
+
+class OrderedSplitSampler(Sampler):
+    def __init__(self, data_length):
+        curr_rank = get_mpi_rank()
+        world_size = get_mpi_size()
+        rank_size = (data_length + world_size - 1) // world_size
+        start = rank_size * curr_rank
+        end = start + rank_size
+        assert start >= 0 and start <= data_length
+        if curr_rank < world_size - 1:
+            assert end >= 0 and end <= data_length
+        end = min(end, data_length)
+        self.start = start
+        self.end = end
+
+    def __iter__(self):
+        return iter(range(self.start, self.end))
+
+    def __len__(self):
+        return self.end - self.start
 
 class BatchSampler(Sampler):
     r"""Wraps another sampler to yield a mini-batch of indices.

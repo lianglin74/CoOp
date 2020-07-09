@@ -6,21 +6,73 @@ import numpy as np
 import cv2
 import random
 from qd.qd_common import img_from_base64
+import json
 
+
+class FeatureDecoder(object):
+    def __call__(self, row):
+        key, str_rects = row
+        rects = json.loads(str_rects)
+        result = {'key': key,
+         'feature': torch.tensor([r['feature'] for r in rects])}
+        return result
+
+class RemoveUselessKeys(object):
+    def __init__(self, keys=None):
+        if keys is None:
+            self.keys = ['io_dataset']
+        else:
+            self.keys = keys
+    def __call__(self, sample):
+        for k in self.keys:
+            if k in sample:
+                del sample[k]
+        return sample
+
+class TwoCropsTransform(object):
+    """Take two random crops of one image as the query and key."""
+
+    def __init__(self, first_transform, second_transform=None):
+        self.first_transform = first_transform
+        self.second_transform = first_transform
+        assert first_transform is not None
+        if self.second_transform is None:
+            self.second_transform = first_transform
+
+    def __call__(self, x):
+        q = self.first_transform(x)
+        k = self.second_transform(x)
+        return [q, k]
+
+class MultiCropsTransform(object):
+    """Take two random crops of one image as the query and key."""
+
+    def __init__(self, transform_infos):
+        self.transform_infos = transform_infos
+
+    def __call__(self, x):
+        result = []
+        for trans_info in self.transform_infos:
+            transform = trans_info['transform']
+            repeat = trans_info['repeat']
+            result.append([transform(x) for _ in range(repeat)])
+        return result
 
 class ImageCutout(object):
-    def __init__(self, size):
-        self.size = size
-
+    def __init__(self, ratio):
+        assert ratio < 1
+        self.ratio = ratio
     def __repr__(self):
-        return 'ImageCutout(size={})'.format(self.size)
+        return 'ImageCutout(ratio={})'.format(self.ratio)
 
     def __call__(self, im):
         depth, height, width = im.shape
+        assert height == width
+        size = int(height * self.ratio)
         h_center = int(random.random() * height)
         w_center = int(random.random() * width)
-        side1 = self.size // 2
-        side2 = self.size - side1
+        side1 = size // 2
+        side2 = size - side1
         h1 = h_center - side1
         h2 = h_center + side2
         w1 = w_center - side1
@@ -90,6 +142,18 @@ class List2NumpyLabelRectDict(object):
         dict_data['label'] = label
         return dict_data
 
+class CapBoxCount(object):
+    # if the number of boxes is too large, teh trainign might crash, because
+    # some detectors, e.g. faster-rcnn depends on the box count. When it
+    # calculates teh assignment, it calculates the matrix of teh anchors vs gt
+    def __call__(self, dict_data):
+        label = dict_data['label']
+        if len(label) > 300:
+            random.shuffle(label)
+            label = label[:300]
+            dict_data['label'] = label
+        return dict_data
+
 class RemoveSmallLabelDict(object):
     def __call__(self, dict_data):
         label = dict_data['label']
@@ -145,17 +209,6 @@ class CvImageDecodeDict(object):
 
 class Normalize(object):
     pass
-
-class ImageToImageDictTransform(object):
-    def __init__(self, image_transform):
-        self.image_transform = image_transform
-
-    def __call__(self, dict_data):
-        out = dict(dict_data.items())
-        image = dict_data['image']
-        image = self.image_transform(image)
-        out['image'] = image
-        return out
 
 class RandomResizedCropDict(object):
     """Crop the given PIL Image to random size and aspect ratio.
@@ -266,3 +319,35 @@ class SimCLRGaussianBlur(object):
             sample = cv2.GaussianBlur(sample, (self.kernel_size, self.kernel_size), sigma)
 
         return sample
+
+class ImageTransform2Dict(object):
+    def __init__(self, image_transform):
+        self.image_transform = image_transform
+
+    def __call__(self, dict_data):
+        out = dict(dict_data.items())
+        out['image'] = self.image_transform(dict_data['image'])
+        return out
+
+    def __repr__(self):
+        return 'ImageTransform2Dict(image_transform={})'.format(
+            self.image_transform,
+        )
+
+class RandomResizedCropMultiSize(object):
+    def __init__(self, sizes, scale=(0.08, 1.0), ratio=(3. / 4., 4. / 3.), interpolation=Image.BILINEAR):
+        self.sizes = sizes
+        self.scale = scale
+        self.ratio = ratio
+        self.interpolation = interpolation
+    def __call__(self, data_dict):
+        size = self.sizes[data_dict['iteration'] % len(self.sizes)]
+        from torchvision.transforms import transforms
+        trans_func = transforms.RandomResizedCrop(size, scale=self.scale, ratio=self.ratio,
+                                     interpolation=self.interpolation)
+        data_dict['image'] = trans_func(data_dict['image'])
+        return data_dict
+
+class ImageToImageDictTransform(ImageTransform2Dict):
+    pass
+
