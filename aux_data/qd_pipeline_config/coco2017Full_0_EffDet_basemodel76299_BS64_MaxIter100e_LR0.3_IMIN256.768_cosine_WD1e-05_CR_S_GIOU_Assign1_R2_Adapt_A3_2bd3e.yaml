@@ -1,0 +1,41 @@
+all_test_data:
+- test_data: coco2017Full
+  test_split: test
+param:
+  adaptive_up: true
+  anchor_scale: 3
+  at_least_1_assgin: true
+  base_lr: 0.3
+  basemodel: output/imagenet2012Full_efficientnet-b0_TByM_single_BS1024_MaxIter400e_LR0.4_RGB_cosine_Trand_cut_WD1e-05_CR_Lsmooth_ce_S_C2/snapshot/model_iter_0500455.pt
+  cosine_restart_after_warmup: true
+  data: coco2017Full
+  dict_trainer: true
+  dist_url_tcp_port: 21136
+  effective_batch_size: 64
+  efficient_net_simple_padding: true
+  env:
+    availability_check: true
+    cluster: wev32
+    num_gpu: 8
+    run_type: save_config
+  evaluate_method: coco_box
+  expid: EffDet_basemodel76299_BS64_MaxIter100e_LR0.3_IMIN256.768_cosine_WD1e-05_CR_S_GIOU_Assign1_R2_Adapt_A3
+  expid_prefix: EffDet
+  full_expid: coco2017Full_0_EffDet_basemodel76299_BS64_MaxIter100e_LR0.3_IMIN256.768_cosine_WD1e-05_CR_S_GIOU_Assign1_R2_Adapt_A3
+  log_step: 100
+  max_iter: 100e
+  min_size_range32:
+  - 256
+  - 768
+  net: 0
+  num_workers: 8
+  pipeline_type:
+    from: qd.pipelines.efficient_det_pipeline
+    import: EfficientDetPipeline
+  prior_prob: 0.01
+  reg_loss_type: GIOU
+  reg_weight: 2
+  scheduler_type: cosine
+  test_batch_size: 32
+  weight_decay: 1.0e-05
+type: pipeline_train_eval_multi
