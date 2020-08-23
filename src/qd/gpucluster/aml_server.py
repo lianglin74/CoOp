@@ -250,7 +250,42 @@ def parse_args():
     args = parser.parse_args()
     return args
 
+def get_host_ip():
+    import socket
+    host_name = socket.gethostname()
+    host_ip = socket.gethostbyname(host_name)
+    return host_ip
+
+def print_trace():
+    import traceback
+    traceback.print_exc()
+
+def try_once(func):
+    def func_wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            logging.info('ignore error \n{}'.format(str(e)))
+            print_trace()
+    return func_wrapper
+
+@try_once
+def is_bad_node():
+    ip = get_host_ip()
+    bad_list_fname = 'bad_node_ip.txt'
+    if op.isfile(bad_list_fname):
+        bad_node_ips = load_list_file(bad_list_fname)
+        if ip in bad_node_ips:
+            return True
+        return False
+    else:
+        return False
+
 def run():
+    if is_bad_node():
+        logging.info('this is a bad node and we will occupy it without running')
+        cmd_run(['sleep', 'infinity'])
+        return
     from pprint import pformat
     logging.info(pformat(sys.argv))
     dict_param = vars(parse_args())
