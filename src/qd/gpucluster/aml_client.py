@@ -76,7 +76,8 @@ def parse_run_info(run, with_details=True,
         if all_log is None:
             all_log = []
         info['all_log_path'] = all_log
-        master_logs = [l for l in all_log if l.endswith('70_driver_log_0.txt')]
+        master_logs = [l for l in all_log if l.endswith('70_driver_log_0.txt')
+                       or l.endswith('00_stdout.txt')]
         if len(master_logs) > 0:
             logging.info('parsing the log for {}'.format(info['appID']))
             info['master_log'] = master_logs[0]
@@ -172,15 +173,24 @@ def iter_active_runs(compute_target):
 def get_compute_status(compute_target, gpu_per_node=4):
     info = {}
 
-    info['running_node_count'] = compute_target.status.node_state_counts.running_node_count
-    info['preparing_node_count'] = compute_target.status.node_state_counts.preparing_node_count
-    info['unusable_node_count'] = compute_target.status.node_state_counts.unusable_node_count
-    info['max_node_count'] = compute_target.scale_settings.maximum_node_count
+    if hasattr(compute_target, 'status'):
+        # aks-compute
+        info['running_node_count'] = compute_target.status.node_state_counts.running_node_count
+        info['preparing_node_count'] = compute_target.status.node_state_counts.preparing_node_count
+        info['unusable_node_count'] = compute_target.status.node_state_counts.unusable_node_count
+        info['max_node_count'] = compute_target.scale_settings.maximum_node_count
+        info['total_gpu'] = info['max_node_count'] * gpu_per_node
+        info['total_free_gpu'] = (info['max_node_count'] -
+            info['unusable_node_count'] - info['running_node_count'] -
+            info['preparing_node_count']) * gpu_per_node
+    else:
+        info['running_node_count'] = -1
+        info['preparing_node_count'] = -1
+        info['unusable_node_count'] = -1
+        info['max_node_count'] = -1
+        info['total_gpu'] = -1
+        info['total_free_gpu'] = -1
 
-    info['total_gpu'] = info['max_node_count'] * gpu_per_node
-    info['total_free_gpu'] = (info['max_node_count'] -
-        info['unusable_node_count'] - info['running_node_count'] -
-        info['preparing_node_count']) * gpu_per_node
     all_job_status = [j.status for j in iter_active_runs(compute_target)]
     info['num_running_job'] = len([j for j in all_job_status if j == 'Running'])
     info['num_queued_jobs'] = len([j for j in all_job_status if j ==

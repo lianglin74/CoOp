@@ -2547,6 +2547,23 @@ def calc_eta(days, hours):
     x = datetime.now() + timedelta(days=days, hours=hours + 1)
     return '{}/{}-{}'.format(x.month, x.day, x.hour)
 
+def attach_itp_log_if_is(all_log, job_info):
+    for log in reversed(all_log):
+        pattern = r'.*<stdout>:(.*),.* trainer\.py.*(?:do_train|do_train_dict)\(\): eta: (.*) iter: [0-9]*  speed: ([0-9\.]*).*'
+        result = re.match(pattern, log)
+        if result and result.groups():
+            log_time, left, speed = result.groups()
+            job_info['speed'] = speed
+            from dateutil.parser import parse
+            log_time = parse(log_time)
+            job_info['log_time'] = log_time
+            # log_time here is UTC. convert it to local time
+            d, h = parse_eta_in_hours(left)
+            job_info['left'] = '{}-{:.1f}h'.format(d, h)
+            job_info['eta'] = calc_eta(d, h)
+            return True
+    return False
+
 def attach_aml_maskrcnn_log_if_is(all_log, job_info):
     for log in reversed(all_log):
         pattern = r'(.*),.* trainer\.py.*(?:do_train|do_train_dict)\(\): eta: (.*) iter: [0-9]*  speed: ([0-9\.]*).*'
@@ -2616,6 +2633,8 @@ def attach_log_parsing_result(job_info):
     all_log = logs.split('\n')
     del job_info['latest_log']
     attach_gpu_utility_from_log(all_log, job_info)
+    if attach_itp_log_if_is(all_log, job_info):
+        return
     if attach_philly_maskrcnn_log_if_is(all_log, job_info):
         return
     if attach_aml_maskrcnn_log_if_is(all_log, job_info):
