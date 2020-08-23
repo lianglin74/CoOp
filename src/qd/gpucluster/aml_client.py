@@ -80,7 +80,7 @@ def parse_run_info(run, with_details=True,
         if len(master_logs) > 0:
             logging.info('parsing the log for {}'.format(info['appID']))
             info['master_log'] = master_logs[0]
-            info['latest_log'] = cmd_run(['tail', '-n', '100',
+            info['latest_log'] = cmd_run(['tail', '-c', '2097152',
                 info['master_log']],
                 return_output=True)
             from qd.qd_common import attach_log_parsing_result
@@ -129,34 +129,32 @@ def download_run_logs(run_info, full=True):
     log_folder = get_log_folder()
     log_status_file = op.join(log_folder, run_info['appID'],
             'log_status.yaml')
-    if not full:
-        if op.isfile(log_status_file):
-            log_status = load_from_yaml_file(log_status_file)
-            if run_info['status'] == AMLClient.status_failed and \
-                    log_status['status'] != AMLClient.status_failed:
-                full = True
     for k, v in run_info['logFiles'].items():
         target_file = op.join(log_folder, run_info['appID'], k)
-        from qd.qd_common import url_to_file_by_wget
         from qd.qd_common import url_to_file_by_curl
         url_fsize = get_url_fsize(v)
-        if full or url_fsize <= 1024 * 100:
-            url_to_file_by_wget(v, target_file)
-        else:
-            if op.isfile(target_file):
-                start_size = get_file_size(target_file)
-                if start_size < url_fsize:
-                    extra_target_file = target_file + '.extra'
-                    try_delete(extra_target_file)
+        if url_fsize == 0:
+            continue
+        if op.isfile(target_file):
+            start_size = get_file_size(target_file)
+            if start_size < url_fsize:
+                extra_target_file = target_file + '.extra'
+                try_delete(extra_target_file)
+                if full:
+                    end_size = None
+                else:
                     end_size = min(url_fsize, start_size + 1024 * 100)
-                    url_to_file_by_curl(v, extra_target_file, start_size,
-                                        end_size)
-                    if op.isfile(extra_target_file):
-                        concat_files([target_file, extra_target_file], target_file)
-                        try_delete(extra_target_file)
+                url_to_file_by_curl(v, extra_target_file, start_size,
+                                    end_size)
+                if op.isfile(extra_target_file):
+                    concat_files([target_file, extra_target_file], target_file)
+                    try_delete(extra_target_file)
+        else:
+            if full:
+                end_size = None
             else:
                 end_size = min(url_fsize, 1024 * 100)
-                url_to_file_by_curl(v, target_file, 0, end_size)
+            url_to_file_by_curl(v, target_file, 0, end_size)
         all_log_file.append(target_file)
 
     log_status = {'status': run_info['status'],
@@ -334,6 +332,10 @@ class AMLClient(object):
     def blame(self):
         print_topk_long_run_jobs(self.ws, 5)
 
+    def list_nodes(self):
+        node_list = self.compute_target.list_nodes()
+        return node_list
+
     def ssh(self, run_id):
         node_list = self.compute_target.list_nodes()
         import re
@@ -356,6 +358,50 @@ class AMLClient(object):
         else:
             logging.info('no node is found')
 
+    def query_one(self, run_id,
+                  with_details=False, with_log=False, log_full=False,
+                  detect_error_if_failed=False):
+        run = create_aml_run(self.experiment, run_id)
+        info = parse_run_info(run,
+                              with_details=with_details,
+                              with_log=with_log,
+                              log_full=log_full,
+                              )
+        if info['status'] == self.status_failed and detect_error_if_failed:
+            messages = detect_aml_error_message(info['appID'])
+            if messages is not None:
+                info['result'] = ','.join(messages)
+        return info
+
+    def iter_query(self, run_id=None, by_status=None, max_runs=None,
+                   with_log=False, with_details=False, log_full=False,
+                   detect_error_if_failed=False):
+        with_log = (with_log and with_details)
+        log_full = (log_full and with_log and with_details)
+        if run_id is None:
+            # all_run is ordered by created time, latest first
+            iter_run = self.experiment.get_runs()
+        else:
+            iter_run = [create_aml_run(self.experiment, run_id)]
+
+        for i, run in enumerate(iter_run):
+            if max_runs and i >= max_runs:
+                break
+            if by_status and run.status != by_status:
+                continue
+            info = parse_run_info(run,
+                                  with_details=with_details,
+                                  with_log=with_log,
+                                  log_full=log_full,
+                                  )
+            info['cluster'] = self.cluster
+            if info['status'] == self.status_failed and detect_error_if_failed:
+                messages = detect_aml_error_message(info['appID'])
+                if messages is not None:
+                    info['result'] = ','.join(messages)
+            yield info
+
+    @deprecated('use iter_query')
     def query(self, run_id=None, by_status=None, max_runs=None,
             with_log=False, with_details=None):
         if run_id is None:
@@ -397,8 +443,6 @@ class AMLClient(object):
                     with_details=with_details,
                     with_log=self.with_log or with_log,
                     log_full=with_log)
-            if 'master_log' in info:
-                cmd_run(['tail', '-n', '100', info['master_log']])
             if info['status'] == self.status_failed:
                 messages = detect_aml_error_message(info['appID'])
                 if messages is not None:
@@ -596,8 +640,9 @@ class AMLClient(object):
                 collection_name=collection_name)
 
     def sync_code(self, random_id, compile_in_docker=False, clean=True):
-        random_qd = 'aml_quickdetection{}'.format(random_id)
+        assert random_id == ''
         import os.path as op
+        random_qd = op.basename(self.config_param['code_path']['path'])
         from qd.qd_common import get_user_name
         random_abs_qd = op.join('/tmp', get_user_name(),
                 '{}.zip'.format(random_qd))
@@ -651,7 +696,10 @@ def detect_aml_error_message(app_id):
         for i, line in enumerate(all_line):
             if "raise RuntimeError('NaN encountered!')" in line:
                 error_codes.add('NaN')
-            if 'RuntimeError: CUDA out of memory' in line:
+            if 'ValueError: regression_loss is NaN' in line:
+                error_codes.add('RegNaN')
+            if 'RuntimeError: CUDA out of memory' in line or \
+                    'CUDA error: out of memory' in line:
                 error_codes.add('Mem')
             if 'No module named' in line:
                 error_codes.add('ModuleErr')
@@ -660,6 +708,8 @@ def detect_aml_error_message(app_id):
             if 'RuntimeError: connect() timed out' in line:
                 error_codes.add('connect')
             if 'unhandled cuda error' in line:
+                error_codes.add('cuda')
+            if 'CUDA error' in line:
                 error_codes.add('cuda')
             if 'Error' in line and \
                 'TrackUserError:context_managers.TrackUserError' not in line and \
@@ -784,9 +834,14 @@ def execute(task_type, **kwargs):
     if task_type in ['q', 'query']:
         if len(kwargs.get('remainders', [])) > 0:
             assert len(kwargs['remainders']) == 1
-            c = MultiAMLClient(**kwargs)
-            c.query(partial_id=kwargs['remainders'][0],
-                    with_log=True, with_details=True)
+            c = create_aml_client(**kwargs)
+            all_info = list(c.iter_query(run_id=kwargs['remainders'][0],
+                    with_log=kwargs.get('with_log', True),
+                    log_full=kwargs.get('log_full', True),
+                    with_details=kwargs.get('with_details', True),
+                    ))
+            from qd.qd_common import print_job_infos
+            print_job_infos(all_info)
         else:
             c = create_aml_client(**kwargs)
             c.query(max_runs=kwargs.get('max', None))
@@ -897,9 +952,9 @@ def parse_args():
                 'initic', # incremental & compile
                 'blame', 'resubmit',
                 's', 'summary', 'i', 'inject'])
-    parser.add_argument('-wl', dest='with_log', default=True, action='store_true')
-    parser.add_argument('-no-wl', dest='with_log',
-            action='store_false')
+    parser.add_argument('-no-wl', dest='with_log', action='store_false')
+    parser.add_argument('-no-dt', dest='with_details', action='store_false')
+    parser.add_argument('-no-lf', dest='log_full', action='store_false')
     parser.add_argument('-c', '--cluster', default=argparse.SUPPRESS, type=str)
     parser.add_argument('-rt', '--resubmit_to', default=argparse.SUPPRESS, type=str)
     parser.add_argument('-p', '--param', help='parameter string, yaml format',
