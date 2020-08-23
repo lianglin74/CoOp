@@ -219,6 +219,7 @@ class AMLClient(object):
             with_log=True,
             env=None,
             multi_process=True,
+            aks_compute=False,
             **kwargs):
         self.kwargs = kwargs
         self.cluster = kwargs.get('cluster', 'aml')
@@ -278,6 +279,7 @@ class AMLClient(object):
         self.use_custom_docker = use_custom_docker
         self._experiment = None
         self.multi_process = multi_process
+        self.aks_compute = aks_compute
 
     def __repr__(self):
         return self.compute_target_name
@@ -312,6 +314,8 @@ class AMLClient(object):
     @property
     def compute_target(self):
         if self._compute_target is None:
+            if self.aks_compute:
+                from azureml.contrib.core.compute.k8scompute import AksCompute
             self._compute_target = self.ws.compute_targets[self.compute_target_name]
         return self._compute_target
 
@@ -611,6 +615,12 @@ class AMLClient(object):
                     node_count=node_count,
                     distributed_training=mpi_config,
                     )
+        if self.aks_compute:
+            from azureml.contrib.core.k8srunconfig import K8sComputeConfiguration
+            k8sconfig = K8sComputeConfiguration()
+            k8s = dict()
+            k8sconfig.configuration = k8s
+            estimator10.run_config.cmk8scompute = k8sconfig
 
         r = self.experiment.submit(estimator10)
         logging.info('job id = {}, cmd = \n{}'.format(r.id, cmd))

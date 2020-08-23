@@ -71,21 +71,29 @@ def ensure_directory(path):
         except:
             pass
 
+def root_user():
+    import getpass
+    user = getpass.getuser()
+    logging.info('user = {}'.format(user))
+    return user == 'root'
+
+
 def compile_qd(folder):
     path = os.environ['PATH']
-    cmd_run(['env', 'PATH={}'.format(path), 'pip', 'install', '--no-index',
-        '--find-links', '/var/storage/shared/input/jianfw/pipwheels',
-        '-r', 'requirements.txt'],
-        working_directory=folder,
-        succeed=False)
-    cmd_run(['env', 'PATH={}'.format(path), 'pip', 'install',
-        '-r', 'requirements.txt'],
-        working_directory=folder,
-        succeed=False)
 
     compile_file = 'compile.aml.sh'
     cmd_run(['chmod', '+x', op.join(folder, compile_file)])
-    cmd_run(['env', 'PATH={}'.format(path), './{}'.format(compile_file)],
+    cmd = ['env', 'PATH={}'.format(path), 'pip', 'install',
+            '-r', 'requirements.txt']
+    if not root_user():
+        cmd.insert(0, 'sudo')
+    cmd_run(cmd,
+        working_directory=folder,
+        succeed=False)
+    cmd = ['env', 'PATH={}'.format(path), './{}'.format(compile_file)]
+    if not root_user():
+        cmd.insert(0, 'sudo')
+    cmd_run(cmd,
             working_directory=folder, succeed=False)
 
 def update_ssh():
