@@ -40,8 +40,9 @@ class EMAOptimizer(Optimizer):
                 not isinstance(decays, tuple):
             assert decays < 1
             decays = [decays]
-        self.ema_infos = [{'decay': d, 'param_groups': deepcopy(self.param_groups)}
-                                 for d in decays]
+        self.ema_infos = [{'decay': d,
+                           'param_groups': deepcopy(self.param_groups)}
+                          for d in decays]
 
     def __getstate__(self):
         result = self.optimizer.__getstate__()

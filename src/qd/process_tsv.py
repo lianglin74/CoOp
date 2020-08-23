@@ -65,6 +65,7 @@ from qd.qd_common import concat_files
 from qd.qd_common import try_delete
 from qd.qd_common import encoded_from_img
 from qd.qd_common import get_frame_info
+from qd.qd_common import calc_mean
 from qd.taxonomy import child_parent_print_tree2
 from qd.taxonomy import create_markdown_url
 from qd.taxonomy import disambibuity_noffsets
@@ -4534,6 +4535,7 @@ def build_taxonomy_from_single_composite_source(source_data,
         source_split, source_version,
         min_image_per_label,
         out_data):
+    info = get_frame_info()
     out_dataset = TSVDataset(out_data)
     if op.isdir(out_dataset._data_root):
         logging.info('ignore to build since exists')
@@ -4542,6 +4544,10 @@ def build_taxonomy_from_single_composite_source(source_data,
     dataset = TSVDataset(source_data)
     label_to_idx = dataset.load_inverted_label(source_split,
             version=source_version)
+    if min_image_per_label < 1:
+        # this is the ratio beteen the real value and the average
+        mean_count = calc_mean([len(idx) for _, idx in label_to_idx.items()])
+        min_image_per_label = int(mean_count * min_image_per_label)
     all_idx = list(range(dataset.num_rows(source_split)))
     idx_to_labels = list_to_dict(dict_to_list(label_to_idx, 0), 1)
 
@@ -4556,6 +4562,7 @@ def build_taxonomy_from_single_composite_source(source_data,
         min_idx = copy.deepcopy(label_to_idx[min_label])
         min_count = len(min_idx)
         copies = (min_image_per_label + min_count - 1)  // min_count - 1
+        info['duplicate_info${}'.format(min_label)] = copies
         assert copies > 0
         # add these extra images
         all_idx.extend(copies * min_idx)
@@ -4582,6 +4589,7 @@ def build_taxonomy_from_single_composite_source(source_data,
             dataset.iter_data('train', 'label', version=source_version,
                 filter_idx=all_idx),
             'train', 'label')
+    out_dataset.write_data(list(info.items()), 'train', 'generate_info')
 
 def build_taxonomy_from_single_source(source_data,
         source_split, source_version,
@@ -6954,7 +6962,6 @@ def duplicate_balance_fg_classes(
                         if l != bkg_class}
     info['dup_factor'] = dup_factor
     # calculate the average number of images for each category
-    from qd.qd_common import calc_mean
     avg_count = calc_mean([len(idx) for l, idx in dup_label_to_idx.items()])
     # based on the parameters, each category should have at_least_count images.
     at_least_count = int(avg_count * fg_rel_class_ratio)

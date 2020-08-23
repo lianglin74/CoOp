@@ -21,7 +21,7 @@ class SGDVerbose(SGD):
                     loss_wd += (p.data * p.data).sum() * weight_decay
                     num_param += 1
             loss_wd *= 0.5
-            logging.info('weight decay loss = {}/{}'.format(
+            logging.info('weight decay loss = {:.4f}/{}'.format(
                 loss_wd, num_param))
         self.iter += 1
 

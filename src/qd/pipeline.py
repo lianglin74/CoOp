@@ -32,6 +32,9 @@ from qd.process_tsv import populate_dataset_hw
 from qd.batch_process import BatchProcess
 from qd.gpucluster import create_aml_client
 from qd.db import create_annotation_db
+from tqdm import tqdm
+from qd.qd_common import write_to_yaml_file
+from datetime import datetime
 
 
 def get_all_test_data(exp):
@@ -78,14 +81,14 @@ def ensure_upload_all_data(all_data, philly_client):
                 for split in ['train', 'trainval', 'test']):
             from qd.process_tsv import ensure_labelmap_extract
             ensure_labelmap_extract(d)
-    need_to_upload_data = copy.deepcopy(all_data)
+    need_to_upload_data = copy.deepcopy(list(set(all_data)))
 
     for d in all_data:
         dataset = TSVDataset(d)
         for split in ['train', 'test', 'trainval']:
             splitx = split + 'X'
             if (op.isfile(dataset.get_data(splitx)) and
-                not op.isfile(dataset.get_data(d))):
+                not op.isfile(dataset.get_data(split))):
                 data_sources = dataset.load_composite_source_data_split(split)
                 need_to_upload_data.extend([x[0] for x in data_sources])
                 # the logic of converting composite to standard should be
@@ -118,22 +121,28 @@ def ensure_upload_trained_model(param, aml_client):
         full_expid = param['full_expid']
         aml_client.sync_full_expid_from_local_by_exist(full_expid)
 
+def platform_run_knn_classifier(env, param):
+    from qd.pipelines.knn_classifier import knn_classifier
+    func = knn_classifier
+    return env_run(env, func, param)
+
 def aml_func_run(func, param, **submit_param):
     from qd.gpucluster import create_aml_client
     from qd.qd_common import run_if_not_memory_cached
     aml_client = run_if_not_memory_cached(create_aml_client, **submit_param)
-    all_data = []
-    if 'data' in param.get('param', {}):
-        from qd.pipeline import get_all_related_data_for_gpu_jobs
-        data = param['param']['data']
-        all_data.extend(get_all_related_data_for_gpu_jobs(data))
-    if 'all_test_data' in param:
-        all_data.extend([test_data_info['test_data'] for test_data_info in
-            param['all_test_data']])
-    run_if_not_memory_cached(
-        ensure_upload_all_data,
-        all_data,
-        aml_client)
+    if not submit_param.get('skip_data_upload'):
+        all_data = []
+        if 'data' in param.get('param', {}):
+            from qd.pipeline import get_all_related_data_for_gpu_jobs
+            data = param['param']['data']
+            all_data.extend(get_all_related_data_for_gpu_jobs(data))
+        if 'all_test_data' in param:
+            all_data.extend([test_data_info['test_data'] for test_data_info in
+                param['all_test_data']])
+        run_if_not_memory_cached(
+            ensure_upload_all_data,
+            all_data,
+            aml_client)
     if 'basemodel' in param.get('param', {}):
         ensure_upload_init_model(param['param'], aml_client)
     if 'param' in param:
@@ -417,6 +426,11 @@ def generate_expid(param):
                         infos.append('{}{}'.format(setting['non_default_hint'], pk))
                 elif action_type == 'bool':
                     infos.append(setting['non_default_hint'])
+                elif action_type == 'dict_key':
+                    infos.append('{}{}'.format(
+                        setting['non_default_hint'],
+                        '.'.join(pk)
+                    ))
                 else:
                     raise NotImplementedError
         else:
@@ -555,12 +569,36 @@ def pipeline_pred_eval(all_test_data, **kwargs):
         # we should check here instead of before for-loop since we can alter
         # the value of max_iter to just evaluate the intermediate model or take
         # the intermediate model as the final model
-        if not pip.is_train_finished():
+        if not pip.is_train_finished() and pip.model_file is None:
             logging.info('the model specified by the following is not ready\n{}'.format(
                 pformat(test_data_info)))
             return
         pip.ensure_predict()
         pip.ensure_evaluate()
+
+def calc_randomness(feature_fname):
+    from qd.data_layer.loader import create_feature_loader
+    loader = create_feature_loader(feature_fname)
+    total, num = 0, 0
+    cov = 0
+    logging.info('calc randomness')
+    for i, feature in tqdm(enumerate(loader)):
+        feature = feature['feature'].squeeze(1)
+        feature = torch.nn.functional.normalize(feature)
+        cov += torch.matmul(feature.T, feature)
+        total += feature.sum()
+        num += feature.numel()
+    values = torch.eig(cov)[0][:, 0]
+    mean_value = values.mean()
+    ratio = (values - mean_value).abs().mean() / mean_value
+    result = {}
+    result['feat_eig_value_ratio'] = float(ratio)
+    result['feat_mean_value'] = float(total / num)
+    result['feat_eig_max_value_ratio'] = float(
+        (values.max()-mean_value)/mean_value)
+    logging.info(pformat(result))
+    out_file = feature_fname + '.randomness.report'
+    write_to_yaml_file(result, out_file)
 
 @deprecated('use pipeline_pred_eval for simplicity')
 def pipeline_eval_multi(param, all_test_data, **kwargs):
@@ -584,6 +622,28 @@ def pipeline_demo(param, image_path):
     pip = load_pipeline(**param)
     pip.demo(image_path)
 
+def env_run(env, func, func_param):
+    run_type = env['run_type']
+    if run_type in ['debug', 'local']:
+        return func(**func_param)
+    elif run_type == 'aml':
+        submit_param = copy.deepcopy(env)
+        submit_param.pop('run_type')
+        result = aml_func_run(func, kwargs, **submit_param)
+        aml_client = create_aml_client(**submit_param)
+        aml_client.inject(result)
+        return result
+    elif run_type == 'remote':
+        submit_param = copy.deepcopy(env)
+        submit_param.pop('run_type')
+        from qd.batch_process import remote_run_func
+        return remote_run_func(func,
+                               is_mpi=submit_param.get('is_mpi', True),
+                               availability_check=submit_param.get('availability_check', False),
+                               **func_param,
+                               )
+
+@deprecated('gradually use env_run')
 def platform_run(env, func, **kwargs):
     run_type, num_gpu = env['run_type'], env['num_gpu']
     param = kwargs.get('param', {})
@@ -623,6 +683,15 @@ def platform_run(env, func, **kwargs):
                 all_test_data=all_test_data,
                 param=param,
                 )
+    elif run_type == 'print':
+        config = {'all_test_data': all_test_data,
+                'param': param,
+                'type': func.__name__}
+        if 'full_expid' in param:
+            full_expid = param['full_expid']
+        else:
+            full_expid = '{}_{}_{}'.format(param['data'], param['net'], param['expid'])
+        logging.info(pformat(config))
     elif run_type == 'save_config':
         config = {'all_test_data': all_test_data,
                 'param': param,
@@ -638,7 +707,6 @@ def platform_run(env, func, **kwargs):
         logging.info(out_file)
         assert not op.isfile(out_file)
         logging.info(pformat(config))
-        from qd.qd_common import write_to_yaml_file
         write_to_yaml_file(config, out_file)
 
 def run_training_pipeline(swap_params):
@@ -654,12 +722,12 @@ def run_training_pipeline(swap_params):
     result = []
 
     for param, env in all_param_env:
-        if 'test_data' in param:
-            all_test_data = [{'test_data': param['test_data'],
-                'test_split': param.get('test_split', 'test')}]
-        elif 'all_test_data' in param:
+        if 'all_test_data' in param:
             all_test_data = param['all_test_data']
             del param['all_test_data']
+        elif 'test_data' in param:
+            all_test_data = [{'test_data': param['test_data'],
+                'test_split': param.get('test_split', 'test')}]
         else:
             all_test_data = get_all_test_data(param['data'])
 
@@ -703,11 +771,6 @@ def model_predict_pipeline(all_test_data,
             all_test_data = get_all_test_data(pip.data)
         logging.info(pformat(all_test_data))
 
-    if env['run_type'] == 'debug':
-        for t in all_test_data:
-            t['test_batch_size'] = 1
-            t['force_predict'] = True
-
     return platform_run(env, func, all_test_data=all_test_data)
 
 def run_prediction_pipeline(swap_params, time_cost_test):
@@ -720,17 +783,6 @@ def run_prediction_pipeline(swap_params, time_cost_test):
     else:
         monitor_train = False
     if time_cost_test:
-        for test_data in all_test_data:
-            test_data.update({
-                'ignore_evaluate': True,
-                #'test_mergebn': True,
-                })
-        #for test_data in all_test_data:
-            #test_data.update({
-                #'test_max_iter': 102,
-                ##'device': 'cpu',
-                ##'test_max_iter': 10,
-                #})
         for test_data in all_test_data:
             test_data['env']['num_gpu'] = 1
             test_data['env']['run_type'] = 'local'
@@ -806,7 +858,6 @@ def update_current_cluster_status(clusters):
     summary = list(map(lambda c: c.get_cluster_status(), aml_clients))
     c = create_annotation_db()
     for cluster, s in zip(clusters, summary):
-        from datetime import datetime
         s['last_update_time'] = datetime.now()
         c.update_one('current_cluster', {'cluster': cluster},
                      update={'$set': s}, upsert=True)
@@ -818,6 +869,14 @@ def insert_cluster_status(clusters):
     for cluster, s in zip(clusters, summary):
         s['cluster'] = cluster
         c.insert_one('cluster_status_summary', **s)
+    if len(summary) > 0:
+        all_s = copy.deepcopy(summary[0])
+        for s in summary[1:]:
+            for k, v in s.items():
+                if type(v) in [int, float]:
+                    all_s[k] += v
+        all_s['cluster'] = '_'.join(clusters)
+        c.insert_one('cluster_status_summary', **all_s)
 
 def test_model_pipeline(param):
     '''
@@ -836,6 +895,126 @@ def test_model_pipeline(param):
         pip.ensure_train()
         pip.ensure_predict()
         pip.ensure_evaluate()
+
+def evaluate_topk_pipeline(data, split, pred):
+    from qd.qd_pytorch import evaluate_topk
+    dataset = TSVDataset(data)
+    iter_gt = dataset.iter_data(split, 'label')
+    from qd.tsv_io import tsv_reader
+    iter_pred = tsv_reader(pred)
+    acc = evaluate_topk(iter_pred, iter_gt)
+    evaluate_file = pred + '.top1.report'
+    logging.info('top1 = {}'.format(acc))
+    write_to_yaml_file({'top1': acc}, evaluate_file)
+
+from qd.qd_common import run_if_not_memory_cached
+
+def inject_aml_job_status(clusters):
+    db = create_annotation_db()
+    def iter_simple_job_from_aml():
+        for c in clusters:
+            client = run_if_not_memory_cached(create_aml_client,
+                                     cluster=c)
+            all_info = client.iter_query(
+                max_runs=1000,
+                with_details=False,
+                detect_error_if_failed=False
+            )
+            for info in all_info:
+                yield client, info
+    from qd.gpucluster.aml_client import AMLClient
+    collection_name = 'phillyjob'
+    def trim_info_in_aml_(job_in_aml):
+        if 'logFiles' in job_in_aml:
+            del job_in_aml['logFiles']
+        non_value_keys = [k for k, v in job_in_aml.items() if v is None]
+        for k in non_value_keys:
+            del job_in_aml[k]
+
+    def inject_one_job_status(job_in_aml, db):
+        job_in_db = None
+        try:
+            job_in_db = next(db.iter_general(collection_name, appID=job_in_aml['appID']))
+        except:
+            pass
+
+        if job_in_db is None:
+            try:
+                job_in_aml['need_attention'] = False
+                job_in_aml = client.query_one(
+                    job_in_aml['appID'], with_details=True, with_log=True,
+                    log_full=False, detect_error_if_failed=True)
+                trim_info_in_aml_(job_in_aml)
+                db.insert_one(collection_name, **job_in_aml)
+            except:
+                # if two instances are running to inject to db, there might be
+                # a chance that a new job is inserted here at the same time.
+                # For the db, we make the appID unique, and one of the
+                # instances will fail. Thus, we just ignore the error here
+                from qd.qd_common import print_trace
+                print_trace()
+            return
+
+        if job_in_db['status'] == job_in_aml['status']:
+            s = job_in_db['status']
+            if s in [AMLClient.status_failed,
+                     AMLClient.status_canceled,
+                     AMLClient.status_completed,
+                     ]:
+                return
+
+        if job_in_aml['status'] in [
+                AMLClient.status_completed,
+                AMLClient.status_failed] and (job_in_db['status'] !=
+                                job_in_aml['status']):
+            job_in_aml['need_attention'] = True
+
+        logging.info(job_in_aml['appID'])
+
+        # re-query the job information
+        if job_in_aml['status'] in [AMLClient.status_failed,
+                                    AMLClient.status_completed]:
+            job_in_aml.update(client.query_one(
+                job_in_aml['appID'],
+                with_details=True,
+                with_log=True,
+                log_full=True,
+                detect_error_if_failed=True,
+            ))
+        if job_in_aml['status'] in [AMLClient.status_running]:
+            job_in_aml.update(client.query_one(
+                job_in_aml['appID'],
+                with_details=True,
+                with_log=True,
+                log_full=False,
+                detect_error_if_failed=True,
+            ))
+
+        trim_info_in_aml_(job_in_aml)
+        db.update_many(collection_name,
+                query={'appID': job_in_aml['appID']},
+                update={'$set': job_in_aml})
+
+    visited_id = set()
+    for client, job_in_aml in tqdm(iter_simple_job_from_aml()):
+        visited_id.add(job_in_aml['appID'])
+        inject_one_job_status(job_in_aml, db)
+
+    for job_in_db in db.iter_general(collection_name, status={'$nin': [
+            AMLClient.status_failed,
+            AMLClient.status_completed,
+            AMLClient.status_canceled,
+    ]}, cluster={'$in': clusters}):
+        if job_in_db['appID'] in visited_id:
+            continue
+        logging.info('re-check {}: {}'.format(job_in_db['appID'], job_in_db['status']))
+        client = run_if_not_memory_cached(
+            create_aml_client, cluster=job_in_db['cluster'])
+        job_in_aml = client.query_one(job_in_db['appID'])
+        inject_one_job_status(job_in_aml, db)
+
+
+
 
 if __name__ == '__main__':
     from qd.qd_common import parse_general_args
