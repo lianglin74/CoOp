@@ -414,6 +414,7 @@ def retry_agent(func, *args, **kwargs):
             time.sleep(5)
 
 def ensure_copy_folder(src_folder, dst_folder):
+    ensure_directory(dst_folder)
     cmd_run('rsync -ravz {}/ {} --progress'.format(
         src_folder, dst_folder).split(' '))
 
@@ -455,7 +456,8 @@ def iter_swap_param(swap_params):
         if type(p[1]) is not list and type(p[1]) is not tuple:
             p[1] = [p[1]]
     counts = [len(p[1]) for p in swap_params]
-    assert all(c > 0 for c in counts)
+    empty_keys = [k for k, vs in swap_params if len(vs) == 0]
+    assert len(empty_keys) == 0, empty_keys
     idx = [0] * num
 
     while True:
@@ -624,6 +626,9 @@ def get_url_fsize(url):
 
 def url_to_file_by_curl(url, fname, bytes_start=None, bytes_end=None):
     ensure_directory(op.dirname(fname))
+    if bytes_start == 0 and bytes_end == 0:
+        cmd_run(['touch', fname])
+        return
     if bytes_start is None:
         bytes_start = 0
     elif bytes_start < 0:
@@ -633,8 +638,12 @@ def url_to_file_by_curl(url, fname, bytes_start=None, bytes_end=None):
             bytes_start = 0
     if bytes_end is None:
         # -f: if it fails, no output will be sent to output file
-        cmd_run(['curl', '-f', '-r', '{}-'.format(bytes_start),
-            url, '--output', fname])
+        if bytes_start == 0:
+            cmd_run(['curl', '-f',
+                url, '--output', fname])
+        else:
+            cmd_run(['curl', '-f', '-r', '{}-'.format(bytes_start),
+                url, '--output', fname])
     else:
         # curl: end is inclusive
         cmd_run(['curl', '-f', '-r', '{}-{}'.format(bytes_start, bytes_end - 1),
@@ -2405,11 +2414,9 @@ def run_if_not_cached(func, *args, **kwargs):
     cache_file = op.join(cache_folder, key)
 
     if op.isfile(cache_file) and not force:
-        logging.info('loading {}'.format(cache_file))
         return pkl.loads(read_to_buffer(cache_file))
     else:
         result = func(*args, **kwargs)
-        logging.info('caching to file: {}'.format(cache_file))
         write_to_file(pkl.dumps(result), cache_file)
         return result
 
@@ -2996,7 +3003,10 @@ def execute_func(info):
     # info = {'from': module; 'import': func_name, 'param': dict}
     from importlib import import_module
     modules = import_module(info['from'])
-    return getattr(modules, info['import'])(**info['param'])
+    if 'param' not in info:
+        return getattr(modules, info['import'])()
+    else:
+        return getattr(modules, info['import'])(**info['param'])
 
 def detect_error_codes(log_file):
     all_line = read_to_buffer(log_file).decode().split('\n')
