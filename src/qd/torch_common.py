@@ -1,18 +1,211 @@
 import torch
+from torch import nn
 from qd.qd_common import get_mpi_rank, get_mpi_size
 from qd.qd_common import is_hvd_initialized
 import torch.distributed as dist
 import os
 from qd.tsv_io import load_list_file
 import os.path as op
+from torch import nn
+import logging
 from qd.qd_common import get_mpi_local_rank, get_mpi_local_size
+from qd.qd_common import ensure_directory
 
 
-def describe_tensor(t):
-    return 'min/max/mean={:.2f}/{:.2f}/{:.2f}+-{:.2f}'.format(t.min(),
-                                       t.max(),
-                                       t.mean(),
-                                       t.std())
+def freeze_bn_(model):
+    num_freezed = 0
+    for n, m in model.named_modules():
+        if isinstance(m, torch.nn.modules.batchnorm._BatchNorm):
+            num_freezed += 1
+            logging.info('freeze {}'.format(n))
+            m.eval()
+    logging.info('#freeze = {}'.format(num_freezed))
+
+def attach_module_name_(model):
+    for n, m in model.named_modules():
+        m.name_from_root = n
+
+def query_modules_by_name(module, part_name):
+    return [m for n, m in module.named_modules() if n.endswith(part_name)]
+
+def replace_module_by_name(module, module_part_name, creator_func):
+    attach_module_name_(module)
+    return replace_module(module,
+                   lambda m: m.name_from_root.endswith(module_part_name),
+                   creator_func)
+
+def replace_module(module, condition_func, creator_func):
+    module_output = module
+    if condition_func(module):
+        module_output = creator_func(module)
+    for name, child in module.named_children():
+        child = replace_module(child, condition_func, creator_func)
+        module_output.add_module(name, child)
+    del module
+    return module_output
+
+def torch_save(t, f):
+    ensure_directory(op.dirname(f))
+    tmp_f = f + '.tmp'
+    torch.save(t, tmp_f)
+    os.rename(tmp_f, f)
+
+def torch_load(filename):
+    return torch.load(filename, map_location=lambda storage, loc: storage)
+
+def recursive_to_device(x, device):
+    if isinstance(x, torch.Tensor):
+        x = x.to(device)
+    elif isinstance(x, dict):
+        x = {k: recursive_to_device(v, device) for k, v in x.items()}
+    elif isinstance(x, list):
+        x = [recursive_to_device(y, device) for y in x]
+    return x
+
+def distributed_sinkhorn(sim, eps, niters):
+    # sim: B * K. different gpus has different rows.
+    world_size = get_mpi_size()
+
+    sim = sim / eps
+    max_sim = sim.max()
+    max_reduce_(max_sim)
+    sim -= max_sim
+
+    Q = sim.exp()
+    sum_q = Q.sum()
+    sum_reduce_(sum_q)
+    Q /= sum_q
+
+    #Q = (sim / eps).exp().T
+    #Q /= sum(Q)
+
+    B, K = Q.shape
+    device = sim.device
+    c = torch.ones(K, device=device) / K
+    r = torch.ones(B, device=device) / (B * world_size)
+    #cap = 1e-5
+    for _ in range(niters):
+        u = Q.sum(dim=0)
+        sum_reduce_(u)
+        #u[u < cap & u > 0] = cap
+        #u[u > -cap & u < 0] = -cap
+        Q *= (c / (u + 1e-5)).unsqueeze(0)
+        Q *= (r / (Q.sum(dim=1) + 1e-5)).unsqueeze(1)
+    return (Q / (Q.sum(dim=1, keepdim=True) + 1e-5))
+
+def sinkhorn_correct_sum(sim, eps, niters):
+    # the function is used to solve the following problem. max (sim * Q).sum()
+    # + eps * entropy(Q) with niters iterations. The constraint is uniform
+    # distribution
+
+    # here it is sim / eps rather than sim / -eps, since the cost matrix is
+    # -sim, so based on the paper of lightspeed, it is -sim / -eps = sim /
+    # eps, which is consistent with SwAV paper. The rotation of T is useless,
+    # it looks like, but it is ok since the returned matrix is also transposed.
+
+    # reduce the chance of being small here
+    sim = sim / eps
+    max_sim = sim.max()
+    sim -= max_sim
+    Q = sim.exp()
+    Q /= Q.sum()
+
+    #Q = (sim / eps).exp().T
+    #Q /= sum(Q)
+
+    B, K = Q.shape
+    device = sim.device
+    c, r = torch.ones(K, device=device) / K, torch.ones(B, device=device) / B
+    #cap = 1e-5
+    for _ in range(niters):
+        u = Q.sum(dim=0)
+        #u[u < cap & u > 0] = cap
+        #u[u > -cap & u < 0] = -cap
+        Q *= (c / (u + 1e-5)).unsqueeze(0)
+        Q *= (r / (Q.sum(dim=1) + 1e-5)).unsqueeze(1)
+    return (Q / (Q.sum(dim=1, keepdim=True) + 1e-5))
+
+def sinkhorn2(sim, eps, niters):
+    # this function fixes the Q/Q.sum() issue. all others are the same with
+    # sinkhorn. This function is only used for parity check of
+    # sinkhorn_correct_sum, where no transpose is performed.
+    # use sinkhorn. The difference is to remove transpose at the beginning and
+    # the end.
+    # the function is used to solve the following problem. max (sim * Q).sum()
+    # + eps * entropy(Q) with niters iterations. The constraint is uniform
+    # distribution
+
+    # here it is sim / eps rather than sim / -eps, since the cost matrix is
+    # -sim, so based on the paper of lightspeed, it is -sim / -eps = sim /
+    # eps, which is consistent with SwAV paper. The rotation of T is useless,
+    # it looks like, but it is ok since the returned matrix is also transposed.
+
+    # reduce the chance of being small here
+    sim = sim / eps
+    max_sim = sim.max()
+    sim -= max_sim
+    Q = sim.exp().T
+    Q /= Q.sum()
+
+    #Q = (sim / eps).exp().T
+    #Q /= sum(Q)
+
+    K, B = Q.shape
+    device = sim.device
+    r, c = torch.ones(K, device=device) / K, torch.ones(B, device=device) / B
+    #cap = 1e-5
+    for _ in range(niters):
+        u = Q.sum(dim=1)
+        #u[u < cap & u > 0] = cap
+        #u[u > -cap & u < 0] = -cap
+        Q *= (r / (u + 1e-5)).unsqueeze(1)
+        Q *= (c / (Q.sum(dim=0) + 1e-5)).unsqueeze(0)
+    return (Q / (Q.sum(dim=0, keepdim=True) + 1e-5)).T
+
+def sinkhorn(sim, eps, niters):
+    # this function has some issues, where we should use Q/Q.sum() but we used
+    # Q/=sum(Q)
+    # the function is used to solve the following problem. max (sim * Q).sum()
+    # + eps * entropy(Q) with niters iterations. The constraint is uniform
+    # distribution
+
+    # here it is sim / eps rather than sim / -eps, since the cost matrix is
+    # -sim, so based on the paper of lightspeed, it is -sim / -eps = sim /
+    # eps, which is consistent with SwAV paper. The rotation of T is useless,
+    # it looks like, but it is ok since the returned matrix is also transposed.
+
+    # reduce the chance of being small here
+    sim = sim / eps
+    max_sim = sim.max()
+    sim -= max_sim
+    Q = sim.exp().T
+    Q /= sum(Q)
+
+    #Q = (sim / eps).exp().T
+    #Q /= sum(Q)
+
+    K, B = Q.shape
+    device = sim.device
+    r, c = torch.ones(K, device=device) / K, torch.ones(B, device=device) / B
+    #cap = 1e-5
+    for _ in range(niters):
+        u = Q.sum(dim=1)
+        #u[u < cap & u > 0] = cap
+        #u[u > -cap & u < 0] = -cap
+        Q *= (r / (u + 1e-5)).unsqueeze(1)
+        Q *= (c / (Q.sum(dim=0) + 1e-5)).unsqueeze(0)
+    return (Q / (Q.sum(dim=0, keepdim=True) + 1e-5)).T
+
+def describe_tensor(t, num_dec=2):
+    t = t.float()
+    if t.numel() == 1:
+        return 'value={:.2f}'.format(float(t))
+    format_str = 'min/max/mean={{:.{0}f}}/{{:.{0}f}}/{{:.{0}f}}+-{{:.{0}f}}'.format(
+        num_dec)
+    return format_str.format(t.min(),
+                             t.max(),
+                             t.mean(),
+                             t.std())
 
 @torch.no_grad()
 def concat_all_gather(tensor):
@@ -45,6 +238,8 @@ def get_master_node_ip():
         return get_aml_mpi_host_names()[0]
     elif 'AZ_BATCHAI_JOB_MASTER_NODE_IP' in os.environ:
         return os.environ['AZ_BATCHAI_JOB_MASTER_NODE_IP']
+    elif 'MASTER_IP' in os.environ:
+        return os.environ['MASTER_IP']
     else:
         return get_philly_mpi_hosts()[0]
 
@@ -119,5 +314,14 @@ def all_gather_grad_curr(x):
             torch.distributed.all_gather(all_x, x)
         all_x[get_mpi_rank()] = x
         return torch.cat(all_x, dim=0)
+
+def sum_reduce_(x):
+    if get_mpi_size() > 1:
+        torch.distributed.all_reduce(x)
+
+def max_reduce_(x):
+    if get_mpi_size() > 1:
+        torch.distributed.all_reduce(x, torch.distributed.ReduceOp.MAX)
+
 
 
