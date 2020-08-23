@@ -64,6 +64,7 @@ from qd.torch_common import ensure_init_process_group
 from qd.torch_common import get_master_node_ip
 from qd.torch_common import get_aml_mpi_host_names
 from qd.torch_common import get_philly_mpi_hosts
+from qd.torch_common import torch_save, torch_load
 from qd.layers.loss import MultiHotCrossEntropyLoss
 from qd.layers.loss import multi_hot_cross_entropy
 from qd.torch_common import concat_all_gather
@@ -72,6 +73,7 @@ from qd.data_layer.samplers import AttachIterationNumberBatchSampler
 from qd.data_layer.transform import ImageCutout
 from qd.data_layer.transform import TwoCropsTransform
 
+from qd.torch_common import replace_module
 
 class InputAsDict(nn.Module):
     def __init__(self, model):
@@ -212,16 +214,6 @@ def adapt_convbn_weight(weight, running_mean,
     x = x.view((len(x), 1)).repeat((1, spatial_dim)).view((-1, 1))
     running_mean += torch.mm(weight.view((weight.shape[0], -1)), x).view(-1)
     return weight, running_mean
-
-def replace_module(module, condition_func, creator_func):
-    module_output = module
-    if condition_func(module):
-        module_output = creator_func(module)
-    for name, child in module.named_children():
-        child = replace_module(child, condition_func, creator_func)
-        module_output.add_module(name, child)
-    del module
-    return module_output
 
 def load_scheduler_state(scheduler, state):
     for k, v in state.items():
@@ -1490,15 +1482,6 @@ def save_parameters(param, folder):
     write_to_yaml_file(dict(os.environ), op.join(folder,
         'env_{}.yaml'.format(time_str)))
 
-def torch_save(t, f):
-    ensure_directory(op.dirname(f))
-    tmp_f = f + '.tmp'
-    torch.save(t, tmp_f)
-    os.rename(tmp_f, f)
-
-def torch_load(filename):
-    return torch.load(filename, map_location=lambda storage, loc: storage)
-
 def ensure_create_evaluate_meta_file(evaluate_file):
     result = None
     simple_file = evaluate_file + '.map.json'
@@ -2083,6 +2066,12 @@ class TorchTrain(object):
                     transform=transform,
                     labelmap=labelmap,
                     cache_policy=self.cache_policy)
+        elif dataset_type == 'io':
+            # this is the recommended setting. all others can be implemented in
+            # transform
+            from qd.data_layer.dataset import IODataset, DatasetPlusTransform
+            io_set = IODataset(data, split, version=0)
+            return DatasetPlusTransform(io_set, transform)
         elif dataset_type == 'soft_assign':
             return TSVSplitImageSoftAssign(data, split,
                     transform=transform,
@@ -2126,6 +2115,14 @@ class TorchTrain(object):
                                             criterion_type=self.criterion_type,
                                             denominator_ce_factor=self.denominator_ce_factor
                                             )
+            elif self.loss_type == 'SwAV':
+                from qd.layers.ntxent_loss import SwAVQueueLoss
+                criterion = SwAVQueueLoss(
+                    self.temperature,
+                    cluster_size=self.cluster_size,
+                    queue_size=self.queue_size,
+                    involve_queue_after=self.involve_queue_after,
+                    dim=self.out_dim)
             elif self.loss_type == 'SimpleQueue':
                 from qd.layers.ntxent_loss import SimpleQueueLoss
                 criterion = SimpleQueueLoss(self.temperature,
@@ -2153,6 +2150,26 @@ class TorchTrain(object):
             elif self.loss_type == 'ExCE':
                 from qd.layers.loss import ExclusiveCrossEntropyLoss
                 criterion = ExclusiveCrossEntropyLoss(2.)
+            elif self.loss_type == 'kl_ce':
+                from qd.layers.loss import KLCrossEntropyLoss
+                criterion = KLCrossEntropyLoss()
+            elif self.loss_type == 'l2':
+                from qd.layers.loss import L2Loss
+                criterion = L2Loss()
+            elif self.loss_type == 'mo_dist_ce':
+                from qd.layers.loss import DistillCrossEntropyLoss
+                criterion = DistillCrossEntropyLoss(
+                    num_image=self.get_num_training_images(),
+                    num_class=self.get_num_classes(),
+                    momentum=self.dist_ce_momentum,
+                    dist_weight=self.dist_weight,
+                )
+            elif self.loss_type == 'eff_fpn_ce':
+                from qd.layers.loss import EfficientDetCrossEntropy
+                criterion = EfficientDetCrossEntropy(
+                    no_reg=self.no_reg,
+                    sep=self.sep,
+                )
             else:
                 criterion = nn.CrossEntropyLoss().cuda()
         elif self.dataset_type in ['soft_assign']:
@@ -2187,6 +2204,21 @@ class TorchTrain(object):
                                         num_class,
                                         dropout_ratio=self.mobilenetv3_dropout_ratio)
             assert not pretrained
+        elif self.net.startswith('efficientdet'):
+            # used for pre-training
+            assert not pretrained
+            compound = int(self.net[-1])
+            from qd.layers.efficient_det import EfficientDetBackbone
+            model = EfficientDetBackbone(num_classes=num_class,
+                                            compound_coef=compound,
+                                            ratios=[(1., 1.)],
+                                            scales=[2 ** 0],
+                                            prior_prob=0.5,
+                                            adaptive_up=True,
+                                            anchor_scale=3,
+                                            drop_connect_rate=None,
+                                            box_dim=num_class,
+                                            )
         elif self.net.startswith('efficientnet'):
             if pretrained:
                 assert ValueError('not tested')
@@ -2205,6 +2237,9 @@ class TorchTrain(object):
                     self.net,
                     override_params={'num_classes': num_class})
                 assert not pretrained
+        elif self.net.startswith('yolov5'):
+            from qd.layers.yolov5 import ClassificationModel, get_model_cfg
+            model = ClassificationModel(cfg=get_model_cfg(self.net))
         elif self.net.startswith('resnet'):
             dict_data = {
                 'from': 'qd.layers.resnet',
@@ -2248,17 +2283,17 @@ class TorchTrain(object):
     def _data_parallel_wrap(self, model):
         if self.distributed:
             model.cuda()
-            if self.mpi_local_size > 1:
-                if not self.use_hvd:
-                    model = torch.nn.parallel.DistributedDataParallel(
-                        model,
-                        device_ids=[self.device_id],
-                        # used for effiicient-net + faster-rcnn
-                        #find_unused_parameters=True,
-                    )
-            else:
-                if not self.use_hvd:
-                    model = torch.nn.parallel.DistributedDataParallel(model)
+            #if self.mpi_local_size > 1:
+            if not self.use_hvd:
+                model = torch.nn.parallel.DistributedDataParallel(
+                    model,
+                    device_ids=[self.device_id],
+                    # used for effiicient-net + faster-rcnn
+                    find_unused_parameters=self.find_unused_parameters,
+                )
+            #else:
+                #if not self.use_hvd:
+                    #model = torch.nn.parallel.DistributedDataParallel(model)
         #else:
             #model = torch.nn.parallel.DistributedDataParallel(model)
             #model = torch.nn.DataParallel(model).cuda()
@@ -2375,25 +2410,23 @@ class TorchTrain(object):
                 raise ValueError('unknown init type = {}'.format(self.init_from['type']))
 
     def get_optimizer(self, model):
-        from qd.opt.ema_optimizer import get_params_with_name
-        parameters = get_params_with_name(model)
-
-        if self.bias_no_weight_decay:
-            parameters = []
-            for key, value in model.named_parameters():
-                if not value.requires_grad:
-                    continue
-                lr = self.base_lr
-                weight_decay = self.weight_decay
-                if "bias" in key:
-                    weight_decay = 0.
-                logging.info('{}: lr = {}; weight_decay = {}'.format(
-                    key, lr, weight_decay
-                ))
-                parameters += [{"params": [value],
-                                "lr": lr,
-                                "weight_decay": weight_decay,
-                                'param_names': [key]}]
+        parameters = []
+        for key, value in model.named_parameters():
+            if not value.requires_grad:
+                continue
+            lr = self.base_lr
+            weight_decay = self.weight_decay
+            if self.bias_no_weight_decay and "bias" in key:
+                weight_decay = 0.
+            if self.conv_no_weight_decay and key.endswith('conv.weight'):
+                weight_decay = 0.
+            logging.info('{}: lr = {}; weight_decay = {}'.format(
+                key, lr, weight_decay
+            ))
+            parameters += [{"params": [value],
+                            "lr": lr,
+                            "weight_decay": weight_decay,
+                            'param_names': [key]}]
 
         if self.optimizer_type in [None, 'SGD', 'LARS']:
             from qd.opt.sgd import SGDVerbose
@@ -2407,12 +2440,13 @@ class TorchTrain(object):
                                    nesterov=self.sgd_nesterov,
                                    )
         elif self.optimizer_type == 'RMSprop':
-            optimizer = torch.optim.RMSprop(parameters,
-                                            self.base_lr,
-                                            momentum=self.momentum,
-                                            alpha=self.rms_alpha,
-                                            weight_decay=self.weight_decay,
-                                            )
+            optimizer = torch.optim.RMSprop(
+                parameters,
+                self.base_lr,
+                momentum=self.momentum,
+                alpha=self.rms_alpha,
+                weight_decay=self.weight_decay,
+            )
         elif self.optimizer_type in ['Adam']:
             optimizer = torch.optim.Adam(parameters, self.base_lr,
                                         weight_decay=self.weight_decay)
@@ -2872,7 +2906,7 @@ class TorchTrain(object):
         # through. No need to run initilaization here actually.
         #self._ensure_initialized()
         if not predict_file:
-            model_file = self._get_checkpoint_file(iteration=self.max_iter)
+            model_file = self._get_checkpoint_file()
             predict_file = self._get_predict_file(model_file)
         evaluate_file = self._get_evaluate_file(predict_file)
         if evaluate_file is None:
@@ -2895,13 +2929,16 @@ class TorchTrain(object):
 
         if self.evaluate_method == 'map':
             from qd.deteval import deteval_iter
+            other_param = copy.deepcopy(self.kwargs)
+            if 'ovthresh' in other_param:
+                del other_param['ovthresh']
             deteval_iter(
                     dataset.iter_data(self.test_split, 'label',
                         version=self.test_version),
                     predict_file,
                     report_file=evaluate_file,
-                    ovthresh=self.ovthresh,
-                    **self.kwargs)
+                    ovthresh=self.ovthresh, # this is in self.kwargs already
+                    **other_param)
         elif self.evaluate_method == 'coco_box':
             from qd.cocoeval import convert_gt_to_cocoformat
             from qd.cocoeval import convert_to_cocoformat
@@ -3025,8 +3062,8 @@ def load_model_state_ignore_mismatch(model, init_dict):
             unique_key_in_init_dict.append(k)
             num_ignored = num_ignored + 1
 
-    logging.info('unique keys in pre-trained model = {}; total = {}'.format(
-        ','.join(unique_key_in_init_dict), len(unique_key_in_init_dict),
+    logging.info('unique keys in loaded model = {}; total = {}'.format(
+        pformat(unique_key_in_init_dict), len(unique_key_in_init_dict),
     ))
 
     result = model.load_state_dict(real_init_dict, strict=False)
