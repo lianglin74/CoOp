@@ -140,11 +140,12 @@ def download_run_logs(run_info, full=True):
             start_size = get_file_size(target_file)
             if start_size < url_fsize:
                 extra_target_file = target_file + '.extra'
-                try_delete(extra_target_file)
+                if op.isfile(extra_target_file):
+                    try_delete(extra_target_file)
                 if full:
                     end_size = None
                 else:
-                    end_size = min(url_fsize, start_size + 1024 * 100)
+                    end_size = min(url_fsize, start_size + 1024 * 1024 * 10)
                 url_to_file_by_curl(v, extra_target_file, start_size,
                                     end_size)
                 if op.isfile(extra_target_file):
