@@ -48,9 +48,11 @@ def forward_backward(model, images, targets,
         optimizer,
         arguments, checkpointer, use_hvd,
         meters, device, loss_scalar, no_update=False):
+    start_fw = time.time()
     loss_dict = model(images, targets)
 
     losses = sum(loss for loss in loss_dict.values()) * loss_scalar
+    end_fw = time.time()
     if losses != losses:
         logging.info('NaN encountered!')
         arguments['images'] = images
@@ -66,19 +68,27 @@ def forward_backward(model, images, targets,
     else:
         losses_reduced = sum(loss for loss in loss_dict.values())
         meters.update(loss=losses_reduced, **loss_dict)
+    meters.update(fw_time=(end_fw-start_fw))
+
+    #from pprint import pformat
+    #x = model.get_time_info()['meters']
+    #logging.info(pformat([(y['name'], y['global_avg']) for y in x]))
+    #import ipdb;ipdb.set_trace(context=15)
 
     # Note: If mixed precision is not used, this ends up doing nothing
     # Otherwise apply loss scaling for mixed-precision recipe
+    start_bw = time.time()
     if not no_update:
        if device.type == 'cpu':
            losses.backward()
        else:
-           if not use_hvd:
-               from apex import amp
-               with amp.scale_loss(losses, optimizer) as scaled_losses:
-                   scaled_losses.backward()
-           else:
-               losses.backward()
+           #if not use_hvd:
+               #from apex import amp
+               #with amp.scale_loss(losses, optimizer) as scaled_losses:
+                   #scaled_losses.backward()
+           #else:
+           losses.backward()
+    meters.update(bw_time=(time.time() - start_bw))
 
 def partition_data(images, targets, num):
     if num == 1 or len(images.image_sizes) < num:
@@ -135,8 +145,12 @@ def do_train(
     log_start = time.time()
     from qd.qd_common import is_hvd_initialized
     use_hvd = is_hvd_initialized()
+
     visualize_input = False
     fix_input = False
+
+    #from qd.layers.forward_pass_memory_checker import ForwardPassMemoryChecker
+    #model = ForwardPassMemoryChecker(model)
 
     for iteration, (images, targets, _) in enumerate(data_loader, start_iter):
         if hasattr(images, 'image_sizes') and len(images.image_sizes) == 0:
@@ -154,14 +168,12 @@ def do_train(
 
         if visualize_input:
             from qd.qd_pytorch import visualize_maskrcnn_input
+            logging.info(images.tensors.shape)
             visualize_maskrcnn_input(images, targets, show_box=True)
 
         data_time = time.time() - end
         iteration = iteration + 1
         arguments["iteration"] = iteration
-
-        if not no_update:
-            scheduler.step()
 
         if isinstance(images, list):
             images = [x.to(device) for x in images]
@@ -177,18 +189,24 @@ def do_train(
 
         all_image_target = partition_data(images,
                 targets, data_partition)
-
+        start_fb = time.time()
         for curr_images, curr_target in all_image_target:
             forward_backward(model, curr_images, curr_target,
                     optimizer,
                     arguments, checkpointer, use_hvd,
                     meters, device, loss_scalar=1./data_partition,
                     no_update=no_update)
+        end_fb = time.time()
         if explicit_average_grad:
             average_gradients(model)
 
+        start_opt_step = time.time()
         if not no_update:
             optimizer.step()
+        end_opt_step = time.time()
+
+        if not no_update:
+            scheduler.step()
 
         batch_time = time.time() - end
         end = time.time()
@@ -197,6 +215,8 @@ def do_train(
             # we will skip the first few iterations since the time cost
             # evaluation for those are not good
             meters.update(time=batch_time, data=data_time)
+            meters.update(fb_time=(end_fb-start_fb))
+            meters.update(opt_step_time=(end_opt_step-start_opt_step))
 
         if iteration % log_step == 0 or iteration == max_iter:
             speed = get_mpi_size() * log_step * len(targets) / (time.time() - log_start)
@@ -225,6 +245,20 @@ def do_train(
                     memory=torch.cuda.max_memory_allocated() / 1024.0 / 1024.0,
                 )
             )
+            #time_model = model
+            #time_info = None
+            #while True:
+                #if hasattr(time_model, 'get_time_info'):
+                    #time_info = time_model.get_time_info()
+                    #break
+                #if hasattr(time_model, 'module'):
+                    #time_model = time_model.module
+                    #continue
+                #break
+            #if time_info is not None:
+                #logger.info('\n'.join((', '.join(('{} = {}'.format(k, m[k])for k in
+                                       #['name', 'global_avg'])) for m in
+                                      #time_info['meters'])))
             log_start = time.time()
         if iteration % checkpoint_period == 0:
             # with blobfuse, saving could fail with unknown reason. Instead of
@@ -280,6 +314,8 @@ def do_train_dict(
     data_partition=1,
     explicit_average_grad=False,
     no_update=False,
+    ema=None,
+    use_amp=False,
 ):
     logger = logging.getLogger("maskrcnn_benchmark.trainer")
     logger.info("Start training")
@@ -289,53 +325,47 @@ def do_train_dict(
     start_training_time = time.time()
     end = time.time()
     log_start = time.time()
-    from qd.qd_common import is_hvd_initialized
-    use_hvd = is_hvd_initialized()
+
+    if use_amp:
+        scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
 
     for iteration, dict_data in enumerate(data_loader, start_iter):
         data_time = time.time() - end
         iteration = iteration + 1
         arguments["iteration"] = iteration
 
-        if not no_update:
-            scheduler.step()
-
         dict_data = to(dict_data, device)
 
         if not no_update:
             optimizer.zero_grad()
 
-        loss_dict = model(dict_data)
+        if use_amp:
+            with torch.cuda.amp.autocast(enabled=use_amp):
+                loss_dict = model(dict_data)
+                losses = sum(loss for loss in loss_dict.values())
+            scaler.scale(losses).backward()
+            if not no_update:
+                scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss_dict = model(dict_data)
+            losses = sum(loss for loss in loss_dict.values())
+            losses.backward()
+            if not no_update:
+                optimizer.step()
 
-        losses = sum(loss for loss in loss_dict.values())
         if losses != losses:
             logging.info('NaN encountered!')
             checkpointer.save("NaN_context_{}".format(get_mpi_rank()), **arguments)
             raise RuntimeError('NaN encountered!')
 
-        # reduce losses over all GPUs for logging purposes
-        if not use_hvd:
-            loss_dict_reduced = reduce_loss_dict(loss_dict)
-            losses_reduced = sum(loss for loss in loss_dict_reduced.values())
-            meters.update(loss=losses_reduced, **loss_dict_reduced)
-        else:
-            losses_reduced = sum(loss for loss in loss_dict.values())
-            meters.update(loss=losses_reduced, **loss_dict)
-
-        # Note: If mixed precision is not used, this ends up doing nothing
-        # Otherwise apply loss scaling for mixed-precision recipe
-        if device.type == 'cpu':
-            losses.backward()
-        else:
-            if not use_hvd:
-                from apex import amp
-                with amp.scale_loss(losses, optimizer) as scaled_losses:
-                    scaled_losses.backward()
-            else:
-                losses.backward()
+        meters.update(loss=losses, **loss_dict)
 
         if not no_update:
-            optimizer.step()
+            scheduler.step()
+
+        if ema is not None:
+            ema.update(model)
 
         batch_time = time.time() - end
         end = time.time()
