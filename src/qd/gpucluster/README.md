@@ -52,9 +52,8 @@
 5. Create the config file of `aux_data/aml/aml.yaml` to specify the submission
    related parameters. Here is one example.
    ```yaml
-   azure_blob_config_file: ./aux_data/configs/vigblob_account.yaml
-   # the name for the azure storage account, used as a tag in AML
-   datastore_name: vig_data 
+   azure_blob_config_file: null # no need to specify, legacy option
+   datastore_name: null # no need to specify. legacy option
    # used to initialize the workspace
    aml_config: aux_data/aml/config.json 
 
@@ -62,70 +61,48 @@
    # submission utility here, you can set any value
 
    config_param: 
-       # the path here is relative to the azure blob container
-       # where the zipped source code is
-       code_path: alias/code/quickdetection.zip 
-       # after the source code is unzipped, this folder will be as $ROOT/data
-       # if aml_server.py is the entry_script
-       data_folder: alias/data/qd_data
-       # this folder will be as $ROOT/models if aml_server.py is the
-       # entry_script
-       model_folder: alias/work/qd_models 
-       # this folder will be as $ROOT/output if aml_server.py is the
-       # entry_script
-       output_folder: alias/work/qd_output 
+      code_path:
+          azure_blob_config_file: ./aux_data/configs/vigeastblob_account.yaml # the blob account information
+          path: jianfw/code/quickdetection.zip # where the zipped source code is
+      data_folder:
+          azure_blob_config_file: ./aux_data/configs/vigeastblob_account.yaml # the blob account information
+          path: jianfw/data/qd_data # after the source code is unzipped, this folder will be as $ROOT/data
+      model_folder:
+          azure_blob_config_file: ./aux_data/configs/vigeastblob_account.yaml # the blob account information
+          path: jianfw/work/qd_models # this folder will be as $ROOT/models
+      output_folder:
+          azure_blob_config_file: ./aux_data/configs/vigeastblob_account.yaml # the blob account information
+          path: jianfw/work/qd_output # this folder will be as $ROOT/output
    # if False, it will use AML's PyTorch estimator, which is not heavily tested here
    use_custom_docker: true
    # this is from AML admin. don't change it unless got notified
    compute_target: NC24RSV3 
+   # if it is the ITP cluster, please set it as true
+   aks_compute: false
    docker:
        # the custom docker. If use_custom_docker is False, this will be ignored
-       image: amsword/setup:py36pt11 
-   # please make the experiment name start with your alias, because the
-   #   experiment cannot be deleted in AML and it is hard to figure out the
-   #   user name based on the experiment name or job ID
-   experiment_name: your_alias
-   multi_process: true # if false, it only launches on process in each node
-   # used to calculate how many nodes are required based on the number of GPU requested
+       image: amsword/setup:py36pt16
+   # any name to specify the experiment name.
+   # better to have alias name as part of the experiment name since experiment
+   # cannot be deleted and it is better to use fewer experiments
+   experiment_name: your_alias 
+   # if it is true, you need to run az login --use-device-code to authorize
+   # before job submission. If you don't set it (default), it will prompt website to ask
+   # you do the authentication. It is recommmended to set it as True
+   use_cli_auth: True
+   # if it is true, it will spawn n processes on each node. n equals #gpu on
+   # the node. otherwise, there will be only 1 process on each node. In
+   # distributed training, if it is false, you might need to spawn n extra
+   # processes by yourself. It is recommended to set it as true (default)
+   multi_process: True
    gpu_per_node: 4
    env:
-       ENV_KEY: ENV_VALUE # specify any environment you want, the value: str
+      # the dictionary of env will be as extra environment variables for the
+      # job running. you can add multiple env here. Note, sometimes the default
+      # of NCCL_IB_DISABLE is '1', which will disable IB. highly recommneded to
+      # alwasy set it as '0', even when IB is not available.
+      NCCL_IB_DISABLE: '0'
    ```
-   - This example only uses one blob for data access. If you want to use multiple
-     blobs, make those folder variables as dictionray. Here is an example
-     ```yaml
-     azure_blob_config_file: null # no need to specify
-     datastore_name: null # no need to specify
-     # used to initialize the workspace
-     aml_config: aux_data/aml/config.json 
-
-     # the following is related with the job submission. If you don't use the
-     # submission utility here, you can set any value
-
-     config_param: 
-        code_path:
-            azure_blob_config_file: ./aux_data/configs/vigeastblob_account.yaml # the blob account information
-            path: jianfw/code/quickdetection.zip # where the zipped source code is
-        data_folder:
-            azure_blob_config_file: ./aux_data/configs/vigeastblob_account.yaml # the blob account information
-            path: jianfw/data/qd_data # after the source code is unzipped, this folder will be as $ROOT/data
-        model_folder:
-            azure_blob_config_file: ./aux_data/configs/vigeastblob_account.yaml # the blob account information
-            path: jianfw/work/qd_models # this folder will be as $ROOT/models
-        output_folder:
-            azure_blob_config_file: ./aux_data/configs/vigeastblob_account.yaml # the blob account information
-            path: jianfw/work/qd_output # this folder will be as $ROOT/output
-     # if False, it will use AML's PyTorch estimator, which is not heavily tested here
-     use_custom_docker: true
-     # this is from AML admin. don't change it unless got notified
-     compute_target: NC24RSV3 
-     docker:
-         # the custom docker. If use_custom_docker is False, this will be ignored
-         image: amsword/setup:py36pt11 
-     experiment_name: your_alias
-     env:
-         ENV_KEY: ENV_VALUE # specify any environment you want, the value: str
-     ```
 
 6. Set an alias
    ```bash
