@@ -1,4 +1,4 @@
-azure
+azure-storage-blob==2.1.0
 Cython
 deprecated
 django
@@ -15,6 +15,7 @@ opencv-python
 orderedset
 pandas
 pathos
+pillow
 progressbar
 protobuf
 psutil
@@ -30,3 +31,4 @@ tqdm
 traceback2
 tb-nightly
 yacs
+torchlars
