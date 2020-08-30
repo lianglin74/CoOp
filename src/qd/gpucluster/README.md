@@ -3,16 +3,26 @@
 ## AML
 ### Installation
 1. Download and install the source code
-   ```bash
-   git clone git@ssh.dev.azure.com:v3/visionbio/quickdetection/quickdetection
-   cd src
-   python setup.py build develop
-   ```
+   * install with pip
+     ```bash
+     pip install "git+https://visionbio@dev.azure.com/visionbio/quickdetection/_git/quickdetection#egg=qd&subdirectory=src"
+     ```
+     if you have set up the ssh for authentication, you can run the following
+     to install
+     ```bash
+     pip install "git+ssh://git@ssh.dev.azure.com/v3/visionbio/quickdetection/quickdetection#egg=qd&subdirectory=src"
+     ```
+   * or, install by download the source code explicitly
+     ```bash
+     git clone git@ssh.dev.azure.com:v3/visionbio/quickdetection/quickdetection
+     cd src
+     python setup.py build develop
+     ```
    Note
-   - you don't have to use the option of `--recursive` to download all
-   submodules. 
-   - Recommended to build it with develop option so that you can
-   modify the code and there is no need to re-compile it. 
+   - This will automatically install the dependencies. If you don't want to
+   install the dependencies, you can add `--no-deps` in `pip` command or
+   `setup.py` command, where you need to manually install the dependency if
+   some package is missing.
    - If you are using system-level python, please use the option of `--user` 
    in setup command so that the lib won't contaminate the system lib
 
