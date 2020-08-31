@@ -545,7 +545,7 @@ class EffNetFPN(nn.Module):
             conv_channel_coef = self.conv_channel_coef2345[compound_coef]
 
         self.bifpn = nn.Sequential(
-            *[BiFPN(self.fpn_num_filters[compound_coef],
+            *[BIFPN(self.fpn_num_filters[compound_coef],
                     conv_channel_coef,
                     True if _ == 0 else False)
               for _ in range(self.fpn_cell_repeats[compound_coef])])
@@ -567,7 +567,7 @@ class EffNetFPN(nn.Module):
             features = self.bifpn(features)
             return features
 
-class BiFPN(nn.Module):
+class BIFPN(nn.Module):
     def __init__(self, num_channels,
                  conv_channels,
                  first_time=False,
