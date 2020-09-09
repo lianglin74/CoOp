@@ -74,12 +74,16 @@
       code_path:
           azure_blob_config_file: ./aux_data/configs/vigeastblob_account.yaml # the blob account information
           path: jianfw/code/quickdetection.zip # where the zipped source code is
+      # you can add multiple key-value pairs to configure the folder mapping.
+      # Locally, if the folder name is A, and you want A to be a blobfuse
+      # folder in the AML side, you need to set the key as A_folder. For
+      # example, if the local folder is datasets, and you want datasets to be a
+      # blobfuse folder in AML running, then add a pair with the key being
+      # datasets_folder.
       data_folder:
           azure_blob_config_file: ./aux_data/configs/vigeastblob_account.yaml # the blob account information
-          path: jianfw/data/qd_data # after the source code is unzipped, this folder will be as $ROOT/data
-      model_folder:
-          azure_blob_config_file: ./aux_data/configs/vigeastblob_account.yaml # the blob account information
-          path: jianfw/work/qd_models # this folder will be as $ROOT/models
+          # after the source code is unzipped, this folder will be as $ROOT/data
+          path: jianfw/data/qd_data 
       output_folder:
           azure_blob_config_file: ./aux_data/configs/vigeastblob_account.yaml # the blob account information
           path: jianfw/work/qd_output # this folder will be as $ROOT/output
