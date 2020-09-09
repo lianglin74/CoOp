@@ -171,7 +171,7 @@ def launch_monitoring_process():
     return p
 
 def wrap_all(code_zip, code_root,
-        data_folder, model_folder, output_folder, command):
+        folder_link, command):
     cmd_run(['ibstatus'])
     cmd_run(['grep', 'Port', '/etc/ssh/sshd_config'])
     cmd_run(['nvidia-smi'])
@@ -188,24 +188,17 @@ def wrap_all(code_zip, code_root,
         # set up the code, models, output under qd
         logging.info('unzipping {}'.format(code_zip))
         unzip(code_zip, code_root)
-        cmd_run(['rm', '-rf', 'data'], code_root)
-        cmd_run(['rm', '-rf', 'models'], code_root)
-        cmd_run(['rm', '-rf', 'output'], code_root)
-        cmd_run(['ln', '-s',
-            data_folder,
-            op.join(code_root, 'data')])
-        cmd_run(['ln',
-            '-s',
-            model_folder,
-            op.join(code_root, 'models')
-            ])
 
-        cmd_run(['mkdir', '-p', output_folder])
+        for target, source in folder_link.items():
+            cmd_run(['rm', '-rf', target], code_root)
+            cmd_run(['ln', '-s',
+                     source,
+                     op.join(code_root, target)])
 
-        cmd_run(['chmod', 'a+rw',
-            output_folder], succeed=False)
+        #cmd_run(['chmod', 'a+rw',
+            #output_folder], succeed=False)
 
-        cmd_run(['ln', '-s', output_folder, op.join(code_root, 'output')])
+        #cmd_run(['ln', '-s', output_folder, op.join(code_root, 'output')])
 
         # compile the source code
         compile_qd(code_root)
@@ -240,15 +233,35 @@ def link_nltk():
 def load_from_yaml_str(s):
     return yaml.load(s)
 
-def parse_args():
-    parser = argparse.ArgumentParser()
+def parse_args_to_dict():
+    from argparse import ArgumentParser
+    parser = ArgumentParser()
     parser.add_argument('--code_path', type=str)
-    parser.add_argument('--data_folder', type=str)
-    parser.add_argument('--model_folder', type=str)
-    parser.add_argument('--output_folder', type=str)
+    # you can add multiple --xxx_folder, where xxx will be the folder name in
+    # aml. Before, we hard-coded it to be data or model or output. Now, we can
+    # use any name
+    #parser.add_argument('--data_folder', type=str)
+    #parser.add_argument('--model_folder', type=str)
+    #parser.add_argument('--output_folder', type=str)
     parser.add_argument('--command', type=str)
-    args = parser.parse_args()
-    return args
+    args, unknown = parser.parse_known_args()
+    param = vars(args)
+    assert (len(unknown) % 2) == 0, unknown
+    assert 'folder_link' not in param
+    param['folder_link'] = {}
+    for i in range(len(unknown) // 2):
+        key = unknown[2 * i]
+        value = unknown[2 * i + 1]
+        while key.startswith('-'):
+            key = key[1:]
+        if not key.endswith('_folder'):
+            logging.info('ignore {}={} because key not ends with _folder'.format(
+                key,
+                value))
+            continue
+        assert key not in param['folder_link'], (param, key)
+        param['folder_link'][key[:-len('_folder')]] = value
+    return param
 
 def get_host_ip():
     import socket
@@ -288,7 +301,8 @@ def run():
         return
     from pprint import pformat
     logging.info(pformat(sys.argv))
-    dict_param = vars(parse_args())
+    dict_param = parse_args_to_dict()
+    logging.info(pformat(dict_param))
 
     logging.info('start')
 
@@ -302,9 +316,10 @@ def run():
         update_ssh()
         link_nltk()
 
-    wrap_all(dict_param['code_path'], qd_root,
-            dict_param['data_folder'], dict_param['model_folder'],
-            dict_param['output_folder'], dict_param['command'])
+    wrap_all(dict_param['code_path'],
+             qd_root,
+             dict_param['folder_link'],
+             dict_param['command'])
 
 if __name__ == '__main__':
     init_logging()

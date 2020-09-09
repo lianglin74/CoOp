@@ -542,33 +542,39 @@ class AMLClient(object):
                             for suffix in ['.pt', '.yaml']):
                     cloud.az_upload2(local_file, remote_file)
 
+    @deprecated('use upload_file')
     def upload_qd_output(self, model_file):
-        assert(op.isfile(model_file))
-        rel_model_file = op.relpath(model_file, './output')
-        target_path = op.join(self.config_param['output_folder']['path'],
-                rel_model_file)
-        cloud = self.config_param['output_folder']['cloud_blob']
-        if not cloud.exists(target_path):
-            cloud.az_upload2(model_file, target_path)
+        self.upload_file(model_file)
+        #assert(op.isfile(model_file))
+        #rel_model_file = op.relpath(model_file, './output')
+        #target_path = op.join(self.config_param['output_folder']['path'],
+                #rel_model_file)
+        #cloud = self.config_param['output_folder']['cloud_blob']
+        #if not cloud.exists(target_path):
+            #cloud.az_upload2(model_file, target_path)
 
+    def upload_file(self, fname):
+        # this function is quite general to upload anyfile for any folder as
+        # long as the folder will be from blobfuse in AML
+        curr = op.abspath(os.curdir)
+        fname = op.abspath(fname)
+        assert fname.startswith(curr)
+        fname = op.relpath(fname, curr)
+        p = fname
+        while True:
+            d = op.dirname(p)
+            if d == '':
+                break
+            p = d
+        target_path = op.join(self.config_param['{}_folder'.format(p)]['path'],
+                              fname[len(p) + 1:])
+        cloud = self.config_param['{}_folder'.format(p)]['cloud_blob']
+        if not cloud.exists(target_path):
+            cloud.az_upload2(fname, target_path)
+
+    @deprecated('use upload_file')
     def upload_qd_model(self, model_file):
-        def split_all_path(fpath):
-            path_splits = []
-            dirname, basename = op.split(fpath)
-            while basename:
-                path_splits.append(basename)
-                dirname, basename = op.split(dirname)
-            path_splits.append(dirname)
-            return path_splits[::-1]
-
-        assert(op.isfile(model_file))
-        path_splits = split_all_path(model_file)
-        assert(len(path_splits) >= 3 and path_splits[-2] == "snapshot")
-        target_path = op.join(self.config_param['output_folder']['path'],
-                path_splits[-3], path_splits[-2], path_splits[-1])
-        cloud = self.config_param['output_folder']['cloud_blob']
-        if not cloud.exists(target_path):
-            cloud.az_upload2(model_file, target_path)
+        self.upload_file(model_file)
 
     def submit(self, cmd, num_gpu=None):
         self.attach_data_store()
@@ -592,10 +598,15 @@ class AMLClient(object):
             assert type(v) is str
         env.environment_variables.update(self.env)
 
+
         from azureml.core.runconfig import MpiConfiguration
         mpi_config = MpiConfiguration()
         if num_gpu is None:
             num_gpu = self.num_gpu
+
+        # this env is only used by some code with torch.distributed.launch
+        env.environment_variables.update({'WORLD_SIZE': num_gpu})
+
         if num_gpu <= self.gpu_per_node:
             mpi_config.process_count_per_node = num_gpu
             node_count = 1
@@ -630,6 +641,11 @@ class AMLClient(object):
             from azureml.contrib.core.k8srunconfig import K8sComputeConfiguration
             k8sconfig = K8sComputeConfiguration()
             k8s = dict()
+            id_rsa = op.expanduser('~/.ssh/id_rsa.pub')
+            if op.isfile(id_rsa):
+                k8s['enable_ssh'] = True
+                k8s['ssh_public_key'] = read_to_buffer(
+                    id_rsa).decode()
             k8sconfig.configuration = k8s
             estimator10.run_config.cmk8scompute = k8sconfig
 
