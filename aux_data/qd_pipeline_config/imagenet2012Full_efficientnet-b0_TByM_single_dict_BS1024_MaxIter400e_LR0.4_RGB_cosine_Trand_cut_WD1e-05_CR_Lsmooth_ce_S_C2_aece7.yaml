@@ -1,0 +1,34 @@
+all_test_data:
+- test_data: imagenet2012Full
+  test_split: test
+param:
+  base_lr: 0.4
+  bgr2rgb: true
+  cosine_restart_after_warmup: true
+  cutout_factor: 2
+  data: imagenet2012Full
+  dataset_type: single_dict
+  dict_trainer: true
+  dist_url_tcp_port: 25014
+  effective_batch_size: 1024
+  efficient_net_simple_padding: true
+  env:
+    availability_check: true
+    cluster: wev32
+    num_gpu: 8
+    run_type: save_config
+  evaluate_method: top1
+  expid: TByM_single_dict_BS1024_MaxIter400e_LR0.4_RGB_cosine_Trand_cut_WD1e-05_CR_Lsmooth_ce_S_C2
+  expid_prefix: TByM
+  full_expid: imagenet2012Full_efficientnet-b0_TByM_single_dict_BS1024_MaxIter400e_LR0.4_RGB_cosine_Trand_cut_WD1e-05_CR_Lsmooth_ce_S_C2
+  log_step: 100
+  loss_type: smooth_ce
+  max_iter: 400e
+  net: efficientnet-b0
+  num_workers: 16
+  pipeline_type: classification_by_mask
+  scheduler_type: cosine
+  test_batch_size: 32
+  train_transform: rand_cut
+  weight_decay: 1.0e-05
+type: pipeline_train_eval_multi
