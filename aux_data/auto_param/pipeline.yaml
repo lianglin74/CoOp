@@ -9,11 +9,597 @@
     #MODEL$RPN$POST_NMS_TOP_N_TEST: $A
     #MODEL$RPN$FPN_POST_NMS_TOP_N_TRAIN: $A
     #MODEL$RPN$FPN_POST_NMS_TOP_N_TEST: $A
+- condition:
+    pipeline_type: classification_by_mask
+  default:
+    - condition:
+        pipeline_type: classification_by_mask
+      default:
+        dict_trainer: true
+        dataset_type: single_dict
+        log_step: 100
+        scheduler_type: cosine
+    - condition:
+        net: efficientnet-b.*
+      default:
+        train_transform: rand_cut
+        cutout_factor: 2
+        loss_type: smooth_ce
+        weight_decay: 0.00001
+        scheduler_type: cosine
+
+
+- condition:
+    pipeline_type$import: MMDetPipeline
+  default:
+    pred_tsv_to_json_extra: 0
+
+- condition:
+    data: Taxcoco2017FullR1
+  default:
+    test_data: coco2017Full
+- condition:
+    data: mmdetcoco2017
+  default:
+    test_data: coco2017Full
+
+- condition:
+    data: mmdetcoco2017
+    test_data: coco2017Full
+  default:
+    pred_tsv_to_json_extra: 0
+    evaluate_method: coco_box
+
+- condition:
+    data: Taxcoco2017FullR1
+    test_data: coco2017Full
+  default:
+    pred_tsv_to_json_extra: 0
+    evaluate_method: coco_box
+
+- condition:
+    train_transform: cutout
+  default:
+    cutout_factor: 2
+- condition:
+    train_transform: rand_cut
+  default:
+    cutout_factor: 2
+
+- condition:
+    net: efficientnet.*
+  default:
+    efficient_net_simple_padding: True
+
+- condition:
+    data: TaxCoco2017_20_part
+  default:
+    test_data: coco2017Full
+
+- condition:
+    pipeline_type$import: EfficientDetDistillPipeline
+  default:
+    weight_decay: 0.00001
+    prior_prob: 0.01
+    scheduler_type: cosine
+    expid_prefix: EffDet
+    reg_loss_type: GIOU
+    efficient_net_simple_padding: True
+    reg_weight: 2
+    adaptive_up: True
+    anchor_scale: 3
+    dict_trainer: True
+    at_least_1_assgin: True
+- condition:
+    pipeline_type$import: EfficientDetDistillPipeline
+  default:
+    - condition:
+        net: 0
+      default:
+        basemodel: output/imagenet2012Full_efficientnet-b0_TByM_single_BS1024_MaxIter400e_LR0.4_RGB_cosine_Trand_cut_WD1e-05_CR_Lsmooth_ce_S_C2/snapshot/model_iter_0500455.pt
+        min_size_range32: [256, 768]
+
+- condition:
+    pipeline_type$import: EfficientDetPipeline
+  default:
+    weight_decay: 0.00001
+    prior_prob: 0.01
+    scheduler_type: cosine
+    expid_prefix: EffDet
+    reg_loss_type: GIOU
+    efficient_net_simple_padding: True
+    reg_weight: 2
+    adaptive_up: True
+    anchor_scale: 3
+    dict_trainer: True
+    at_least_1_assgin: True
+    #wh_transform_type: explinear
+- condition:
+    pipeline_type$import: EfficientDetPipeline
+  default:
+    - condition:
+        net: 3
+      default:
+        basemodel: output/imagenet2012Full_efficientnet-b3_TByM_single_BS256_MaxIter400e_LR0.1_RGB_Crop300_cosine_Trand_cut_WD1e-05_CR_Lsmooth_ce_C2/snapshot/model_iter_2001823.pt
+    - condition:
+        net: 2
+      default:
+        basemodel: output/imagenet2012Full_efficientnet-b2_TByM_single_BS1024_MaxIter400e_LR0.4_RGB_Crop260_cosine_Trand_cut_WD1e-05_CR_Lsmooth_ce_S_C2/snapshot/model_iter_0500455.pt
+    - condition:
+        net: 1
+      default:
+        basemodel: output/imagenet2012Full_efficientnet-b1_TByM_single_BS1024_MaxIter400e_LR0.4_RGB_Crop240_cosine_Trand_cut_WD1e-05_CR_Lsmooth_ce_S_C2/snapshot/model_iter_0500455.pt
+    - condition:
+        net: 0
+      default:
+        basemodel: output/imagenet2012Full_efficientnet-b0_TByM_single_BS1024_MaxIter400e_LR0.4_RGB_cosine_Trand_cut_WD1e-05_CR_Lsmooth_ce_S_C2/snapshot/model_iter_0500455.pt
+        min_size_range32: [256, 768]
+
+- condition:
+    pipeline_type: MaskRCNNPipeline
+    net: e2e_faster_rcnn_efficient_det_tb
+  default:
+    convert_bn: SBN
+    SOLVER$WEIGHT_DECAY: 1e-5
+- condition:
+    pipeline_type: MaskRCNNPipeline
+    net: e2e_faster_rcnn_efficient_det_tb
+  default:
+    - condition:
+        MODEL$BACKBONE$EFFICIENT_DET_COMPOUND: 0
+      default:
+        min_size_range32: [256, 768]
+        INPUT$MAX_SIZE_TEST: 512
+        basemodel: output/imagenet2012Full_efficientnet-b0_TByM_single_BS1024_MaxIter400e_LR0.4_RGB_cosine_Trand_cut_WD1e-05_CR_Lsmooth_ce_S_C2/snapshot/model_iter_0500455.pt
+
+- condition:
+    pipeline_type$import: FasterRCNNDistillPipeline
+    net: e2e_faster_rcnn_efficient_det_tb
+  default:
+    convert_bn: SBN
+    SOLVER$WEIGHT_DECAY: 1e-5
+    INPUT$MIN_SIZE_ON_ITER: true
+    expid_prefix: DistFast
+
+- condition:
+    pipeline_type$import: FasterRCNNDistillPipeline
+    net: e2e_faster_rcnn_efficient_det_tb
+  default:
+    - condition:
+        MODEL$BACKBONE$EFFICIENT_DET_COMPOUND: 0
+      default:
+        min_size_range32: [256, 768]
+        INPUT$MAX_SIZE_TEST: 512
+
+- condition:
+    evaluate_method: map
+  default:
+    ovthresh: [0.5]
+
+- condition:
+    pipeline_type$import: MocoDistillPipeline
+  default:
+    - condition:
+        pipeline_type$import: MocoDistillPipeline
+      default:
+        expid_prefix: MDistill
+    - condition:
+        teacher_net: resnet50w5
+      default:
+        teacher_mlp_dim: 10240
+        basemodel: output/facebook_swav_pretrained/swav_RN50w5_400ep_pretrain.pth.tar.pt
+        mlp_bn: False
+    - condition:
+        teacher_net: resnet50w2
+      default:
+        teacher_mlp_dim: 8192
+        basemodel: output/facebook_swav_pretrained/swav_RN50w2_400ep_pretrain.pth.tar.pt
+        mlp_bn: True
+    - condition:
+        teacher_net: resnet50
+      default:
+        teacher_mlp_dim: 2048
+
+- condition:
+    pipeline_type$import: FCOSPipeline
+  default:
+    - condition:
+        pipeline_type$import: FCOSPipeline
+      default:
+        INPUT$MIN_SIZE_ON_ITER: true
+    - condition:
+        clear_to_remove: true
+      default:
+        pred_tsv_to_json_extra: 0
+    - condition:
+        use_amp: true
+      default:
+        MODEL$ROI_BOX_HEAD$USE_TORCHVISION: true
+    - condition:
+        evaluate_method: map
+      default:
+        ovthresh: [0.5]
+    - condition:
+        data: animal20
+      default:
+        DATALOADER$ASPECT_RATIO_GROUPING: false
+        min_size_range32: [256, 768]
+        evaluate_method: map
+        ovthresh: [0.5]
+    - condition:
+        data: O365
+      default:
+        #MaskTSVDataset$remove_images_without_annotations: False
+        MODEL$RPN$FPN_POST_NMS_TOP_N_EACH_IMAGE_TRAIN: 1000
+        evaluate_method: coco_box
+    - condition:
+        data: TaxVisualGenome.*
+      default:
+        MODEL$RPN$FPN_POST_NMS_TOP_N_EACH_IMAGE_TRAIN: 1000
+        MODEL$CLS_AGNOSTIC_BBOX_REG: true
+        MODEL$ROI_HEADS$NMS_ON_MAX_CONF_AGNOSTIC: true
+        MaskTSVDataset$remove_images_without_annotations: False
+        max_box: 100
+        SOLVER$WEIGHT_DECAY: 1e-6
+        evaluate_method: map
+    - condition:
+          env$run_type: debug
+      default:
+          DATALOADER$ASPECT_RATIO_GROUPING: false
+          MaskTSVDataset$remove_images_without_annotations: False
+    - condition:
+        #Tax1300V14.4_0.0_0.0_with_bb
+        data: Tax1300.*
+      default:
+        MODEL$ROI_BOX_HEAD$CLASSIFICATION_LOSS: tree
+        MODEL$CLS_AGNOSTIC_BBOX_REG: true
+        MODEL$ROI_HEADS$NMS_ON_MAX_CONF_AGNOSTIC: true
+        MaskTSVDataset$remove_images_without_annotations: False
+        max_box: 100
+        SOLVER$WEIGHT_DECAY: 1e-6
+    - condition:
+        affine_resize: RC
+      default:
+        DATALOADER$ASPECT_RATIO_GROUPING: false
+    - condition:
+          data: $A
+          MODEL$ROI_BOX_HEAD$CLASSIFICATION_LOSS: tree
+      default:
+          MODEL$ROI_BOX_HEAD$TREE_0_BKG: ./data/$A/tree_with_bkg.txt
+          MODEL$ROI_BOX_HEAD$CLASSIFICATION_ACTIVATE: tree
+    - condition:
+          net: e2e_faster_rcnn_R_50_FPN_1x_tb
+      default:
+          min_size_range32: [640, 960]
+          MODEL$BACKBONE$FREEZE_CONV_BODY_AT: 0
+    - condition:
+        net: e2e_faster_rcnn_efficient_det_tb|frcnn_eff_8|frcnn_eff_attr|frcnn_eff_attr_8|e2e_faster_rcnn_efficient_det_as8
+      default:
+        - condition:
+            net: e2e_faster_rcnn_efficient_det_tb|frcnn_eff_8|frcnn_eff_attr|frcnn_eff_attr_8|e2e_faster_rcnn_efficient_det_as8
+          default:
+            convert_bn: SBN
+            SOLVER$WEIGHT_DECAY: 1e-5
+        - condition:
+            MODEL$BACKBONE$EFFICIENT_DET_COMPOUND: 5
+          default:
+            affine_resize: RC
+            train_size_mode: mm_cut1280
+            # what was tested is 384 to 1104
+            use_amp: true
+            min_size_range32: [640, 1920]
+            MODEL$RPN$FPN_POST_NMS_TOP_N_EACH_IMAGE_TRAIN: 1000
+            INPUT$MAX_SIZE_TEST: 1280
+            basemodel: output/imagenet2012Full_efficientnet-b5_TByM_basemodelc780e_single_dict_BS128_MaxIter100e_LR0.05_RGB_Crop456_cosine_Trand_cut_WD1e-05_CR_Lsmooth_ce_S_C2/snapshot/model_iter_1000911.pt
+        - condition:
+            MODEL$BACKBONE$EFFICIENT_DET_COMPOUND: 4
+          default:
+            affine_resize: RC
+            train_size_mode: mm_cut1024
+            # what was tested is 384 to 1104
+            min_size_range32: [512, 1536]
+            MODEL$RPN$FPN_POST_NMS_TOP_N_EACH_IMAGE_TRAIN: 1000
+            INPUT$MAX_SIZE_TEST: 1024
+            basemodel: output/imagenet2012Full_efficientnet-b4_TByM_single_dict_BS256_MaxIter400e_LR0.1_BNToSBN_RGB_Crop380_cosine_Trand_cut_WD1e-05_CR_Lsmooth_ce_S_C2/snapshot/model_iter_2001823.pt
+        - condition:
+            MODEL$BACKBONE$EFFICIENT_DET_COMPOUND: 3
+          default:
+            - condition:
+                affine_resize: RC
+              default:
+                train_size_mode: mm_cut896
+                # what was tested is 384 to 1104
+                min_size_range32: [448, 1344]
+            - condition:
+                MODEL$BACKBONE$EFFICIENT_DET_COMPOUND: 3
+              default:
+                min_size_range32:
+                    - 576
+                    - 1216
+                INPUT$MAX_SIZE_TEST: 896
+                basemodel: output/imagenet2012Full_efficientnet-b3_TByM_single_BS256_MaxIter400e_LR0.1_RGB_Crop300_cosine_Trand_cut_WD1e-05_CR_Lsmooth_ce_C2/snapshot/model_iter_2001823.pt
+        - condition:
+            MODEL$BACKBONE$EFFICIENT_DET_COMPOUND: 2
+          default:
+            - condition:
+                affine_resize: RC
+              default:
+                train_size_mode: mm_cut768
+                # what was tested is 384 to 1104
+                min_size_range32: [384, 1152]
+            - condition:
+                MODEL$BACKBONE$EFFICIENT_DET_COMPOUND: 2
+              default:
+                min_size_range32: [384, 1088]
+                INPUT$MAX_SIZE_TEST: 768
+                basemodel: output/imagenet2012Full_efficientnet-b2_TByM_single_BS1024_MaxIter400e_LR0.4_RGB_Crop260_cosine_Trand_cut_WD1e-05_CR_Lsmooth_ce_S_C2/snapshot/model_iter_0500455.pt
+        - condition:
+            MODEL$BACKBONE$EFFICIENT_DET_COMPOUND: 1
+          default:
+            - condition:
+                MODEL$BACKBONE$EFFICIENT_DET_COMPOUND: 1
+              default:
+                min_size_range32: [320, 960]
+                INPUT$MAX_SIZE_TRAIN: 1344
+                INPUT$MAX_SIZE_TEST: 640
+                basemodel: output/imagenet2012Full_efficientnet-b1_TByM_single_BS1024_MaxIter400e_LR0.4_RGB_Crop240_cosine_Trand_cut_WD1e-05_CR_Lsmooth_ce_S_C2/snapshot/model_iter_0500455.pt
+            - condition:
+                affine_resize: RC
+              default:
+                train_size_mode: mm_cut640
+        - condition:
+            MODEL$BACKBONE$EFFICIENT_DET_COMPOUND: 0
+          default:
+            - condition:
+                MODEL$BACKBONE$EFFICIENT_DET_COMPOUND: 0
+              default:
+                min_size_range32: [256, 768]
+                INPUT$MAX_SIZE_TEST: 512
+                INPUT$MIN_SIZE_TEST: 512
+                basemodel: output/imagenet2012Full_efficientnet-b0_TByM_single_BS1024_MaxIter400e_LR0.4_RGB_cosine_Trand_cut_WD1e-05_CR_Lsmooth_ce_S_C2/snapshot/model_iter_0500455.pt
+            - condition:
+                affine_resize: RC
+              default:
+                train_size_mode: mm_cut512
+
+
+- condition:
+    pipeline_type$import: SoftBalancedPipeline
+  default:
+    expid_prefix: SoftB
+    mlp: true
+    aug_plus: plus_dict
+    moco_t: 0.2
+    scheduler_type: cosine
+    log_step: 100
+    num_workers: 16
+    dataset_type: single_dict
+    ignore_predict: true
+    dict_trainer: true
+
+- condition:
+    pipeline_type$import: MocoDistillPipeline
+  default:
+    expid_prefix: MoCo
+    mlp: true
+    aug_plus: plus_dict
+    moco_t: 0.2
+    scheduler_type: cosine
+    log_step: 100
+    num_workers: 16
+    dataset_type: single_dict
+    ignore_predict: true
+    dict_trainer: true
 
 - condition:
     pipeline_type: fb_moco
   default:
     expid_prefix: MoCo
+    mlp: true
+    aug_plus: plus_dict
+    moco_t: 0.2
+    scheduler_type: cosine
+    log_step: 100
+    num_workers: 16
+    dataset_type: single_dict
+    ignore_predict: true
+    dict_trainer: true
+
+- condition:
+    pipeline_type: fb_moco
+  default:
+    - condition:
+        moco_cluster: true
+      default:
+        moco_k: 4096
+        loss_type: kl_ce
+    - condition:
+        aug_plus: multi_crop
+      default:
+        loss_type: multi_ce
+
+- condition:
+    scheduler_type: cosine
+  default:
+    cosine_restart_after_warmup: true
+
+- condition:
+    train_crop_size: $A
+  default:
+    test_crop_size: $A
+
+- condition:
+    data: coco2017Full
+  default:
+    evaluate_method: coco_box
+
+- condition:
+    data: Taxcoco2017FullR
+  default:
+    test_data: coco2017Full
+
+- condition:
+    net: efficientnet-b11
+  default:
+    train_crop_size: 224
+- condition:
+    net: efficientnet-b11
+    train_crop_size: 224
+  default:
+    test_crop_size: 224
+
+- condition:
+    net: efficientnet-b10
+  default:
+    train_crop_size: 224
+- condition:
+    net: efficientnet-b10
+    train_crop_size: 224
+  default:
+    test_crop_size: 224
+
+- condition:
+    net: efficientnet-b1
+  default:
+    train_crop_size: 240
+- condition:
+    net: efficientnet-b1
+    train_crop_size: 240
+  default:
+    test_crop_size: 240
+
+- condition:
+    net: efficientnet-b2
+  default:
+    train_crop_size: 260
+- condition:
+    net: efficientnet-b2
+    train_crop_size: 260
+  default:
+    test_crop_size: 260
+
+- condition:
+    net: efficientnet-b3
+  default:
+    train_crop_size: 300
+- condition:
+    net: efficientnet-b3
+    train_crop_size: 300
+  default:
+    test_crop_size: 300
+
+- condition:
+    net: efficientnet-b4
+  default:
+    train_crop_size: 380
+- condition:
+    net: efficientnet-b4
+    train_crop_size: 380
+  default:
+    test_crop_size: 380
+
+- condition:
+    net: efficientnet-b5
+  default:
+    train_crop_size: 456
+- condition:
+    net: efficientnet-b5
+    train_crop_size: 456
+  default:
+    test_crop_size: 456
+- condition:
+    with_sim_clr: qq_qk
+  default:
+    loss_type: multi_ce
+- condition:
+    with_sim_clr: qq_qk
+  default:
+    shuffle_bn: False
+- condition:
+    with_sim_clr: qqk
+  default:
+    shuffle_bn: False
+
+- condition:
+    net: efficientnet-b6
+  default:
+    train_crop_size: 528
+- condition:
+    net: efficientnet-b6
+    train_crop_size: 528
+  default:
+    test_crop_size: 528
+
+- condition:
+    net: efficientnet-b7
+  default:
+    train_crop_size: 600
+- condition:
+    net: efficientnet-b7
+    train_crop_size: 600
+  default:
+    test_crop_size: 600
+
+- condition:
+    net: efficientnet-b8
+  default:
+    train_crop_size: 672
+- condition:
+    net: efficientnet-b8
+    train_crop_size: 672
+  default:
+    test_crop_size: 672
+
+- condition:
+    full_expid: Tax20200107_b92_tag_complete_removesize_train0\.1_fix_uk_0\.2_0\.3_Yolo_crop_train0.*
+  default:
+    test_data: TaxMultiProductUnknownVB92_0_with_bb_croptest0
+
+- condition:
+    full_expid: TaxMars_data_10-18_train0\.1_fix_uk_0\.2_0\.3_Yolo_crop_train0.*
+  default:
+    test_data: TaxMultiProductUnknownVMarsB_0_with_bb_croptest0
+- condition:
+    full_expid: TaxMars_data_10-18_train0\.3_fix_uk_0\.2_0\.3_Yolo_crop_train0.*
+  default:
+    test_data: TaxMultiProductUnknownVMarsA_0_with_bb_croptest0
+
+- condition:
+    full_expid: TaxMarsASampleTagRegion_uk_.*
+  default:
+    test_data: TaxMultiProductUnknownVMarsA_0_with_bb_croptest0
+
+- condition:
+    full_expid: TaxMarsBSampleTagRegion_uk_.*
+  default:
+    test_data: TaxMultiProductUnknownVMarsB_0_with_bb_croptest0
+
+- condition:
+    full_expid: TaxB92SampleTagRegion_uk.*
+  default:
+    test_data: TaxMultiProductUnknownVB92_0_with_bb_croptest0
+
+- condition:
+    full_expid: TaxMarsASampleTagRegion_product_det_20200107_0.5_no_bb.*
+  default:
+    test_data: TaxMultiProductUnknownVMarsA_0_with_bb_croptest0
+
+- condition:
+    full_expid: TaxMarsBSampleTagRegion_product_det_20200107_0.5_no_bb.*
+  default:
+    test_data: TaxMultiProductUnknownVMarsB_0_with_bb_croptest0
+
+- condition:
+    full_expid: TaxB92SampleTagRegion_product_det_20200107_0.5_no_bb.*
+  default:
+    test_data: TaxMultiProductUnknownVB92_0_with_bb_croptest0
+
+
+- condition:
+    pipeline_type: sim_clr
+  default:
+    expid_prefix: SC
+
 - condition:
     pipeline_type: YoloByMask
   default:
@@ -125,18 +711,48 @@
       env$num_gpu: 4
 
 - condition:
-    pipeline_type: Detectron2Pipeline
+    data: Tax1300V14.4_0.0_0.0_with_bb
   default:
-      - condition:
-          env$run_type: debug
-        default:
-          env$num_gpu: 1
-          test_max_iter: 10
-          ignore_evaluate: true
+    all_test_data:
+        - test_data: Tax1300V14.1_voc0712Test_with_bb
+          test_split: train
+          evaluate_method: map
+          ovthresh: [0.5]
+        - test_data: Tax1300V14.1_coco2017Test_with_bb
+          test_split: train
+          evaluate_method: map
+          ovthresh: [0.5]
+- condition:
+    data: TaxVisualGenome_1k
+  default:
+    all_test_data:
+        - test_data: TaxVisualGenome
+          test_split: test
+          evaluate_method: map
+          ovthresh: [0.5]
+
+##- condition:
+    #pipeline_type: Detectron2Pipeline
+  #default:
+      #- condition:
+          #env$run_type: debug
+        #default:
+          #env$num_gpu: 1
+          #test_max_iter: 10
+          #ignore_evaluate: true
 
 - condition:
       pipeline_type: MaskRCNNPipeline
   default:
+      - condition:
+          affine_resize: RC
+        default:
+          DATALOADER$ASPECT_RATIO_GROUPING: false
+      - condition:
+          affine_resize: DAP
+        default:
+          MaskTSVDataset$remove_images_without_annotations: False
+          DATALOADER$ASPECT_RATIO_GROUPING: false
       - condition:
           data: product_det_20200107
         default:
@@ -314,10 +930,16 @@
     evaluate_method: coco_box
   default:
     coco_eval_max_det: 1000
+
 - condition:
     full_expid: MarsA.*
   default:
     test_data: MarsA
+
+- condition:
+    full_expid: MarsA.*
+    test_data: MarsA
+  default:
     test_split: test
     test_version: 2
 - condition:

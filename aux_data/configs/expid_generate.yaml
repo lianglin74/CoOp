@@ -1,4 +1,8 @@
 direct_add_value_keys:
+    - key: MODEL$BACKBONE$EFFICIENT_DET_COMPOUND
+      default: null
+      action_type: keyword
+      non_default_hint: C
     - key: MODEL$WEIGHT
       default: null
       action_type: keyword
@@ -95,6 +99,10 @@ direct_add_value_keys:
       default: null
       action_type: keyword
       non_default_hint: O
+    - key: rt_param$noobject_scale
+      default: 1.
+      action_type: keyword
+      non_default_hint: NO
     - key: yolo_train_session_param$data_augmentation$box_data_param$random_scale_min
       default: null
       action_type: keyword
@@ -220,9 +228,555 @@ direct_add_value_keys:
       action_type: bool
       non_default_hint: IterResize
     - key: affine_resize
+      default: null
+      action_type: keyword
+      non_default_hint: ''
+    - key: SOLVER$LR_POLICY
+      default: multistep
+      action_type: keyword
+      non_default_hint: LRP
+    - key: init_model_only
+      default: true
+      action_type: bool
+      non_default_hint: Continue
+    - key: MODEL$RESNETS$USE_SE
+      default: false
+      action_type: bool
+      non_default_hint: SE
+    - key: ssfpn_scale_factor
+      default: 0.5
+      action_type: keyword
+      non_default_hint: S
+    - key: ssfpn_weight_scaled
+      default: 1.
+      action_type: keyword
+      non_default_hint: WS
+    - key: ssfpn_weight_ss
+      default: 1.
+      action_type: keyword
+      non_default_hint: WSS
+    - key: ssfpn_weight_original
+      default: 1.
+      action_type: keyword
+      non_default_hint: WO
+    - key: ssfpn_detach_larger
+      default: false
+      action_type: bool
+      non_default_hint: Detach
+    - key: ssfpn_extra_conv
+      default: false
+      action_type: bool
+      non_default_hint: EC
+    - key: all_color_jitter
+      default: 0
+      action_type: keyword
+      non_default_hint: ColorJ
+    - key: INPUT$COLORJITTER_ADAPTIVE
+      default: ''
+      action_type: keyword
+      non_default_hint: CJA
+    - key: train_crop_size
+      default: 224
+      action_type: keyword
+      non_default_hint: Crop
+    - key: neg_selective_loss
       default: False
       action_type: bool
-      non_default_hint: Aff
+      non_default_hint: NSLoss
+    - key: num_select_exp
+      default: 1
+      action_type: keyword
+      non_default_hint: Num
+    - key: entropy_weight_exp
+      default: 1
+      action_type: keyword
+      non_default_hint: Ent
+    - key: MODEL$RPN$FG_IOU_THRESHOLD
+      default: 0.7
+      action_type: keyword
+      non_default_hint: RpnFGIoU
+    - key: MODEL$RPN$BG_IOU_THRESHOLD
+      default: 0.3
+      action_type: keyword
+      non_default_hint: RpnBG
+    - key: freeze_all_except
+      default: null
+      action_type: keyword
+      non_default_hint: NoFreeze
+    - key: scheduler_type
+      default: step
+      action_type: keyword
+      non_default_hint: ''
+    - key: stageiter
+      default:
+          from: qd.pipeline
+          import: get_default_stageiter
+      action_type: keyword
+      non_default_hint: 'StageIter'
+    - key: dap_max_grid
+      default: None
+      action_type: keyword
+      non_default_hint: GM
+    - key: train_transform
+      default: inception
+      action_type: keyword
+      non_default_hint: T
+    - key: weight_decay
+      default: null
+      action_type: keyword
+      non_default_hint: WD
+    - key: moco_t
+      default: 0.07
+      action_type: keyword
+      non_default_hint: MT
+    - key: T # temporature
+      default: 0.07
+      action_type: keyword
+      non_default_hint: MT
+    - key: moco_k
+      default: 65536
+      action_type: keyword
+      non_default_hint: MK
+    - key: mlp
+      default: false
+      action_type: bool
+      non_default_hint: MLP
+    - key: aug_plus
+      default: null
+      action_type: keyword
+      non_default_hint: ''
+    - key: aug_plus_iou
+      default: 0.5
+      action_type: keyword
+      non_default_hint: IoU
+    - key: optimizer_type
+      default: SGD
+      action_type: keyword
+      non_default_hint: ''
+    - key: rms_alpha
+      default: 0.99
+      action_type: keyword
+      non_default_hint: alpha
+    - key: cosine_warmup_iters
+      default: 10e
+      action_type: keyword
+      non_default_hint: Warm
+    - key: temperature
+      default: 0.1
+      action_type: keyword
+      non_default_hint: T
+    - key: moco_finetune_init_last_linear
+      default: False
+      action_type: bool
+      non_default_hint: MLinear
+    - key: sgd_nesterov
+      default: False
+      action_type: bool
+      non_default_hint: Nest
+    - key: bias_no_weight_decay
+      default: False
+      action_type: bool
+      non_default_hint: BiasNWD
+    - key: entropy_weight
+      default: 0.5
+      action_type: keyword
+      non_default_hint: EW
+    - key: fc_to_mlp
+      default: False
+      action_type: bool
+      non_default_hint: MLP
+    - key: zero_init_last_linear
+      default: False
+      action_type: bool
+      non_default_hint: ZeroLinearInit
+    - key: cosine_restart_after_warmup
+      default: False
+      action_type: bool
+      non_default_hint: CR
+    - key: mlp_bn
+      default: False
+      action_type: bool
+      non_default_hint: MBN
+    - key: mlp_num
+      default: 1
+      action_type: keyword
+      non_default_hint: MN
+    - key: shuffle_bn
+      default: False
+      action_type: bool
+      non_default_hint: ShufBN
+    - key: infinite_sampler
+      default: False
+      action_type: bool
+      non_default_hint: IS
+    - key: with_sim_clr # used in moco
+      default: null
+      action_type: keyword
+      non_default_hint: ''
+    - key: fc2mlp
+      default: False
+      action_type: bool
+      non_default_hint: MLP
+    - key: freeze_last_bn_stats
+      default: 0
+      action_type: keyword
+      non_default_hint: FixBNStat
+    - key: shuffle_bn # in MOCO
+      default: True
+      action_type: bool
+      non_default_hint: SBN
+    - key: heads
+      default: 1
+      action_type: keyword
+      non_default_hint: H
+    - key: loss_type
+      default: null
+      action_type: keyword
+      non_default_hint: L
+    - key: multi_ce_weights
+      default: null
+      action_type: keyword
+      non_default_hint: W
+    - key: stem_stride2
+      default: null
+      action_type: keyword
+      non_default_hint: 'Stem'
+    - key: hswish2relu6
+      default: false
+      action_type: bool
+      non_default_hint: R6
+    - key: queue_size
+      default: 0
+      action_type: keyword
+      non_default_hint: Q
+    - key: queue_alpha
+      default: 1
+      action_type: keyword
+      non_default_hint: A
+    - key: smooth_label_eps
+      default: 0
+      action_type: keyword
+      non_default_hint: Eps
+    - key: efficient_net_simple_padding
+      default: False
+      action_type: bool
+      non_default_hint: S
+    - key: focal_alpha
+      default: 0.25
+      action_type: keyword
+      non_default_hint: A
+    - key: prior_prob
+      default: 0.01
+      action_type: keyword
+      non_default_hint: Prior
+    - key: cls_loss_type
+      default: FL
+      action_type: keyword
+      non_default_hint: ''
+    - key: focal_gamma
+      default: 2
+      action_type: keyword
+      non_default_hint: G
+    - key: reg_loss_type
+      default: L1
+      action_type: keyword
+      non_default_hint: ''
+    - key: at_least_1_assgin
+      default: False
+      action_type: bool
+      non_default_hint: Assign1
+    - key: neg_iou_th
+      default: 0.4
+      action_type: keyword
+      non_default_hint: NI
+    - key: pos_iou_th
+      default: 0.5
+      action_type: keyword
+      non_default_hint: PI
+    - key: cls_weight
+      default: 1
+      action_type: keyword
+      non_default_hint: C
+    - key: reg_weight
+      default: 1
+      action_type: keyword
+      non_default_hint: R
+    - key: queue_alpha_policy
+      default: null
+      action_type: keyword
+      non_default_hint: Alpha
+    - key: adaptive_up
+      default: false
+      action_type: bool
+      non_default_hint: Adapt
+    - key: train_crop_sizes
+      default: null
+      action_type: keyword
+      non_default_hint: TC
+    - key: anchor_scale
+      default: null
+      action_type: keyword
+      non_default_hint: A
+    - key: mobilenetv3_dropout_ratio
+      default: 0.2
+      action_type: keyword
+      non_default_hint: Drop
+    - key: cutout_factor
+      default: 4
+      action_type: keyword
+      non_default_hint: C
+    - key: ema_optimizer
+      default: False
+      action_type: bool
+      non_default_hint: EMA
+    - key: criterion_type
+      default: null
+      action_type: keyword
+      non_default_hint: ''
+    - key: denominator_ce_factor
+      default: 2
+      action_type: keyword
+      non_default_hint: F
+    - key: drop_connect_rate
+      default: 0.2
+      action_type: keyword
+      non_default_hint: DropConnect
+    - key: correct_loss
+      default: False
+      action_type: bool
+      non_default_hint: Corr
+    - key: multi_scale_train
+      default: False
+      action_type: bool
+      non_default_hint: MS
+    - key: dist_ce_weight
+      default: null
+      action_type: keyword
+      non_default_hint: W
+    - key: num_small_crop
+      default: 6
+      action_type: keyword
+      non_default_hint: SNum
+    - key: small_crop_size
+      default: 96
+      action_type: keyword
+      non_default_hint: SSize
+    - key: dim_mlp
+      default: null
+      action_type: keyword
+      non_default_hint: MlpD
+    - key: min_rel_lr_in_cosine
+      default: null
+      action_type: keyword
+      non_default_hint: lrMin
+    - key: cls_target_on_iou
+      default: False
+      action_type: bool
+      non_default_hint: CI
+    - key: random_scale_factor
+      default: 1.2
+      action_type: keyword
+      non_default_hint: random_scale
+    - key: multi_mlp
+      default: null
+      action_type: dict_key
+      non_default_hint: ''
+    - key: rc_depends_on_max_side
+      default: False
+      action_type: bool
+      non_default_hint: DM
+    - key: moco_cluster
+      default: false
+      action_type: bool
+      non_default_hint: Cluster
+    - key: fc_as_mlp
+      default: False
+      action_type: bool
+      non_default_hint: MLP
+    - key: dist_weight
+      default: 1
+      action_type: keyword
+      non_default_hint: dw
+    - key: assigner_type
+      default: null
+      action_type: keyword
+      non_default_hint: ''
+    - key: atss_topk
+      default: 9
+      action_type: keyword
+      non_default_hint: T
+    - key: uni_anchor
+      default: false
+      action_type: bool
+      non_default_hint: UniAnchor
+    - key: wh_transform_type
+      default: null
+      action_type: keyword
+      non_default_hint: ''
+    - key: teacher_net
+      default: null
+      action_type: keyword
+      non_default_hint: TNet
+    - key: teacher_T
+      default: null
+      action_type: keyword
+      non_default_hint: TTemp
+    - key: teacher_mlp_dim
+      default: null
+      action_type: keyword
+      non_default_hint: TMLP
+    - key: distill_cls
+      default: false
+      action_type: bool
+      non_default_hint: Dcls
+    - key: distill_cls_weight
+      default: 1
+      action_type: keyword
+      non_default_hint: DclsW
+    - key: distill_hint
+      default: false
+      action_type: bool
+      non_default_hint: Dhint
+    - key: mlp_as_conv
+      default: False
+      action_type: bool
+      non_default_hint: conv_mlp
+    - key: MODEL$RPN$ASSIGNER_TYPE
+      default: iou_max
+      action_type: keyword
+      non_default_hint: ''
+    - key: swav_mc
+      default: false
+      action_type: bool
+      non_default_hint: MC
+    - key: final_lr
+      default: 0
+      action_type: bool
+      non_default_hint: FLR
+    - key: MODEL$RPN$ATSS_TOPK
+      default: 27
+      action_type: keyword
+      non_default_hint: T
+    - key: cluster_sinkhorn_eps
+      default: 0.05
+      action_type: keyword
+      non_default_hint: Seps
+    - key: cluster_skip_to_use_queue
+      default: 200
+      action_type: keyword
+      non_default_hint: Skip
+    - key: cluster_sinkhorn_iter
+      default: 3
+      action_type: keyword
+      non_default_hint: SinkIter
+    - key: moco_cluster_size
+      default: 3000
+      action_type: keyword
+      non_default_hint: Cluster
+    - key: reg_init_as_zero_out
+      default: false
+      action_type: bool
+      non_default_hint: Reg0Init
+    - key: non_local_net
+      default: null
+      action_type: keyword
+      non_default_hint: NonLocal
+    - key: no_reg
+      default: false
+      action_type: bool
+      non_default_hint: NoReg
+    - key: sep
+      default: false
+      action_type: bool
+      non_default_hint: sep
+    - key: sinkhorn_func
+      default: null
+      action_type: keyword
+      non_default_hint: ''
+    - key: moco_m
+      default: 0.999
+      action_type: keyword
+      non_default_hint: M
+    - key: INPUT$TREAT_MIN_AS_MAX
+      default: false
+      action_type: bool
+      non_default_hint: MaxResize
+    - key: moco_dim
+      default: 128
+      action_type: keyword
+      non_default_hint: D
+    - key: use_amp
+      default: false
+      action_type: bool
+      non_default_hint: AMP
+    - key: distill_roi_cls_weight
+      default: 1
+      action_type: keyword
+      non_default_hint: DclsW
+    - key: train_size_mode
+      default: random
+      action_type: keyword
+      non_default_hint: ''
+    - key: MODEL$ROI_BOX_HEAD$POOLER_RESOLUTION
+      default: 4
+      action_type: keyword
+      non_default_hint: PoolRes
+    - key: MODEL$ROI_BOX_HEAD$POOLER_SAMPLING_RATIO
+      default: 2
+      action_type: keyword
+      non_default_hint: PoolSample
+    - key: MODEL$RPN$ANCHOR_LEARNABLE
+      default: false
+      action_type: bool
+      non_default_hint: LAnchor
+    - key: max_box
+      default: null
+      action_type: keyword
+      non_default_hint: MB
+    - key: freeze_bn
+      default: false
+      action_type: bool
+      non_default_hint: FreezeBN
+    - key: soft_lambda
+      default: 1.
+      action_type: keyword
+      non_default_hint: Lambda
+    - key: soft_mu
+      default: 0
+      action_type: keyword
+      non_default_hint: Mu
+    - key: conv_no_weight_decay
+      default: false
+      action_type: bool
+      non_default_hint: NoWDOnConv
+    - key: standarize_conv2d
+      default: false
+      action_type: bool
+      non_default_hint: StdConv
+    - key: distill_obj_weight
+      default: 0
+      action_type: keyword
+      non_default_hint: DistObj
+    - key: MODEL$RPN$FPN_POST_NMS_TOP_N_EACH_IMAGE_TRAIN
+      default: 0
+      action_type: keyword
+      non_default_hint: Roi
+    - key: MODEL$ROI_BOX_HEAD$USE_TORCHVISION
+      default: False
+      action_type: bool
+      non_default_hint: TV
+    - key: MODEL$RPN$RPN_HEAD
+      default: null
+      action_type: keyword
+      non_default_hint: ''
+    - key: SOLVER$STEPS
+      default: null
+      action_type: keyword
+      non_default_hint: step
+    - key: clear_to_remove
+      default: false
+      action_type: bool
+      non_default_hint: NoRM
 
 need_hash_sha_params:
     - basemodel
@@ -232,7 +786,12 @@ need_hash_sha_params:
     - MODEL$RPN$ANCHOR_SIZES
     - MODEL$ROI_BOX_HEAD$TREE_0_BKG
     - stagelr
+
 non_expid_impact_keys:
+    - DATA_DIR
+    - dict_trainer
+    - ignore_predict
+    - all_test_data
     - data
     - net
     - expid_prefix
@@ -279,3 +838,10 @@ non_expid_impact_keys:
     - MODEL$RETINANET$INFERENCE_TH
     - MODEL$ROI_HEADS$NMS_ON_MAX_CONF_AGNOSTIC
     - ignore_evaluate
+    - test_crop_size
+    - pred_tsv_to_json_extra
+    - INPUT$MAX_SIZE_TEST
+    - test_resize_type
+    - predict_ema_decay
+    - find_unused_parameters
+
