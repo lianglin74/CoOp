@@ -67,6 +67,10 @@ def parse_run_info(run, with_details=True,
     info['appID'] = run.id
     info['appID-s'] = run.id[-5:]
     info['portal_url'] = run.get_portal_url()
+    if run.status == 'Queued' and \
+            run.tags.get('amlk8s status') == 'running':
+        # there is a bug in AML/DLTS
+        info['status'] = AMLClient.status_running
     if not with_details:
         return info
     details = run.get_details()
@@ -705,8 +709,9 @@ class AMLClient(object):
         target_folder = op.join('output', full_expid)
 
         self.config_param['output_folder']['cloud_blob'].blob_download_qdoutput(
-                src_path,
-                target_folder)
+            src_path,
+            target_folder,
+        )
 
 def inject_to_tensorboard(info):
     log_folder = 'output/tensorboard/aml'
