@@ -68,6 +68,7 @@ class AnnotationDB(object):
             kwargs['create_time'] = datetime.now()
         if 'username' not in kwargs:
             kwargs['username'] = self.username
+        kwargs['update_time'] = datetime.now()
 
     def insert_judge(self, **kwargs):
         self.add_meta_data(kwargs)
@@ -113,6 +114,8 @@ class AnnotationDB(object):
                 )
 
     def update_many(self, doc_name, query, update):
+        if '$set' in update:
+            update['$set']['update_time'] = datetime.now()
         return self._qd['qd'][doc_name].update_many(query, update)
 
     def update_phillyjob(self, query, update):
@@ -458,7 +461,6 @@ def update_cluster_job_db(all_job_info, collection_name='phillyjob'):
                 # instances will fail. Thus, we just ignore the error here
                 from qd.qd_common import print_trace
                 print_trace()
-                pass
 
 def query_job_acc(job_ids, key='appID', inject=False,
         must_have_any_in_predict=None,
@@ -500,11 +502,15 @@ def query_acc_by_full_expid(all_full_expid,
     acc = list(c.iter_acc(full_expid={'$in': all_full_expid}))
     if metric_names is None:
         metric_names = [
-        'all-all',
-        'overall$0.5$map',
-        'overall$-1$map',
-        'top1',
-        'global_avg']
+            'all-all',
+            'overall$0.5$map',
+            'overall$-1$map',
+            'top1',
+            'global_avg',
+            'feat_eig_value_ratio',
+            'feat_mean_value',
+            'feat_eig_max_value_ratio',
+        ]
     acc = [a for a in acc if a['metric_name'] in metric_names]
     if must_have_any_in_predict is not None:
         acc = [a for a in acc if any(t in a['predict_file'] for t in

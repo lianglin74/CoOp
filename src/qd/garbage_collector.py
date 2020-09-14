@@ -7,6 +7,51 @@ from pprint import pformat
 import os.path as op
 import time
 
+
+def iter_file(folder):
+    for root, _, file_names in os.walk(folder):
+        for f in file_names:
+            yield op.join(root, f)
+
+def del_backed_models(
+        target_folder='',
+        not_in_folder='',
+        in_folders='',
+        threshold_in_days=7,
+        dry_run=True,
+):
+    # we will delete a file if 1) the file is in target folder & 2) the file is
+    # not in not_in_folder and 3) teh file is in in_folder.
+    # the scenarios, the azure blob folder contains a file, the file is in
+    # local downloaded folder, but it is in back-ed up folder.
+    total = 0
+    for i, f in enumerate(iter_file(target_folder)):
+        logging.info('checking {}'.format(f))
+        not_f = f.replace(target_folder, not_in_folder)
+        if op.isfile(not_f):
+            logging.info('ignore since {} exists - {}'.format(
+                not_f, total / 1024. ** 3))
+            continue
+        in_fs = [f.replace(target_folder, in_folder) for in_folder in in_folders]
+        if all(not op.isfile(in_f) for in_f in in_fs):
+            logging.info('ignore since {} does not exist - {}'.format(
+                pformat(in_fs),
+                total / 1024. ** 3
+            ))
+            continue
+        if not old_enough(f, threshold_in_days):
+            logging.info('ignore since not old enough - {}'.format(
+                total / 1024. ** 3
+            ))
+            continue
+        logging.info('removing {} - {} - {:.4f}'.format(
+            f, total, 1. * total / 1024. ** 3))
+        total += get_file_size(f)
+        if not dry_run:
+            from qd.qd_common import try_delete
+            try_delete(f)
+    logging.info('deleted {} GB'.format(total / 1024. / 1024. / 1024.))
+
 def del_intermediate_models(folder='./output', threshold_in_days=30,
         must_have_in_folder=None, dry_run=False):
     logging.info('start')

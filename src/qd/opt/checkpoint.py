@@ -82,12 +82,14 @@ def align_and_update_state_dicts(model_state_dict, loaded_state_dict):
     logger = logging.getLogger(__name__)
     target_source_name_matched = 0
     all_key_old = set()
+    updated_keys = []
     for idx_new, idx_old in enumerate(idxs.tolist()):
         if idx_old == -1:
             continue
         key = current_keys[idx_new]
         key_old = loaded_keys[idx_old]
         model_state_dict[key] = loaded_state_dict[key_old]
+        updated_keys.append(key)
         all_key_old.add(key_old)
         target_source_name_matched += 1
         logger.info(
@@ -99,11 +101,18 @@ def align_and_update_state_dicts(model_state_dict, loaded_state_dict):
                 tuple(loaded_state_dict[key_old].shape),
             )
         )
-    logging.info('target model param # = {}; name matched = {}; loaded = {}'.format(
+    logging.info('target model param = {}; name matched = {}; loaded = {}'.format(
         len(model_state_dict), target_source_name_matched,
         len(loaded_state_dict)))
+    from pprint import pformat
     logging.info('from loaded; ignore = {}'.format(
-        '; '.join([k for k in loaded_state_dict if k not in all_key_old])))
+        pformat([k for k in loaded_state_dict if k not in all_key_old])))
+    # at the end, we remove these keys since model_state_dict will be treated
+    # as loaded dict
+    updated_keys = set(updated_keys)
+    no_update_keys = [k for k in model_state_dict.keys() if k not in updated_keys]
+    for k in no_update_keys:
+        del model_state_dict[k]
 
 
 def strip_prefix_if_present(state_dict, prefix):
@@ -217,8 +226,8 @@ class Checkpointer(object):
         if get_mpi_rank() == 0:
             self.tag_last_checkpoint(save_file)
 
-    def load(self, f=None, model_only=False):
-        if self.has_checkpoint():
+    def load(self, f=None, model_only=False, load_if_has=True):
+        if self.has_checkpoint() and load_if_has:
             f = self.get_checkpoint_file()
             model_only = False
         if not f:
@@ -247,6 +256,11 @@ class Checkpointer(object):
             if len(checkpoint) == 1:
                 assert 'iteration' in checkpoint
             else:
+                # the following two are used in fb_swav
+                if 'epoch' in checkpoint:
+                    del checkpoint['epoch']
+                if 'amp' in checkpoint:
+                    del checkpoint['amp']
                 assert len(checkpoint) == 0
             checkpoint = {}
 
@@ -275,7 +289,12 @@ class Checkpointer(object):
             f.write(last_filename)
 
     def _load_file(self, f):
-        return torch.load(f, map_location=torch.device("cpu"))
+        if isinstance(f, str):
+            return torch.load(f, map_location=torch.device("cpu"))
+        else:
+            assert isinstance(f, dict)
+            # this is a pre-loaded checkpoint dict
+            return f
 
     def _load_model(self, checkpoint):
         load_state_dict(self.model, checkpoint.pop("model"))

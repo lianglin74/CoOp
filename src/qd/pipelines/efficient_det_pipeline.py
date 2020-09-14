@@ -140,10 +140,12 @@ def train_collater(data):
     return imgs, annot_padded, None
 
 class RandomResizeCrop(object):
-    def __init__(self, all_crop_size, random_scale_factor=1.2):
+    def __init__(self, all_crop_size, random_scale_factor=1.2,
+                 depends_on_max_side=False):
         self.all_crop_size = all_crop_size
         self.random_scale_factor = random_scale_factor
         self.visualize = False
+        self.depends_on_max_side = depends_on_max_side
 
     def __call__(self, sample):
         if self.visualize:
@@ -156,8 +158,13 @@ class RandomResizeCrop(object):
         image, annots = sample['image'], sample['label']
         height, width, _ = image.shape
         s1, s2 = crop_size / height, crop_size / width
-        min_scale = min(s1, s2) / self.random_scale_factor
-        max_scale = max(s1, s2) * self.random_scale_factor
+        if self.depends_on_max_side:
+            # it should be min, because width/height is in denominator
+            min_scale = min(s1, s2) / self.random_scale_factor
+            max_scale = min(s1, s2) * self.random_scale_factor
+        else:
+            min_scale = min(s1, s2) / self.random_scale_factor
+            max_scale = max(s1, s2) * self.random_scale_factor
         import random
         scale = random.random() * (max_scale - min_scale) + min_scale
 
@@ -178,8 +185,8 @@ class RandomResizeCrop(object):
                 new_annots[:, 2] -= left
                 new_annots[:, 3] -= top
                 new_annots = new_annots.clip(0, crop_size)
-                valid = (new_annots[:, 2] > new_annots[:, 0]) & (
-                    new_annots[:, 3] > new_annots[:, 1])
+                valid = (new_annots[:, 2] > new_annots[:, 0] + 1.) & (
+                    new_annots[:, 3] > new_annots[:, 1] + 1.)
                 new_annots = new_annots[valid, :]
                 if len(new_annots) > 0:
                     break
@@ -225,6 +232,11 @@ class SmartResizer(object):
     def __init__(self, all_crop_size):
         self.all_crop_size = all_crop_size
 
+    def __repr__(self):
+        return 'SmartResizer(all_crop_size={})'.format(
+            self.all_crop_size
+        )
+
     def __call__(self, sample):
         if len(self.all_crop_size) == 1:
             crop_size = self.all_crop_size[0]
@@ -250,6 +262,8 @@ class Resizer(object):
     def __init__(self, all_crop_size):
         self.all_crop_size = all_crop_size
 
+    def __repr__(self):
+        return 'Resizer(all_crop_size={})'.format(self.all_crop_size)
     def __call__(self, sample):
         if len(self.all_crop_size) == 1:
             crop_size = self.all_crop_size[0]
@@ -258,11 +272,11 @@ class Resizer(object):
         image, annots = sample['image'], sample['label']
         height, width, _ = image.shape
         if height > width:
-            scale = crop_size / height
+            scale = 1. * crop_size / height
             resized_height = crop_size
             resized_width = int(width * scale)
         else:
-            scale = crop_size / width
+            scale = 1. * crop_size / width
             resized_height = int(height * scale)
             resized_width = crop_size
 
@@ -329,6 +343,12 @@ class EfficientDetPipeline(MaskClassificationPipeline):
             'test_crop_size': None,
             'cls_target_on_iou': False,
             'random_scale_factor': 1.2,
+            'inference_conf_th': 0.01,
+            'nms_threshold': 0.5,
+            'assigner_type': 'iou_max',
+            'atss_topk': 9,
+            'reg_init_as_zero_out': False,
+            'non_local_net': None,
         }
         self._default.update(curr_default)
 
@@ -336,6 +356,10 @@ class EfficientDetPipeline(MaskClassificationPipeline):
 
         self.train_collate_fn = train_collater
         self.test_collate_fn = test_collater
+
+        if self.uni_anchor:
+            self.anchors_scales = [2 ** 0]
+            self.anchors_ratios = [(1., 1.)]
 
     def get_train_transform(self):
         mean = get_default_mean()
@@ -364,7 +388,8 @@ class EfficientDetPipeline(MaskClassificationPipeline):
             if self.affine_resize == 'RC':
                 resizer = RandomResizeCrop(
                     all_crop_size,
-                    random_scale_factor=self.random_scale_factor)
+                    random_scale_factor=self.random_scale_factor,
+                    depends_on_max_side=self.rc_depends_on_max_side)
             else:
                 resizer = Resizer(all_crop_size)
             transform = transforms.Compose([
@@ -405,6 +430,10 @@ class EfficientDetPipeline(MaskClassificationPipeline):
         super().append_predict_param(cc)
         if self.test_resize_type is not None:
             cc.append(self.test_resize_type)
+        if self.inference_conf_th != 0.01:
+            cc.append('th{}'.format(self.inference_conf_th))
+        if self.nms_threshold != 0.5:
+            cc.append('nms{}'.format(self.nms_threshold))
 
     def get_test_transform(self):
         from qd.qd_pytorch import get_default_mean, get_default_std
@@ -464,6 +493,7 @@ class EfficientDetPipeline(MaskClassificationPipeline):
             io_set = IODataset(data, split, version=0)
             dataset = DatasetPlusTransform(io_set, transform)
         else:
+            raise ValueError
             logging.info('deprecating')
             dataset = EfficientDetDataset(data,
                                           split,
@@ -473,10 +503,11 @@ class EfficientDetPipeline(MaskClassificationPipeline):
 
     def _get_model(self, pretrained, num_class):
         from qd.layers.efficient_det import EfficientDetBackbone
-        if self.efficient_net_simple_padding:
-            from qd.layers import efficient_det
-            efficient_det.g_simple_padding = True
-        model = EfficientDetBackbone(num_classes=len(self.labelmap),
+        if self.cls_loss_type == 'CE':
+            num_classes = len(self.labelmap) + 1
+        else:
+            num_classes = len(self.labelmap)
+        model = EfficientDetBackbone(num_classes=num_classes,
                                      compound_coef=self.net,
                                      ratios=self.anchors_ratios,
                                      scales=self.anchors_scales,
@@ -484,6 +515,8 @@ class EfficientDetPipeline(MaskClassificationPipeline):
                                      adaptive_up=self.adaptive_up,
                                      anchor_scale=self.anchor_scale,
                                      drop_connect_rate=self.drop_connect_rate,
+                                     init_as_zero_out=self.reg_init_as_zero_out,
+                                     non_local_net=self.non_local_net,
                                      )
         return model
 
@@ -501,6 +534,9 @@ class EfficientDetPipeline(MaskClassificationPipeline):
                          cls_weight=self.cls_weight,
                          reg_weight=self.reg_weight,
                          cls_target_on_iou=self.cls_target_on_iou,
+                         assigner_type=self.assigner_type,
+                         atss_topk=self.atss_topk,
+                         wh_transform_type=self.wh_transform_type,
                          )
 
     def combine_model_criterion(self, model, criterion):
@@ -511,7 +547,22 @@ class EfficientDetPipeline(MaskClassificationPipeline):
     def get_test_model(self):
         model = super().get_test_model()
         from qd.layers.efficient_det import InferenceModel
-        model = InferenceModel(model)
+        model = InferenceModel(
+            model,
+            self.inference_conf_th,
+            self.nms_threshold,
+            wh_transform_type=self.wh_transform_type,
+        )
+        if self.device == 'cpu' and self.mpi_size == 1:
+            # sync-bn does not support cpu
+            from qd.torch_common import replace_module
+            model = replace_module(model,
+                    lambda m: isinstance(m, torch.nn.SyncBatchNorm),
+                    lambda m: torch.nn.BatchNorm2d(m.num_features,
+                        eps=m.eps,
+                        momentum=m.momentum,
+                        affine=m.affine,
+                        track_running_stats=m.track_running_stats))
         #if self.dict_trainer:
             #from qd.layers.forward_image_model import ForwardImageModel
             #model = ForwardImageModel(model)

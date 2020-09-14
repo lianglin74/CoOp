@@ -10,7 +10,7 @@ from qd.qd_common import init_logging
 import copy
 
 
-def prep_coco(imgfolder, annfile, out_tsv_file):
+def load_ann(annfile):
     with open(annfile,'r') as jsin:
         print("Loading annotations...")
         truths = json.load(jsin)
@@ -31,6 +31,10 @@ def prep_coco(imgfolder, annfile, out_tsv_file):
             crect['class'] = catdict[cid]
             crect['rect'] = bbox
             anndict[imgid]+=[crect];
+    return anndict, imgdict, catdict
+
+def prep_coco(imgfolder, annfile, out_tsv_file):
+    anndict, imgdict, catdict = load_ann(annfile)
 
     cnames=sorted(catdict.values());
     with open("labelmap.txt","w") as tsvout:

@@ -44,6 +44,18 @@ class TSVSplitProperty(Dataset):
     def __len__(self):
         return len(self.tsv)
 
+    def __iter__(self):
+        self.curr_idx = 0
+        return self
+
+    def __next__(self):
+        if self.curr_idx < len(self):
+            result = self[self.curr_idx]
+            self.curr_idx += 1
+            return result
+        else:
+            raise StopIteration
+
 class IODataset(object):
     def __init__(self, data, split, version):
         from qd.qd_pytorch import TSVSplitProperty
@@ -67,7 +79,6 @@ class IODataset(object):
         image_row = self.image_tsv[idx]
         result['image'] = image_row[-1]
         label_row = self.label_tsv[idx]
-        assert label_row[0] == image_row[0]
         result['label'] = label_row[-1]
         result['key'] = label_row[0]
         result['io_dataset'] = self

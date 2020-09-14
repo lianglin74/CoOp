@@ -93,14 +93,21 @@ def blob_download_all_qdoutput(prefix, c=None, out_folder='output',
     if c is None:
         c = 'vig'
     c = create_cloud_storage(c)
-    all_blob_name = list(c.list_blob_names(prefix))
+    from datetime import datetime, timedelta
+    creation_time_larger_than = datetime.utcnow() - timedelta(days=14)
+    all_blob_name = list(c.list_blob_names(
+        prefix,
+        creation_time_larger_than=creation_time_larger_than))
     root, all_full_expid = get_root_all_full_expid(prefix, all_blob_name)
     for full_expid in all_full_expid:
         logging.info(full_expid)
         src_path = op.join(root, full_expid)
         target_folder = op.join(out_folder, full_expid)
-        c.blob_download_qdoutput(src_path, target_folder,
-                latest_only=latest_only)
+        c.blob_download_qdoutput(
+            src_path, target_folder,
+            latest_only=latest_only,
+            creation_time_larger_than=creation_time_larger_than,
+        )
 
 def get_azcopy():
     # this is v10
@@ -156,9 +163,14 @@ class CloudStorage(object):
                     sas_token=self.sas_token)
         return self._block_blob_service
 
-    def list_blob_names(self, prefix=None):
-        return self.block_blob_service.list_blob_names(self.container_name,
-                prefix=prefix)
+    def list_blob_names(self, prefix=None, creation_time_larger_than=None):
+        if creation_time_larger_than is not None:
+            creation_time_larger_than = creation_time_larger_than.timestamp()
+            return (b.name for b in self.block_blob_service.list_blobs(self.container_name,
+                                                                       prefix=prefix)
+                    if b.properties.creation_time.timestamp() > creation_time_larger_than)
+        else:
+            return self.block_blob_service.list_blob_names(self.container_name, prefix=prefix)
 
     def upload_stream(self, s, name, force=False):
         if not force and self.block_blob_service.exists(self.container_name,
@@ -343,10 +355,13 @@ class CloudStorage(object):
         return self.block_blob_service.exists(
                 self.container_name, path)
 
-    def blob_download_qdoutput(self, src_path, target_folder, latest_only=True):
+    def blob_download_qdoutput(self, src_path, target_folder, latest_only=True,
+                               creation_time_larger_than=None):
         def is_in_snapshot(b):
             return op.basename(op.dirname(b)) == 'snapshot'
-        all_blob_name = list(self.list_blob_names(src_path))
+        all_blob_name = list(self.list_blob_names(
+            src_path,
+            creation_time_larger_than))
         all_blob_name = get_leaf_names(all_blob_name)
         in_snapshot_blobs = [b for b in all_blob_name if is_in_snapshot(b)]
         not_in_snapshot_blobs = [b for b in all_blob_name if not is_in_snapshot(b)]

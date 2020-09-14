@@ -114,13 +114,17 @@ class CleanerCompose(object):
         for c in self.components:
             c(param, info)
 
-def clean_label(data, split, version):
-    cleaner = CleanerCompose([
-        TruncateInRange(),
-        MergeColocate(),
-        RemoveSmall(),
-        #RemoveDuplicate(),
-        ])
+def clean_label(data, split, version, cleaner_config=None):
+    if cleaner_config is None:
+        cleaner = CleanerCompose([
+            TruncateInRange(),
+            MergeColocate(),
+            RemoveSmall(),
+            #RemoveDuplicate(),
+            ])
+    else:
+        from qd.qd_common import execute_func
+        cleaner = CleanerCompose([execute_func(c) for c in cleaner_config])
     process_label(data, split, version, cleaner)
 
 class ReplaceIsGroupOfByTightness(object):
@@ -146,6 +150,7 @@ def process_label(data, split, version, cleaner):
     if version == -1:
         version = dataset.get_latest_version(split, t='label')
     label_iter = dataset.iter_data(split, t='label', version=version)
+    assert not dataset.has(split, t='label', version=version+1)
     hw_iter = dataset.iter_data(split, t='hw')
     num_rows = dataset.num_rows(split)
     info = {}

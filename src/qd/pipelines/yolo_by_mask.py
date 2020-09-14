@@ -649,7 +649,7 @@ class YoloByMask(MaskClassificationPipeline):
 
         from torch.utils.data import DataLoader
         return DataLoader(augmented_dataset,
-                batch_size=self.test_batch_size // self.mpi_size,
+                batch_size=self.test_batch_size,
                 sampler=sampler,
                 num_workers=self.num_workers,
                 pin_memory=True,

@@ -30,7 +30,7 @@ def calculate_giou_x1y1x2y2(box1, box2):
         inter = 0
     min_x1 = min(ax1, bx1)
     min_y1 = min(ay1, by1)
-    max_x2 = max(ax2, by2)
+    max_x2 = max(ax2, bx2)
     max_y2 = max(ay2, by2)
     cover = (max_x2 - min_x1) * (max_y2 - min_y1)
     union = a + b - inter

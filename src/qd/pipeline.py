@@ -114,7 +114,7 @@ def ensure_upload_init_model(param, philly_client):
         logging.info('No need to upload base model')
         return
     assert(op.isfile(basemodel))
-    philly_client.upload_qd_model(basemodel)
+    philly_client.upload_file(basemodel)
 
 def ensure_upload_trained_model(param, aml_client):
     if 'full_expid' in param:
@@ -940,7 +940,9 @@ def inject_aml_job_status(clusters):
 
         if job_in_db is None:
             try:
-                job_in_aml['need_attention'] = False
+                job_in_aml['need_attention'] = job_in_aml['status'] in [
+                    AMLClient.status_completed,
+                    AMLClient.status_failed]
                 job_in_aml = client.query_one(
                     job_in_aml['appID'], with_details=True, with_log=True,
                     log_full=False, detect_error_if_failed=True)
@@ -981,7 +983,10 @@ def inject_aml_job_status(clusters):
                 log_full=True,
                 detect_error_if_failed=True,
             ))
-        if job_in_aml['status'] in [AMLClient.status_running]:
+        if job_in_aml['status'] in [
+                AMLClient.status_running,
+                AMLClient.status_queued,
+        ]:
             job_in_aml.update(client.query_one(
                 job_in_aml['appID'],
                 with_details=True,

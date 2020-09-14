@@ -5,15 +5,13 @@ import torch
 
 
 class SmoothedValue(object):
-    def __init__(self, window_size=1):
+    def __init__(self, window_size=10):
         self.deque = deque(maxlen=window_size)
-        self.series = []
         self.total = 0.0
         self.count = 0
 
     def update(self, value):
         self.deque.append(value)
-        self.series.append(value)
         self.count += 1
         self.total += value
 
@@ -31,10 +29,9 @@ class SmoothedValue(object):
     def global_avg(self):
         return self.total / self.count
 
-
 class MetricLogger(object):
-    def __init__(self, delimiter="\t"):
-        self.meters = defaultdict(SmoothedValue)
+    def __init__(self, delimiter="\t", meter_creator=SmoothedValue):
+        self.meters = defaultdict(meter_creator)
         self.delimiter = delimiter
 
     def update(self, **kwargs):
@@ -61,10 +58,12 @@ class MetricLogger(object):
         return self.delimiter.join(loss_str)
 
 class MeanSigmaMetricLogger(object):
-    def __init__(self, delimiter="\t"):
+    def __init__(self, delimiter="\t", meter_creator=SmoothedValue):
         from qd.logger import MetricLogger
-        self.mean_meters = MetricLogger(delimiter=delimiter)
-        self.sq_meters = MetricLogger(delimiter=delimiter)
+        self.mean_meters = MetricLogger(delimiter=delimiter,
+                                        meter_creator=SmoothedValue)
+        self.sq_meters = MetricLogger(delimiter=delimiter,
+                                      meter_creator=SmoothedValue)
 
     def update(self, **kwargs):
         self.mean_meters.update(**kwargs)

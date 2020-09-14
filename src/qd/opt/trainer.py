@@ -134,6 +134,7 @@ def do_train(
     data_partition=1,
     explicit_average_grad=False,
     no_update=False,
+    use_amp=False,
 ):
     logger = logging.getLogger("maskrcnn_benchmark.trainer")
     logger.info("Start training")
@@ -151,12 +152,15 @@ def do_train(
 
     #from qd.layers.forward_pass_memory_checker import ForwardPassMemoryChecker
     #model = ForwardPassMemoryChecker(model)
+    if use_amp:
+        scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
 
     for iteration, (images, targets, _) in enumerate(data_loader, start_iter):
         if hasattr(images, 'image_sizes') and len(images.image_sizes) == 0:
             logging.error('this should never happen since different workers '
                     'will have different numbers of iterations.')
             continue
+        logging.info(images.tensors.shape)
 
         if fix_input:
             logging.info('fix input')
@@ -187,22 +191,49 @@ def do_train(
         if not no_update:
             optimizer.zero_grad()
 
-        all_image_target = partition_data(images,
-                targets, data_partition)
-        start_fb = time.time()
-        for curr_images, curr_target in all_image_target:
-            forward_backward(model, curr_images, curr_target,
-                    optimizer,
-                    arguments, checkpointer, use_hvd,
-                    meters, device, loss_scalar=1./data_partition,
-                    no_update=no_update)
-        end_fb = time.time()
-        if explicit_average_grad:
-            average_gradients(model)
+        #all_image_target = partition_data(images,
+                #targets, data_partition)
+        #start_fb = time.time()
+        #for curr_images, curr_target in all_image_target:
+            #forward_backward(model, curr_images, curr_target,
+                    #optimizer,
+                    #arguments, checkpointer, use_hvd,
+                    #meters, device, loss_scalar=1./data_partition,
+                    #no_update=no_update)
+        #end_fb = time.time()
+        if use_amp:
+            with torch.cuda.amp.autocast(enabled=use_amp):
+                loss_dict = model(images, targets)
+                losses = sum(loss for loss in loss_dict.values())
+            if losses != losses:
+                logging.info('NaN encountered!')
+                arguments['images'] = images
+                arguments['targets'] = targets
+                checkpointer.save("NaN_context_{}".format(get_mpi_rank()), **arguments)
+                raise RuntimeError('NaN encountered!')
+            scaler.scale(losses).backward()
+            if not no_update:
+                scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss_dict = model(images, targets)
+            losses = sum(loss for loss in loss_dict.values())
+            if losses != losses:
+                logging.info('NaN encountered!')
+                arguments['images'] = images
+                arguments['targets'] = targets
+                checkpointer.save("NaN_context_{}".format(get_mpi_rank()), **arguments)
+                raise RuntimeError('NaN encountered!')
+            losses.backward()
+            if not no_update:
+                optimizer.step()
+        meters.update(loss=losses, **loss_dict)
+
+
+        #if explicit_average_grad:
+            #average_gradients(model)
 
         start_opt_step = time.time()
-        if not no_update:
-            optimizer.step()
         end_opt_step = time.time()
 
         if not no_update:
@@ -215,7 +246,6 @@ def do_train(
             # we will skip the first few iterations since the time cost
             # evaluation for those are not good
             meters.update(time=batch_time, data=data_time)
-            meters.update(fb_time=(end_fb-start_fb))
             meters.update(opt_step_time=(end_opt_step-start_opt_step))
 
         if iteration % log_step == 0 or iteration == max_iter:
@@ -354,7 +384,7 @@ def do_train_dict(
             if not no_update:
                 optimizer.step()
 
-        if losses != losses:
+        if not use_amp and losses != losses:
             logging.info('NaN encountered!')
             checkpointer.save("NaN_context_{}".format(get_mpi_rank()), **arguments)
             raise RuntimeError('NaN encountered!')

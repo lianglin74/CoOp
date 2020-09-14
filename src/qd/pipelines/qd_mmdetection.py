@@ -160,6 +160,7 @@ class MMDetPipeline(ModelPipeline):
             return True
         else:
             raise NotImplementedError()
+
     def train(self):
         ensure_directory(self.output_folder)
         ensure_directory(op.join(self.output_folder, 'snapshot'))

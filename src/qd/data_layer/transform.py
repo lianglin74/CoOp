@@ -7,6 +7,8 @@ import cv2
 import random
 from qd.qd_common import img_from_base64
 import json
+import logging
+import PIL
 
 
 class FeatureDecoder(object):
@@ -57,6 +59,8 @@ class MultiCropsTransform(object):
             repeat = trans_info['repeat']
             result.append([transform(x) for _ in range(repeat)])
         return result
+    def __repr__(self):
+        return 'MultiCropsTransform({})'.format(self.transform_infos)
 
 class ImageCutout(object):
     def __init__(self, ratio):
@@ -107,7 +111,9 @@ class Label2IndexDict(object):
 
     def __call__(self, dict_data):
         for l in dict_data['label']:
-            l['class'] = self.label2idx[l['class']]
+            # during test, sometimes the labels are not in the training
+            # domains
+            l['class'] = self.label2idx.get(l['class'], -1)
         return dict_data
 
 class LabelXYXY2CXYWH(object):
@@ -125,7 +131,7 @@ class List2NumpyXYXYCLabelDict(object):
         label = dict_data['label']
         label = np.array([(r['rect'][0], r['rect'][1], r['rect'][2], r['rect'][3], r['class'])
                           for r in label
-                          ])
+                          ], dtype=np.float)
         if len(label) == 0:
             label = np.zeros((0, 5))
         dict_data['label'] = label
@@ -196,6 +202,16 @@ class CvImageBGR2RGBDict(object):
     def __call__(self, dict_data):
         img = cv2.cvtColor(dict_data['image'], cv2.COLOR_BGR2RGB)
         dict_data['image'] = img
+        return dict_data
+
+class DecodeFeatureDict(object):
+    def __call__(self, dict_data):
+        infos = json.loads(dict_data['label'])
+        fs = [i['feature'] for i in infos]
+        fs = torch.tensor(fs)
+        assert fs.shape[0] == 1, 'each image has one feature'
+        fs = fs.squeeze(0)
+        dict_data['label'] = fs
         return dict_data
 
 class CvImageDecodeDict(object):
@@ -348,6 +364,277 @@ class RandomResizedCropMultiSize(object):
         data_dict['image'] = trans_func(data_dict['image'])
         return data_dict
 
+class FourRotateImage(object):
+    def __init__(self, prob_rotate):
+        self.prob_rotate = prob_rotate
+
+    def __call__(self, data_dict):
+        image = data_dict['image']
+        if random.random() > self.prob_rotate:
+            degree = random.choice([1, 2, 3]) * 90
+        else:
+            degree = 0
+        if degree != 0:
+            image = image.rotate(degree)
+        data_dict['image'] = image
+        data_dict['four_rotate_idx'] = degree // 90
+        return data_dict
+
+class RandomGrayscaleDict(object):
+    """Randomly convert image to grayscale with a probability of p (default 0.1).
+
+    Args:
+        p (float): probability that image should be converted to grayscale.
+
+    Returns:
+        PIL Image: Grayscale version of the input image with probability p and unchanged
+        with probability (1-p).
+        - If input image is 1 channel: grayscale version is 1 channel
+        - If input image is 3 channel: grayscale version is 3 channel with r == g == b
+
+    """
+
+    def __init__(self, p=0.1):
+        self.p = p
+
+    def __call__(self, data_dict):
+        """
+        Args:
+            img (PIL Image): Image to be converted to grayscale.
+
+        Returns:
+            PIL Image: Randomly grayscaled image.
+        """
+        img = data_dict['image']
+        data_dict['is_color'] = 1 if (img.mode != 'L') else 0
+        num_output_channels = 1 if img.mode == 'L' else 3
+        if random.random() < self.p:
+            import torchvision.transforms.functional as F
+            img = F.to_grayscale(img, num_output_channels=num_output_channels)
+            data_dict['image'] = img
+            data_dict['is_color'] = 0
+        return data_dict
+
+    def __repr__(self):
+        return self.__class__.__name__ + '(p={0})'.format(self.p)
+
 class ImageToImageDictTransform(ImageTransform2Dict):
     pass
 
+class IoURandomResizedCrop(object):
+    def __init__(self, iou, size, scale=(0.08, 1.0), ratio=(3. / 4., 4. / 3.),
+                 interpolation=PIL.Image.BILINEAR):
+        if isinstance(size, tuple):
+            self.size = size
+        else:
+            self.size = (size, size)
+
+        self.interpolation = interpolation
+        self.scale = scale
+        self.ratio = ratio
+        self.iou = iou
+        self.not_found = 0
+
+    def __repr__(self):
+        return ('IoURandomResizedCrop(iou={}, size={}, scale={}, ratio={}, '
+                'interpolation={})'.format(self.iou,
+                                           self.size,
+                                           self.scale,
+                                           self.ratio,
+                                           self.interpolation))
+
+    def get_params(self, img, anchor=None):
+        """Get parameters for ``crop`` for a random sized crop.
+
+        Args:
+            img (PIL Image): Image to be cropped.
+            scale (tuple): range of size of the origin size cropped
+            ratio (tuple): range of aspect ratio of the origin aspect ratio cropped
+
+        Returns:
+            tuple: params (i, j, h, w) to be passed to ``crop`` for a random
+                sized crop.
+        """
+        width, height = img.size
+        area = height * width
+        scale = self.scale
+        ratio = self.ratio
+
+        for attempt in range(500):
+            target_area = random.uniform(*scale) * area
+            log_ratio = (math.log(ratio[0]), math.log(ratio[1]))
+            aspect_ratio = math.exp(random.uniform(*log_ratio))
+
+            w = int(round(math.sqrt(target_area * aspect_ratio)))
+            h = int(round(math.sqrt(target_area / aspect_ratio)))
+
+            if 0 < w <= width and 0 < h <= height:
+                i = random.randint(0, height - h)
+                j = random.randint(0, width - w)
+                if anchor is None:
+                    return i, j, h, w
+                else:
+                    from qd.qd_common import calculate_iou
+                    i1, j1, h1, w1 = anchor
+                    iou = calculate_iou([j, i, j + w, i + h],
+                                        [j1, i1, j1 + w1, i1 + h1])
+                    if iou > self.iou:
+                        return i, j, h, w
+        if anchor is not None:
+            if (self.not_found % 100) == 0:
+                logging.info('not found after 500 trials')
+            self.not_found += 1
+            return anchor
+
+        # Fallback to central crop
+        in_ratio = float(width) / float(height)
+        if (in_ratio < min(ratio)):
+            w = width
+            h = int(round(w / min(ratio)))
+        elif (in_ratio > max(ratio)):
+            h = height
+            w = int(round(h * max(ratio)))
+        else:  # whole image
+            w = width
+            h = height
+        i = (height - h) // 2
+        j = (width - w) // 2
+        return i, j, h, w
+
+    def __call__(self, img1, img2):
+        i1, j1, h1, w1 = self.get_params(img1)
+        i2, j2, h2, w2 = self.get_params(img2, anchor=[i1, j1, h1, w1])
+        import torchvision.transforms.functional as F
+        img1 = F.resized_crop(img1, i1, j1, h1, w1, self.size, self.interpolation)
+        img2 = F.resized_crop(img2, i2, j2, h2, w2, self.size, self.interpolation)
+        return img1, img2
+
+class MultiScaleRandomResizedCrop(object):
+    def __init__(self, iou, size, scale=(0.08, 1.0), ratio=(3. / 4., 4. / 3.),
+                 interpolation=PIL.Image.BILINEAR):
+        if isinstance(size, tuple):
+            self.size = size
+        else:
+            self.size = (size, size)
+
+        self.interpolation = interpolation
+        self.scale = scale
+        self.ratio = ratio
+        self.iou = iou
+        self.not_found = 0
+
+    def __repr__(self):
+        return ('IoURandomResizedCrop(iou={}, size={}, scale={}, ratio={}, '
+                'interpolation={})'.format(self.iou,
+                                           self.size,
+                                           self.scale,
+                                           self.ratio,
+                                           self.interpolation))
+
+    def get_params(self, img, anchor=None):
+        """Get parameters for ``crop`` for a random sized crop.
+
+        Args:
+            img (PIL Image): Image to be cropped.
+            scale (tuple): range of size of the origin size cropped
+            ratio (tuple): range of aspect ratio of the origin aspect ratio cropped
+
+        Returns:
+            tuple: params (i, j, h, w) to be passed to ``crop`` for a random
+                sized crop.
+        """
+        width, height = img.size
+        area = height * width
+        scale = self.scale
+        ratio = self.ratio
+
+        for attempt in range(500):
+            target_area = random.uniform(*scale) * area
+            log_ratio = (math.log(ratio[0]), math.log(ratio[1]))
+            aspect_ratio = math.exp(random.uniform(*log_ratio))
+
+            w = int(round(math.sqrt(target_area * aspect_ratio)))
+            h = int(round(math.sqrt(target_area / aspect_ratio)))
+
+            if 0 < w <= width and 0 < h <= height:
+                i = random.randint(0, height - h)
+                j = random.randint(0, width - w)
+                if anchor is None:
+                    return i, j, h, w
+                else:
+                    from qd.qd_common import calculate_iou
+                    i1, j1, h1, w1 = anchor
+                    iou = calculate_iou([j, i, j + w, i + h],
+                                        [j1, i1, j1 + w1, i1 + h1])
+                    if iou > self.iou:
+                        return i, j, h, w
+        if anchor is not None:
+            if (self.not_found % 100) == 0:
+                logging.info('not found after 500 trials')
+            self.not_found += 1
+            return anchor
+
+        # Fallback to central crop
+        in_ratio = float(width) / float(height)
+        if (in_ratio < min(ratio)):
+            w = width
+            h = int(round(w / min(ratio)))
+        elif (in_ratio > max(ratio)):
+            h = height
+            w = int(round(h * max(ratio)))
+        else:  # whole image
+            w = width
+            h = height
+        i = (height - h) // 2
+        j = (width - w) // 2
+        return i, j, h, w
+
+    def __call__(self, x):
+        y1 = dict(x.items())
+        y2 = dict(x.items())
+        i1, j1, h1, w1 = self.get_params(x['image'])
+        import torchvision.transforms.functional as F
+        img1 = F.resized_crop(x['image'], i1, j1, h1, w1, self.size, self.interpolation)
+        img2 = F.resized_crop(x['image'], i1, j1, h1, w1, [s // 2 for s in self.size], self.interpolation)
+        y1['image'] = img1
+        y2['image'] = img2
+        return y1, y2
+
+class TwoCropsTransformX():
+    def __init__(self, aug1, aug_join, aug2):
+        self.aug1 = aug1
+        self.aug_join = aug_join
+        self.aug2 = aug2
+
+    def __repr__(self):
+        s = 'TwoCropsTransformX(aug1={}, aug_join={}, aug2={})'.format(
+            self.aug1, self.aug_join, self.aug2,
+        )
+        return s
+
+    def __call__(self, x):
+        y1 = self.aug1(x)
+        y2 = self.aug1(x)
+        y1, y2 = self.aug_join(y1, y2)
+        y1 = self.aug2(y1)
+        y2 = self.aug2(y2)
+        return [y1, y2]
+
+class TwoCropsTransform112():
+    def __init__(self, aug1, aug_join, aug2):
+        self.aug1 = aug1
+        self.aug_join = aug_join
+        self.aug2 = aug2
+
+    def __repr__(self):
+        s = 'TwoCropsTransformX(aug1={}, aug_join={}, aug2={})'.format(
+            self.aug1, self.aug_join, self.aug2,
+        )
+        return s
+
+    def __call__(self, x):
+        x = self.aug1(x)
+        y1, y2 = self.aug_join(x)
+        y1 = self.aug2(y1)
+        y2 = self.aug2(y2)
+        return [y1, y2]
