@@ -12,6 +12,80 @@ from qd.qd_common import get_mpi_local_rank, get_mpi_local_size
 from qd.qd_common import ensure_directory
 
 
+def boxlist_to_list_dict(box_list,
+                         label_id_to_label,
+                         extra=0):
+    # box_list here is the maskrcnn-benchmark style of BoxList
+    # use to_rects, which handles the case where 'labels' not in the field
+    box_list = box_list.convert("xyxy")
+    if len(box_list) == 0:
+        return []
+    scores = box_list.get_field("scores").tolist()
+    labels = box_list.get_field("labels").tolist()
+    extra_key_values = [(k, v) for k, v in box_list.extra_fields.items()
+            if k not in ['scores', 'labels']]
+    boxes = box_list.bbox
+    rects = []
+    for i, (box, score, label_id) in enumerate(zip(boxes, scores, labels)):
+        top_left, bottom_right = box[:2].tolist(), box[2:].tolist()
+
+        r = [top_left[0],
+             top_left[1],
+             bottom_right[0] + extra,
+             bottom_right[1] + extra,
+             ]
+        rect = {'class': label_id_to_label[label_id], 'conf': score, 'rect': r}
+
+        for k, v in extra_key_values:
+            f = v[i]
+            if isinstance(f, torch.Tensor):
+                f = f.squeeze()
+                if len(f.shape) == 1:
+                    # just to make it a list of float
+                    rect[k] = f.tolist()
+                elif len(f.shape) == 0:
+                    rect[k] = float(f)
+                else:
+                    raise ValueError('unknown Tensor {}'.format(
+                        ','.join(map(str, f.shape))))
+            else:
+                raise ValueError('unknown {}'.format(type(f)))
+        rects.append(rect)
+    return rects
+
+def freeze_parameters(modules):
+    if isinstance(modules, nn.Module):
+        modules = [modules]
+    for m in modules:
+        for n, p in m.named_parameters():
+            p.requires_grad = False
+            if hasattr(m, 'name_from_root'):
+                logging.info('freeze param: {}.{}'.format(
+                    m.name_from_root,
+                    n))
+            else:
+                logging.info('freeze param: {}'.format(
+                    n))
+        m.eval()
+
+def get_torch_version_info():
+    return {
+        'version': torch.__version__,
+        'cuda': torch.version.cuda,
+        'nccl': torch.cuda.nccl.version(),
+        'cudnn': torch.backends.cudnn.version(),
+    }
+
+def update_bn_momentum(model, bn_momentum):
+    from collections import defaultdict
+    type_to_count = defaultdict(int)
+    for _, module in model.named_modules():
+        if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
+            module.momentum = bn_momentum
+            type_to_count[module.__class__.__name__] += 1
+    from pprint import pformat
+    logging.info(pformat(dict(type_to_count)))
+
 def freeze_bn_(model):
     num_freezed = 0
     for n, m in model.named_modules():

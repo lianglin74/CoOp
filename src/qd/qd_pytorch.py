@@ -65,22 +65,29 @@ from qd.torch_common import get_master_node_ip
 from qd.torch_common import get_aml_mpi_host_names
 from qd.torch_common import get_philly_mpi_hosts
 from qd.torch_common import torch_save, torch_load
+from qd.torch_common import freeze_parameters
 from qd.layers.loss import MultiHotCrossEntropyLoss
 from qd.layers.loss import multi_hot_cross_entropy
 from qd.torch_common import concat_all_gather
 from qd.data_layer.transform import ImageTransform2Dict
 from qd.data_layer.samplers import AttachIterationNumberBatchSampler
 from qd.data_layer.transform import ImageCutout
-from qd.data_layer.transform import TwoCropsTransform
-
+from qd.data_layer.transform import TwoCropsTransform, IoURandomResizedCrop
+from qd.data_layer.transform import TwoCropsTransformX
 from qd.torch_common import replace_module
+
+
 
 class InputAsDict(nn.Module):
     def __init__(self, model):
         super().__init__()
         self.module = model
     def forward(self, data_dict):
-        return self.module(data_dict['image'])
+        if isinstance(data_dict, torch.Tensor):
+            im = data_dict
+        else:
+            im = data_dict['image']
+        return self.module(im)
 
 class GaussianBlur(object):
     """Gaussian blur augmentation in SimCLR https://arxiv.org/abs/2002.05709"""
@@ -299,113 +306,6 @@ class OrderedSampler(torch.utils.data.Sampler):
 
     def __len__(self):
         return len(self.idx)
-
-class IoURandomResizedCrop(object):
-    def __init__(self, iou, size, scale=(0.08, 1.0), ratio=(3. / 4., 4. / 3.),
-                 interpolation=PIL.Image.BILINEAR):
-        if isinstance(size, tuple):
-            self.size = size
-        else:
-            self.size = (size, size)
-
-        self.interpolation = interpolation
-        self.scale = scale
-        self.ratio = ratio
-        self.iou = iou
-        self.not_found = 0
-
-    def __repr__(self):
-        return ('IoURandomResizedCrop(iou={}, size={}, scale={}, ratio={}, '
-                'interpolation={})'.format(self.iou,
-                                           self.size,
-                                           self.scale,
-                                           self.ratio,
-                                           self.interpolation))
-
-    def get_params(self, img, anchor=None):
-        """Get parameters for ``crop`` for a random sized crop.
-
-        Args:
-            img (PIL Image): Image to be cropped.
-            scale (tuple): range of size of the origin size cropped
-            ratio (tuple): range of aspect ratio of the origin aspect ratio cropped
-
-        Returns:
-            tuple: params (i, j, h, w) to be passed to ``crop`` for a random
-                sized crop.
-        """
-        width, height = img.size
-        area = height * width
-        scale = self.scale
-        ratio = self.ratio
-
-        for attempt in range(500):
-            target_area = random.uniform(*scale) * area
-            log_ratio = (math.log(ratio[0]), math.log(ratio[1]))
-            aspect_ratio = math.exp(random.uniform(*log_ratio))
-
-            w = int(round(math.sqrt(target_area * aspect_ratio)))
-            h = int(round(math.sqrt(target_area / aspect_ratio)))
-
-            if 0 < w <= width and 0 < h <= height:
-                i = random.randint(0, height - h)
-                j = random.randint(0, width - w)
-                if anchor is None:
-                    return i, j, h, w
-                else:
-                    from qd.qd_common import calculate_iou
-                    i1, j1, h1, w1 = anchor
-                    iou = calculate_iou([j, i, j + w, i + h],
-                                        [j1, i1, j1 + w1, i1 + h1])
-                    if iou > self.iou:
-                        return i, j, h, w
-        if anchor is not None:
-            if (self.not_found % 100) == 0:
-                logging.info('not found after 500 trials')
-            self.not_found += 1
-            return anchor
-
-        # Fallback to central crop
-        in_ratio = float(width) / float(height)
-        if (in_ratio < min(ratio)):
-            w = width
-            h = int(round(w / min(ratio)))
-        elif (in_ratio > max(ratio)):
-            h = height
-            w = int(round(h * max(ratio)))
-        else:  # whole image
-            w = width
-            h = height
-        i = (height - h) // 2
-        j = (width - w) // 2
-        return i, j, h, w
-
-    def __call__(self, img1, img2):
-        i1, j1, h1, w1 = self.get_params(img1)
-        i2, j2, h2, w2 = self.get_params(img2, anchor=[i1, j1, h1, w1])
-        img1 = F.resized_crop(img1, i1, j1, h1, w1, self.size, self.interpolation)
-        img2 = F.resized_crop(img2, i2, j2, h2, w2, self.size, self.interpolation)
-        return img1, img2
-
-class TwoCropsTransformX():
-    def __init__(self, aug1, aug_join, aug2):
-        self.aug1 = aug1
-        self.aug_join = aug_join
-        self.aug2 = aug2
-
-    def __repr__(self):
-        s = 'TwoCropsTransformX(aug1={}, aug_join={}, aug2={})'.format(
-            self.aug1, self.aug_join, self.aug2,
-        )
-        return s
-
-    def __call__(self, x):
-        y1 = self.aug1(x)
-        y2 = self.aug1(x)
-        y1, y2 = self.aug_join(y1, y2)
-        y1 = self.aug2(y1)
-        y2 = self.aug2(y2)
-        return [y1, y2]
 
 class DictTransformCompose(object):
     def __init__(self, transforms):
@@ -628,45 +528,77 @@ class DictTransformResizeCrop(object):
       chosen from min(c/a, d/b) to max(c/a, d/b).
     - finally, we randomly crop a sub region.
     '''
-    def __init__(self, all_crop_size):
-        self.all_crop_size = [c if
-                isinstance(c, list) or isinstance(c, tuple)
-                else (c, c)
-                for c in all_crop_size]
+    def __init__(self, all_crop_size, size_mode='random'):
+        self.all_crop_size = all_crop_size
+        self.size_mode = size_mode
 
     def get_size(self, image_size, iteration):
-        w, h = image_size
-        crop_w, crop_h = self.all_crop_size[iteration % len(self.all_crop_size)]
-        rw = 1. * crop_w / w
-        rh = 1. * crop_h / h
-        min_s = min(rw, rh)
-        max_s = max(rw, rh)
-        target_s = random.random() * (max_s - min_s) + min_s
-        target_w = int(target_s * w)
-        target_h = int(target_s * h)
-
+        if self.size_mode == 'random':
+            w, h = image_size
+            crop_size = self.all_crop_size[iteration % len(self.all_crop_size)]
+            rw = 1. * crop_size / w
+            rh = 1. * crop_size / h
+            min_s = min(rw, rh)
+            max_s = max(rw, rh)
+            target_s = random.random() * (max_s - min_s) + min_s
+            target_w = int(target_s * w)
+            target_h = int(target_s * h)
+            crop_w = crop_h = crop_size
+        elif self.size_mode == 'max':
+            w, h = image_size
+            crop_size = self.all_crop_size[iteration % len(self.all_crop_size)]
+            target_s = 1. * crop_size / max(w, h)
+            target_w = int(target_s * w)
+            target_h = int(target_s * h)
+            crop_h = target_h
+            crop_w = target_w
+        elif self.size_mode.startswith('max_cut'):
+            w, h = image_size
+            # range(256:768)
+            crop_size = self.all_crop_size[iteration % len(self.all_crop_size)]
+            cut_size = int(self.size_mode[len('max_cut'):])
+            target_s = 1. * crop_size / max(w, h)
+            target_w = int(target_s * w)
+            target_h = int(target_s * h)
+            crop_h = min(target_h, cut_size)
+            crop_w = min(target_w, cut_size)
+        elif self.size_mode.startswith('mm_cut'):
+            w, h = image_size
+            # range(256:768)
+            crop_size = self.all_crop_size[iteration % len(self.all_crop_size)]
+            cut_size = int(self.size_mode[len('mm_cut'):])
+            target_s = 1. * crop_size / min(w, h)
+            target_w = int(target_s * w)
+            target_h = int(target_s * h)
+            crop_h = min(target_h, cut_size)
+            crop_w = min(target_w, cut_size)
         return (target_h, target_w, crop_h, crop_w)
 
     def __call__(self, dict_data):
-        image, target = dict_data['image'], dict_data['rects']
-        # we should not combine resize and crop here, since the resize will do
-        # some anti-aliassing trick which helps if we need to downsample to a
-        # large factor.
-        target_h, target_w, crop_h, crop_w = self.get_size(image.size, dict_data['iteration'])
+        num_trial = 50
+        for idx_trial in range(num_trial):
+            image, target = dict_data['image'], dict_data['rects']
+            # we should not combine resize and crop here, since the resize will do
+            # some anti-aliassing trick which helps if we need to downsample to a
+            # large factor.
+            target_h, target_w, crop_h, crop_w = self.get_size(image.size, dict_data['iteration'])
+
+            def random_offset(origin, crop):
+                if origin > crop:
+                    return random.random() * (origin - crop)
+
+            top = int(random.random() * (target_h - crop_h))
+            left = int(random.random() * (target_w - crop_w))
+
+            target = target.resize((target_w, target_h))
+            target = target.crop((left, top, left + crop_w, top + crop_h))
+            target = target.clip_to_image(remove_empty=True)
+
+            if len(target) > 0:
+                break
+
         image = F.resize(image, (target_h, target_w))
-        target = target.resize(image.size)
-
-        def random_offset(origin, crop):
-            if origin > crop:
-                return random.random() * (origin - crop)
-
-        top = int(random.random() * (target_h - crop_h))
-        left = int(random.random() * (target_w - crop_w))
-
         image = image.crop((left, top, left + crop_w, top + crop_h))
-        target = target.crop((left, top, left + crop_w, top + crop_h))
-        target = target.clip_to_image(remove_empty=True)
-
         dict_data['image'] = image
         dict_data['rects'] = target
         return dict_data
@@ -675,12 +607,26 @@ class DictTransformMaskResize(object):
     '''
     maskrcnn-style resize
     '''
-    def __init__(self, min_size, max_size, depends_on_iter=False):
+    def __init__(self, min_size,
+                 max_size,
+                 depends_on_iter=False,
+                 treat_min_as_max=False):
         if not isinstance(min_size, (list, tuple)):
             min_size = (min_size,)
         self.min_size = min_size
         self.max_size = max_size
         self.depends_on_iter = depends_on_iter
+        self.treat_min_as_max = treat_min_as_max
+        assert depends_on_iter, 'no need to set it as False'
+
+    def gett_size_min_as_max(self, image_size, iteration):
+        w, h = image_size
+        max_size = self.min_size[iteration % len(self.min_size)]
+
+        max_original_size = float(max((w, h)))
+        scale = max_size / max_original_size
+
+        return (int(h * scale), int(w * scale))
 
     def get_size(self, image_size, iteration):
         w, h = image_size
@@ -689,11 +635,11 @@ class DictTransformMaskResize(object):
         else:
             size = random.choice(self.min_size)
         max_size = self.max_size
-        if max_size is not None:
-            min_original_size = float(min((w, h)))
-            max_original_size = float(max((w, h)))
-            if max_original_size / min_original_size * size > max_size:
-                size = int(round(max_size * min_original_size / max_original_size))
+
+        min_original_size = float(min((w, h)))
+        max_original_size = float(max((w, h)))
+        if max_original_size / min_original_size * size > max_size:
+            size = int(round(max_size * min_original_size / max_original_size))
 
         if (w <= h and w == size) or (h <= w and h == size):
             return (h, w)
@@ -709,7 +655,10 @@ class DictTransformMaskResize(object):
 
     def __call__(self, dict_data):
         image, target = dict_data['image'], dict_data['rects']
-        size = self.get_size(image.size, dict_data['iteration'])
+        if self.treat_min_as_max:
+            size = self.gett_size_min_as_max(image.size, dict_data['iteration'])
+        else:
+            size = self.get_size(image.size, dict_data['iteration'])
         image = F.resize(image, size)
         target = target.resize(image.size)
         dict_data['image'] = image
@@ -857,14 +806,15 @@ class TSVSplit(Dataset):
     read the hw property
     '''
     def __init__(self, data, split, version=0, cache_policy=None):
-        # image tsv only has version 0
-        self.tsv = TSVSplitProperty(data, split, t=None, version=0,
+        self.data = data
+        self.split = split
+        self.tsv = TSVSplitProperty(data, split, t=None, version=version,
                 cache_policy=cache_policy)
         self.label_tsv = TSVSplitProperty(data, split, t='label',
                 version=version, cache_policy=cache_policy)
 
     def __getitem__(self, index):
-        _, __, str_image = self.tsv[index]
+        str_image = self.tsv[index][-1]
         key, str_label = self.label_tsv[index]
         return key, str_label, str_image
 
@@ -1618,21 +1568,6 @@ def freeze_parameters_by_last_name(model, last_fixed_param):
         pformat(names)))
     freeze_parameters(fixed_modules)
 
-def freeze_parameters(modules):
-    for m in modules:
-        for n, p in m.named_parameters():
-            p.requires_grad = False
-            if hasattr(m, 'name_from_root'):
-                logging.info('freeze param: {}.{}'.format(
-                    m.name_from_root,
-                    n))
-            else:
-                logging.info('freeze param: {}'.format(
-                    n))
-        from torch.nn import BatchNorm2d
-        if isinstance(m, BatchNorm2d):
-            m.eval()
-
 def get_all_module_need_fixed(model, last_fixed_param):
     found = False
     result = []
@@ -1661,6 +1596,35 @@ def all_gather(x):
             # will be propagated back through all_rep
             torch.distributed.all_gather(all_x, x)
         return torch.cat(all_x, dim=0)
+
+class L2NormModule(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.iter = 0
+
+    def forward(self, x):
+        verbose = (self.iter % 100) == 0
+        self.iter += 1
+        if verbose:
+            from qd.torch_common import describe_tensor
+            logging.info(describe_tensor(x))
+        return torch.nn.functional.normalize(x)
+
+def replace_fc_with_mlp_(model, num=1, mlp_bn=False,
+                         with_l2=True):
+    while not hasattr(model, 'fc'):
+        model = model.module
+    module_list = []
+    dim_mlp = model.fc.weight.shape[1]
+    for i in range(num):
+        module_list.append(nn.Linear(dim_mlp, dim_mlp))
+        if mlp_bn:
+            module_list.append(nn.BatchNorm1d(dim_mlp))
+        module_list.append(nn.ReLU())
+    module_list.append(model.fc)
+    if with_l2:
+        module_list.append(L2NormModule())
+    model.fc = nn.Sequential(*module_list)
 
 class TorchTrain(object):
     def __init__(self, **kwargs):
@@ -1717,6 +1681,8 @@ class TorchTrain(object):
             'mobilenetv3_dropout_ratio': 0.2,
             'cutout_factor': 4,
             'min_rel_lr_in_cosine': 0.,
+            'dist_weight': 1.,
+            'find_unused_parameters': False,
         }
 
         assert 'batch_size' not in kwargs, 'use effective_batch_size'
@@ -1728,17 +1694,17 @@ class TorchTrain(object):
         self.full_expid = kwargs.get('full_expid',
                 '_'.join(map(str, [self.data, self.net, self.expid])))
         self.output_folder = op.join('output', self.full_expid)
+        self.model_folder = op.join(self.output_folder, 'snapshot')
+        ensure_directory(self.model_folder)
         self.test_data = kwargs.get('test_data', self.data)
         self.test_batch_size = kwargs.get('test_batch_size',
                 self.effective_batch_size)
-        # if self.max_epoch is None and \
-        #         type(self.max_iter) is str and \
-        #         self.max_iter.endswith('e'):
-        #     # we will not use max_epoch gradually
-        #     self.max_epoch = int(self.max_iter[: -1])
+        if self.max_epoch is None and \
+                type(self.max_iter) is str and \
+                self.max_iter.endswith('e'):
+            # we will not use max_epoch gradually
+            self.max_epoch = int(self.max_iter[: -1])
 
-        # deprecate max_epoch, use max_iter
-        assert self.max_epoch is None and self.max_iter is not None
         self.mpi_rank = get_mpi_rank()
         self.mpi_size= get_mpi_size()
         self.mpi_local_rank = get_mpi_local_rank()
@@ -1755,11 +1721,8 @@ class TorchTrain(object):
         if 'RANK' in os.environ:
             assert int(os.environ['RANK']) == self.mpi_rank
 
-        if self.mpi_size > 1:
-            self.distributed = True
-        else:
-            self.distributed = False
-            self.is_master = True
+        # we will always use distributed version even when world size is 1
+        self.distributed = True
         # adapt the batch size based on the mpi_size
         self.is_master = self.mpi_rank == 0
 
@@ -1769,8 +1732,18 @@ class TorchTrain(object):
 
         self.initialized = False
 
+    def get_num_training_images(self):
+        return self.train_dataset.num_rows('train')
+
+    def get_num_classes(self):
+        return len(self.train_dataset.load_labelmap())
+
     def demo(self, path):
         logging.info('not implemented')
+
+    @property
+    def batch_size_per_gpu(self):
+        return self.effective_batch_size // self.mpi_size
 
     @property
     def batch_size(self):
@@ -1806,6 +1779,110 @@ class TorchTrain(object):
         else:
             raise ValueError('unknown init_method_type = {}'.format(init_method_type))
         return dist_url
+
+    def model_surgery(self, model):
+        from qd.layers.group_batch_norm import GroupBatchNorm, get_normalize_groups
+        if self.convert_bn == 'L1':
+            raise NotImplementedError
+        elif self.convert_bn == 'L2':
+            raise NotImplementedError
+        elif self.convert_bn == 'GN':
+            model = replace_module(model,
+                    lambda m: isinstance(m, torch.nn.BatchNorm2d),
+                    lambda m: torch.nn.GroupNorm(32, m.num_features),
+                    )
+        elif self.convert_bn == 'LNG': # layer norm by group norm
+            model = replace_module(model,
+                    lambda m: isinstance(m, torch.nn.BatchNorm2d),
+                    lambda m: torch.nn.GroupNorm(1, m.num_features))
+        elif self.convert_bn == 'ING': # Instance Norm by group norm
+            model = replace_module(model,
+                    lambda m: isinstance(m, torch.nn.BatchNorm2d),
+                    lambda m: torch.nn.GroupNorm(m.num_features, m.num_features))
+        elif self.convert_bn == 'GBN':
+            model = replace_module(model,
+                    lambda m: isinstance(m, torch.nn.BatchNorm2d),
+                    lambda m: GroupBatchNorm(get_normalize_groups(m.num_features, self.normalization_group,
+                        self.normalization_group_size), m.num_features))
+        elif self.convert_bn == 'SBN':
+            if self.distributed or True:
+                model = replace_module(model,
+                        lambda m: isinstance(m, torch.nn.BatchNorm2d) or
+                            isinstance(m, torch.nn.BatchNorm1d),
+                        lambda m: torch.nn.SyncBatchNorm(m.num_features,
+                            eps=m.eps,
+                            momentum=m.momentum,
+                            affine=m.affine,
+                            track_running_stats=m.track_running_stats))
+                from qd.layers.batch_norm import FrozenBatchNorm2d
+                model = replace_module(model,
+                        lambda m: isinstance(m, FrozenBatchNorm2d),
+                        lambda m: torch.nn.SyncBatchNorm(m.num_features,
+                            eps=m.eps))
+
+        elif self.convert_bn == 'FBN': # frozen batch norm
+            def set_eval_return(m):
+                m.eval()
+                return m
+            model = replace_module(model,
+                    lambda m: isinstance(m, torch.nn.BatchNorm2d) or
+                                   isinstance(m, torch.nn.BatchNorm1d),
+                    lambda m: set_eval_return(m))
+        #elif self.convert_bn == 'NSBN':
+            #if self.distributed:
+                #from qd.layers.batch_norm import NaiveSyncBatchNorm
+                #model = replace_module(model,
+                        #lambda m: isinstance(m, torch.nn.BatchNorm2d),
+                        #lambda m: NaiveSyncBatchNorm(m.num_features,
+                            #eps=m.eps,
+                            #momentum=m.momentum,
+                            #affine=m.affine,
+                            #track_running_stats=m.track_running_stats))
+        elif self.convert_bn == 'CBN':
+            from qd.layers.batch_norm import ConvergingBatchNorm
+            model = replace_module(model,
+                    lambda m: isinstance(m, torch.nn.BatchNorm2d),
+                    lambda m: ConvergingBatchNorm(
+                        policy=self.cbn_policy,
+                        max_iter=self.max_iter,
+                        gamma=self.cbn_gamma,
+                        num_features=m.num_features,
+                        eps=m.eps,
+                        momentum=m.momentum,
+                        affine=True,
+                        track_running_stats=m.track_running_stats,
+                        ))
+        else:
+            assert self.convert_bn is None, self.convert_bn
+        if self.fc_as_mlp:
+            # this is used, normally for self-supervised learning scenarios
+            replace_fc_with_mlp_(model)
+        if self.hswish2relu6:
+            from qd.layers.mitorch_models.modules.activation import HardSwish
+            model = replace_module(model,
+                    lambda m: isinstance(m,
+                                         HardSwish),
+                    lambda m: torch.nn.ReLU6(inplace=True))
+        if self.vis_adaptive_global_pool:
+            from qd.layers.adapt_avg_pool2d import VisAdaptiveAvgPool2d
+            model = replace_module(model,
+                    lambda m: isinstance(m,
+                                         nn.AdaptiveAvgPool2d),
+                    lambda m: VisAdaptiveAvgPool2d())
+        if self.freeze_bn:
+            from qd.torch_common import freeze_bn_
+            freeze_bn_(model)
+        if self.standarize_conv2d:
+            from qd.layers.standarized_conv import convert_conv2d_to_standarized_conv2d
+            model = convert_conv2d_to_standarized_conv2d(model)
+        if self.bn_momentum:
+            from qd.torch_common import update_bn_momentum
+            update_bn_momentum(model, self.bn_momentum)
+        # assign a name to each module so that we can use it in each module to
+        # print debug information
+        from qd.torch_common import attach_module_name_
+        attach_module_name_(model)
+        return model
 
     def _ensure_initialized(self):
         if self._initialized:
@@ -1952,6 +2029,24 @@ class TorchTrain(object):
                 totensor,
                 normalize,])
             data_augmentation = transforms.Compose(all_trans)
+        elif self.train_transform == 'feature':
+            # this should be paired with io dataset
+            from qd.data_layer.transform import (
+                CvImageDecodeDict,
+                DecodeFeatureDict,
+                RemoveUselessKeys,
+            )
+            decode_transform = [
+                CvImageDecodeDict(),
+                DecodeFeatureDict(),
+                RemoveUselessKeys(),
+            ]
+            decode_transform = transforms.Compose(decode_transform)
+            data_augmentation = get_train_transform(self.bgr2rgb, crop_size=self.train_crop_size)
+            data_augmentation = ImageTransform2Dict(data_augmentation)
+            data_augmentation = transforms.Compose([
+                decode_transform,
+                data_augmentation])
         elif self.train_transform == 'rand_cut':
             normalize = get_data_normalize()
             totensor = transforms.ToTensor()
@@ -2099,7 +2194,8 @@ class TorchTrain(object):
             raise ValueError('unknown {}'.format(self.dataset_type))
 
     def _get_criterion(self):
-        if self.dataset_type in ['single', 'crop', 'single_dict']:
+        if self.dataset_type in ['single', 'crop', 'single_dict',
+                                 'io']:
             if self.loss_type == 'NTXent':
                 from qd.layers.ntxent_loss import NTXentLoss
                 criterion = NTXentLoss(self.temperature, self.correct_loss)
@@ -2190,6 +2286,8 @@ class TorchTrain(object):
         return criterion
 
     def _get_checkpoint_file(self, epoch=None, iteration=None):
+        if iteration is None and epoch is None and self.model_file is not None:
+            return self.model_file
         assert epoch is None, 'not supported'
         if iteration is None:
             iteration = self.max_iter
@@ -2234,7 +2332,7 @@ class TorchTrain(object):
                     efficient_det.g_simple_padding = False
                 from qd.layers.efficient_det import EfficientNet
                 model = EfficientNet.from_name(
-                    self.net,
+                    self.net, # efficientnet-b0
                     override_params={'num_classes': num_class})
                 assert not pretrained
         elif self.net.startswith('yolov5'):
@@ -2384,11 +2482,17 @@ class TorchTrain(object):
         ensure_directory(self.output_folder)
 
         logging.info(pformat(self.kwargs))
-        logging.info('torch version = {}'.format(torch.__version__))
+        from qd.torch_common import get_torch_version_info
+        logging.info('torch info = {}'.format(
+            pformat(get_torch_version_info())))
 
         if self.mpi_rank == 0 and not self.debug_train:
-            from qd.qd_common import zip_qd
+            from qd.qd_common import zip_qd, try_delete
+            # we'd better to delete it since it seems like zip will read/write
+            # if there is
+            try_delete(op.join(self.output_folder, 'source_code.zip'))
             zip_qd(op.join(self.output_folder, 'source_code'))
+        synchronize()
 
         self._setup_logging()
         train_result = self.train()
@@ -2686,7 +2790,7 @@ class TorchTrain(object):
     def is_train_finished(self):
         last_model = self._get_checkpoint_file()
         logging.info('checking if {} exists'.format(last_model))
-        return op.isfile(last_model)
+        return op.isfile(last_model) or op.islink(last_model)
 
     def update_acc_iter(self, iter_to_eval):
         if self.mpi_rank == 0:
@@ -3056,8 +3160,12 @@ def load_model_state_ignore_mismatch(model, init_dict):
     num_ignored = 0
     unique_key_in_init_dict = []
     for k in init_dict:
-        if k in name_to_param and same_shape(init_dict[k], name_to_param[k]):
-            real_init_dict[k] = init_dict[k]
+        if k in name_to_param:
+            if same_shape(init_dict[k], name_to_param[k]):
+                real_init_dict[k] = init_dict[k]
+            else:
+                logging.info('{} shape is not consistent, expected: {}; got '
+                             '{}'.format(k, name_to_param[k].shape, init_dict[k].shape))
         else:
             unique_key_in_init_dict.append(k)
             num_ignored = num_ignored + 1
@@ -3068,8 +3176,11 @@ def load_model_state_ignore_mismatch(model, init_dict):
 
     result = model.load_state_dict(real_init_dict, strict=False)
     logging.info('unique key (not initialized) in current model = {}'.format(
-        result.missing_keys,
+        pformat(result.missing_keys),
     ))
+
+    logging.info('loaded key = {}'.format(
+        pformat(list(real_init_dict.keys()))))
 
 if __name__ == '__main__':
     init_logging()

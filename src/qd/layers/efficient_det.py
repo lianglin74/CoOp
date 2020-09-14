@@ -15,12 +15,16 @@ from qd.qd_common import print_frame_info
 GlobalParams = collections.namedtuple('GlobalParams', [
     'batch_norm_momentum', 'batch_norm_epsilon', 'dropout_rate',
     'num_classes', 'width_coefficient', 'depth_coefficient',
-    'depth_divisor', 'min_depth', 'drop_connect_rate', 'image_size'])
+    'depth_divisor', 'min_depth', 'drop_connect_rate', 'image_size',
+    'non_local_net',
+])
 
 # Parameters for an individual model block
 BlockArgs = collections.namedtuple('BlockArgs', [
     'kernel_size', 'num_repeat', 'input_filters', 'output_filters',
-    'expand_ratio', 'id_skip', 'stride', 'se_ratio'])
+    'expand_ratio', 'id_skip', 'stride', 'se_ratio',
+    'non_local_net',
+])
 
 # https://stackoverflow.com/a/18348004
 # Change namedtuple defaults
@@ -30,19 +34,27 @@ BlockArgs.__new__.__defaults__ = (None,) * len(BlockArgs._fields)
 # in the old version, g_simple_padding = False, which tries to align
 # tensorflow's implementation, which is not required here.
 g_simple_padding = True
-class MaxPool2dStaticSamePadding(nn.Module):
-    """
-    created by Zylo117
-    The real keras/tensorflow MaxPool2d with same padding
-    """
 
+# by default, currently, g_anchor_xyxy is False, which means it is yxyx
+g_anchor_xyxy = False
+
+class SimpleMaxPool(nn.Module):
+    def __init__(self, kernel_size, stride):
+        super().__init__()
+        self.pool = nn.MaxPool2d(kernel_size, stride,
+                                 padding=(kernel_size-1)//2)
+
+    def forward(self, x):
+        return self.pool(x)
+
+class MaxPool2dStaticSamePadding(nn.Module):
     def __init__(self, kernel_size, stride):
         super().__init__()
         if g_simple_padding:
             self.pool = nn.MaxPool2d(kernel_size, stride,
                                      padding=(kernel_size-1)//2)
         else:
-            assert ValueError()
+            raise ValueError()
             self.pool = nn.MaxPool2d(kernel_size, stride)
             self.stride = self.pool.stride
             self.kernel_size = self.pool.kernel_size
@@ -61,7 +73,7 @@ class MaxPool2dStaticSamePadding(nn.Module):
         if g_simple_padding:
             return self.pool(x)
         else:
-            assert ValueError()
+            raise ValueError()
             h, w = x.shape[-2:]
 
             h_step = math.ceil(w / self.stride[1])
@@ -82,12 +94,27 @@ class MaxPool2dStaticSamePadding(nn.Module):
             x = self.pool(x)
         return x
 
-class Conv2dStaticSamePadding(nn.Module):
-    """
-    created by Zylo117
-    The real keras/tensorflow conv2d with same padding
-    """
+class SimpleConv(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, bias=True, groups=1, dilation=1, **kwargs):
+        super().__init__()
+        assert kernel_size % 2 == 1
+        assert dilation == 1
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride=stride,
+                              bias=bias,
+                              groups=groups,
+                              padding=(kernel_size - 1) // 2)
+        self.stride = self.conv.stride
+        if isinstance(self.stride, int):
+            self.stride = [self.stride] * 2
+        elif len(self.stride) == 1:
+            self.stride = [self.stride[0]] * 2
+        else:
+            self.stride = list(self.stride)
 
+    def forward(self, x):
+        return self.conv(x)
+
+class Conv2dStaticSamePadding(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, bias=True, groups=1, dilation=1, **kwargs):
         super().__init__()
         if g_simple_padding:
@@ -105,7 +132,7 @@ class Conv2dStaticSamePadding(nn.Module):
             else:
                 self.stride = list(self.stride)
         else:
-            assert ValueError()
+            raise ValueError()
             self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride=stride,
                                   bias=bias, groups=groups)
             self.stride = self.conv.stride
@@ -126,7 +153,7 @@ class Conv2dStaticSamePadding(nn.Module):
         if g_simple_padding:
             return self.conv(x)
         else:
-            assert ValueError()
+            raise ValueError()
             h, w = x.shape[-2:]
 
             h_step = math.ceil(w / self.stride[1])
@@ -147,28 +174,26 @@ class Conv2dStaticSamePadding(nn.Module):
             x = self.conv(x)
             return x
 
-class SeparableConvBlock(nn.Module):
-    """
-    created by Zylo117
-    """
-
+class DepthwiseSeparableConvModule(nn.Module):
     def __init__(self, in_channels, out_channels=None, norm=True, activation=False, onnx_export=False):
-        super(SeparableConvBlock, self).__init__()
+        super().__init__()
         if out_channels is None:
             out_channels = in_channels
 
-        # Q: whether separate conv
-        #  share bias between depthwise_conv and pointwise_conv
-        #  or just pointwise_conv apply bias.
-        # A: Confirmed, just pointwise_conv applies bias, depthwise_conv has no bias.
-
-        self.depthwise_conv = Conv2dStaticSamePadding(in_channels, in_channels,
-                                                      kernel_size=3, stride=1, groups=in_channels, bias=False)
-        self.pointwise_conv = Conv2dStaticSamePadding(in_channels, out_channels, kernel_size=1, stride=1)
+        self.depthwise_conv = SimpleConv(
+            in_channels,
+            in_channels,
+            kernel_size=3,
+            stride=1,
+            groups=in_channels,
+            bias=False)
+        self.pointwise_conv = SimpleConv(
+            in_channels,
+            out_channels,
+            kernel_size=1)
 
         self.norm = norm
         if self.norm:
-            # Warning: pytorch momentum is different from tensorflow's, momentum_pytorch = 1 - momentum_tensorflow
             self.bn = nn.BatchNorm2d(num_features=out_channels, momentum=0.01, eps=1e-3)
 
         self.activation = activation
@@ -186,6 +211,150 @@ class SeparableConvBlock(nn.Module):
             x = self.swish(x)
 
         return x
+
+class SeparableConvBlock(nn.Module):
+    def __init__(self, in_channels, out_channels=None, norm=True, activation=False, onnx_export=False):
+        super(SeparableConvBlock, self).__init__()
+        if out_channels is None:
+            out_channels = in_channels
+
+        self.depthwise_conv = SimpleConv(in_channels, in_channels,
+                                                      kernel_size=3, stride=1, groups=in_channels, bias=False)
+        self.pointwise_conv = SimpleConv(in_channels, out_channels, kernel_size=1, stride=1)
+
+        self.norm = norm
+        if self.norm:
+            self.bn = nn.BatchNorm2d(num_features=out_channels, momentum=0.01, eps=1e-3)
+
+        self.activation = activation
+        if self.activation:
+            self.swish = MemoryEfficientSwish() if not onnx_export else Swish()
+
+    def forward(self, x):
+        x = self.depthwise_conv(x)
+        x = self.pointwise_conv(x)
+
+        if self.norm:
+            x = self.bn(x)
+
+        if self.activation:
+            x = self.swish(x)
+
+        return x
+
+class BIFPN(nn.Module):
+    def __init__(self, num_channels,
+                 conv_channels,
+                 first_time=False,
+                 epsilon=1e-4,
+                 onnx_export=False):
+        super().__init__()
+        self.epsilon = epsilon
+        self.first_fusion_output_convs = nn.ModuleList([DepthwiseSeparableConvModule(num_channels, onnx_export=onnx_export)
+                       for _ in range(4)])
+
+        self.swish = MemoryEfficientSwish() if not onnx_export else Swish()
+
+        self.first_time = first_time
+        if self.first_time:
+            self.down_channels = nn.ModuleList([nn.Sequential(
+                SimpleConv(c, num_channels, 1),
+                nn.BatchNorm2d(num_channels, momentum=0.01, eps=1e-3),
+            ) for c in conv_channels])
+
+            if len(conv_channels) == 3:
+                self.down_channel_reduce_spatial = nn.Sequential(
+                    SimpleConv(conv_channels[2], num_channels, 1),
+                    nn.BatchNorm2d(num_channels, momentum=0.01, eps=1e-3),
+                    SimpleMaxPool(3, 2)
+                )
+            self.reduce_spatial = SimpleMaxPool(3, 2)
+
+            self.extra_down_channel = nn.ModuleList([nn.Sequential(
+                SimpleConv(c, num_channels, 1),
+                nn.BatchNorm2d(num_channels, momentum=0.01, eps=1e-3),
+            ) for c in conv_channels[1:3]])
+
+        self.first_fusion_weights = nn.ParameterList([nn.Parameter(torch.ones(2,
+                                                        dtype=torch.float32),
+                                             requires_grad=True) for _ in
+                                range(4)])
+        self.second_fusion_weights = nn.ParameterList([nn.Parameter(torch.ones(3 if i < 3 else 2,
+                                                dtype=torch.float32),
+                                     requires_grad=True) for i in range(4)])
+
+        self.second_fusion_output_convs = nn.ModuleList([
+            DepthwiseSeparableConvModule(num_channels, onnx_export=onnx_export)
+            for _ in range(4)])
+
+
+    def forward(self, inputs):
+        #ipdb> pp [i.shape for i in inputs]
+        #[torch.Size([1, 24, 96, 128]),
+         #torch.Size([1, 40, 48, 64]),
+         #torch.Size([1, 112, 24, 32]),
+         #torch.Size([1, 320, 12, 16])]
+        if len(inputs) == 3:
+            five_inputs = [c(i) for i, c in zip(inputs, self.down_channels)]
+            five_inputs.append(self.down_channel_reduce_spatial(inputs[-1]))
+            five_inputs.append(self.reduce_spatial(five_inputs[-1]))
+        elif len(inputs) == 4:
+            five_inputs = [c(i) for i, c in zip(inputs, self.down_channels)]
+            five_inputs.append(self.reduce_spatial(five_inputs[-1]))
+        else:
+            five_inputs = inputs
+
+        #ipdb> pp [i.shape for i in five_inputs]
+        #[torch.Size([1, 64, 96, 128]),
+         #torch.Size([1, 64, 48, 64]),
+         #torch.Size([1, 64, 24, 32]),
+         #torch.Size([1, 64, 12, 16]),
+         #torch.Size([1, 64, 6, 8])]
+
+        first_fusion_tb_out = [None for i in range(4)] # from top to bottom, tb: top to bottom
+        # feature map (idx in five_inputs) (idx in tb_out)
+        # 7           (4)
+        # 6           (3)                  (3)
+        # 5           (2)                  (2)
+        # 4           (1)                  (1)
+        # 3           (0)                  (0)
+        for i in range(3, -1, -1):
+            weight = nn.functional.relu(self.first_fusion_weights[i])
+            norm_weight = weight / (weight.sum() + self.epsilon)
+            if i == 3:
+                previous = five_inputs[-1]
+            else:
+                previous = first_fusion_tb_out[i + 1]
+            curr = five_inputs[i]
+            upsample = nn.Upsample(size=curr.shape[-2:])
+            x = norm_weight[0] * curr + norm_weight[1] * upsample(previous)
+            x = self.swish(x)
+            x = self.first_fusion_output_convs[i](x)
+            first_fusion_tb_out[i] = x
+
+        if self.first_time:
+            for i in range(1, 3):
+                five_inputs[i] = self.extra_down_channel[i - 1](inputs[i])
+
+        second_fusion_bt_out = [None for _ in range(5)] # bt: bottom to top
+        second_fusion_bt_out[0] = first_fusion_tb_out[0]
+
+        for i in range(1, 5):
+            previous = second_fusion_bt_out[i - 1]
+            weight = nn.functional.relu(self.second_fusion_weights[i - 1])
+            norm_weight = weight / (torch.sum(weight, dim=0) + self.epsilon)
+            curr_in = five_inputs[i]
+            downsample = SimpleMaxPool(3, 2)
+            if i < 4:
+                first_fusion = first_fusion_tb_out[i]
+                x = norm_weight[0] * curr_in + norm_weight[1] * first_fusion + norm_weight[2] * downsample(previous)
+            else:
+                x = norm_weight[0] * curr_in + norm_weight[1] * downsample(previous)
+            x = self.swish(x)
+            out = self.second_fusion_output_convs[i - 1](x)
+            second_fusion_bt_out[i] = out
+
+        return second_fusion_bt_out
 
 
 class BiFPN(nn.Module):
@@ -222,50 +391,50 @@ class BiFPN(nn.Module):
 
         self.adaptive_up = adaptive_up
 
-        self.p4_downsample = MaxPool2dStaticSamePadding(3, 2)
-        self.p5_downsample = MaxPool2dStaticSamePadding(3, 2)
-        self.p6_downsample = MaxPool2dStaticSamePadding(3, 2)
-        self.p7_downsample = MaxPool2dStaticSamePadding(3, 2)
+        self.p4_downsample = SimpleMaxPool(3, 2)
+        self.p5_downsample = SimpleMaxPool(3, 2)
+        self.p6_downsample = SimpleMaxPool(3, 2)
+        self.p7_downsample = SimpleMaxPool(3, 2)
 
         self.swish = MemoryEfficientSwish() if not onnx_export else Swish()
 
         self.first_time = first_time
         if self.first_time:
             self.p5_down_channel = nn.Sequential(
-                Conv2dStaticSamePadding(conv_channels[2], num_channels, 1),
+                SimpleConv(conv_channels[2], num_channels, 1),
                 nn.BatchNorm2d(num_channels, momentum=0.01, eps=1e-3),
             )
             self.p4_down_channel = nn.Sequential(
-                Conv2dStaticSamePadding(conv_channels[1], num_channels, 1),
+                SimpleConv(conv_channels[1], num_channels, 1),
                 nn.BatchNorm2d(num_channels, momentum=0.01, eps=1e-3),
             )
             self.p3_down_channel = nn.Sequential(
-                Conv2dStaticSamePadding(conv_channels[0], num_channels, 1),
+                SimpleConv(conv_channels[0], num_channels, 1),
                 nn.BatchNorm2d(num_channels, momentum=0.01, eps=1e-3),
             )
 
             if len(conv_channels) == 3:
                 self.p5_to_p6 = nn.Sequential(
-                    Conv2dStaticSamePadding(conv_channels[2], num_channels, 1),
+                    SimpleConv(conv_channels[2], num_channels, 1),
                     nn.BatchNorm2d(num_channels, momentum=0.01, eps=1e-3),
-                    MaxPool2dStaticSamePadding(3, 2)
+                    SimpleMaxPool(3, 2)
                 )
             else:
                 assert len(conv_channels) == 4
                 self.p6_down_channel = nn.Sequential(
-                    Conv2dStaticSamePadding(conv_channels[3], num_channels, 1),
+                    SimpleConv(conv_channels[3], num_channels, 1),
                     nn.BatchNorm2d(num_channels, momentum=0.01, eps=1e-3),
                 )
             self.p6_to_p7 = nn.Sequential(
-                MaxPool2dStaticSamePadding(3, 2)
+                SimpleMaxPool(3, 2)
             )
 
             self.p4_down_channel_2 = nn.Sequential(
-                Conv2dStaticSamePadding(conv_channels[1], num_channels, 1),
+                SimpleConv(conv_channels[1], num_channels, 1),
                 nn.BatchNorm2d(num_channels, momentum=0.01, eps=1e-3),
             )
             self.p5_down_channel_2 = nn.Sequential(
-                Conv2dStaticSamePadding(conv_channels[2], num_channels, 1),
+                SimpleConv(conv_channels[2], num_channels, 1),
                 nn.BatchNorm2d(num_channels, momentum=0.01, eps=1e-3),
             )
 
@@ -478,11 +647,9 @@ class BiFPN(nn.Module):
 
 
 class Regressor(nn.Module):
-    """
-    modified by Zylo117
-    """
-
-    def __init__(self, in_channels, num_anchors, num_layers, onnx_export=False):
+    def __init__(self, in_channels, num_anchors, num_layers,
+                 onnx_export=False, box_dim=4,
+                 init_as_zero_out=False):
         super(Regressor, self).__init__()
         self.num_layers = num_layers
         self.num_layers = num_layers
@@ -492,7 +659,13 @@ class Regressor(nn.Module):
         self.bn_list = nn.ModuleList(
             [nn.ModuleList([nn.BatchNorm2d(in_channels, momentum=0.01, eps=1e-3) for i in range(num_layers)]) for j in
              range(5)])
-        self.header = SeparableConvBlock(in_channels, num_anchors * 4, norm=False, activation=False)
+        self.box_dim = box_dim
+        self.header = SeparableConvBlock(in_channels, num_anchors * box_dim, norm=False, activation=False)
+
+        if init_as_zero_out:
+            torch.nn.init.constant_(self.header.pointwise_conv.conv.bias, 0)
+            torch.nn.init.constant_(self.header.pointwise_conv.conv.weight, 0)
+
         self.swish = MemoryEfficientSwish() if not onnx_export else Swish()
 
     def forward(self, inputs):
@@ -504,7 +677,7 @@ class Regressor(nn.Module):
                 feat = self.swish(feat)
             feat = self.header(feat)
             feat = feat.permute(0, 2, 3, 1)
-            feat = feat.contiguous().view(feat.shape[0], -1, 4)
+            feat = feat.contiguous().view(feat.shape[0], -1, self.box_dim)
 
             feats.append(feat)
 
@@ -534,10 +707,6 @@ class Swish(nn.Module):
         return x * torch.sigmoid(x)
 
 class Classifier(nn.Module):
-    """
-    modified by Zylo117
-    """
-
     def __init__(self, in_channels, num_anchors, num_classes, num_layers,
                  onnx_export=False, prior_prob=0.01):
         super(Classifier, self).__init__()
@@ -579,36 +748,34 @@ class Classifier(nn.Module):
 
         return feats
 
-class Conv2dDynamicSamePadding(nn.Conv2d):
-    """ 2D Convolutions like TensorFlow, for a dynamic image size """
+#class Conv2dDynamicSamePadding(nn.Conv2d):
+    #""" 2D Convolutions like TensorFlow, for a dynamic image size """
 
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, dilation=1, groups=1, bias=True):
-        super().__init__(in_channels, out_channels, kernel_size, stride, 0, dilation, groups, bias)
-        raise ValueError('tend to be deprecated')
-        self.stride = self.stride if len(self.stride) == 2 else [self.stride[0]] * 2
+    #def __init__(self, in_channels, out_channels, kernel_size, stride=1, dilation=1, groups=1, bias=True):
+        #super().__init__(in_channels, out_channels, kernel_size, stride, 0, dilation, groups, bias)
+        #raise ValueError('tend to be deprecated')
+        #self.stride = self.stride if len(self.stride) == 2 else [self.stride[0]] * 2
 
-    def forward(self, x):
-        ih, iw = x.size()[-2:]
-        kh, kw = self.weight.size()[-2:]
-        sh, sw = self.stride
-        oh, ow = math.ceil(ih / sh), math.ceil(iw / sw)
-        pad_h = max((oh - 1) * self.stride[0] + (kh - 1) * self.dilation[0] + 1 - ih, 0)
-        pad_w = max((ow - 1) * self.stride[1] + (kw - 1) * self.dilation[1] + 1 - iw, 0)
-        if pad_h > 0 or pad_w > 0:
-            x = F.pad(x, [pad_w // 2, pad_w - pad_w // 2, pad_h // 2, pad_h - pad_h // 2])
-        return F.conv2d(x, self.weight, self.bias, self.stride, self.padding, self.dilation, self.groups)
+    #def forward(self, x):
+        #ih, iw = x.size()[-2:]
+        #kh, kw = self.weight.size()[-2:]
+        #sh, sw = self.stride
+        #oh, ow = math.ceil(ih / sh), math.ceil(iw / sw)
+        #pad_h = max((oh - 1) * self.stride[0] + (kh - 1) * self.dilation[0] + 1 - ih, 0)
+        #pad_w = max((ow - 1) * self.stride[1] + (kw - 1) * self.dilation[1] + 1 - iw, 0)
+        #if pad_h > 0 or pad_w > 0:
+            #x = F.pad(x, [pad_w // 2, pad_w - pad_w // 2, pad_h // 2, pad_h - pad_h // 2])
+        #return F.conv2d(x, self.weight, self.bias, self.stride, self.padding, self.dilation, self.groups)
 
-#TODO: it seems like the standard conv layer is good enough with proper padding
-# parameters.
-def get_same_padding_conv2d(image_size=None):
-    """ Chooses static padding if you have specified an image size, and dynamic padding otherwise.
-        Static padding is necessary for ONNX exporting of models. """
-    if image_size is None:
-        raise ValueError('not validated')
-        return Conv2dDynamicSamePadding
-    else:
-        from functools import partial
-        return partial(Conv2dStaticSamePadding, image_size=image_size)
+#def get_same_padding_conv2d(image_size=None):
+    #""" Chooses static padding if you have specified an image size, and dynamic padding otherwise.
+        #Static padding is necessary for ONNX exporting of models. """
+    #if image_size is None:
+        #raise ValueError('not validated')
+        #return Conv2dDynamicSamePadding
+    #else:
+        #from functools import partial
+        #return partial(Conv2dStaticSamePadding, image_size=image_size)
 
 def round_filters(filters, global_params):
     """ Calculate and round number of filters based on depth multiplier. """
@@ -643,17 +810,6 @@ def drop_connect(inputs, p, training):
     return output
 
 class MBConvBlock(nn.Module):
-    """
-    Mobile Inverted Residual Bottleneck Block
-
-    Args:
-        block_args (namedtuple): BlockArgs, see above
-        global_params (namedtuple): GlobalParam, see above
-
-    Attributes:
-        has_se (bool): Whether the block contains a Squeeze and Excitation layer.
-    """
-
     def __init__(self, block_args, global_params):
         super().__init__()
         self._block_args = block_args
@@ -661,21 +817,19 @@ class MBConvBlock(nn.Module):
         self._bn_eps = global_params.batch_norm_epsilon
         self.has_se = (self._block_args.se_ratio is not None) and (0 < self._block_args.se_ratio <= 1)
         self.id_skip = block_args.id_skip  # skip connection and drop connect
-
-        # Get static or dynamic convolution depending on image size
-        Conv2d = get_same_padding_conv2d(image_size=global_params.image_size)
+        self.has_non_local = self._block_args.non_local_net is not None
 
         # Expansion phase
         inp = self._block_args.input_filters  # number of input channels
         oup = self._block_args.input_filters * self._block_args.expand_ratio  # number of output channels
         if self._block_args.expand_ratio != 1:
-            self._expand_conv = Conv2d(in_channels=inp, out_channels=oup, kernel_size=1, bias=False)
+            self._expand_conv = SimpleConv(in_channels=inp, out_channels=oup, kernel_size=1, bias=False)
             self._bn0 = nn.BatchNorm2d(num_features=oup, momentum=self._bn_mom, eps=self._bn_eps)
 
         # Depthwise convolution phase
         k = self._block_args.kernel_size
         s = self._block_args.stride
-        self._depthwise_conv = Conv2d(
+        self._depthwise_conv = SimpleConv(
             in_channels=oup, out_channels=oup, groups=oup,  # groups makes it depthwise
             kernel_size=k, stride=s, bias=False)
         self._bn1 = nn.BatchNorm2d(num_features=oup, momentum=self._bn_mom, eps=self._bn_eps)
@@ -683,12 +837,25 @@ class MBConvBlock(nn.Module):
         # Squeeze and Excitation layer, if desired
         if self.has_se:
             num_squeezed_channels = max(1, int(self._block_args.input_filters * self._block_args.se_ratio))
-            self._se_reduce = Conv2d(in_channels=oup, out_channels=num_squeezed_channels, kernel_size=1)
-            self._se_expand = Conv2d(in_channels=num_squeezed_channels, out_channels=oup, kernel_size=1)
+            self._se_reduce = SimpleConv(in_channels=oup, out_channels=num_squeezed_channels, kernel_size=1)
+            self._se_expand = SimpleConv(in_channels=num_squeezed_channels, out_channels=oup, kernel_size=1)
+
+        if self.has_non_local:
+            from qd.layers.non_local_net.non_local_embedded_gaussian import NONLocalBlock2D
+            non_local = NONLocalBlock2D(inp, inp // 2)
+            from qd.torch_common import replace_module
+            self.non_local = replace_module(
+                non_local,
+                lambda m: isinstance(m, nn.BatchNorm2d),
+                lambda m: nn.BatchNorm2d(
+                    num_features=m.num_features,
+                    momentum=self._bn_mom,
+                    eps=self._bn_eps)
+            )
 
         # Output phase
         final_oup = self._block_args.output_filters
-        self._project_conv = Conv2d(in_channels=oup, out_channels=final_oup, kernel_size=1, bias=False)
+        self._project_conv = SimpleConv(in_channels=oup, out_channels=final_oup, kernel_size=1, bias=False)
         self._bn2 = nn.BatchNorm2d(num_features=final_oup, momentum=self._bn_mom, eps=self._bn_eps)
         self._swish = MemoryEfficientSwish()
 
@@ -698,6 +865,9 @@ class MBConvBlock(nn.Module):
         :param drop_connect_rate: drop connect rate (float, between 0 and 1)
         :return: output of block
         """
+
+        if self.has_non_local:
+            inputs = self.non_local(inputs)
 
         # Expansion and Depthwise Convolution
         x = inputs
@@ -809,12 +979,14 @@ class BlockDecoder(object):
 
 def efficientnet(width_coefficient=None, depth_coefficient=None, dropout_rate=0.2,
                  drop_connect_rate=0.2, image_size=None, num_classes=1000):
-    """ Creates a efficientnet model. """
 
     blocks_args = [
-        'r1_k3_s11_e1_i32_o16_se0.25', 'r2_k3_s22_e6_i16_o24_se0.25',
-        'r2_k5_s22_e6_i24_o40_se0.25', 'r3_k3_s22_e6_i40_o80_se0.25',
-        'r3_k5_s11_e6_i80_o112_se0.25', 'r4_k5_s22_e6_i112_o192_se0.25',
+        'r1_k3_s11_e1_i32_o16_se0.25',
+        'r2_k3_s22_e6_i16_o24_se0.25',
+        'r2_k5_s22_e6_i24_o40_se0.25',
+        'r3_k3_s22_e6_i40_o80_se0.25',
+        'r3_k5_s11_e6_i80_o112_se0.25',
+        'r4_k5_s22_e6_i112_o192_se0.25',
         'r1_k3_s11_e6_i192_o320_se0.25',
     ]
     blocks_args = BlockDecoder.decode(blocks_args)
@@ -835,21 +1007,82 @@ def efficientnet(width_coefficient=None, depth_coefficient=None, dropout_rate=0.
 
     return blocks_args, global_params
 
-
 def efficientnet_params(model_name):
     """ Map EfficientNet model name to parameter coefficients. """
     params_dict = {
+        'efficientnet-b11': {
+            'width': 0.7,
+            'depth': 0.5,
+            'res': 224,
+            'dropout': 0.2,
+        },
+        'efficientnet-b10': {
+            'width': 0.8,
+            'depth': 0.8,
+            'res': 224,
+            'dropout': 0.2,
+        },
         # Coefficients:   width,depth,res,dropout
-        'efficientnet-b0': (1.0, 1.0, 224, 0.2),
-        'efficientnet-b1': (1.0, 1.1, 240, 0.2),
-        'efficientnet-b2': (1.1, 1.2, 260, 0.3),
-        'efficientnet-b3': (1.2, 1.4, 300, 0.3),
-        'efficientnet-b4': (1.4, 1.8, 380, 0.4),
-        'efficientnet-b5': (1.6, 2.2, 456, 0.4),
-        'efficientnet-b6': (1.8, 2.6, 528, 0.5),
-        'efficientnet-b7': (2.0, 3.1, 600, 0.5),
-        'efficientnet-b8': (2.2, 3.6, 672, 0.5),
-        'efficientnet-l2': (4.3, 5.3, 800, 0.5),
+        'efficientnet-b0': {
+            'width': 1.0,
+            'depth': 1.0,
+            'res': 224,
+            'dropout': 0.2,
+        },
+        'efficientnet-b1': {
+            'width': 1.0,
+            'depth': 1.1,
+            'res': 240,
+            'dropout': 0.2,
+        },
+        'efficientnet-b2': {
+            'width': 1.1,
+            'depth': 1.2,
+            'res': 260,
+            'dropout': 0.3,
+        },
+        'efficientnet-b3': {
+            'width': 1.2,
+            'depth': 1.4,
+            'res': 300,
+            'dropout': 0.3,
+        },
+        'efficientnet-b4': {
+            'width': 1.4,
+            'depth': 1.8,
+            'res': 380,
+            'dropout': 0.4,
+        },
+        'efficientnet-b5': {
+            'width': 1.6,
+            'depth': 2.2,
+            'res': 456,
+            'dropout': 0.4,
+        },
+        'efficientnet-b6': {
+            'width': 1.8,
+            'depth': 2.6,
+            'res': 528,
+            'dropout': 0.5,
+        },
+        'efficientnet-b7': {
+            'width': 2.0,
+            'depth': 3.1,
+            'res': 600,
+            'dropout': 0.5,
+        },
+        'efficientnet-b8': {
+            'width': 2.2,
+            'depth': 3.6,
+            'res': 672,
+            'dropout': 0.5,
+        },
+        'efficientnet-l2': {
+            'width': 4.3,
+            'depth': 5.3,
+            'res': 800,
+            'dropout': 0.5,
+        },
     }
     return params_dict[model_name]
 
@@ -857,7 +1090,8 @@ def efficientnet_params(model_name):
 def get_model_params(model_name, override_params):
     """ Get the block args and global params for a given model """
     if model_name.startswith('efficientnet'):
-        w, d, s, p = efficientnet_params(model_name)
+        x = efficientnet_params(model_name)
+        w, d, s, p = x['width'], x['depth'], x['res'], x['dropout']
         # note: all models have drop connect rate = 0.2
         blocks_args, global_params = efficientnet(
             width_coefficient=w, depth_coefficient=d, dropout_rate=p, image_size=s)
@@ -868,68 +1102,55 @@ def get_model_params(model_name, override_params):
         global_params = global_params._replace(**override_params)
     return blocks_args, global_params
 
-url_map = {
-    'efficientnet-b0': 'https://publicmodels.blob.core.windows.net/container/aa/efficientnet-b0-355c32eb.pth',
-    'efficientnet-b1': 'https://publicmodels.blob.core.windows.net/container/aa/efficientnet-b1-f1951068.pth',
-    'efficientnet-b2': 'https://publicmodels.blob.core.windows.net/container/aa/efficientnet-b2-8bb594d6.pth',
-    'efficientnet-b3': 'https://publicmodels.blob.core.windows.net/container/aa/efficientnet-b3-5fb5a3c3.pth',
-    'efficientnet-b4': 'https://publicmodels.blob.core.windows.net/container/aa/efficientnet-b4-6ed6700e.pth',
-    'efficientnet-b5': 'https://publicmodels.blob.core.windows.net/container/aa/efficientnet-b5-b6417697.pth',
-    'efficientnet-b6': 'https://publicmodels.blob.core.windows.net/container/aa/efficientnet-b6-c76e70fd.pth',
-    'efficientnet-b7': 'https://publicmodels.blob.core.windows.net/container/aa/efficientnet-b7-dcc49843.pth',
-}
+#url_map = {
+    #'efficientnet-b0': 'https://publicmodels.blob.core.windows.net/container/aa/efficientnet-b0-355c32eb.pth',
+    #'efficientnet-b1': 'https://publicmodels.blob.core.windows.net/container/aa/efficientnet-b1-f1951068.pth',
+    #'efficientnet-b2': 'https://publicmodels.blob.core.windows.net/container/aa/efficientnet-b2-8bb594d6.pth',
+    #'efficientnet-b3': 'https://publicmodels.blob.core.windows.net/container/aa/efficientnet-b3-5fb5a3c3.pth',
+    #'efficientnet-b4': 'https://publicmodels.blob.core.windows.net/container/aa/efficientnet-b4-6ed6700e.pth',
+    #'efficientnet-b5': 'https://publicmodels.blob.core.windows.net/container/aa/efficientnet-b5-b6417697.pth',
+    #'efficientnet-b6': 'https://publicmodels.blob.core.windows.net/container/aa/efficientnet-b6-c76e70fd.pth',
+    #'efficientnet-b7': 'https://publicmodels.blob.core.windows.net/container/aa/efficientnet-b7-dcc49843.pth',
+#}
 
-url_map_advprop = {
-    'efficientnet-b0': 'https://publicmodels.blob.core.windows.net/container/advprop/efficientnet-b0-b64d5a18.pth',
-    'efficientnet-b1': 'https://publicmodels.blob.core.windows.net/container/advprop/efficientnet-b1-0f3ce85a.pth',
-    'efficientnet-b2': 'https://publicmodels.blob.core.windows.net/container/advprop/efficientnet-b2-6e9d97e5.pth',
-    'efficientnet-b3': 'https://publicmodels.blob.core.windows.net/container/advprop/efficientnet-b3-cdd7c0f4.pth',
-    'efficientnet-b4': 'https://publicmodels.blob.core.windows.net/container/advprop/efficientnet-b4-44fb3a87.pth',
-    'efficientnet-b5': 'https://publicmodels.blob.core.windows.net/container/advprop/efficientnet-b5-86493f6b.pth',
-    'efficientnet-b6': 'https://publicmodels.blob.core.windows.net/container/advprop/efficientnet-b6-ac80338e.pth',
-    'efficientnet-b7': 'https://publicmodels.blob.core.windows.net/container/advprop/efficientnet-b7-4652b6dd.pth',
-    'efficientnet-b8': 'https://publicmodels.blob.core.windows.net/container/advprop/efficientnet-b8-22a8fe65.pth',
-}
+#url_map_advprop = {
+    #'efficientnet-b0': 'https://publicmodels.blob.core.windows.net/container/advprop/efficientnet-b0-b64d5a18.pth',
+    #'efficientnet-b1': 'https://publicmodels.blob.core.windows.net/container/advprop/efficientnet-b1-0f3ce85a.pth',
+    #'efficientnet-b2': 'https://publicmodels.blob.core.windows.net/container/advprop/efficientnet-b2-6e9d97e5.pth',
+    #'efficientnet-b3': 'https://publicmodels.blob.core.windows.net/container/advprop/efficientnet-b3-cdd7c0f4.pth',
+    #'efficientnet-b4': 'https://publicmodels.blob.core.windows.net/container/advprop/efficientnet-b4-44fb3a87.pth',
+    #'efficientnet-b5': 'https://publicmodels.blob.core.windows.net/container/advprop/efficientnet-b5-86493f6b.pth',
+    #'efficientnet-b6': 'https://publicmodels.blob.core.windows.net/container/advprop/efficientnet-b6-ac80338e.pth',
+    #'efficientnet-b7': 'https://publicmodels.blob.core.windows.net/container/advprop/efficientnet-b7-4652b6dd.pth',
+    #'efficientnet-b8': 'https://publicmodels.blob.core.windows.net/container/advprop/efficientnet-b8-22a8fe65.pth',
+#}
 
-def load_pretrained_weights(model, model_name, load_fc=True, advprop=False):
-    """ Loads pretrained weights, and downloads if loading for the first time. """
-    # AutoAugment or Advprop (different preprocessing)
-    url_map_ = url_map_advprop if advprop else url_map
-    from torch.utils import model_zoo
-    state_dict = model_zoo.load_url(url_map_[model_name], map_location=torch.device('cpu'))
-    # state_dict = torch.load('../../weights/backbone_efficientnetb0.pth')
-    if load_fc:
-        ret = model.load_state_dict(state_dict, strict=False)
-        print(ret)
-    else:
-        state_dict.pop('_fc.weight')
-        state_dict.pop('_fc.bias')
-        res = model.load_state_dict(state_dict, strict=False)
-        assert set(res.missing_keys) == set(['_fc.weight', '_fc.bias']), 'issue loading pretrained weights'
-    print('Loaded pretrained weights for {}'.format(model_name))
+#def load_pretrained_weights(model, model_name, load_fc=True, advprop=False):
+    #""" Loads pretrained weights, and downloads if loading for the first time. """
+    ## AutoAugment or Advprop (different preprocessing)
+    #url_map_ = url_map_advprop if advprop else url_map
+    #from torch.utils import model_zoo
+    #state_dict = model_zoo.load_url(url_map_[model_name], map_location=torch.device('cpu'))
+    ## state_dict = torch.load('../../weights/backbone_efficientnetb0.pth')
+    #if load_fc:
+        #ret = model.load_state_dict(state_dict, strict=False)
+        #print(ret)
+    #else:
+        #state_dict.pop('fc.weight')
+        #state_dict.pop('fc.bias')
+        #res = model.load_state_dict(state_dict, strict=False)
+        #assert set(res.missing_keys) == set(['fc.weight', 'fc.bias']), 'issue loading pretrained weights'
+    #print('Loaded pretrained weights for {}'.format(model_name))
 
 class EfficientNet(nn.Module):
-    """
-    An EfficientNet model. Most easily loaded with the .from_name or .from_pretrained methods
-
-    Args:
-        blocks_args (list): A list of BlockArgs to construct blocks
-        global_params (namedtuple): A set of GlobalParams shared between blocks
-
-    Example:
-        model = EfficientNet.from_pretrained('efficientnet-b0')
-
-    """
-
-    def __init__(self, blocks_args=None, global_params=None):
+    def __init__(self,
+                 blocks_args=None,
+                 global_params=None):
         super().__init__()
         assert isinstance(blocks_args, list), 'blocks_args should be a list'
         assert len(blocks_args) > 0, 'block args must be greater than 0'
         self._global_params = global_params
         self._blocks_args = blocks_args
-
-        # Get static or dynamic convolution depending on image size
-        Conv2d = get_same_padding_conv2d(image_size=global_params.image_size)
 
         # Batch norm parameters
         bn_mom = 1 - self._global_params.batch_norm_momentum
@@ -938,12 +1159,19 @@ class EfficientNet(nn.Module):
         # Stem
         in_channels = 3  # rgb
         out_channels = round_filters(32, self._global_params)  # number of output channels
-        self._conv_stem = Conv2d(in_channels, out_channels, kernel_size=3, stride=2, bias=False)
+        self._conv_stem = SimpleConv(in_channels, out_channels, kernel_size=3, stride=2, bias=False)
         self._bn0 = nn.BatchNorm2d(num_features=out_channels, momentum=bn_mom, eps=bn_eps)
 
         # Build blocks
         self._blocks = nn.ModuleList([])
-        for block_args in self._blocks_args:
+        non_local_net = global_params.non_local_net
+        if non_local_net is not None:
+            stride2_stages = [i for i, b in enumerate(self._blocks_args) if b.stride[0] == 2]
+            idx_non_local = stride2_stages[non_local_net - 1]
+            assert self._blocks_args[idx_non_local].num_repeat >= 2
+        else:
+            idx_non_local = None
+        for idx_block, block_args in enumerate(self._blocks_args):
 
             # Update block input and output filters based on depth multiplier.
             block_args = block_args._replace(
@@ -956,19 +1184,28 @@ class EfficientNet(nn.Module):
             self._blocks.append(MBConvBlock(block_args, self._global_params))
             if block_args.num_repeat > 1:
                 block_args = block_args._replace(input_filters=block_args.output_filters, stride=1)
-            for _ in range(block_args.num_repeat - 1):
+            for idx_repeat in range(block_args.num_repeat - 1):
+                if idx_block == idx_non_local and \
+                        idx_repeat == block_args.num_repeat - 2:
+                    # as the paper of non-local-network suggests, we add it
+                    # before  the last building block
+                    block_args = block_args._replace(non_local_net=True)
                 self._blocks.append(MBConvBlock(block_args, self._global_params))
 
         # Head
         in_channels = block_args.output_filters  # output of final block
         out_channels = round_filters(1280, self._global_params)
-        self._conv_head = Conv2d(in_channels, out_channels, kernel_size=1, bias=False)
+        self._conv_head = SimpleConv(in_channels, out_channels, kernel_size=1, bias=False)
         self._bn1 = nn.BatchNorm2d(num_features=out_channels, momentum=bn_mom, eps=bn_eps)
 
         # Final linear layer
         self._avg_pooling = nn.AdaptiveAvgPool2d(1)
         self._dropout = nn.Dropout(self._global_params.dropout_rate)
-        self._fc = nn.Linear(out_channels, self._global_params.num_classes)
+        # before the name is _fc, rather than fc. This is a breaking change which
+        # might impact the classifier testing accuracy. We do this because all
+        # resnet-family network's name is fc rather than _fc. This consistency
+        # will make the unsupervised pre-training much easier.
+        self.fc = nn.Linear(out_channels, self._global_params.num_classes)
         self._swish = MemoryEfficientSwish()
 
     def set_swish(self, memory_efficient=True):
@@ -1004,55 +1241,32 @@ class EfficientNet(nn.Module):
         x = self._avg_pooling(x)
         x = x.view(bs, -1)
         x = self._dropout(x)
-        x = self._fc(x)
+        x = self.fc(x)
         return x
 
     @classmethod
     def from_name(cls, model_name, override_params=None):
-        cls._check_model_name_is_valid(model_name)
         blocks_args, global_params = get_model_params(model_name, override_params)
         return cls(blocks_args, global_params)
 
-    @classmethod
-    def from_pretrained(cls, model_name, load_weights=True, advprop=True, num_classes=1000, in_channels=3):
-        model = cls.from_name(model_name, override_params={'num_classes': num_classes})
-        if load_weights:
-            load_pretrained_weights(model, model_name, load_fc=(num_classes == 1000), advprop=advprop)
-        if in_channels != 3:
-            Conv2d = get_same_padding_conv2d(image_size = model._global_params.image_size)
-            out_channels = round_filters(32, model._global_params)
-            model._conv_stem = Conv2d(in_channels, out_channels, kernel_size=3, stride=2, bias=False)
-        return model
-
-    @classmethod
-    def get_image_size(cls, model_name):
-        cls._check_model_name_is_valid(model_name)
-        _, _, res, _ = efficientnet_params(model_name)
-        return res
-
-    @classmethod
-    def _check_model_name_is_valid(cls, model_name):
-        """ Validates model name. """
-        valid_models = ['efficientnet-b'+str(i) for i in range(9)]
-        if model_name not in valid_models:
-            raise ValueError('model_name should be one of: ' + ', '.join(valid_models))
-
 class EfficientNetD(nn.Module):
-    """
-    modified by Zylo117
-    """
-
     def __init__(self, compound_coef, load_weights=False,
-                 drop_connect_rate=None):
+                 drop_connect_rate=None,
+                 non_local_net=None,
+                 ):
         super().__init__()
         from qd.qd_common import print_frame_info
         print_frame_info()
-        model = EfficientNet.from_pretrained(f'efficientnet-b{compound_coef}', load_weights)
+        override_params = {'num_classes': 1000}
+        override_params['non_local_net'] = non_local_net
+        model = EfficientNet.from_name(
+            f'efficientnet-b{compound_coef}',
+            override_params=override_params)
         del model._conv_head
         del model._bn1
         del model._avg_pooling
         del model._dropout
-        del model._fc
+        del model.fc
         self.model = model
         if drop_connect_rate is None:
             drop_connect_rate = self.model._global_params.drop_connect_rate
@@ -1064,9 +1278,6 @@ class EfficientNetD(nn.Module):
         x = self.model._swish(x)
         feature_maps = []
 
-        # TODO: temporarily storing extra tensor last_x and del it later might not be a good idea,
-        #  try recording stride changing when creating efficientnet,
-        #  and then apply it here.
         last_x = None
         for idx, block in enumerate(self.model._blocks):
             drop_connect_rate = self.drop_connect_rate
@@ -1083,10 +1294,6 @@ class EfficientNetD(nn.Module):
         return feature_maps[1:]
 
 class Anchors(nn.Module):
-    """
-    adapted and modified from https://github.com/google/automl/blob/master/efficientdet/anchors.py by Zylo117
-    """
-
     def __init__(self, anchor_scale=4., pyramid_levels=None, **kwargs):
         super().__init__()
         print_frame_info()
@@ -1103,30 +1310,16 @@ class Anchors(nn.Module):
 
     @torch.no_grad()
     def forward(self, image, dtype=torch.float32, features=None):
-        """Generates multiscale anchor boxes.
-
-        Args:
-          image_size: integer number of input image size. The input image has the
-            same dimension for width and height. The image_size should be divided by
-            the largest feature stride 2^max_level.
-          anchor_scale: float number representing the scale of size of the base
-            anchor to the feature stride 2^level.
-          anchor_configs: a dictionary with keys as the levels of anchors and
-            values as a list of anchor configuration.
-
-        Returns:
-          anchor_boxes: a numpy array with shape [N, 4], which stacks anchors on all
-            feature levels.
-        Raises:
-          ValueError: input size must be the multiple of largest feature stride.
-        """
         image_shape = image.shape[2:]
         anchor_key = self.get_key('anchor', image_shape)
         stride_idx_key = self.get_key('anchor_stride_index', image_shape)
 
         if self.buffer is not None and anchor_key in self.buffer:
-            return {'stride_idx': self.buffer[stride_idx_key].detach(),
-                    'anchor': self.buffer[anchor_key].detach()}
+            return {
+                'stride_idx': self.buffer[stride_idx_key].detach(),
+                'anchor': self.buffer[anchor_key].detach(),
+                'num_anchor_each_pos': len(self.scales) * len(self.ratios),
+            }
 
         if dtype == torch.float16:
             dtype = np.float16
@@ -1184,13 +1377,14 @@ class Anchors(nn.Module):
         return {
             'stride_idx': anchor_stride_indices,
             'anchor': anchor_boxes,
+            'num_anchor_each_pos': len(self.scales) * len(self.ratios),
         }
 
     def get_key(self, hint, image_shape):
         return '{}_{}'.format(hint, '_'.join(map(str, image_shape)))
 
 class EffNetFPN(nn.Module):
-    def __init__(self, compound_coef=0, start_from=3):
+    def __init__(self, compound_coef=0, start_from=3, bifpn_version=0):
         super().__init__()
 
         self.backbone_net = EfficientNetD(EfficientDetBackbone.backbone_compound_coef[compound_coef],
@@ -1200,13 +1394,20 @@ class EffNetFPN(nn.Module):
         else:
             conv_channel_coef = EfficientDetBackbone.conv_channel_coef2345[compound_coef]
 
-        self.bifpn = nn.Sequential(
-            *[BiFPN(EfficientDetBackbone.fpn_num_filters[compound_coef],
-                    conv_channel_coef,
-                    True if _ == 0 else False,
-                    attention=True if compound_coef < 6 else False,
-                    adaptive_up=True)
-              for _ in range(EfficientDetBackbone.fpn_cell_repeats[compound_coef])])
+        if bifpn_version == 0:
+            self.bifpn = nn.Sequential(
+                *[BiFPN(EfficientDetBackbone.fpn_num_filters[compound_coef],
+                        conv_channel_coef,
+                        True if _ == 0 else False,
+                        attention=True if compound_coef < 6 else False,
+                        adaptive_up=True)
+                  for _ in range(EfficientDetBackbone.fpn_cell_repeats[compound_coef])])
+        else:
+            self.bifpn = nn.Sequential(
+                *[BIFPN(EfficientDetBackbone.fpn_num_filters[compound_coef],
+                        conv_channel_coef,
+                        True if _ == 0 else False)
+                  for _ in range(EfficientDetBackbone.fpn_cell_repeats[compound_coef])])
 
         self.out_channels = EfficientDetBackbone.fpn_num_filters[compound_coef]
         self.start_from = start_from
@@ -1243,18 +1444,18 @@ class EfficientDetBackbone(nn.Module):
         # the channels of P2/P3/P4/P5.
         0: [24, 40, 112, 320],
         # to be determined for the following
-        1: [40, 112],
-        2: [48, 120],
-        3: [48, 136],
-        4: [56, 160],
-        5: [64, 176],
+        1: [24, 40, 112, 320],
+        2: [24, 48, 120, 352],
+        3: [32, 48, 136, 384],
+        4: [32, 56, 160, 448],
+        5: [40, 64, 176, 512],
         6: [72, 200],
         7: [72, 200],
     }
     fpn_cell_repeats = [3, 4, 5, 6, 7, 7, 8, 8]
     def __init__(self, num_classes=80, compound_coef=0, load_weights=False,
                  prior_prob=0.01, **kwargs):
-        super(EfficientDetBackbone, self).__init__()
+        super().__init__()
         self.compound_coef = compound_coef
 
         self.input_sizes = [512, 640, 768, 896, 1024, 1280, 1280, 1536]
@@ -1264,6 +1465,13 @@ class EfficientDetBackbone(nn.Module):
         self.num_scales = len(kwargs.get('scales', [2 ** 0, 2 ** (1.0 / 3.0), 2 ** (2.0 / 3.0)]))
 
         num_anchors = len(self.aspect_ratios) * self.num_scales
+
+        self.backbone_net = EfficientNetD(
+            self.backbone_compound_coef[compound_coef],
+            load_weights,
+            drop_connect_rate=kwargs.get('drop_connect_rate'),
+            non_local_net=kwargs.get('non_local_net'),
+        )
 
         self.bifpn = nn.Sequential(
             *[BiFPN(self.fpn_num_filters[self.compound_coef],
@@ -1275,7 +1483,10 @@ class EfficientDetBackbone(nn.Module):
 
         self.num_classes = num_classes
         self.regressor = Regressor(in_channels=self.fpn_num_filters[self.compound_coef], num_anchors=num_anchors,
-                                   num_layers=self.box_class_repeats[self.compound_coef])
+                                   num_layers=self.box_class_repeats[self.compound_coef],
+                                   box_dim=kwargs.get('box_dim', 4),
+                                   init_as_zero_out=kwargs.get('init_as_zero_out'),
+                                   )
         self.classifier = Classifier(in_channels=self.fpn_num_filters[self.compound_coef], num_anchors=num_anchors,
                                      num_classes=num_classes,
                                      num_layers=self.box_class_repeats[self.compound_coef],
@@ -1286,11 +1497,6 @@ class EfficientDetBackbone(nn.Module):
         if 'anchor_scale' in kwargs:
             del kwargs['anchor_scale']
         self.anchors = Anchors(anchor_scale=anchor_scale, **kwargs)
-
-        self.backbone_net = EfficientNetD(
-            self.backbone_compound_coef[compound_coef],
-            load_weights,
-            drop_connect_rate=kwargs.get('drop_connect_rate'))
 
     def freeze_bn(self):
         for m in self.modules():
@@ -1356,13 +1562,29 @@ def calc_iou(a, b):
     iw = torch.clamp(iw, min=0)
     ih = torch.clamp(ih, min=0)
     ua = torch.unsqueeze((a[:, 2] - a[:, 0]) * (a[:, 3] - a[:, 1]), dim=1) + area - iw * ih
-    ua = torch.clamp(ua, min=1e-8)
+    ua = torch.clamp(ua, min=1e-5)
     intersection = iw * ih
     IoU = intersection / ua
 
     return IoU
 
+class ExpLinear(nn.Module):
+    # when x < 0, it is exp(x). when x > 0, it is x + 1
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        y = x + 1
+        y[x < 0] = x[x < 0].exp()
+        return y
+
 class BBoxTransform(nn.Module):
+    def __init__(self, wh_transform_type=None):
+        super().__init__()
+        print_frame_info()
+        self.wh_transform_type = wh_transform_type
+        self.transform = ExpLinear()
+
     def forward(self, anchors, regression):
         """
         decode_box_outputs adapted from https://github.com/google/automl/blob/master/efficientdet/anchors.py
@@ -1379,8 +1601,12 @@ class BBoxTransform(nn.Module):
         ha = anchors[..., 2] - anchors[..., 0]
         wa = anchors[..., 3] - anchors[..., 1]
 
-        w = regression[..., 3].exp() * wa
-        h = regression[..., 2].exp() * ha
+        if self.wh_transform_type is None:
+            w = regression[..., 3].exp() * wa
+            h = regression[..., 2].exp() * ha
+        else:
+            w = self.transform(regression[..., 3]) * wa
+            h = self.transform(regression[..., 2]) * ha
 
         y_centers = regression[..., 0] * ha + y_centers_a
         x_centers = regression[..., 1] * wa + x_centers_a
@@ -1574,6 +1800,16 @@ def calculate_giou(pred, gt):
     giou = iou - (cover - union) / (cover + 1e-5)
     return giou
 
+class CrossEntropyReceiveBinaryTargetLoss(nn.Module):
+    def forward(self, x, y):
+        # the last entry is the background
+        sum_y = y.sum(dim=1)
+        negative_sample = sum_y == 0
+        valid_sample = sum_y >= 0
+        gt = y.argmax(dim=1)
+        gt[negative_sample] = x.shape[1]
+        return nn.functional.cross_entropy(x, y)
+
 class FocalLoss(nn.Module):
     def __init__(self, alpha=0.25, gamma=2., cls_loss_type='FL', smooth_bce_pos=0.99,
                  smooth_bce_neg=0.01,
@@ -1584,35 +1820,46 @@ class FocalLoss(nn.Module):
                  cls_weight=1.,
                  reg_weight=1.,
                  cls_target_on_iou=False,
+                 assigner_type='iou_max',
+                 atss_topk=9,
+                 wh_transform_type=None,
+                 distill_alpha=0.25,
                  ):
         super(FocalLoss, self).__init__()
         from qd.qd_common import print_frame_info
         print_frame_info()
         self.iter = 0
         self.reg_loss_type = reg_loss_type
-        self.regressBoxes = BBoxTransform()
+        self.regressBoxes = BBoxTransform(wh_transform_type)
         if cls_loss_type == 'FL':
             if cls_target_on_iou:
+                # not working
                 from qd.layers.loss import FocalLossWithLogitsNegSoftLoss
                 self.cls_loss = FocalLossWithLogitsNegSoftLoss(alpha, gamma)
             else:
                 from qd.layers.loss import FocalLossWithLogitsNegLoss
                 self.cls_loss = FocalLossWithLogitsNegLoss(alpha, gamma)
         elif cls_loss_type == 'BCE':
+            # not working
             from qd.qd_pytorch import BCEWithLogitsNegLoss
             self.cls_loss = BCEWithLogitsNegLoss(reduction='sum')
         elif cls_loss_type == 'SmoothBCE':
+            # not working
             from qd.layers.loss import SmoothBCEWithLogitsNegLoss
             self.cls_loss = SmoothBCEWithLogitsNegLoss(
                 pos=smooth_bce_pos, neg=smooth_bce_neg)
         elif cls_loss_type == 'SmoothFL':
+            # not working
             from qd.layers.loss import FocalSmoothBCEWithLogitsNegLoss
             self.cls_loss = FocalSmoothBCEWithLogitsNegLoss(
                 alpha=alpha, gamma=2.,
                 pos=smooth_bce_pos, neg=smooth_bce_neg)
+        elif cls_loss_type == 'CE':
+            self.cls_loss = CrossEntropyReceiveBinaryTargetLoss()
         else:
             raise NotImplementedError(cls_loss_type)
         self.at_least_1_assgin = at_least_1_assgin
+        self.assigner_type = assigner_type
 
         self.gt_total = 0
         self.gt_saved_by_at_least = 0
@@ -1627,14 +1874,24 @@ class FocalLoss(nn.Module):
         if self.cls_target_on_iou:
             assert self.reg_loss_type == 'GIOU'
 
+        self.atss_topk = atss_topk
+
         self.buf = {}
+
+        from qd.layers.loss import DistillFocalLossWithLogitsNegLoss
+        self.distill_cls_loss = DistillFocalLossWithLogitsNegLoss(distill_alpha, gamma)
 
     def forward(self, classifications, regressions, anchor_info, annotations, **kwargs):
         debug = (self.iter % 100) == 0
+        debug_out = []
         self.iter += 1
         if debug:
             from collections import defaultdict
             debug_info = defaultdict(list)
+
+        # used for teacher student distillation
+        guide_classifications = kwargs.get('guide_classifications')
+        guide_cls_losses = []
 
         batch_size = classifications.shape[0]
         classification_losses = []
@@ -1657,12 +1914,12 @@ class FocalLoss(nn.Module):
         for j in range(batch_size):
 
             classification = classifications[j, :, :]
+            if guide_classifications is not None:
+                guide_classification = guide_classifications[j, :, :]
             regression = regressions[j, :, :]
 
             bbox_annotation = annotations[j]
             bbox_annotation = bbox_annotation[bbox_annotation[:, 4] != -1]
-
-            #classification = torch.clamp(classification, 1e-4, 1.0 - 1e-4)
 
             if bbox_annotation.shape[0] == 0:
                 #cls_loss = calculate_focal_loss2(classification,
@@ -1674,35 +1931,54 @@ class FocalLoss(nn.Module):
                 classification_losses.append(cls_loss)
                 continue
 
-            IoU = calc_iou(anchor[:, :], bbox_annotation[:, :4])
+            if self.assigner_type == 'iou_max':
+                IoU = calc_iou(anchor[:, :], bbox_annotation[:, :4])
+                IoU_max, IoU_argmax = torch.max(IoU, dim=1)
+                if self.at_least_1_assgin:
+                    iou_max_gt, iou_argmax_gt = torch.max(IoU, dim=0)
+                    curr_saved = (iou_max_gt < self.pos_iou_th).sum()
+                    self.gt_saved_by_at_least += curr_saved
+                    self.gt_total += len(iou_argmax_gt)
+                    IoU_max[iou_argmax_gt] = 1.
+                    IoU_argmax[iou_argmax_gt] = torch.arange(len(iou_argmax_gt)).to(device)
+                negative_indices = torch.lt(IoU_max, self.neg_iou_th)
+                positive_indices = torch.ge(IoU_max, self.pos_iou_th)
+                assigned_annotations = bbox_annotation[IoU_argmax, :]
+                assigned_annotations = assigned_annotations[positive_indices, :]
+            elif self.assigner_type == 'atss':
+                from mmdet.core import build_assigner
+                assigner = build_assigner({
+                    'type': 'ATSSAssigner',
+                    'topk': self.atss_topk,
+                })
+                num_level_proposals_inside = [(anchor_info['stride_idx'] == i).sum() for i in range(5)]
+                if g_anchor_xyxy:
+                    proposals = anchor
+                else:
+                    proposals = torch.stack([anchor[:, 1], anchor[:, 0], anchor[:, 3], anchor[:, 2]],
+                                            dim=1)
+                assign_result = assigner.assign(
+                    proposals, # N x 4
+                    num_level_proposals_inside,
+                    bbox_annotation[:, :4], None, bbox_annotation[:, 4].long())
+                negative_indices = assign_result.gt_inds == 0
+                positive_indices = assign_result.gt_inds > 0
+                assigned_annotations = bbox_annotation[assign_result.gt_inds[positive_indices] - 1]
 
-            IoU_max, IoU_argmax = torch.max(IoU, dim=1)
-            if self.at_least_1_assgin:
-                iou_max_gt, iou_argmax_gt = torch.max(IoU, dim=0)
-                curr_saved = (iou_max_gt < self.pos_iou_th).sum()
-                self.gt_saved_by_at_least += curr_saved
-                self.gt_total += len(iou_argmax_gt)
-                IoU_max[iou_argmax_gt] = 1.
-                IoU_argmax[iou_argmax_gt] = torch.arange(len(iou_argmax_gt)).to(device)
-
-            # compute the loss for classification
             targets = torch.ones_like(classification) * -1
             targets = targets.to(device)
 
-            targets[torch.lt(IoU_max, self.neg_iou_th), :] = 0
-
-            positive_indices = torch.ge(IoU_max, self.pos_iou_th)
+            targets[negative_indices, :] = 0
 
             num_positive_anchors = positive_indices.sum()
-
-            assigned_annotations = bbox_annotation[IoU_argmax, :]
 
             #cls_loss = calculate_focal_loss(classification, targets, alpha,
                                             #gamma)
 
             if positive_indices.sum() > 0:
-                assigned_annotations = assigned_annotations[positive_indices, :]
                 if self.reg_loss_type == 'L1':
+                    # never reach here please since GIOU is better and there is
+                    # no need to tune the balance between xy and width/height
                     anchor_widths_pi = anchor_widths[positive_indices]
                     anchor_heights_pi = anchor_heights[positive_indices]
                     anchor_ctr_x_pi = anchor_ctr_x[positive_indices]
@@ -1738,7 +2014,15 @@ class FocalLoss(nn.Module):
                     curr_pred_xyxy = self.regressBoxes(curr_anchors, curr_regression)
                     regression_loss = 1.- calculate_giou(curr_pred_xyxy, assigned_annotations)
                     regression_loss = regression_loss.mean()
-                    assert regression_loss == regression_loss
+                    if regression_loss != regression_loss:
+                        from qd.torch_common import describe_tensor
+                        logging.info('curr_regression = {}; '
+                                     'assigned_annotations={}; '
+                                     .format(
+                                         describe_tensor(curr_regression),
+                                         describe_tensor(assigned_annotations),
+                                     ))
+                        raise ValueError('regression_loss is NaN')
                 else:
                     raise NotImplementedError
                 regression_losses.append(regression_loss)
@@ -1750,6 +2034,7 @@ class FocalLoss(nn.Module):
 
             targets[positive_indices, :] = 0
             if self.cls_target_on_iou:
+                # not working
                 with torch.no_grad():
                     iou = calc_pair_iou_xyxy(curr_pred_xyxy, assigned_annotations[:, :4])
                 targets[positive_indices,
@@ -1779,6 +2064,11 @@ class FocalLoss(nn.Module):
                     self.buf['cum_pos_count_each_stride'] = cum_pos_count_each_stride
 
             cls_loss = self.cls_loss(classification, targets)
+            if guide_classifications is not None:
+                guide_cls_loss = self.distill_cls_loss(classification, targets, guide_classification)
+                guide_cls_loss = guide_cls_loss.sum() / torch.clamp(num_positive_anchors.to(dtype), min=1.0)
+                assert guide_cls_loss == guide_cls_loss
+                guide_cls_losses.append(guide_cls_loss)
 
             cls_loss = cls_loss.sum() / torch.clamp(num_positive_anchors.to(dtype), min=1.0)
             assert cls_loss == cls_loss
@@ -1786,26 +2076,35 @@ class FocalLoss(nn.Module):
 
         if debug:
             if len(debug_info) > 0:
-                s1 = ('pos = {}, neg = {}, saved_ratio = {}/{}={:.1f}, '
-                             'stride_info = {}, '
-                             .format(
-                                 torch.tensor(debug_info['pos_conf']).mean(),
-                                 torch.tensor(debug_info['neg_conf']).mean(),
-                                 self.gt_saved_by_at_least,
-                                 self.gt_total,
-                                 1. * self.gt_saved_by_at_least / self.gt_total,
-                                 self.buf['cum_pos_count_each_stride'],
-                             ))
+                debug_out.append('pos = {}, neg = {}, '.format(
+                    torch.tensor(debug_info['pos_conf']).mean(),
+                    torch.tensor(debug_info['neg_conf']).mean(),
+                ))
+                if self.assigner_type == 'iou_max':
+                    debug_out.append(('saved_ratio = {}/{}={:.1f}, '
+                                       'stride_info = {}, '
+                                       .format(
+                                           self.gt_saved_by_at_least,
+                                           self.gt_total,
+                                           1. * self.gt_saved_by_at_least / self.gt_total,
+                                           self.buf['cum_pos_count_each_stride'],
+                                       )))
                 if 'target_mean' in debug_info:
                     s2 = 'target_mean/min/max = {:.2f}/{:.2f}/{:.2f}'.format(
                         torch.tensor(debug_info['target_mean']).mean(),
                         torch.tensor(debug_info['target_mean']).min(),
                         torch.tensor(debug_info['target_mean']).max(),
                     )
-                    s1 += s2
-                logging.info(s1)
-        return self.cls_weight * torch.stack(classification_losses).mean(dim=0, keepdim=True), \
+                    debug_out.append(s2)
+                logging.info(','.join(debug_out))
+
+        result = [
+                self.cls_weight * torch.stack(classification_losses).mean(dim=0, keepdim=True), \
                self.reg_weight * torch.stack(regression_losses).mean(dim=0, keepdim=True)
+        ]
+        if guide_classifications is not None:
+            result.append(torch.stack(guide_cls_losses).mean(dim=0, keepdim=True))
+        return result
 
 class ModelWithLoss(nn.Module):
     def __init__(self, model, criterion):
@@ -1893,22 +2192,30 @@ class PostProcess(nn.Module):
         return out
 
 class InferenceModel(nn.Module):
-    def __init__(self, model):
+    def __init__(self, model, threshold=0.01,
+                 nms_threshold=0.5,
+                 wh_transform_type=None,
+                 cls_loss_type=None):
         super().__init__()
         self.module = model
 
-        self.regressBoxes = BBoxTransform()
+        self.regressBoxes = BBoxTransform(wh_transform_type)
         self.clipBoxes = ClipBoxes()
-        self.threshold = 0.01
-        self.nms_threshold = 0.5
+        self.threshold = threshold
+        self.nms_threshold = nms_threshold
         self.max_box = 100
         self.debug = False
         self.post_process = PostProcess(self.nms_threshold)
+        self.cls_loss_type = cls_loss_type
 
     def forward(self, sample):
         features, regression, classification, anchor_info = self.module(sample['image'])
         anchors = anchor_info['anchor']
-        classification = classification.sigmoid()
+        if self.cls_loss_type == 'CE':
+            classification = nn.functional.softmax(classification, dim=1)
+            classification = classification[:, 1:]
+        else:
+            classification = classification.sigmoid()
         transformed_anchors = self.regressBoxes(anchors, regression)
         transformed_anchors = self.clipBoxes(transformed_anchors, sample['image'])
 

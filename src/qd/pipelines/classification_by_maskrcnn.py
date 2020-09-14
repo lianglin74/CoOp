@@ -25,6 +25,9 @@ class MaskClassificationPipeline(ModelPipeline):
             'normalization_group_size': None,
             'freeze_last_bn_stats': 0,
             'predict_ema_decay': None,
+
+            'dist_ce_momentum': 0.99,
+            'use_amp': False,
             })
         self.step_lr = self.parse_iter(self.step_lr)
         self.max_iter = self.parse_iter(self.max_iter)
@@ -44,10 +47,15 @@ class MaskClassificationPipeline(ModelPipeline):
         return model
 
     def combine_model_criterion(self, model, criterion):
-        model = ModelLoss(model, criterion)
+        if self.loss_type in ['mo_dist_ce']:
+            from qd.layers.loss import ModelLossWithInput
+            model = ModelLossWithInput(model, criterion)
+        else:
+            model = ModelLoss(model, criterion)
         return model
 
     def init_apex_amp(self, model, optimizer):
+        # deprecated since pytorch 1.6 natively supports this
         from apex import amp
         # Initialize mixed-precision training
         use_mixed_precision = False
@@ -84,6 +92,13 @@ class MaskClassificationPipeline(ModelPipeline):
         )
         return checkpointer
 
+    def load_checkpoint(self, checkpointer):
+        # in teacher student network training, we need to load multiple
+        # checkpointers. one is for the student, the other is for the teacher
+        extra_checkpoint_data = checkpointer.load(self.basemodel,
+                model_only=True)
+        return extra_checkpoint_data
+
     def train(self):
         device = torch.device('cuda')
         model = self.get_train_model()
@@ -93,7 +108,7 @@ class MaskClassificationPipeline(ModelPipeline):
         optimizer = self.get_optimizer(model)
         logging.info(optimizer)
 
-        model, optimizer = self.init_apex_amp(model, optimizer)
+        #model, optimizer = self.init_apex_amp(model, optimizer)
 
         model = self._data_parallel_wrap(model)
 
@@ -104,8 +119,7 @@ class MaskClassificationPipeline(ModelPipeline):
 
         checkpointer = self.create_checkpointer(model, optimizer, scheduler)
 
-        extra_checkpoint_data = checkpointer.load(self.basemodel,
-                model_only=True)
+        extra_checkpoint_data = self.load_checkpoint(checkpointer)
 
         arguments = {}
         arguments['iteration'] = 0
@@ -142,6 +156,7 @@ class MaskClassificationPipeline(ModelPipeline):
                 checkpoint_period=self.get_snapshot_steps(),
                 arguments=arguments,
                 log_step=self.log_step,
+                use_amp=self.use_amp,
             )
         else:
             from qd.opt.trainer import do_train
@@ -155,6 +170,7 @@ class MaskClassificationPipeline(ModelPipeline):
                 checkpoint_period=self.get_snapshot_steps(),
                 arguments=arguments,
                 log_step=self.log_step,
+                use_amp=self.use_amp,
             )
 
     def _get_old_check_point_file(self, i):
@@ -268,84 +284,6 @@ class MaskClassificationPipeline(ModelPipeline):
     def get_rank_specific_tsv(self, f, rank):
         return '{}_{}_{}.tsv'.format(f, rank, self.mpi_size)
 
-    def model_surgery(self, model):
-        if self.convert_bn == 'L1':
-            raise NotImplementedError
-        elif self.convert_bn == 'L2':
-            raise NotImplementedError
-        elif self.convert_bn == 'GN':
-            model = replace_module(model,
-                    lambda m: isinstance(m, torch.nn.BatchNorm2d),
-                    lambda m: torch.nn.GroupNorm(32, m.num_features),
-                    )
-        elif self.convert_bn == 'LNG': # layer norm by group norm
-            model = replace_module(model,
-                    lambda m: isinstance(m, torch.nn.BatchNorm2d),
-                    lambda m: torch.nn.GroupNorm(1, m.num_features))
-        elif self.convert_bn == 'ING': # Instance Norm by group norm
-            model = replace_module(model,
-                    lambda m: isinstance(m, torch.nn.BatchNorm2d),
-                    lambda m: torch.nn.GroupNorm(m.num_features, m.num_features))
-        elif self.convert_bn == 'GBN':
-            model = replace_module(model,
-                    lambda m: isinstance(m, torch.nn.BatchNorm2d),
-                    lambda m: GroupBatchNorm(get_normalize_groups(m.num_features, self.normalization_group,
-                        self.normalization_group_size), m.num_features))
-        elif self.convert_bn == 'SBN':
-            if self.distributed:
-                model = replace_module(model,
-                        lambda m: isinstance(m, torch.nn.BatchNorm2d) or
-                                       isinstance(m, torch.nn.BatchNorm1d),
-                        lambda m: torch.nn.SyncBatchNorm(m.num_features,
-                            eps=m.eps,
-                            momentum=m.momentum,
-                            affine=m.affine,
-                            track_running_stats=m.track_running_stats))
-        elif self.convert_bn == 'FBN': # frozen batch norm
-            def set_eval_return(m):
-                m.eval()
-                return m
-            model = replace_module(model,
-                    lambda m: isinstance(m, torch.nn.BatchNorm2d) or
-                                   isinstance(m, torch.nn.BatchNorm1d),
-                    lambda m: set_eval_return(m))
-        #elif self.convert_bn == 'NSBN':
-            #if self.distributed:
-                #from qd.layers.batch_norm import NaiveSyncBatchNorm
-                #model = replace_module(model,
-                        #lambda m: isinstance(m, torch.nn.BatchNorm2d),
-                        #lambda m: NaiveSyncBatchNorm(m.num_features,
-                            #eps=m.eps,
-                            #momentum=m.momentum,
-                            #affine=m.affine,
-                            #track_running_stats=m.track_running_stats))
-        elif self.convert_bn == 'CBN':
-            from qd.layers.batch_norm import ConvergingBatchNorm
-            model = replace_module(model,
-                    lambda m: isinstance(m, torch.nn.BatchNorm2d),
-                    lambda m: ConvergingBatchNorm(
-                        policy=self.cbn_policy,
-                        max_iter=self.max_iter,
-                        gamma=self.cbn_gamma,
-                        num_features=m.num_features,
-                        eps=m.eps,
-                        momentum=m.momentum,
-                        affine=True,
-                        track_running_stats=m.track_running_stats,
-                        ))
-        else:
-            assert self.convert_bn is None, self.convert_bn
-        if self.hswish2relu6:
-            from qd.layers.mitorch_models.modules.activation import HardSwish
-            model = replace_module(model,
-                    lambda m: isinstance(m,
-                                         HardSwish),
-                    lambda m: torch.nn.ReLU6(inplace=True))
-        # assign a name to each module so that we can use it in each module to
-        # print debug information
-        for n, m in model.named_modules():
-            m.name_from_root = n
-        return model
 
     def demo(self, image_path):
         from qd.process_image import load_image
@@ -406,7 +344,7 @@ class MaskClassificationPipeline(ModelPipeline):
         checkpointer = DetectronCheckpointer(cfg=DummyCfg(),
                 model=model,
                 save_dir=self.output_folder)
-        checkpointer.load(model_file)
+        checkpointer.load(model_file, load_if_has=False)
 
     def wrap_feature_extract(self, model):
         from qd.layers.feature_extract import FeatureExtract
@@ -418,6 +356,9 @@ class MaskClassificationPipeline(ModelPipeline):
         start = time.time()
         if self.predict_extract:
             model = self.wrap_feature_extract(model)
+        if self.debug_feature:
+            from qd.layers.forward_pass_feature_cache import ForwardPassFeatureCache
+            model = ForwardPassFeatureCache(model)
         for i, data_from_loader in tqdm(enumerate(dataloader),
                 total=len(dataloader)):
             is_dict_data = isinstance(data_from_loader, dict)
@@ -439,14 +380,13 @@ class MaskClassificationPipeline(ModelPipeline):
             meters.update(data=time.time() - start)
             start = time.time()
             if is_dict_data:
-                for k in inputs:
-                    if hasattr(inputs[k], 'to'):
-                        inputs[k] = inputs[k].to(self.device)
+                from qd.torch_common import recursive_to_device
+                inputs = recursive_to_device(inputs, self.device)
             elif hasattr(inputs, 'to'):
                 inputs = inputs.to(self.device)
             meters.update(input_to_cuda=time.time() - start)
             start = time.time()
-            output = model(inputs)
+            output = self.predict_iter_forward(model, inputs)
             meters.update(model=time.time() - start)
             start = time.time()
             if self.predict_extract:
@@ -459,8 +399,15 @@ class MaskClassificationPipeline(ModelPipeline):
                 for row in self.predict_output_to_tsv_row(output, keys,
                                                           dataloader=dataloader):
                     yield row
+            if self.debug_feature:
+                model.sumarize_feature()
+            assert not self.debug_feature
             meters.update(write=time.time() - start)
             start = time.time()
+
+    def predict_iter_forward(self, model, inputs):
+        with torch.no_grad():
+            return model(inputs)
 
     def feature_to_tsv_row(self, features, feature_names, keys):
         if isinstance(feature_names, str):
@@ -495,6 +442,7 @@ class MaskClassificationPipeline(ModelPipeline):
         if self.test_mergebn:
             from qd.layers import MergeBatchNorm
             model = MergeBatchNorm(model)
+            logging.info('after merging bn = {}'.format(model))
         from qd.layers import ForwardPassTimeChecker
         model = ForwardPassTimeChecker(model)
         tsv_writer(self.predict_iter(dataloader, model, softmax_func, meters),

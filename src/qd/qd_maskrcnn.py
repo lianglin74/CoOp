@@ -11,7 +11,6 @@ from maskrcnn_benchmark.config import cfg
 from maskrcnn_benchmark.data import make_data_loader
 from maskrcnn_benchmark.solver import make_lr_scheduler
 from maskrcnn_benchmark.solver import make_optimizer
-from maskrcnn_benchmark.engine.trainer import do_train
 from maskrcnn_benchmark.modeling.detector import build_detection_model
 from maskrcnn_benchmark.utils.checkpoint import DetectronCheckpointer
 from maskrcnn_benchmark.utils.comm import synchronize, get_rank
@@ -19,6 +18,7 @@ from maskrcnn_benchmark.utils.comm import is_main_process
 from maskrcnn_benchmark.utils.comm import get_world_size
 from maskrcnn_benchmark.solver import make_lr_scheduler
 from maskrcnn_benchmark.structures.bounding_box import BoxList
+from maskrcnn_benchmark.layers.batch_norm import FrozenBatchNorm2d
 from qd.qd_pytorch import ModelPipeline
 from qd.qd_pytorch import torch_load, torch_save
 from qd.qd_common import ensure_directory
@@ -45,6 +45,9 @@ import os.path as op
 from tqdm import tqdm
 from qd.qd_common import merge_dict_to_cfg
 from qd.layers import ensure_shape_bn_layer
+from torch.nn import BatchNorm2d
+from qd.torch_common import update_bn_momentum
+from qd.torch_common import boxlist_to_list_dict
 
 
 def convert_to_sync_bn(module, norm=torch.nn.SyncBatchNorm, exclude_gn=False,
@@ -89,15 +92,6 @@ def lock_except_classifier(model):
         else:
             ignore += 1
     assert ignore == 2
-
-def update_bn_momentum(model, bn_momentum):
-    from collections import defaultdict
-    type_to_count = defaultdict(int)
-    for _, module in model.named_modules():
-        if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
-            module.momentum = bn_momentum
-            type_to_count[module.__class__.__name__] += 1
-    logging.info(pformat(dict(type_to_count)))
 
 def sync_model(model):
     module_states = list(model.state_dict().values())
@@ -246,6 +240,8 @@ def train(cfg, model, local_rank, distributed, log_step=20, sync_bn=False,
     )
 
     checkpoint_period = cfg.SOLVER.CHECKPOINT_PERIOD
+
+    from qd.opt.trainer import do_train
 
     do_train(
         model,
@@ -451,40 +447,6 @@ def boxlist_to_rects(box_list, func_label_id_to_label):
         rects.append(rect)
     return rects
 
-def boxlist_to_list_dict(box_list, label_id_to_label):
-    # use to_rects, which handles the case where 'labels' not in the field
-    box_list = box_list.convert("xyxy")
-    if len(box_list) == 0:
-        return []
-    scores = box_list.get_field("scores").tolist()
-    labels = box_list.get_field("labels").tolist()
-    extra_key_values = [(k, v) for k, v in box_list.extra_fields.items()
-            if k not in ['scores', 'labels']]
-    boxes = box_list.bbox
-    rects = []
-    for i, (box, score, label_id) in enumerate(zip(boxes, scores, labels)):
-        top_left, bottom_right = box[:2].tolist(), box[2:].tolist()
-
-        r = [top_left[0], top_left[1], bottom_right[0], bottom_right[1]]
-        rect = {'class': label_id_to_label[label_id], 'conf': score, 'rect': r}
-
-        for k, v in extra_key_values:
-            f = v[i]
-            if isinstance(f, Tensor):
-                f = f.squeeze()
-                if len(f.shape) == 1:
-                    # just to make it a list of float
-                    rect[k] = f.tolist()
-                elif len(f.shape) == 0:
-                    rect[k] = float(f)
-                else:
-                    raise ValueError('unknown Tensor {}'.format(
-                        ','.join(map(str, f.shape))))
-            else:
-                raise ValueError('unknown {}'.format(type(f)))
-        rects.append(rect)
-    return rects
-
 def only_inference_to_tsv(
         model,
         data_loader,
@@ -521,8 +483,7 @@ def only_inference_to_tsv(
                     start = time.time()
                 key = ds.id_to_img_map[idx]
                 wh_info = ds.get_img_info(idx)
-                box_list = box_list.resize((wh_info['width'],
-                    wh_info['height']))
+                box_list = box_list.resize((wh_info['width'], wh_info['height']))
                 if i > 1:
                     meters.update(finalize_boxlist=time.time() - start)
                     start = time.time()
@@ -646,6 +607,13 @@ class MaskRCNNPipeline(ModelPipeline):
     def __init__(self, **kwargs):
         super(MaskRCNNPipeline, self).__init__(**kwargs)
 
+        from maskrcnn_benchmark.config import _default_cfg
+        # the cfg could be modified by other places and we have to do this
+        # trick to restore to its default. Gradually, we can remove the
+        # dependence on this global variable of cfg.
+        cfg.merge_from_other_cfg(_default_cfg)
+
+
         self._default.update({
             'num_workers': 4,
             'log_step': 20,
@@ -660,6 +628,8 @@ class MaskRCNNPipeline(ModelPipeline):
             'exclude_convert_gn': False,
             'data_partition': 1,
             'use_ddp': True,
+            'min_size_range32': (800, 800),
+            'dap_max_grid': 3,
             })
 
         maskrcnn_root = op.join('src', 'maskrcnn-benchmark')
@@ -737,13 +707,81 @@ class MaskRCNNPipeline(ModelPipeline):
         pass_key_value_if_has(self.kwargs, 'basemodel',
                 self.kwargs['MODEL'], 'WEIGHT')
 
-        if self.min_size_range32:
-            set_if_not_exist(self.kwargs, 'INPUT', {})
-            self.kwargs['INPUT']['MIN_SIZE_TRAIN'] = tuple(range(*self.min_size_range32, 32))
+        min_size_train = tuple(range(self.min_size_range32[0], self.min_size_range32[1] + 32, 32))
+        if self.affine_resize:
+            if self.affine_resize == 'AF':
+                # AF: affine
+                info = {'from': 'qd.qd_pytorch',
+                        'import': 'DictTransformAffineResize',
+                        'param': {'out_sizes': min_size_train}}
+            elif self.affine_resize == 'RC':
+                # RC: resize and crop
+                info = {'from': 'qd.qd_pytorch',
+                        'import': 'DictTransformResizeCrop',
+                        'param': {'all_crop_size': min_size_train}}
+            elif self.affine_resize == 'DAP':
+                info = {'from': 'qd.qd_pytorch',
+                        'import': 'DictDAPlacing',
+                        'param': {'all_crop_size': min_size_train,
+                                  'max_grid': self.dap_max_grid}}
+            else:
+                raise NotImplementedError(self.affine_resize)
+            dict_update_path_value(self.kwargs, 'INPUT$TRAIN_RESIZER',
+                    dump_to_yaml_str(info))
+        else:
+            dict_update_path_value(self.kwargs, 'INPUT$MIN_SIZE_TRAIN',
+                    min_size_train)
+
+        if self.first_feature_anchor_size:
+            strides = dict_get_path_value(self.kwargs, 'MODEL$RPN$ANCHOR_STRIDE')
+            if isinstance(strides, str):
+                strides = eval(strides)
+            assert isinstance(strides, tuple)
+            num = len(strides)
+            dict_update_path_value(self.kwargs, 'MODEL$RPN$ANCHOR_SIZES',
+                    tuple(self.first_feature_anchor_size * 2 ** i
+                        for i in range(num)))
 
         if self.with_dcn:
             self.kwargs['MODEL']['RESNETS']['STAGE_WITH_DCN'] = (False, True,
                     True, True)
+
+        if self.all_color_jitter:
+            dict_update_path_value(self.kwargs, 'INPUT$BRIGHTNESS',
+                    self.all_color_jitter)
+            dict_update_path_value(self.kwargs, 'INPUT$CONTRAST',
+                    self.all_color_jitter)
+            dict_update_path_value(self.kwargs, 'INPUT$SATURATION',
+                    self.all_color_jitter)
+            dict_update_path_value(self.kwargs, 'INPUT$HUE',
+                    self.all_color_jitter / 2)
+
+        if self.ssfpn_weight_scaled is not None or \
+                self.ssfpn_weight_ss is not None or \
+                self.ssfpn_weight_original is not None or\
+                self.ssfpn_scale_factor is not None or \
+                self.ssfpn_detach_larger is not None:
+            arch = dict_get_path_value(self.kwargs, 'MODEL$META_ARCHITECTURE')
+            from qd.qd_common import load_from_yaml_str
+            arch = load_from_yaml_str(arch)
+            if self.ssfpn_weight_scaled is not None:
+                arch['param']['weight_scaled'] = self.ssfpn_weight_scaled
+            if self.ssfpn_weight_ss is not None:
+                arch['param']['weight_ss'] = self.ssfpn_weight_ss
+            if self.ssfpn_weight_original is not None:
+                arch['param']['weight_original'] = self.ssfpn_weight_original
+            if self.ssfpn_scale_factor is not None:
+                arch['param']['scale_factor'] = self.ssfpn_scale_factor
+            if self.ssfpn_detach_larger is not None:
+                arch['param']['detach_larger'] = self.ssfpn_detach_larger
+            if self.ssfpn_extra_conv:
+                # if it is not 256, it will crash. Then, we should fix it.
+                # Here, let's just use the defualt 256 which works in most of
+                # the cases
+                arch['param']['extra_conv_cfg'] = {'num': 4,
+                        'in_channels': 256, 'out_channels': 256}
+            dict_update_path_value(self.kwargs, 'MODEL$META_ARCHITECTURE',
+                dump_to_yaml_str(arch))
 
         # use self.kwargs instead  of kwargs because we might load parameters
         # from local disk not from the input argument
@@ -784,7 +822,9 @@ class MaskRCNNPipeline(ModelPipeline):
             if self.use_ddp:
                 logging.info('set use_ddp=False sine data_partition > 1')
             self.use_ddp = False
-        model = self.build_detection_model()
+        model = self.build_detection_model(training=True)
+        model = self.model_surgery(model)
+        model = ForwardPassTimeChecker(model)
         train(cfg, model, self.mpi_local_rank, self.distributed, self.log_step,
                 sync_bn=self.sync_bn,
                 exclude_convert_gn=self.exclude_convert_gn,
@@ -905,6 +945,8 @@ class MaskRCNNPipeline(ModelPipeline):
             cc.append('rnTh2{}'.format(cfg.MODEL.RETINANET.NMS_POLICY.THRESH2))
         if cfg.MODEL.RETINANET.NMS_POLICY.COMPOSE_FINAL_RERANK:
             cc.append('rnRerank')
+            if cfg.MODEL.RETINANET.NMS_POLICY.COMPOSE_FINAL_RERANK_TYPE != 'nms':
+                cc.append(cfg.MODEL.RETINANET.NMS_POLICY.COMPOSE_FINAL_RERANK_TYPE)
 
         if cfg.MODEL.ROI_HEADS.NMS_ON_MAX_CONF_AGNOSTIC:
             cc.append('nmsMax')
@@ -942,10 +984,15 @@ class MaskRCNNPipeline(ModelPipeline):
         else:
             raise NotImplementedError()
 
-    def build_detection_model(self):
+    def build_detection_model(self, training=True):
         model = build_detection_model(cfg)
+        if training:
+            # we might use eval model for BN layers after this
+            model.train()
         if self.sync_bn:
-            if get_mpi_size() == 1:
+            if get_mpi_size() == 1 or not training:
+                # in prediction, we may not wrap the model with
+                # DistributedDataParallel
                 norm = torch.nn.BatchNorm2d
             else:
                 # SyncBatchNorm only works in distributed env. We have not tested
@@ -960,6 +1007,20 @@ class MaskRCNNPipeline(ModelPipeline):
             model, convert_info = convert_to_sync_bn(model,
                     norm, self.exclude_convert_gn)
             logging.info(pformat(convert_info))
+        if self.convert_bn_to_nsbn:
+            from detectron2.layers.batch_norm import NaiveSyncBatchNorm
+            norm = NaiveSyncBatchNorm
+            replace_module(model,
+                    lambda m: type(m) == FrozenBatchNorm2d,
+                    lambda m: NaiveSyncBatchNorm(num_features=m.num_features,
+                        eps=m.eps))
+            replace_module(model,
+                    lambda m: type(m) == BatchNorm2d,
+                    lambda m: NaiveSyncBatchNorm(num_features=m.num_features,
+                        eps=m.eps,
+                        momentum=m.momentum,
+                        affine=m.affine,
+                        track_running_stats=m.track_running_stats))
         if self.convert_gn:
             if self.convert_gn == 'GBN':
                 from qd.layers.group_batch_norm import GroupBatchNorm, get_normalize_groups
@@ -977,10 +1038,15 @@ class MaskRCNNPipeline(ModelPipeline):
                             self.normalization_group_size), m.num_channels))
             else:
                 raise NotImplementedError
+        if self.convert_fbn_to_bn:
+            model = replace_module(model,
+                    lambda m: type(m) == FrozenBatchNorm2d,
+                    lambda m: BatchNorm2d(num_features=m.num_features,
+                        eps=m.eps))
         return model
 
     def predict(self, model_file, predict_result_file):
-        model = self.build_detection_model()
+        model = self.build_detection_model(training=False)
         #model = self._data_parallel_wrap(model)
         model.eval()
         model.to(cfg.MODEL.DEVICE)
@@ -998,8 +1064,12 @@ class MaskRCNNPipeline(ModelPipeline):
         labelmap = dataset.load_labelmap()
         extra = 1 if self.has_background_output() else 0
         label_id_to_label = {i + extra: l for i, l in enumerate(labelmap)}
+        old_value = cfg.DATALOADER.ASPECT_RATIO_GROUPING
+        cfg.DATALOADER.ASPECT_RATIO_GROUPING = False
         test(cfg, model, self.distributed, [predict_result_file],
                 label_id_to_label, **self.kwargs)
+        cfg.DATALOADER.ASPECT_RATIO_GROUPING = old_value
+
 
     def _get_load_model(self):
         if self.model is None:
@@ -1046,7 +1116,9 @@ class MaskRCNNPipeline(ModelPipeline):
         curr_transform = build_transforms(cfg, is_train=False)
 
         target = create_empty_boxlist(width, height, self.device)
-        im, target = curr_transform(im, target)
+        transform_result = curr_transform({'image': im, 'rects': target,
+            'iteration': 0})
+        im, target = transform_result['image'], transform_result['rects']
 
         from maskrcnn_benchmark.structures.image_list import to_image_list
         image_list = to_image_list(im, cfg.DATALOADER.SIZE_DIVISIBILITY)
@@ -1060,10 +1132,23 @@ class MaskRCNNPipeline(ModelPipeline):
         box_list = output[0]
         box_list = box_list.resize((width, height))
         rects = boxlist_to_list_dict(box_list, label_id_to_label)
-        rects = [r for r in rects if r['conf'] >= 0.2]
+
+        threshold = self._get_predict_one_threshold()
+        rects = [r for r in rects if
+                r['conf'] >= threshold.get(r['class'], 0.2)]
 
         logging.info('result = \n{}'.format(pformat(rects)))
         return rects
+
+    def _get_predict_one_threshold(self):
+        if self.predict_one_threshold is None:
+            threshold_file = op.join(self.output_folder, 'deploy', 'threshold.tsv')
+            if op.isfile(threshold_file):
+                result = {c: float(th) for c, th in tsv_reader(threshold_file)}
+            else:
+                result = {}
+            self.predict_one_threshold = result
+        return self.predict_one_threshold
 
 def create_empty_boxlist(w, h, device):
     boxlist_empty = BoxList(torch.zeros((0,4)).to(device),

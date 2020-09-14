@@ -266,6 +266,13 @@ class TSVDataset(object):
     def get_labelmap_file(self):
         return op.join(self._data_root, 'labelmap.txt')
 
+    def load_txt(self, t='labelmap'):
+        return load_list_file(self.get_txt(t))
+
+    # labelmap or attribute map
+    def get_txt(self, t='labelmap'):
+        return op.join(self._data_root, '{}.txt'.format(t))
+
     def get_pos_labelmap_file(self):
         return op.join(self._data_root, 'labelmap.pos.txt')
 

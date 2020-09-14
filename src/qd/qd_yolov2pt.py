@@ -126,3 +126,15 @@ class ResizeAndPlaceForMaskRCNN(object):
         #self.visualize(image, target)
         return image, target
 
+class DictResizeAndPlaceForMaskRCNN(ResizeAndPlaceForMaskRCNN):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+    def __call__(self, dict_data):
+        image = dict_data['image']
+        target = dict_data['rects']
+        image, target = super().__call__(image, target)
+        dict_data['image'] = image
+        dict_data['rects'] = target
+        return dict_data
+
+

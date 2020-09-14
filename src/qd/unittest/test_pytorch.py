@@ -41,6 +41,12 @@ class TestQDPyTorch(unittest.TestCase):
 
         self.parity_check_resnet(config_file, net)
 
+    def test_R101_in_maskrcnn(self):
+        config_file = './src/maskrcnn-benchmark/configs/e2e_faster_rcnn_R_101_FPN_1x_tb.yaml'
+        net = 'resnet101'
+
+        self.parity_check_resnet(config_file, net)
+
     def test_x101_in_maskrcnn(self):
         config_file = './src/maskrcnn-benchmark/configs/e2e_faster_rcnn_X_101_32x8d_FPN_1x_tbase.yaml'
         net = 'resnext101_32x8d'
@@ -94,8 +100,11 @@ class TestQDPyTorch(unittest.TestCase):
         from maskrcnn_benchmark.structures.bounding_box import BoxList
         import torch
         box = torch.empty((0, 4))
-        mask_net_input, _ = mask_transforms(pil_image, BoxList(box, image_size=(416,
-            416)))
+        dict_out = mask_transforms({
+            'image': pil_image,
+            'rects': BoxList(box, image_size=(416, 416)),
+            'iteration': 0})
+        mask_net_input = dict_out['image']
         from maskrcnn_benchmark.modeling.detector import build_detection_model
         mask_model = build_detection_model(cfg)
         mask_model.eval()

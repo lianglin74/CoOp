@@ -22,7 +22,7 @@ class DummyLayer(torch.nn.Module):
 
 
 def is_mergable_batch_norm(m):
-    mergable_bns = [torch.nn.BatchNorm2d]
+    mergable_bns = [torch.nn.BatchNorm2d, torch.nn.SyncBatchNorm]
     try:
         import maskrcnn_benchmark
         mergable_bns.append(maskrcnn_benchmark.layers.batch_norm.FrozenBatchNorm2d)
@@ -85,10 +85,14 @@ def merge_bn_into_conv(model):
                 m_idx += 1
         m_idx += 1
 
-    output_model = convert_layers_to_dummy(model, to_be_absorbed)
-    assert len(to_be_absorbed) == 0
-    return output_model
+    #output_model = convert_layers_to_dummy(model, to_be_absorbed)
+    #assert len(to_be_absorbed) == 0
+    #return output_model
 
+    for n in to_be_absorbed:
+        from qd.torch_common import replace_module_by_name
+        model = replace_module_by_name(model, n, lambda m: DummyLayer())
+    return model
 
 def convert_layers_to_dummy(module, to_be_converted_layers, module_name=None):
     module_output = module

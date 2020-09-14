@@ -1656,9 +1656,14 @@ def populate_dataset_hw(data, splits=['train', 'trainval', 'test']):
     dataset = TSVDataset(data)
     for split in splits:
         if dataset.has(split) and not dataset.has(split, 'hw'):
+            success = False
             if op.isfile(dataset.get_data(split + 'X')):
-                derive_composite_meta_data(data, split, 'hw')
-            else:
+                try:
+                    derive_composite_meta_data(data, split, 'hw')
+                    success = True
+                except:
+                    pass
+            if not success:
                 multi_thread = True
                 if not multi_thread:
                     logging.info('generating hw')
@@ -1667,9 +1672,6 @@ def populate_dataset_hw(data, splits=['train', 'trainval', 'test']):
                         img_from_base64(row[-1]).shape[:2]))) for
                         row in rows), split, 'hw')
                 else:
-                    if dataset.has(split + 'X'):
-                        ensure_extract_from_data_source(data, split, 'hw')
-                        continue
                     num_images = dataset.num_rows(split)
                     num_tasks = min(num_images, 128 * 3)
                     num_worker = (num_tasks + 2) // 3

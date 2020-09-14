@@ -2,6 +2,7 @@ import torch
 from torch import nn
 import logging
 from collections import OrderedDict
+from qd.torch_common import accuracy
 
 
 class ExclusiveMultiHotCrossEntropyLoss(torch.nn.Module):
@@ -55,6 +56,33 @@ class FocalLossWithLogitsNegLoss(nn.Module):
 
         return -loss
 
+class DistillFocalLossWithLogitsNegLoss(nn.Module):
+    def __init__(self, alpha, gamma, t=1.):
+        super().__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.T = t
+
+    def extra_repr(self):
+        return 'alpha={}, gamma={}'.format(self.alpha, self.gamma)
+
+    def forward(self, pred, target, guide):
+        weight = torch.zeros_like(target)
+        weight[target == 0] = 1. - self.alpha  # negative
+        weight[target > 1e-5] = self.alpha # positive
+
+        sigmoid_pred = pred.sigmoid()
+        sigmoid_guide = (guide / self.T).sigmoid()
+
+        log_sigmoid = torch.nn.functional.logsigmoid(pred)
+        log_sigmoid_inv = torch.nn.functional.logsigmoid(-pred)
+
+        coef = weight * torch.pow((sigmoid_pred - target).abs(), self.gamma)
+        loss = sigmoid_guide * log_sigmoid + (1. - sigmoid_guide) * log_sigmoid_inv
+        loss = (coef * loss).sum()
+
+        return -loss
+
 class FocalLossWithLogitsNegSoftLoss(nn.Module):
     def __init__(self, alpha, gamma):
         super().__init__()
@@ -65,10 +93,6 @@ class FocalLossWithLogitsNegSoftLoss(nn.Module):
         return 'alpha={}, gamma={}'.format(self.alpha, self.gamma)
 
     def forward(self, pred, target):
-        # the loss can be generalized as -weight * (\sigma(x) - target)^r *
-        # [target * log(sigma(x)) + (1 - target) * log(1 - sigma(x))]
-        # target == 0: means neg: target > 0 means positive; target < 0 means
-        # ignorable
 
         weight = torch.zeros_like(target)
         weight[target == 0] = 1. - self.alpha  # negative
@@ -174,6 +198,23 @@ class ModelLoss(nn.Module):
         else:
             return {'criterion_loss': loss}
 
+class ModelLossWithInput(nn.Module):
+    # used for mask-rcnn trainer engine
+    def __init__(self, model, criterion):
+        super().__init__()
+        self.module = model
+        self.criterion = criterion
+
+    def forward(self, *args):
+        data_dict = args[0]
+        out = self.module(data_dict['image'])
+        loss = self.criterion(out, data_dict['label'],
+                              data_dict)
+        if isinstance(loss, dict):
+            return loss
+        else:
+            return {'criterion_loss': loss}
+
 class UnsupervisedLoss(nn.Module):
     def __init__(self, model, criterion):
         super().__init__()
@@ -194,19 +235,46 @@ class MultiCrossEntropyLoss(nn.Module):
         super().__init__()
         self.loss = nn.CrossEntropyLoss()
         self.weights = weights
+        self.iter = 0
 
     def extra_repr(self):
         return 'weights={}'.format(self.weights)
 
     def forward(self, *args):
+        verbose = (self.iter % 100) == 0
+        self.iter += 1
+
+        info = []
         num = len(args) // 2
         loss = OrderedDict()
         for i in range(num):
-            l = self.loss(args[2 * i], args[2 * i + 1])
+            logits = args[2 * i]
+            label = args[2 * i + 1]
+            if verbose:
+                with torch.no_grad():
+                    # in some cases, there is less than 5 outputs. so don't run
+                    # top5. top1 is also good enough
+                    top1, = accuracy(logits, label, (1,))
+                    pos = logits.gather(1, label[:, None])
+                    if logits.numel() == pos.numel():
+                        neg = 0
+                    else:
+                        neg = (logits.sum() - pos.sum()) / (
+                            logits.numel() - pos.numel())
+                    info.append('top1 = {:.1f}, pos_avg = {:.1f}, '
+                                'neg_avg = {:.1f}'.format(
+                        float(top1),
+                        float(pos.mean()),
+                        float(neg)
+                    ))
+
+            l = self.loss(logits, label)
             if self.weights is None:
-                self.weights = [1. / num] * num
+                self.weights = [1.] * num
             w = self.weights[i]
             loss['loss_{}'.format(i)] = l * w
+        if verbose:
+            logging.info('\n'.join(info))
         return loss
 
 class DistilCrossEntropyLoss(nn.Module):
@@ -263,5 +331,83 @@ class SmoothLabelCrossEntropyLoss(nn.Module):
             avg_prob = prob[torch.arange(num), target].mean()
             logging.info('avg positive = {}'.format(avg_prob))
         loss = self.kl(log_prb, one_hot)
+        return loss
+
+class KLCrossEntropyLoss(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.iter = 0
+
+    def forward(self, logits, conf_targets):
+        verbose = (self.iter % 100 == 0)
+        self.iter += 1
+        # logits.shape == conf_targets.shape
+        loss = -(conf_targets * torch.nn.functional.log_softmax(
+            logits, dim=1)).sum(dim=1)
+        if verbose:
+            with torch.no_grad():
+                hard_target = conf_targets.argmax(dim=1)
+                top1, = accuracy(logits, hard_target)
+                logging.info('top1 = {:.1f}'.format(float(top1)))
+        ret = loss.mean()
+        return ret
+
+class L2Loss(nn.Module):
+    def forward(self, x, y):
+        d = x - y
+        return 0.5 * (d * d).sum() / len(x)
+
+class DistillCrossEntropyLoss(nn.Module):
+    def __init__(self, num_image, num_class, momentum,
+                 dist_weight=1.):
+        super().__init__()
+        from qd.qd_common import print_frame_info
+        print_frame_info()
+
+        self.ce_loss = nn.CrossEntropyLoss()
+        self.kl_ce = KLCrossEntropyLoss()
+        history = torch.randn(num_image, num_class)
+        history = torch.nn.functional.softmax(history, dim=1)
+        self.register_buffer('history', history)
+        self.momentum = momentum
+        self.dist_weight = dist_weight
+
+    def forward(self, feature, target, data_dict):
+        loss1 = self.ce_loss(feature, target)
+        idx = data_dict['idx']
+        teacher_signal = self.history[idx].detach()
+        loss2 = self.kl_ce(feature, teacher_signal)
+        with torch.no_grad():
+            softmax_feature = torch.nn.functional.softmax(feature, dim=1)
+            from qd.torch_common import concat_all_gather
+            idx = concat_all_gather(idx)
+            softmax_feature = concat_all_gather(softmax_feature)
+            teacher_signal = concat_all_gather(teacher_signal)
+
+            self.history[idx] = (self.momentum * teacher_signal + (1. - self.momentum) * softmax_feature)
+        return {'ce': loss1, 'kl': loss2 * self.dist_weight}
+
+class EfficientDetCrossEntropy(nn.Module):
+    def __init__(self, no_reg, sep):
+        super().__init__()
+        self.no_reg = no_reg
+        self.sep = sep
+
+    def forward(self, features, target):
+        regression, classification = features[1:3]
+        loss = {}
+        if self.sep:
+            for i in range(5):
+                ind = (features[-1]['stride_idx'] == i)
+                cls  = classification[:, ind, :].mean(dim=1)
+                loss['cls_{}'.format(i)] = nn.functional.cross_entropy(cls, target)
+        else:
+            classification = classification.mean(dim=1)
+            cls_loss = nn.functional.cross_entropy(classification, target)
+            loss['cls_loss'] = cls_loss
+        if not self.no_reg:
+            regression = regression.mean(dim=1)
+            reg_loss = nn.functional.cross_entropy(regression, target)
+            loss['reg_loss'] = reg_loss
         return loss
 
