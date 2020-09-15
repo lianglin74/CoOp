@@ -50,7 +50,7 @@ class FCOSPipeline(MaskClassificationPipeline):
             'max_box': 300,
         })
 
-        fcos_root = op.join('src', 'FCOS', 'configs')
+        fcos_root = op.join('aux_data', 'FCOS_configs')
         if self.net.startswith('retina'):
             config_file = op.join(fcos_root, 'retinanet', self.net + '.yaml')
         elif self.net.startswith('fcos'):
