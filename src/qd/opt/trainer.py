@@ -160,7 +160,6 @@ def do_train(
             logging.error('this should never happen since different workers '
                     'will have different numbers of iterations.')
             continue
-        logging.info(images.tensors.shape)
 
         if fix_input:
             logging.info('fix input')
