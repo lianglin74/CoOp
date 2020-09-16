@@ -737,8 +737,8 @@ def run_training_pipeline(swap_params):
 
     logging.info(pformat(result))
     if len(result) > 0:
-        from qd.db import query_job_acc
-        query_job_acc(result)
+        from qd.db import try_query_job_acc
+        try_query_job_acc(result)
     return result
 
 def pipeline_train_eval_platform(param, all_test_data, env, **kwargs):

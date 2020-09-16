@@ -10,6 +10,7 @@ from collections import defaultdict
 import logging
 from tqdm import tqdm
 from qd.qd_common import print_table
+from qd.qd_common import try_once
 
 def create_mongodb_client():
     config = load_from_yaml_file('./aux_data/configs/mongodb_credential.yaml')
@@ -461,6 +462,10 @@ def update_cluster_job_db(all_job_info, collection_name='phillyjob'):
                 # instances will fail. Thus, we just ignore the error here
                 from qd.qd_common import print_trace
                 print_trace()
+
+@try_once
+def try_query_job_acc(*args, **kwargs):
+    query_job_acc(*args, **kwargs)
 
 def query_job_acc(job_ids, key='appID', inject=False,
         must_have_any_in_predict=None,
