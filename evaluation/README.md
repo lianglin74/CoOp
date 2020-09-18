@@ -4,6 +4,7 @@ Human evaluation is needed when the ground truth labels are not available or com
 Therefore, human judges are asked to verify if the prediction results are correct or
 not. Correct prediction will be added to ground truth labels. Then evaluation
 can be done on the updated ground truth.
+[Here](https://prod.uhrs.playmsn.com/judge/Views/judge?HitAppID=35716&mode=pdesign&TaskgroupID=91381&TaskID=2634770&debug=1) is an example of the verification task. 
 
 This approach is especially useful for comparing with competitors. There is no
 need to get labels covering competitors' taxonomy. We can update ground truth
