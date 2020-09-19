@@ -26,7 +26,9 @@
    - If you are using system-level python, please use the option of `--user` 
    in setup command so that the lib won't contaminate the system lib
 
-2. Setup azcopy
+2. Setup azcopy(optional)
+   azcopy is used to upload or download data to azure blob. If the tool is only
+   used for job management, then there is no need to set this up.
 
    Following [this link](https://docs.microsoft.com/en-us/azure/storage/common/storage-use-azcopy-v10)
    to download the azcopy and make sure the azcopy is downloaded to
@@ -218,6 +220,16 @@
        - highly recommended for distributed training/inference
    - If `multi_process=false`, effectively it runs `mpirun --hostfile hostfile_contain_N_node_ips --npernode 1 cmd`
        - still, the number of nodes x gpu_per_node == the number of gpu requested
+   - For pytorch code, we normally need to run `init_process_group` function.
+     One recommended way is to insert the following code of 
+       ```
+       from qd.torch_common import ensure_init_process_group
+       ensure_init_process_group()
+       ```
+       This function works on AML and locally (if launching with mpirun) as
+       well. On the local machine, it is also recommended to launch the
+       distributed training by `mpirun -n 8 python train.py` rather than
+       `python -m torch.distributed.launch train.py`.
 
 ## Philly
 ### Installation
