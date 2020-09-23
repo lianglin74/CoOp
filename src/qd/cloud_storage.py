@@ -291,8 +291,34 @@ class CloudStorage(object):
             if not op.isfile(target_file):
                 self.az_download(blob_name, target_file,
                         sync=False)
+    def is_folder(self, remote_path):
+        is_folder = False
+        for x in self.list_blob_names(remote_path + '/'):
+            is_folder = True
+            break
+        return is_folder
 
     def az_download(self, remote_path, local_path, sync=True, is_folder=False):
+        if remote_path.startswith('/'):
+            remote_path = remote_path[1:]
+        if remote_path.endswith('/'):
+            remote_path = remote_path[:-1]
+        is_folder = self.is_folder(remote_path)
+        if is_folder:
+            if op.isdir(local_path):
+                if len(os.listdir(local_path)) > 0:
+                    logging.error('ignore to download from {} to {}'
+                                  ' since destination is not empty'.format(
+                                      remote_path,
+                                      local_path,
+                                  ))
+                    return
+                from qd.qd_common import ensure_remove_dir
+                ensure_remove_dir(local_path)
+        else:
+            # we find azcopy will crash sometimes with sync + file. in this
+            # case, we have to use copy command
+            sync = False
         ensure_directory(op.dirname(local_path))
         origin_local_path = local_path
         local_path = local_path + '.tmp'
@@ -305,8 +331,6 @@ class CloudStorage(object):
         else:
             cmd.append('cp')
         url = 'https://{}.blob.core.windows.net'.format(self.account_name)
-        if remote_path.startswith('/'):
-            remote_path = remote_path[1:]
         url = '/'.join([url, self.container_name, remote_path])
         assert self.sas_token.startswith('?')
         data_url = url

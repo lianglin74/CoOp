@@ -722,7 +722,7 @@ class AMLClient(object):
         key = '{}_folder'.format(p)
         assert key in self.config_param
         self.config_param[key]['cloud_blob'].az_download(
-            op.join(op.dirname(self.config_param[key]['path']), file_or_folder),
+            op.join(self.config_param[key]['path'], file_or_folder[len(p) + 1:]),
             file_or_folder,
         )
 
