@@ -221,6 +221,19 @@ def print_topk_long_run_jobs(ws, topk):
     all_expname_job = sorted(all_expname_job, key=lambda x:-x[1]['elapsedTime'])
     logging.info(pformat(all_expname_job[:topk]))
 
+def get_root_folder_in_curr_dir(fname):
+    curr = op.abspath(os.curdir)
+    fname = op.abspath(fname)
+    assert fname.startswith(curr)
+    fname = op.relpath(fname, curr)
+    p = fname
+    while True:
+        d = op.dirname(p)
+        if d == '':
+            break
+        p = d
+    return p
+
 class AMLClient(object):
     status_running = 'Running'
     status_queued = 'Queued'
@@ -514,6 +527,7 @@ class AMLClient(object):
                 op.join(self.config_param['data_folder']['path'],
                 fname))
 
+    @deprecated('use self.upload()')
     def upload_qd_data(self, d):
         self.attach_data_store()
         from qd.tsv_io import TSVDataset
@@ -560,16 +574,7 @@ class AMLClient(object):
     def upload_file(self, fname):
         # this function is quite general to upload anyfile for any folder as
         # long as the folder will be from blobfuse in AML
-        curr = op.abspath(os.curdir)
-        fname = op.abspath(fname)
-        assert fname.startswith(curr)
-        fname = op.relpath(fname, curr)
-        p = fname
-        while True:
-            d = op.dirname(p)
-            if d == '':
-                break
-            p = d
+        p = get_root_folder_in_curr_dir(fname)
         target_path = op.join(self.config_param['{}_folder'.format(p)]['path'],
                               fname[len(p) + 1:])
         cloud = self.config_param['{}_folder'.format(p)]['cloud_blob']
@@ -703,6 +708,25 @@ class AMLClient(object):
         # upload it
         self.config_param['code_path']['cloud_blob'].az_upload2(random_abs_qd, rel_code_path)
 
+    def upload(self, file_or_folder):
+        p = get_root_folder_in_curr_dir(file_or_folder)
+        key = '{}_folder'.format(p)
+        assert key in self.config_param, self.config_param.keys()
+        self.config_param[key]['cloud_blob'].az_sync(
+            file_or_folder,
+            op.join(self.config_param[key]['path'], file_or_folder[len(p) + 1:]),
+        )
+
+    def download(self, file_or_folder):
+        p = get_root_folder_in_curr_dir(file_or_folder)
+        key = '{}_folder'.format(p)
+        assert key in self.config_param
+        self.config_param[key]['cloud_blob'].az_download(
+            op.join(op.dirname(self.config_param[key]['path']), file_or_folder),
+            file_or_folder,
+        )
+
+    @deprecated('use download')
     def download_latest_qdoutput(self, full_expid):
         src_path = op.join(self.config_param['output_folder']['path'],
                 full_expid)
@@ -742,7 +766,7 @@ def detect_aml_error_message(app_id):
                 error_codes.add('RegNaN')
             if 'RuntimeError: CUDA out of memory' in line or \
                     'CUDA error: out of memory' in line:
-                error_codes.add('Mem')
+                error_codes.add('OOM')
             if 'No module named' in line:
                 error_codes.add('ModuleErr')
             if 'copy_if failed to synchronize' in line:
@@ -751,6 +775,8 @@ def detect_aml_error_message(app_id):
                 error_codes.add('connect')
             if 'unhandled cuda error' in line:
                 error_codes.add('cuda')
+            if 'ECC error' in line:
+                error_codes.add('ECC')
             if 'CUDA error' in line:
                 error_codes.add('cuda')
             if 'Error' in line and \
@@ -919,21 +945,14 @@ def execute(task_type, **kwargs):
         for v in kwargs['remainders']:
             v = v.strip('/')
             c.abort(v)
-    elif task_type in ['download_qdoutput', 'd']:
+    elif task_type in ['download', 'd']:
         c = create_aml_client(**kwargs)
         for full_expid in kwargs['remainders']:
-            c.download_latest_qdoutput(full_expid)
-    elif task_type in ['upload_qddata']:
+            c.download(full_expid)
+    elif task_type in ['upload', 'u']:
         c = create_aml_client(**kwargs)
         for data in kwargs['remainders']:
-            c.upload_qd_data(data)
-    elif task_type in ['u']:
-        c = create_aml_client(**kwargs)
-        for data in kwargs['remainders']:
-            if not data.startswith('output'):
-                c.upload_qd_data(data)
-            else:
-                c.upload_qd_output(data)
+            c.upload(data)
     elif task_type == 'blame':
         c = create_aml_client(**kwargs)
         c.blame()
@@ -984,8 +1003,8 @@ def parse_args():
                 'qf', # query failed jobs
                 'qq', # query queued jobs
                 'qr', # query running jobs
-                'd', 'download_qdoutput',
-                'u', 'upload_qddata', # upload the folder in data/
+                'd', 'download',
+                'u', 'upload',
                 'monitor',
                 'parse',
                 'init',
