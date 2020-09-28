@@ -78,7 +78,12 @@ class UhrsTaskManager():
 
     @classmethod
     def is_task_completed(cls, task_group_id, task_id):
-        state = cls._get_task_state(task_group_id, task_id)[0]
+        try:
+            state = cls._get_task_state(task_group_id, task_id)[0]
+        except:
+            logging.info('Error when getting state for task group {}, task id {}'.format(
+                task_group_id, task_id))
+            return False
         if state == 1:
             return False
         if state == 0:
