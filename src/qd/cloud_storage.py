@@ -298,14 +298,39 @@ class CloudStorage(object):
             break
         return is_folder
 
-    def az_download(self, remote_path, local_path, sync=True, is_folder=False):
+    def az_download_each(self, remote_path, local_path):
+        # if it is a folder, we will download each file individually
         if remote_path.startswith('/'):
             remote_path = remote_path[1:]
         if remote_path.endswith('/'):
             remote_path = remote_path[:-1]
         is_folder = self.is_folder(remote_path)
         if is_folder:
-            if op.isdir(local_path):
+            all_remote_file = self.list_blob_names(remote_path + '/')
+            all_local_file = [op.join(local_path, r[len(remote_path) + 1:])
+                              for r in all_remote_file]
+        else:
+            all_remote_file = [remote_path]
+            all_local_file = [local_path]
+        for r, l in zip(all_remote_file, all_local_file):
+            self.az_download(r, l, sync=True)
+
+    def az_download(self,
+                    remote_path,
+                    local_path,
+                    sync=True,
+                    is_folder=None,
+                    tmp_first=True,
+                    ):
+        if is_folder is not None:
+            logging.warn('no need to specify is_folder. deprecating')
+        if remote_path.startswith('/'):
+            remote_path = remote_path[1:]
+        if remote_path.endswith('/'):
+            remote_path = remote_path[:-1]
+        is_folder = self.is_folder(remote_path)
+        if is_folder:
+            if op.isdir(local_path) and tmp_first:
                 if len(os.listdir(local_path)) > 0:
                     logging.error('ignore to download from {} to {}'
                                   ' since destination is not empty'.format(
@@ -316,12 +341,15 @@ class CloudStorage(object):
                 from qd.qd_common import ensure_remove_dir
                 ensure_remove_dir(local_path)
         else:
-            # we find azcopy will crash sometimes with sync + file. in this
-            # case, we have to use copy command
-            sync = False
+            if sync:
+                if tmp_first:
+                    sync = False
+                elif not op.isfile(local_path):
+                    sync = False
         ensure_directory(op.dirname(local_path))
         origin_local_path = local_path
-        local_path = local_path + '.tmp'
+        if tmp_first:
+            local_path = local_path + '.tmp'
         ensure_directory(op.dirname(local_path))
         assert self.sas_token
         cmd = []
@@ -343,7 +371,8 @@ class CloudStorage(object):
                 # azcopy's requirement
                 ensure_directory(local_path)
         cmd_run(cmd)
-        os.rename(local_path, origin_local_path)
+        if tmp_first:
+            os.rename(local_path, origin_local_path)
         return data_url, url
 
     def download_to_path(self, blob_name, local_path,

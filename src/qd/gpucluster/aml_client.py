@@ -724,6 +724,7 @@ class AMLClient(object):
         self.config_param[key]['cloud_blob'].az_download(
             op.join(self.config_param[key]['path'], file_or_folder[len(p) + 1:]),
             file_or_folder,
+            tmp_first=False
         )
 
     @deprecated('use download')
