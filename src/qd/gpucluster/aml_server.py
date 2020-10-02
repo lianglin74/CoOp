@@ -78,11 +78,9 @@ def root_user():
     return user == 'root'
 
 
-def compile_qd(folder):
+def compile_qd(folder, compile_args):
     path = os.environ['PATH']
 
-    compile_file = 'compile.aml.sh'
-    cmd_run(['chmod', '+x', op.join(folder, compile_file)])
     cmd = ['env', 'PATH={}'.format(path), 'pip', 'install',
             '-r', 'requirements.txt']
     if not root_user():
@@ -90,18 +88,22 @@ def compile_qd(folder):
     cmd_run(cmd,
         working_directory=folder,
         succeed=False)
+
+    compile_file = 'compile.aml.sh'
+    cmd_run(['chmod', '+x', op.join(folder, compile_file)])
     cmd = ['env', 'PATH={}'.format(path), './{}'.format(compile_file)]
+    if compile_args:
+        cmd.append(compile_args)
     if not root_user():
         cmd.insert(0, 'sudo')
     cmd_run(cmd,
             working_directory=folder, succeed=False)
 
-def update_ssh():
-    cmd_run(['cp', op.expanduser('~/.ssh/id_rsa'), op.expanduser('~/')])
-    cmd_run(['chmod', '777', op.expanduser('~/id_rsa')])
-
 def get_mpi_rank():
     return int(os.environ.get('OMPI_COMM_WORLD_RANK', '0'))
+
+def get_mpi_local_rank():
+    return int(os.environ.get('OMPI_COMM_WORLD_LOCAL_RANK', '0'))
 
 import fcntl
 
@@ -153,11 +155,11 @@ def monitor():
 
 class MonitoringProcess(object):
     def __enter__(self):
-        if get_mpi_rank() == 0:
+        if get_mpi_local_rank() == 0:
             self.p = launch_monitoring_process()
 
     def __exit__ (self, type, value, tb):
-        if get_mpi_rank() == 0:
+        if get_mpi_local_rank() == 0:
             terminate_monitoring_process(self.p)
 
 def terminate_monitoring_process(p):
@@ -171,7 +173,10 @@ def launch_monitoring_process():
     return p
 
 def wrap_all(code_zip, code_root,
-        folder_link, command):
+             folder_link, command,
+             sleep_if_fail,
+             compile_args,
+             ):
     cmd_run(['ibstatus'])
     cmd_run(['grep', 'Port', '/etc/ssh/sshd_config'])
     cmd_run(['nvidia-smi'])
@@ -201,7 +206,7 @@ def wrap_all(code_zip, code_root,
         #cmd_run(['ln', '-s', output_folder, op.join(code_root, 'output')])
 
         # compile the source code
-        compile_qd(code_root)
+        compile_qd(code_root, compile_args)
     ensure_ssh_server_running()
     releaseLock(lock_fd)
 
@@ -213,22 +218,20 @@ def wrap_all(code_zip, code_root,
 
     with MonitoringProcess():
         if len(command) > 0:
-            cmd_run(command, working_directory=code_root,
-                    succeed=True)
+            try:
+                cmd_run(command, working_directory=code_root,
+                        succeed=True)
+            except:
+                if sleep_if_fail:
+                    cmd_run(['sleep', 'infinity'])
+                else:
+                    raise
 
 def get_mpi_local_rank():
     return int(os.environ.get('OMPI_COMM_WORLD_LOCAL_RANK', '0'))
 
 def get_mpi_local_size():
     return int(os.environ.get('OMPI_COMM_WORLD_LOCAL_SIZE', '1'))
-
-def link_nltk():
-    target_folder = op.expanduser('~/nltk_data')
-    if op.islink(target_folder) or op.exists(target_folder):
-        return
-    nltk_folder = '/var/storage/shared/input/jianfw/nltk_data'
-    if op.isdir(nltk_folder):
-        os.symlink(nltk_folder, op.expanduser('~/nltk_data'))
 
 def load_from_yaml_str(s):
     return yaml.load(s)
@@ -237,12 +240,13 @@ def parse_args_to_dict():
     from argparse import ArgumentParser
     parser = ArgumentParser()
     parser.add_argument('--code_path', type=str)
+    # in aml, tehre is no chance to provide option like 'store_true' or so.
+    # Each option has to be key value pair
+    parser.add_argument('--sleep_if_fail', type=int, default=0)
+    parser.add_argument('--compile_args', type=str, default='')
     # you can add multiple --xxx_folder, where xxx will be the folder name in
     # aml. Before, we hard-coded it to be data or model or output. Now, we can
     # use any name
-    #parser.add_argument('--data_folder', type=str)
-    #parser.add_argument('--model_folder', type=str)
-    #parser.add_argument('--output_folder', type=str)
     parser.add_argument('--command', type=str)
     args, unknown = parser.parse_known_args()
     param = vars(args)
@@ -311,15 +315,13 @@ def run():
 
     qd_root = op.join('/tmp', 'code', 'quickdetection')
 
-    # usefull only in philly@ap. no hurt for other philly
-    if get_mpi_rank() == 0:
-        update_ssh()
-        link_nltk()
-
     wrap_all(dict_param['code_path'],
              qd_root,
              dict_param['folder_link'],
-             dict_param['command'])
+             dict_param['command'],
+             dict_param['sleep_if_fail'],
+             dict_param['compile_args'],
+             )
 
 if __name__ == '__main__':
     init_logging()

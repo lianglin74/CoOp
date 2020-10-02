@@ -49,7 +49,10 @@ def update_by_run_details(info, details):
         d= (now - parse(info['end_time'])).total_seconds() / 3600
         info['elapsedFinished'] = round(d, 2)
     if dict_has_path(details, 'runDefinition$arguments') and len(details['runDefinition']['arguments']) > 0:
-        cmd = details['runDefinition']['arguments'][-1]
+        xs = [i for i, k in enumerate(details['runDefinition']['arguments']) if k == '--command']
+        assert len(xs) == 1
+        i = xs[0]
+        cmd = details['runDefinition']['arguments'][i + 1]
         info['cmd'] = cmd
         info['cmd_param'] = decode_general_cmd(cmd)
     if dict_has_path(details, 'runDefinition$environment$docker$baseImage'):
@@ -59,6 +62,14 @@ def update_by_run_details(info, details):
         info['num_gpu'] = details['runDefinition']['mpi']['processCountPerNode'] * \
                 details['runDefinition']['nodeCount']
     info['logFiles'] = details['logFiles']
+
+def create_ssh_command_from_aks_ssh_tag(aks_ssh):
+    #ssh://jianfw@az-wus2-v100-32gb-infra01.westus2.cloudapp.azure.com:31951
+    url, port = aks_ssh.split('//')[1].split(':')
+    cmd = ['ssh', '-p', port,
+           #'-o', 'StrictHostKeyChecking no',
+           url]
+    return cmd
 
 def parse_run_info(run, with_details=True,
         with_log=False, log_full=True):
@@ -71,6 +82,17 @@ def parse_run_info(run, with_details=True,
             run.tags.get('amlk8s status') == 'running':
         # there is a bug in AML/DLTS
         info['status'] = AMLClient.status_running
+    if run.status == AMLClient.status_canceled:
+        if run.tags.get('amlk8s status') in ['killing', 'failed']:
+            info['status'] = AMLClient.status_failed
+        else:
+            if 'amlk8s status' in run.tags and \
+                    run.tags.get('amlk8s status') != 'Terminated':
+                logging.info('unknown status {}'.format(
+                    run.tags.get('amlk8s status')))
+    if run.tags.get('ssh'):
+        # aks cluster has this field
+        info['ssh'] = create_ssh_command_from_aks_ssh_tag(run.tags['ssh'])
     if not with_details:
         return info
     details = run.get_details()
@@ -97,9 +119,13 @@ def parse_run_info(run, with_details=True,
     logging.info(info['portal_url'])
 
     param_keys = ['data', 'net', 'expid', 'full_expid']
+    from qd.qd_common import dict_get_all_path
+    all_path = dict_get_all_path(info)
     for k in param_keys:
-        if dict_has_path(info, 'cmd_param$param${}'.format(k)):
-            v = info['cmd_param']['param'][k]
+        ps = [p for p in all_path if p.endswith('${}'.format(k))]
+        if len(ps) == 1:
+            from qd.qd_common import dict_get_path_value
+            v = dict_get_path_value(info, ps[0])
         else:
             v = None
         info[k] = v
@@ -241,14 +267,16 @@ class AMLClient(object):
     status_completed = 'Completed'
     status_canceled = 'Canceled'
     def __init__(self, azure_blob_config_file, config_param, docker,
-            datastore_name, aml_config, use_custom_docker,
-            compute_target, source_directory=None, entry_script='aml_server.py',
-            gpu_per_node=4,
-            with_log=True,
-            env=None,
-            multi_process=True,
-            aks_compute=False,
-            **kwargs):
+                 datastore_name, aml_config, use_custom_docker,
+                 compute_target, source_directory=None, entry_script='aml_server.py',
+                 gpu_per_node=4,
+                 with_log=True,
+                 env=None,
+                 multi_process=True,
+                 aks_compute=False,
+                 sleep_if_fail=False,
+                 compile_args='',
+                 **kwargs):
         self.kwargs = kwargs
         self.cluster = kwargs.get('cluster', 'aml')
         self.use_cli_auth = kwargs.get('use_cli_auth', False)
@@ -308,6 +336,8 @@ class AMLClient(object):
         self._experiment = None
         self.multi_process = multi_process
         self.aks_compute = aks_compute
+        self.sleep_if_fail = sleep_if_fail
+        self.compile_args = compile_args
 
     def __repr__(self):
         return self.compute_target_name
@@ -369,26 +399,26 @@ class AMLClient(object):
         return node_list
 
     def ssh(self, run_id):
-        node_list = self.compute_target.list_nodes()
-        import re
-        if re.match('[0-9]*\.[0-9]*\.[0-9]*\.[0-9]*', run_id):
-            target_nodes = [n for n in node_list if n.get('privateIpAddress') ==
-                            run_id]
+        if self.aks_compute:
+            info = self.query_one(run_id=run_id)
+            cmd = info['ssh']
         else:
-            job_info = self.query(run_id, with_log=False, with_details=False)[0]
-            target_nodes = [n for n in node_list if n.get('runId') == job_info['appID']]
-        user_name = self.compute_target.admin_username
-        #ssh user_name@public_ip -p port
-        ssh_commands = ['ssh {}@{} -p {}'.format(user_name,
-                                 n['publicIpAddress'],
-                                 n['port']) for n in target_nodes]
-        if len(ssh_commands) >= 1:
-            logging.info('all commands:\n{}'.format(pformat(ssh_commands)))
-            cmd_run(ssh_commands[0].split(' '),
-                    stdin=None,
-                    shell=True)
-        else:
-            logging.info('no node is found')
+            node_list = self.compute_target.list_nodes()
+            import re
+            if re.match('[0-9]*\.[0-9]*\.[0-9]*\.[0-9]*', run_id):
+                target_nodes = [n for n in node_list if n.get('privateIpAddress') ==
+                                run_id]
+            else:
+                job_info = self.query(run_id, with_log=False, with_details=False)[0]
+                target_nodes = [n for n in node_list if n.get('runId') == job_info['appID']]
+            user_name = self.compute_target.admin_username
+            #ssh user_name@public_ip -p port
+            ssh_commands = ['ssh {}@{} -p {}'.format(user_name,
+                                     n['publicIpAddress'],
+                                     n['port']) for n in target_nodes]
+            cmd = ssh_commands[0].split('' )
+        logging.info('all commands:\n{}'.format(pformat(cmd)))
+        cmd_run(cmd, stdin=None, shell=True)
 
     def query_one(self, run_id,
                   with_details=False, with_log=False, log_full=False,
@@ -591,6 +621,10 @@ class AMLClient(object):
 
         script_params = {'--' + p: v['mount_point'] for p, v in self.config_param.items()}
         script_params['--command'] = cmd
+        if self.sleep_if_fail:
+            script_params['--sleep_if_fail'] = '1'
+        if self.compile_args:
+            script_params['--compile_args'] = self.compile_args
 
         from azureml.train.estimator import Estimator
         from azureml.train.dnn import PyTorch
@@ -602,11 +636,8 @@ class AMLClient(object):
         env.python.interpreter_path = '/opt/conda/bin/python'
         env.python.user_managed_dependencies = True
 
-
-        for k, v in self.env.items():
-            assert type(v) is str
-        env.environment_variables.update(self.env)
-
+        # the env should be with str. here we just convert it
+        env.environment_variables.update({k: str(v) for k, v in self.env.items()})
 
         from azureml.core.runconfig import MpiConfiguration
         mpi_config = MpiConfiguration()
@@ -749,6 +780,9 @@ def inject_to_tensorboard(info):
 def get_log_folder():
     return os.environ.get('AML_LOG_FOLDER', 'assets')
 
+def retriable_error_codes():
+    return ['ECC', 'illegal_cuda_access']
+
 @try_once
 def detect_aml_error_message(app_id):
     import glob
@@ -778,6 +812,8 @@ def detect_aml_error_message(app_id):
                 error_codes.add('cuda')
             if 'ECC error' in line:
                 error_codes.add('ECC')
+            if 'an illegal memory access was encountered' in line:
+                error_codes.add('illegal_cuda_access')
             if 'CUDA error' in line:
                 error_codes.add('cuda')
             if 'Error' in line and \
@@ -904,11 +940,13 @@ def execute(task_type, **kwargs):
         if len(kwargs.get('remainders', [])) > 0:
             assert len(kwargs['remainders']) == 1
             c = create_aml_client(**kwargs)
-            all_info = list(c.iter_query(run_id=kwargs['remainders'][0],
-                    with_log=kwargs.get('with_log', True),
-                    log_full=kwargs.get('log_full', True),
-                    with_details=kwargs.get('with_details', True),
-                    ))
+            all_info = list(c.iter_query(
+                run_id=kwargs['remainders'][0],
+                with_log=kwargs.get('with_log', True),
+                log_full=kwargs.get('log_full', True),
+                with_details=kwargs.get('with_details', True),
+                detect_error_if_failed=True,
+            ))
             from qd.qd_common import print_job_infos
             print_job_infos(all_info)
         else:
@@ -972,7 +1010,8 @@ def execute(task_type, **kwargs):
             dest_client = client
         result = []
         for partial_id in partial_ids:
-            run_info = client.query(partial_id)[0]
+            run_info = client.query_one(partial_id,
+                                        with_details=True)
             result.append(dest_client.submit(run_info['cmd'],
                     num_gpu=run_info['num_gpu']))
             client.abort(run_info['appID'])
@@ -1017,6 +1056,7 @@ def parse_args():
     parser.add_argument('-no-wl', dest='with_log', action='store_false')
     parser.add_argument('-no-dt', dest='with_details', action='store_false')
     parser.add_argument('-no-lf', dest='log_full', action='store_false')
+    parser.add_argument('-hold', dest='sleep_if_fail', default=False, action='store_true')
     parser.add_argument('-c', '--cluster', default=argparse.SUPPRESS, type=str)
     parser.add_argument('-rt', '--resubmit_to', default=argparse.SUPPRESS, type=str)
     parser.add_argument('-p', '--param', help='parameter string, yaml format',
