@@ -291,6 +291,21 @@ class DistilCrossEntropyLoss(nn.Module):
         loss = nn.functional.kl_div(log_soft, soft_target, reduction='batchmean')
         return loss
 
+class BCELogitsNormByPositive(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.iter = 0
+    def forward(self, feature, target):
+        verbose = (self.iter % 100) == 0
+        self.iter += 1
+        if verbose:
+            with torch.no_grad():
+                pos_value = feature[target.bool()].mean()
+                neg_value = feature[(1 - target).bool()].mean()
+                logging.info('pos = {}; neg = {}'.format(pos_value, neg_value))
+        return nn.functional.binary_cross_entropy_with_logits(
+            feature, target, reduction='sum') / (target.sum().float() + 1e-5)
+
 class MultiHotCrossEntropyLoss(nn.Module):
     def __init__(self):
         super(MultiHotCrossEntropyLoss, self).__init__()
@@ -331,6 +346,54 @@ class SmoothLabelCrossEntropyLoss(nn.Module):
             avg_prob = prob[torch.arange(num), target].mean()
             logging.info('avg positive = {}'.format(avg_prob))
         loss = self.kl(log_prb, one_hot)
+        return loss
+
+class MultiKLCrossEntropyLoss(nn.Module):
+    def __init__(self, weights=None):
+        super().__init__()
+        self.loss = KLCrossEntropyLoss()
+        self.weights = weights
+        self.iter = 0
+
+    def extra_repr(self):
+        return 'weights={}'.format(self.weights)
+
+    def forward(self, *args):
+        verbose = (self.iter % 100) == 0
+        self.iter += 1
+
+        info = []
+        num = len(args) // 2
+        loss = OrderedDict()
+        for i in range(num):
+            logits = args[2 * i]
+            label = args[2 * i + 1]
+            if verbose:
+                with torch.no_grad():
+                    # in some cases, there is less than 5 outputs. so don't run
+                    # top5. top1 is also good enough
+                    int_label = label.argmax(dim=1)
+                    top1, = accuracy(logits, int_label, (1,))
+                    pos = logits.gather(1, int_label[:, None])
+                    if logits.numel() == pos.numel():
+                        neg = 0
+                    else:
+                        neg = (logits.sum() - pos.sum()) / (
+                            logits.numel() - pos.numel())
+                    info.append('top1 = {:.1f}, pos_avg = {:.1f}, '
+                                'neg_avg = {:.1f}'.format(
+                        float(top1),
+                        float(pos.mean()),
+                        float(neg)
+                    ))
+
+            l = self.loss(logits, label)
+            if self.weights is None:
+                self.weights = [1.] * num
+            w = self.weights[i]
+            loss['loss_{}'.format(i)] = l * w
+        if verbose:
+            logging.info('\n'.join(info))
         return loss
 
 class KLCrossEntropyLoss(nn.Module):

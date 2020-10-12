@@ -1878,6 +1878,13 @@ class TorchTrain(object):
         if self.bn_momentum:
             from qd.torch_common import update_bn_momentum
             update_bn_momentum(model, self.bn_momentum)
+        if self.c_bias_sigmoid_small is not None:
+            from qd.torch_common import query_modules_by_name
+            modules = query_modules_by_name(model, '.fc')
+            assert len(modules) == 1
+            fc = modules[0]
+            nn.init.constant_(fc.bias, -math.log(1. / self.c_bias_sigmoid_small - 1))
+
         # assign a name to each module so that we can use it in each module to
         # print debug information
         from qd.torch_common import attach_module_name_
