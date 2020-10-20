@@ -46,7 +46,17 @@ except ImportError:
     from urllib2 import HTTPError
 import copy
 from deprecated import deprecated
+import io
 
+
+def encode_np(x):
+    compressed_array = io.BytesIO()
+    np.savez_compressed(compressed_array, x)
+    return base64.b64encode(compressed_array.getvalue())
+
+def decode_np(s):
+    s = base64.b64decode(s)
+    return np.load(io.BytesIO(s))['arr_0']
 
 def print_trace():
     import traceback
@@ -447,7 +457,6 @@ def iter_swap_param_simple(swap_params):
                 if i == 0:
                     return
 
-@deprecated('use iter_swap_param_simple without passing complex key')
 def iter_swap_param(swap_params):
     if isinstance(swap_params, dict):
         swap_params = [(k, v) for k, v in swap_params.items()]
