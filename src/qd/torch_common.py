@@ -12,9 +12,19 @@ from qd.qd_common import get_mpi_local_rank, get_mpi_local_size
 from qd.qd_common import ensure_directory
 
 
+def init_random_seed(random_seed):
+    import random
+    random.seed(random_seed)
+    import numpy as np
+    np.random.seed(random_seed)
+    torch.manual_seed(random_seed)
+    torch.cuda.manual_seed_all(random_seed)
+
 def boxlist_to_list_dict(box_list,
                          label_id_to_label,
-                         extra=0):
+                         extra=0,
+                         encode_np_fields=[],
+                         ):
     # box_list here is the maskrcnn-benchmark style of BoxList
     # use to_rects, which handles the case where 'labels' not in the field
     box_list = box_list.convert("xyxy")
@@ -39,8 +49,12 @@ def boxlist_to_list_dict(box_list,
         for k, v in extra_key_values:
             f = v[i]
             if isinstance(f, torch.Tensor):
-                f = f.squeeze()
-                if len(f.shape) == 1:
+                f = f.cpu()
+                if k in encode_np_fields:
+                    # this is for vlp, based on maskrcnn master branch
+                    from qd.qd_common import encode_np
+                    rect[k] = encode_np(f.numpy()).decode()
+                elif len(f.shape) == 1:
                     # just to make it a list of float
                     rect[k] = f.tolist()
                 elif len(f.shape) == 0:
@@ -74,6 +88,8 @@ def get_torch_version_info():
         'cuda': torch.version.cuda,
         'nccl': torch.cuda.nccl.version(),
         'cudnn': torch.backends.cudnn.version(),
+        'device_count': torch.cuda.device_count(),
+        'current_device': torch.cuda.current_device(),
     }
 
 def update_bn_momentum(model, bn_momentum):
@@ -318,15 +334,17 @@ def get_master_node_ip():
         return get_philly_mpi_hosts()[0]
 
 def ensure_init_process_group(device_id=None, port=12345):
-    if get_mpi_size() == 1:
-        return
     if not dist.is_initialized():
         dist_url = 'tcp://{}:{}'.format(get_master_node_ip(),
                 port)
-        init_param = {'backend': 'nccl',
-                'init_method': dist_url,
-                'rank': get_mpi_rank(),
-                'world_size': get_mpi_size()}
+        from datetime import timedelta
+        init_param = {
+            'backend': 'nccl',
+            'init_method': dist_url,
+            'rank': get_mpi_rank(),
+            'world_size': get_mpi_size(),
+            'timeout': timedelta(days=10),
+        }
         if device_id is None:
             device_id = get_mpi_local_rank()
         torch.cuda.set_device(device_id)
