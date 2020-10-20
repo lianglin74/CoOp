@@ -175,7 +175,7 @@ class FCOSPipeline(MaskClassificationPipeline):
 
     def get_train_data_loader(self, start_iter):
         #from fcos_core.data import make_data_loader
-        from maskrcnn_benchmark.data import make_data_loader
+        from qd.mask.data import make_data_loader
         data_loader = make_data_loader(
             cfg,
             is_train=True,
@@ -185,7 +185,7 @@ class FCOSPipeline(MaskClassificationPipeline):
         return data_loader
 
     def get_test_data_loader(self):
-        from maskrcnn_benchmark.data import make_data_loader
+        from qd.mask.data import make_data_loader
         loaders = make_data_loader(cfg,
                                   is_train=False,
                                   is_distributed=self.distributed)
@@ -230,12 +230,29 @@ class FCOSPipeline(MaskClassificationPipeline):
         ds = kwargs['dataloader'].dataset
         if self.label_id_to_label is None:
             self.label_id_to_label = {i + 1: l for i, l in enumerate(self.labelmap)}
-        from qd.qd_maskrcnn import boxlist_to_list_dict
+        from qd.torch_common import boxlist_to_list_dict
         for box_list, idx in zip(output, keys):
             key = ds.id_to_img_map[idx]
             wh_info = ds.get_img_info(idx)
             box_list = box_list.resize((wh_info['width'], wh_info['height']))
-            rects = boxlist_to_list_dict(box_list, self.label_id_to_label)
+            rects = boxlist_to_list_dict(
+                box_list,
+                self.label_id_to_label,
+                extra=0,
+                encode_np_fields=['box_features'],
+            )
+            if any('box_features' in r for r in rects):
+                # we need to re-name the key as feature to be compatible with
+                # the pre-training logic
+                for r in rects:
+                    assert 'feature' not in r
+                    # if there is on box which has box_features. all others
+                    # should have
+                    r['zlib_feature'] = r['box_features']
+                    del r['box_features']
+            for r in rects:
+                if 'attr_feature' in r:
+                    del r['attr_feature']
 
             #from qd.tsv_io import TSVDataset
             #from qd.qd_common import img_from_base64

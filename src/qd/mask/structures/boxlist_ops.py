@@ -3,7 +3,10 @@ import torch
 
 from .bounding_box import BoxList
 
-from maskrcnn_benchmark.layers import nms as _box_nms
+try:
+    from maskrcnn_benchmark.layers import nms as _box_nms
+except:
+    from fcos_core.layers import nms as _box_nms
 # or
 # from fcos_core.layers import nms as _box_nms
 
@@ -27,7 +30,9 @@ def boxlist_softnms(boxlist, sigma, threshold=0.,
     result.add_field(score_field, scores)
     return result.to(device)
 
-def boxlist_nms_no_convert_back(boxlist, nms_thresh, max_proposals=-1, score_field="scores"):
+def boxlist_nms_no_convert_back(
+    boxlist,
+        nms_thresh, max_proposals=-1, score_field="scores"):
     """
     Performs non-maximum suppression on a boxlist, with scores specified
     in a boxlist field via score_field.
@@ -50,6 +55,9 @@ def boxlist_nms_no_convert_back(boxlist, nms_thresh, max_proposals=-1, score_fie
         #assert len(keep) <= max_proposals
     #else:
     keep = _box_nms(boxes, score, nms_thresh)
+    #from torchvision.ops import nms
+    #keep2 = nms(old_boxes, old_score, nms_thresh)
+    #import ipdb;ipdb.set_trace(context=15)
     if max_proposals > 0:
         keep = keep[: max_proposals]
     boxlist = boxlist[keep]

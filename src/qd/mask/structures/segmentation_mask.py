@@ -2,7 +2,6 @@ import cv2
 import copy
 import torch
 import numpy as np
-from maskrcnn_benchmark.layers.misc import interpolate
 
 import pycocotools.mask as mask_utils
 
