@@ -491,6 +491,9 @@ def gen_uuid():
 def remove_dir(d):
     ensure_remove_dir(d)
 
+def ensure_remove_file(d):
+    os.remove(d)
+
 def ensure_remove_dir(d):
     is_dir = op.isdir(d)
     is_link = op.islink(d)
@@ -533,12 +536,14 @@ def ensure_copy_file(src, dest):
     if not op.isfile(dest):
         copy_file(src, dest)
 
-def cmd_run(list_cmd, return_output=False, env=None,
-        working_dir=None,
-        stdin=sp.PIPE,
-        shell=False,
-        dry_run=False,
-        ):
+def cmd_run(list_cmd,
+            return_output=False,
+            env=None,
+            working_dir=None,
+            stdin=sp.PIPE,
+            shell=False,
+            dry_run=False,
+            ):
     logging.info('start to cmd run: {}'.format(' '.join(map(str, list_cmd))))
     # if we dont' set stdin as sp.PIPE, it will complain the stdin is not a tty
     # device. Maybe, the reson is it is inside another process.
@@ -1223,28 +1228,33 @@ def parse_test_data_with_version(predict_file):
     result = parse_test_data_with_version_with_more_param(predict_file)
     if result is not None:
         return result
+    #model_iter_0040760.TaxCaptionBot.trainval.predict.report
+    all_pattern = [
+        'model_iter_[0-9]*\.(.*)\.(trainval|train|test)\..*predict\.(?:ir_acc|caption)\.report',
+        'model(?:_iter)?_-?[0-9]*[e]?\.(.*)\.(trainval|train|test)\.(\.v[0-9])?.*(?:predict|report|tsv)',
+        'model(?:_iter)?_-?[0-9]*[e]?\.(?:caffemodel|pth\.tar|pth|pt)\.(.*)\.(trainval|train|test)\.(\.v[0-9])?(?:predict|report)',
+        'model_iter_[0-9]*\.(.*)\.([a-zA-Z0-9]+)\..*predict\.(?:ir_acc|caption)\.report',
+    ]
+    for p in all_pattern:
+        match_result = re.match(p, predict_file)
+        if match_result is not None:
+            result = match_result.groups()
+            if len(result) == 2 or result[2] is None:
+                v = 0
+            else:
+                v = int(result[2][2:])
+            return result[0], result[1], v
+
     pattern = \
-        'model(?:_iter)?_-?[0-9]*[e]?\.(?:caffemodel|pth\.tar|pth|pt)\.(.*)\.(trainval|train|test)\.(\.v[0-9])?(?:predict|report)'
+        'model(?:_iter)?_-?[0-9]*[e]?\.(?:caffemodel|pth\.tar|pth|pt)\.([^\.]*).*?(\.v[0-9])?\.(?:predict|report)'
     match_result = re.match(pattern, predict_file)
-    if match_result is None:
-        pattern = \
-            'model(?:_iter)?_-?[0-9]*[e]?\.(?:caffemodel|pth\.tar|pth|pt)\.([^\.]*).*?(\.v[0-9])?\.(?:predict|report)'
-        match_result = re.match(pattern, predict_file)
-        assert match_result
-        result = match_result.groups()
-        if result[1] is None:
-            v = 0
-        else:
-            v = int(result[1][2])
-        return result[0], 'test', v
+    assert match_result
+    result = match_result.groups()
+    if result[1] is None:
+        v = 0
     else:
-        assert match_result
-        result = match_result.groups()
-        if result[2] is None:
-            v = 0
-        else:
-            v = int(result[2][2])
-        return result[0], result[1], v
+        v = int(result[1][2:])
+    return result[0], 'test', v
 
 def parse_test_data(predict_file):
     return parse_test_data_with_version(predict_file)[:2]
@@ -1256,9 +1266,11 @@ def parse_data(full_expid):
     return [c for c in candidates if len(c) == max_length][0]
 
 def parse_iteration(file_name):
-    patterns = ['.*model(?:_iter)?_([0-9]*)\..*',
-                '.*model(?:_iter)?_([0-9]*)e\..*',
-                ]
+    patterns = [
+        '.*model(?:_iter)?_([0-9]*)\..*',
+        '.*model(?:_iter)?_([0-9]*)e\..*',
+        '.*model(?:_iter)?_([0-9]*)$',
+    ]
     for p in patterns:
         r = re.match(p, file_name)
         if r is not None:
@@ -1609,8 +1621,6 @@ def ensure_directory(path):
                     pass
                 else:
                     raise
-        # we should always check if it succeeds.
-        assert op.isdir(op.abspath(path)), path
 
 def parse_pattern(pattern, s):
     result = parse_pattern_as_is(pattern, s)
@@ -1986,7 +1996,19 @@ def load_from_yaml_str(s):
 
 def load_from_yaml_file(file_name):
     with open(file_name, 'r') as fp:
-        return yaml.load(fp, Loader=yaml.UnsafeLoader)
+        data = load_from_yaml_str(fp)
+    while isinstance(data, dict) and '_base_' in data:
+        b = op.join(op.dirname(file_name), data['_base_'])
+        result = load_from_yaml_file(b)
+        assert isinstance(result, dict)
+        del data['_base_']
+        from qd.qd_common import dict_get_all_path
+        all_key = dict_get_all_path(data)
+        for k in all_key:
+            v = dict_get_path_value(data, k)
+            dict_update_path_value(result, k, v)
+        data = result
+    return data
 
 def write_to_file(contxt, file_name, append=False):
     p = os.path.dirname(file_name)
@@ -2072,11 +2094,11 @@ def parse_basemodel_with_depth(net):
         i = net.index('_')
         return net[: i]
 
-def worth_create(base_file_name, derived_file_name, buf_second=0):
-    if not op.isfile(base_file_name):
+def worth_create(base, derived, buf_second=0):
+    if not op.isfile(base) and not op.isdir(base):
         return False
-    if os.path.isfile(derived_file_name) and \
-            os.path.getmtime(derived_file_name) > os.path.getmtime(base_file_name) - buf_second:
+    if os.path.isfile(derived) and \
+            os.path.getmtime(derived) > os.path.getmtime(base) - buf_second:
         return False
     else:
         return True
@@ -2207,13 +2229,13 @@ def pass_key_value_if_has(d_from, from_key, d_to, to_key):
 def dict_update_nested_dict(a, b, overwrite=True):
     for k, v in viewitems(b):
         if k not in a:
-            a[k] = v
+            dict_update_path_value(a, k, v)
         else:
-            if isinstance(a[k], dict) and isinstance(v, dict):
-                dict_update_nested_dict(a[k], v, overwrite)
+            if isinstance(dict_get_path_value(a, k), dict) and isinstance(v, dict):
+                dict_update_nested_dict(dict_get_path_value(a, k), v, overwrite)
             else:
                 if overwrite:
-                    a[k] = v
+                    dict_update_path_value(a, k, v)
 
 def dict_ensure_path_key_converted(a):
     for k in list(a.keys()):
@@ -2234,7 +2256,23 @@ def dict_ensure_path_key_converted(a):
             if isinstance(v, dict):
                 dict_ensure_path_key_converted(v)
 
-def dict_get_all_path(d, with_type=False):
+def query_path_by_suffix(job_in_scheduler, suffix, default=None):
+    found = []
+    for p in dict_get_all_path(job_in_scheduler, leaf_only=False):
+        if p.endswith(suffix):
+            v = dict_get_path_value(job_in_scheduler, p)
+            found.append(v)
+    if len(found) == 1:
+        return found[0]
+    elif len(found) > 1:
+        if all(f == found[0] for f in found[1:]):
+            return found[0]
+        else:
+            raise ValueError
+    else:
+        return default
+
+def dict_get_all_path(d, with_type=False, leaf_only=True):
     all_path = []
     for k, v in viewitems(d):
         if with_type:
@@ -2244,11 +2282,25 @@ def dict_get_all_path(d, with_type=False):
                 k = 'i' + str(k)
             else:
                 raise NotImplementedError
-        if not isinstance(v, dict):
-            all_path.append(k)
-        else:
-            all_sub_path = dict_get_all_path(v, with_type)
+        if isinstance(v, dict):
+            all_sub_path = dict_get_all_path(
+                v, with_type, leaf_only=leaf_only)
             all_path.extend([k + '$' + p for p in all_sub_path])
+            if not leaf_only:
+                all_path.append(k)
+        elif isinstance(v, tuple) or isinstance(v, list):
+            for i, _v in enumerate(v):
+                if isinstance(_v, (dict, list)):
+                    all_sub_path = dict_get_all_path(
+                        _v, with_type,
+                        leaf_only=leaf_only)
+                    all_path.extend([k + '${}$'.format(i) + p for p in all_sub_path])
+                else:
+                    all_path.append(k + '${}'.format(i))
+            if not leaf_only:
+                all_path.append(k)
+        else:
+            all_path.append(k)
     return all_path
 
 def dict_parse_key(k, with_type):
@@ -2322,7 +2374,10 @@ def dict_get_path_value(d, p, with_type=False):
     while True:
         if len(ps) > 0:
             k = dict_parse_key(ps[0], with_type)
-            cur_dict = cur_dict[k]
+            if isinstance(cur_dict, (tuple, list)):
+                cur_dict = cur_dict[int(k)]
+            else:
+                cur_dict = cur_dict[k]
             ps = ps[1:]
         else:
             return cur_dict
@@ -2496,10 +2551,16 @@ def decode_general_cmd(extraParam):
 
 def print_job_infos(all_job_info):
     all_key = [
-            'cluster',
-            'status', 'appID-s', 'elapsedTime', 'elapsedFinished',
-            'retries', 'preempts', 'mem_used', 'gpu_util',
-            'speed', 'left']
+        'cluster',
+        'status',
+        'appID-s',
+        'result',
+        'elapsedTime',
+        'elapsedFinished',
+        'mem_used',
+        'gpu_util',
+        'speed',
+        'left']
     keys = ['data', 'net', 'expid']
     meta_keys = ['num_gpu']
     all_key.extend(keys)
@@ -2534,7 +2595,8 @@ def parse_eta_in_hours(left):
 def attach_philly_maskrcnn_log_if_is(all_log, job_info):
     for log in reversed(all_log):
         # Philly, maskrcnn-benchmark log
-        pattern = '(.*): .*: eta: (.*) iter: [0-9]*  speed: ([0-9\.]*).*'
+        pattern = '(.*): .*: eta: (.*) iter: [0-9]*[ ]*speed: ([0-9\.]*).*'
+
         result = re.match(pattern, log)
         if result and result.groups():
             log_time, left, speed = result.groups()
@@ -2556,9 +2618,59 @@ def calc_eta(days, hours):
     x = datetime.now() + timedelta(days=days, hours=hours + 1)
     return '{}/{}-{}'.format(x.month, x.day, x.hour)
 
+def attach_mmask_caption_itp_multi_line_log_if_is(all_log, job_info):
+    for log in reversed(all_log):
+        pattern = r'.*(202[0-9:\ \-\.]+)\,.* (?:train|mmask_caption|mmask_pretrain)\.py\:.*(?:train)\(\):.*eta[ ]*:(.*) iter: [0-9]*'
+            #2020-10-13 20:15:24 [21ddde126d88bf2a12f76f300ddaac02-ps-0, 10.43.224.4] [1,0]<stdout>:2020-10-13 20:15:23,329.329 mmask_caption.py:186      train(): eta : 3:37:16  iter: 2460  max mem : 4541
+        result = re.match(pattern, log)
+        if result and result.groups():
+            log_time, left = result.groups()
+            from dateutil.parser import parse
+            log_time = parse(log_time)
+            job_info['log_time'] = log_time
+            # log_time here is UTC. convert it to local time
+            d, h = parse_eta_in_hours(left.strip())
+            job_info['left'] = '{}-{:.1f}h'.format(d, h)
+            job_info['eta'] = calc_eta(d, h)
+            return True
+    return False
+
+def attach_mmask_aml_multi_line_log_if_is(all_log, job_info):
+    for log in reversed(all_log):
+        pattern = r'(202[0-9:\ \-\.]+)\,.* (?:mmask_caption|mmask_pretrain)\.py\:.*(?:train)\(\):.*eta[ ]*:(.*) iter: [0-9]*'
+            #2020-10-08 03:00:47,292.292 mmask_caption.py:186      train(): eta : 3:40:55  iter: 1900  max mem : 4541
+        result = re.match(pattern, log)
+        if result and result.groups():
+            log_time, left = result.groups()
+            from dateutil.parser import parse
+            log_time = parse(log_time)
+            job_info['log_time'] = log_time
+            # log_time here is UTC. convert it to local time
+            d, h = parse_eta_in_hours(left.strip())
+            job_info['left'] = '{}-{:.1f}h'.format(d, h)
+            job_info['eta'] = calc_eta(d, h)
+            return True
+    return False
+
+def attach_itp_mmask_log_if_is(all_log, job_info):
+    for log in reversed(all_log):
+        pattern = r'.*<stdout>:(.*),.* (?:trainer|mmask_pretrain)\.py.*(?:do_train|do_train_dict|train)\(\): eta: (.*) iter: [0-9]*.*'
+        result = re.match(pattern, log)
+        if result and result.groups():
+            log_time, left = result.groups()
+            from dateutil.parser import parse
+            log_time = parse(log_time)
+            job_info['log_time'] = log_time
+            # log_time here is UTC. convert it to local time
+            d, h = parse_eta_in_hours(left)
+            job_info['left'] = '{}-{:.1f}h'.format(d, h)
+            job_info['eta'] = calc_eta(d, h)
+            return True
+    return False
+
 def attach_itp_log_if_is(all_log, job_info):
     for log in reversed(all_log):
-        pattern = r'.*<stdout>:(.*),.* trainer\.py.*(?:do_train|do_train_dict)\(\): eta: (.*) iter: [0-9]*  speed: ([0-9\.]*).*'
+        pattern = r'.*<stdout>:(.*),.* (?:trainer|mmask_pretrain|image_text_retrieval)\.py.*(?:do_train|do_train_dict|train|old_train)\(\): eta:[ ]*(.*) iter: [0-9]*[ ]*speed: ([0-9\.]*).*'
         result = re.match(pattern, log)
         if result and result.groups():
             log_time, left, speed = result.groups()
@@ -2575,7 +2687,8 @@ def attach_itp_log_if_is(all_log, job_info):
 
 def attach_aml_maskrcnn_log_if_is(all_log, job_info):
     for log in reversed(all_log):
-        pattern = r'(.*),.* trainer\.py.*(?:do_train|do_train_dict)\(\): eta: (.*) iter: [0-9]*  speed: ([0-9\.]*).*'
+        pattern = r'(.*),.* (?:mmask_pretrain|trainer)\.py.*(?:old_train|do_train|do_train_dict)\(\): eta: (.*) iter: [0-9]*[ ]*speed: ([0-9\.]*).*'
+
         result = re.match(pattern, log)
         if result and result.groups():
             log_time, left, speed = result.groups()
@@ -2652,6 +2765,12 @@ def attach_log_parsing_result(job_info):
         return
     if attach_aml_detectron2_log_if_is(all_log, job_info):
         return
+    if attach_itp_mmask_log_if_is(all_log, job_info):
+        return
+    if attach_mmask_aml_multi_line_log_if_is(all_log, job_info):
+        return
+    if attach_mmask_caption_itp_multi_line_log_if_is(all_log, job_info):
+        return
 
 def print_offensive_folder(folder):
     all_folder = os.listdir(folder)
@@ -2689,6 +2808,9 @@ class make_namespace_by_dict(object):
     def clone(self):
         c = copy.deepcopy(self.__dict__)
         return make_namespace_by_dict(c)
+
+    def __repr__(self):
+        return '{}'.format(pformat(self.__dict__))
 
 @try_once
 def try_get_cpu_info():
@@ -3147,6 +3269,32 @@ def join_hints(hints, sep='_'):
         else:
             parts.append(str(h))
     return sep.join(parts)
+
+def qd_tqdm(*args, **kwargs):
+    desc = kwargs.get('desc', '')
+    import inspect
+    frame = inspect.currentframe()
+    frames = inspect.getouterframes(frame)
+    frame = frames[1].frame
+    line_number = frame.f_lineno
+    fname = op.basename(frame.f_code.co_filename)
+    message = '{}:{}'.format(fname, line_number)
+
+    if 'desc' in kwargs:
+        kwargs['desc'] = message + ' ' + desc
+    else:
+        kwargs['desc'] = message
+
+    if 'mininterval' not in kwargs:
+        # every 2 secons; default is 0.1 second which is too frequent
+        kwargs['mininterval'] = 2
+
+    return tqdm(*args, **kwargs)
+
+def print_opened_files():
+    import psutil
+    proc = psutil.Process()
+    logging.info(pformat(proc.open_files()))
 
 if __name__ == '__main__':
     init_logging()

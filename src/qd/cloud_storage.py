@@ -11,6 +11,7 @@ from tqdm import tqdm
 import os
 from qd.qd_common import ensure_directory
 logger.propagate = False
+from deprecated import deprecated
 
 def create_cloud_storage(x=None, config_file=None, config=None):
     if config is not None:
@@ -86,12 +87,18 @@ def get_root_all_full_expid(full_expid_prefix, all_blob_name):
             all_blob_name if b.startswith(root))
     return root, all_full_expid
 
-def blob_download_all_qdoutput(prefix, c=None, out_folder='output',
-        latest_only=True):
+def blob_download_all_qdoutput(
+    prefix, c=None, out_folder='output',
+    latest_only=True, too_large_limit_in_gb=None,
+    ignore_base_fname_patterns=None
+):
     # e.g. prefix = jianfw/work/qd_output/TaxVehicleV1_1_with_bb_e2e_faster_rcnn_R_50_FPN_1x_M_BS8_MaxIter20e_LR0.01
     # out_folder = 'output'
     if c is None:
         c = 'vig'
+    if isinstance(ignore_base_fname_patterns, str):
+        from qd.qd_common import load_list_file
+        ignore_base_fname_patterns = load_list_file(ignore_base_fname_patterns)
     c = create_cloud_storage(c)
     from datetime import datetime, timedelta
     creation_time_larger_than = datetime.utcnow() - timedelta(days=14)
@@ -104,9 +111,12 @@ def blob_download_all_qdoutput(prefix, c=None, out_folder='output',
         src_path = op.join(root, full_expid)
         target_folder = op.join(out_folder, full_expid)
         c.blob_download_qdoutput(
-            src_path, target_folder,
+            src_path,
+            target_folder,
             latest_only=latest_only,
             creation_time_larger_than=creation_time_larger_than,
+            too_large_limit_in_gb=too_large_limit_in_gb,
+            ignore_base_fname_patterns=ignore_base_fname_patterns,
         )
 
 def get_azcopy():
@@ -166,11 +176,28 @@ class CloudStorage(object):
     def list_blob_names(self, prefix=None, creation_time_larger_than=None):
         if creation_time_larger_than is not None:
             creation_time_larger_than = creation_time_larger_than.timestamp()
-            return (b.name for b in self.block_blob_service.list_blobs(self.container_name,
-                                                                       prefix=prefix)
+            return (b.name for b in self.block_blob_service.list_blobs(
+                self.container_name,
+                prefix=prefix)
                     if b.properties.creation_time.timestamp() > creation_time_larger_than)
         else:
             return self.block_blob_service.list_blob_names(self.container_name, prefix=prefix)
+
+    def rm_prefix(self, prefix):
+        all_path = self.list_blob_names(prefix)
+        for p in all_path:
+            logging.info('deleting {}'.format(p))
+            self.rm(p)
+
+    def rm(self, path):
+        self.block_blob_service.delete_blob(self.container_name, path)
+
+    def list_blob_info(self, prefix=None, creation_time_larger_than=None):
+        return [{'name': b.name,
+                 'size_in_bytes': b.properties.content_length}
+                for b in self.block_blob_service.list_blobs(self.container_name, prefix=prefix)
+                if creation_time_larger_than is None or
+                b.properties.creation_time.timestamp() > creation_time_larger_than.timestamp()]
 
     def upload_stream(self, s, name, force=False):
         if not force and self.block_blob_service.exists(self.container_name,
@@ -242,11 +269,72 @@ class CloudStorage(object):
         else:
             raise Exception
 
+    @deprecated('use upload()')
     def az_sync(self, src_dir, dest_dir):
+        self.upload(src_dir, dest_dir)
+
+    def upload(self, src_dir, dest_dir, from_blob=None):
+        if from_blob is None:
+            self.upload_from_local(src_dir, dest_dir)
+        else:
+            self.upload_from_another(src_dir, dest_dir, from_blob)
+
+    def upload_from_another(self, src_dir, dest_dir, from_blob):
         assert self.sas_token
         cmd = []
         cmd.append(get_azcopy())
-        cmd.append('sync')
+        if from_blob.dir_exists(src_dir) and not self.dir_exists(dest_dir):
+            # in this case, azcopy will copy the local folder under the
+            # destination folder, and thus we have to use the folder of
+            # dest_dir as the dest_dir.
+            assert op.basename(src_dir) == op.basename(dest_dir)
+            dest_dir = op.dirname(dest_dir)
+            cmd.append('cp')
+        else:
+            if self.exists(dest_dir):
+                cmd.append('sync')
+            else:
+                cmd.append('cp')
+        url = 'https://{}.blob.core.windows.net'.format(from_blob.account_name)
+        url = op.join(url, from_blob.container_name, src_dir)
+        assert self.sas_token.startswith('?')
+        from_url = url
+        url = url + from_blob.sas_token
+        cmd.append(url)
+
+        url = 'https://{}.blob.core.windows.net'.format(self.account_name)
+        if dest_dir.startswith('/'):
+            dest_dir = dest_dir[1:]
+        url = op.join(url, self.container_name, dest_dir)
+        assert self.sas_token.startswith('?')
+        data_url = url
+        url = url + self.sas_token
+        cmd.append(url)
+
+        if from_blob.dir_exists(src_dir):
+            cmd.append('--recursive')
+        if from_url == data_url:
+            logging.info('no need to sync data as url is exactly the same')
+            return data_url, url
+        cmd_run(cmd)
+        return data_url, url
+
+    def upload_from_local(self, src_dir, dest_dir):
+        assert self.sas_token
+        cmd = []
+        cmd.append(get_azcopy())
+        if op.isdir(src_dir) and not self.dir_exists(dest_dir):
+            # in this case, azcopy will copy the local folder under the
+            # destination folder, and thus we have to use the folder of
+            # dest_dir as the dest_dir.
+            assert op.basename(src_dir) == op.basename(dest_dir)
+            dest_dir = op.dirname(dest_dir)
+            cmd.append('cp')
+        else:
+            if self.exists(dest_dir):
+                cmd.append('sync')
+            else:
+                cmd.append('cp')
         cmd.append(op.realpath(src_dir))
         url = 'https://{}.blob.core.windows.net'.format(self.account_name)
         if dest_dir.startswith('/'):
@@ -261,27 +349,37 @@ class CloudStorage(object):
         cmd_run(cmd)
         return data_url, url
 
+    @deprecated('use upload')
     def az_upload2(self, src_dir, dest_dir, sync=False):
-        assert self.sas_token
-        cmd = []
-        cmd.append(get_azcopy())
-        if sync:
-            cmd.append('sync')
-        else:
-            cmd.append('cp')
-        cmd.append(op.realpath(src_dir))
-        url = 'https://{}.blob.core.windows.net'.format(self.account_name)
-        if dest_dir.startswith('/'):
-            dest_dir = dest_dir[1:]
-        url = op.join(url, self.container_name, dest_dir)
-        assert self.sas_token.startswith('?')
-        data_url = url
-        url = url + self.sas_token
-        cmd.append(url)
-        if op.isdir(src_dir):
-            cmd.append('--recursive')
-        cmd_run(cmd)
-        return data_url, url
+        return self.upload(src_dir, dest_dir)
+        #assert self.sas_token
+        #cmd = []
+        #cmd.append(get_azcopy())
+        #if sync:
+            #cmd.append('sync')
+        #else:
+            #cmd.append('cp')
+        #cmd.append(op.realpath(src_dir))
+        #url = 'https://{}.blob.core.windows.net'.format(self.account_name)
+        #if dest_dir.startswith('/'):
+            #dest_dir = dest_dir[1:]
+        #url = op.join(url, self.container_name, dest_dir)
+        #assert self.sas_token.startswith('?')
+        #data_url = url
+        #url = url + self.sas_token
+        #cmd.append(url)
+        #if op.isdir(src_dir):
+            #cmd.append('--recursive')
+        #cmd_run(cmd)
+        #return data_url, url
+
+    def query_info(self, path):
+        p = self.block_blob_service.get_blob_properties(self.container_name, path)
+        result = {
+            'size_in_bytes': p.properties.content_length,
+            'creation_time': p.properties.creation_time,
+        }
+        return result
 
     def az_download_all(self, remote_path, local_path):
         all_blob_name = list(self.list_blob_names(remote_path))
@@ -291,6 +389,7 @@ class CloudStorage(object):
             if not op.isfile(target_file):
                 self.az_download(blob_name, target_file,
                         sync=False)
+
     def is_folder(self, remote_path):
         is_folder = False
         for x in self.list_blob_names(remote_path + '/'):
@@ -329,8 +428,11 @@ class CloudStorage(object):
         if remote_path.endswith('/'):
             remote_path = remote_path[:-1]
         is_folder = self.is_folder(remote_path)
+        if sync and tmp_first:
+            logging.info('if sync, no need to save to temp first')
+            tmp_first = False
         if is_folder:
-            if op.isdir(local_path) and tmp_first:
+            if not sync and op.isdir(local_path) and tmp_first:
                 if len(os.listdir(local_path)) > 0:
                     logging.error('ignore to download from {} to {}'
                                   ' since destination is not empty'.format(
@@ -375,6 +477,7 @@ class CloudStorage(object):
             os.rename(local_path, origin_local_path)
         return data_url, url
 
+    @deprecated('use az_download')
     def download_to_path(self, blob_name, local_path,
             max_connections=2):
         dir_path = op.dirname(local_path)
@@ -405,16 +508,44 @@ class CloudStorage(object):
                 blob_name, s)
 
     def exists(self, path):
-        return self.block_blob_service.exists(
-                self.container_name, path)
+        return self.file_exists(path) or self.dir_exists(path)
 
-    def blob_download_qdoutput(self, src_path, target_folder, latest_only=True,
-                               creation_time_larger_than=None):
+    def file_exists(self, path):
+        return self.block_blob_service.exists(self.container_name, op.normpath(path))
+
+    def dir_exists(self, dir_path):
+        dir_path = op.normpath(dir_path)
+        for x in self.list_blob_names(prefix=dir_path + '/'):
+            return True
+        return False
+
+    def blob_download_qdoutput(
+        self,
+        src_path,
+        target_folder,
+        latest_only=True,
+        creation_time_larger_than=None,
+        too_large_limit_in_gb=None,
+        ignore_base_fname_patterns=None,
+        dry_run=False,
+    ):
         def is_in_snapshot(b):
-            return op.basename(op.dirname(b)) == 'snapshot'
+            parts = list(b.split('/'))
+            return 'snapshot' in parts and parts.index('snapshot') < len(parts) - 1
         all_blob_name = list(self.list_blob_names(
             src_path,
             creation_time_larger_than))
+        # remove snapshot/model_iter/abc.bin
+        clean = []
+        for b in all_blob_name:
+            parts = list(b.split('/'))
+            if 'snapshot' in parts and \
+                    parts.index('snapshot') < len(parts) - 2:
+                continue
+            else:
+                clean.append(b)
+        all_blob_name = clean
+
         all_blob_name = get_leaf_names(all_blob_name)
         in_snapshot_blobs = [b for b in all_blob_name if is_in_snapshot(b)]
         not_in_snapshot_blobs = [b for b in all_blob_name if not is_in_snapshot(b)]
@@ -448,16 +579,32 @@ class CloudStorage(object):
         f_target_f = [(f, f.replace(src_path, target_folder)) for f in
             need_download_blobs]
         f_target_f = [(f, target_f) for f, target_f in f_target_f if not op.isfile(target_f)]
+        f_target_f = [(f, target_f) for f, target_f in f_target_f if len(f) > 0]
 
+        if ignore_base_fname_patterns is not None:
+            import re
+            result = []
+            for f, target_f in f_target_f:
+                if any(re.match(p, f) is not None for p in
+                       ignore_base_fname_patterns):
+                    logging.info('ignore {} due to reg pattern matching'.format(f))
+                else:
+                    result.append((f, target_f))
+            f_target_f = result
 
+        if too_large_limit_in_gb is not None:
+            logging.info('before size filtering = {}'.format(len(f_target_f)))
+            f_target_f = [(f, target_f) for f, target_f in f_target_f if
+                          self.query_info(f)['size_in_bytes'] / 1024. ** 3 <=
+                          too_large_limit_in_gb]
+            logging.info('after size filtering = {}'.format(len(f_target_f)))
         for f, target_f in tqdm(f_target_f):
-            if not op.isfile(target_f):
-                if len(f) > 0:
-                    logging.info('download {} to {}'.format(f, target_f))
-                    try:
-                        self.az_download(f, target_f, sync=False)
-                    except:
-                        pass
+            logging.info('download {} to {}'.format(f, target_f))
+            try:
+                if not dry_run:
+                    self.az_download(f, target_f)
+            except:
+                pass
                     #self.download_to_path(f, target_f)
 
 if __name__ == '__main__':

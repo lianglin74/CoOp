@@ -467,13 +467,28 @@ def update_cluster_job_db(all_job_info, collection_name='phillyjob'):
 def try_query_job_acc(*args, **kwargs):
     query_job_acc(*args, **kwargs)
 
-def query_job_acc(job_ids, key='appID', inject=False,
-        must_have_any_in_predict=None,
-        not_have_any_in_predict=None,
-                  metric_names=None):
+def get_job_ids_by_scheduler_id(_ids):
+    from qd.gpucluster.job_scheduler import JobScheduler
     c = create_annotation_db()
-    query_param = {key: {'$in': job_ids}}
+    scheduler_info = [job_info for job_info in c.iter_general(
+        JobScheduler.collection,
+        _id={'$in': _ids},
+    )]
+    _id_to_scheduler = {s['_id']: s for s in scheduler_info}
+    return [{'scheduler_id': _id, 'appID': _id_to_scheduler[_id]['appID']} for _id in _ids]
+
+def query_job_acc(job_ids, key='appID', inject=False,
+                  must_have_any_in_predict=None,
+                  not_have_any_in_predict=None,
+                  metric_names=None):
+    if all(isinstance(i, ObjectId) for i in job_ids):
+        job_ids = get_job_ids_by_scheduler_id(job_ids)
+    c = create_annotation_db()
+    query_param = {key: {'$in': [j['appID'] for j in job_ids]}}
     jobs = list(c.iter_phillyjob(**query_param))
+    appID_to_info = {j['appID']: j for j in job_ids}
+    for j in jobs:
+        j.update(appID_to_info[j['appID']])
     for j in jobs:
         if all(k in j for k in ['data', 'net', 'expid']):
             j['full_expid'] = '_'.join([str(j[k]) for k in ['data', 'net', 'expid']])
@@ -485,10 +500,13 @@ def query_job_acc(job_ids, key='appID', inject=False,
         else:
             full_expid = '_'.join(map(str, [j['data'], j['net'], j['expid']]))
         all_full_expid.append(full_expid)
-    all_key = ['appID', 'status', 'result', 'speed', 'left', 'eta',
+    all_key = ['scheduler_id', 'appID', 'status', 'result', 'speed', 'left', 'eta',
         'full_expid', 'num_gpu', 'mem_used', 'gpu_util']
     all_key = [k for k in all_key if any(j.get(k) is not None for j in jobs)]
-    print_table(jobs, all_key=all_key)
+
+    #print_table([j for j in jobs if j['status'] == 'Failed'],  all_key=all_key)
+    print_table(jobs,  all_key=all_key)
+
     if inject:
         for full_expid in all_full_expid:
             from qd.process_tsv import inject_accuracy_one
@@ -515,6 +533,18 @@ def query_acc_by_full_expid(all_full_expid,
             'feat_eig_value_ratio',
             'feat_mean_value',
             'feat_eig_max_value_ratio',
+            'Bleu_4',
+            'METEOR',
+            'ROUGE_L',
+            'CIDEr',
+            'SPICE',
+            'attr',
+            't2i$R@1',
+            't2i$R@10',
+            't2i$R@5',
+            'i2t$R@1',
+            'i2t$R@10',
+            'i2t$R@5',
         ]
     acc = [a for a in acc if a['metric_name'] in metric_names]
     if must_have_any_in_predict is not None:
@@ -544,6 +574,29 @@ def query_acc_by_full_expid(all_full_expid,
         a['predict_file'].split('.')[2], # test data
         a['metric_value'],
         ))
-    from qd.qd_common import remove_empty_keys_
-    remove_empty_keys_(acc)
-    print_table(acc)
+    #from qd.qd_common import remove_empty_keys_
+    #remove_empty_keys_(acc)
+    # group by metric names
+    all_metric = list(set([a['metric_name'] for a in acc]))
+    all_metric = sorted(all_metric)
+    fp_to_acc = {}
+    for a in acc:
+        fp = (a['full_expid'], a['predict_file'])
+        if fp in fp_to_acc:
+            fp_to_acc[fp].append(a)
+        else:
+            fp_to_acc[fp] = [a]
+    all_x = []
+    for fp, accs in fp_to_acc.items():
+        x = {'full_expid': fp[0], 'predict_file': fp[1]}
+        for m in all_metric:
+            x[m] = None
+        for a in accs:
+            x[a['metric_name']] = a['metric_value']
+        all_x.append(x)
+
+    all_key = ['full_expid']
+    all_key.extend(all_metric)
+    all_key.append('predict_file')
+    print_table(all_x, all_key=all_key)
+

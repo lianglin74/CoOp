@@ -102,8 +102,11 @@ def parse_run_info(run, with_details=True,
         if all_log is None:
             all_log = []
         info['all_log_path'] = all_log
-        master_logs = [l for l in all_log if l.endswith('70_driver_log_0.txt')
-                       or l.endswith('00_stdout.txt')]
+        master_logs = [l for l in all_log if
+                       l.endswith('70_driver_log_0.txt')
+                       or l.endswith('00_stdout.txt')
+                       or l.endswith('ps-0_stdout.txt')
+                       ]
         if len(master_logs) > 0:
             logging.info('parsing the log for {}'.format(info['appID']))
             info['master_log'] = master_logs[0]
@@ -214,13 +217,6 @@ def get_compute_status(compute_target, gpu_per_node=4):
         info['total_free_gpu'] = (info['max_node_count'] -
             info['unusable_node_count'] - info['running_node_count'] -
             info['preparing_node_count']) * gpu_per_node
-    else:
-        info['running_node_count'] = -1
-        info['preparing_node_count'] = -1
-        info['unusable_node_count'] = -1
-        info['max_node_count'] = -1
-        info['total_gpu'] = -1
-        info['total_free_gpu'] = -1
 
     all_job_status = [j.status for j in iter_active_runs(compute_target)]
     info['num_running_job'] = len([j for j in all_job_status if j == 'Running'])
@@ -259,6 +255,14 @@ def get_root_folder_in_curr_dir(fname):
             break
         p = d
     return p
+
+def clean_prefix(file_or_folder):
+    file_or_folder = op.normpath(file_or_folder)
+    if file_or_folder.startswith('./'):
+        file_or_folder = file_or_folder[2:]
+    elif file_or_folder.startswith('/'):
+        file_or_folder = file_or_folder[1:]
+    return file_or_folder
 
 class AMLClient(object):
     status_running = 'Running'
@@ -361,12 +365,18 @@ class AMLClient(object):
     def ws(self):
         if self._ws is None:
             from azureml.core import Workspace
-            if self.use_cli_auth:
-                from azureml.core.authentication import AzureCliAuthentication
-                cli_auth = AzureCliAuthentication()
-                self._ws = Workspace.from_config(self.aml_config, auth=cli_auth)
-            else:
-                self._ws = Workspace.from_config(self.aml_config)
+            for i in range(5):
+                try:
+                    if self.use_cli_auth:
+                        from azureml.core.authentication import AzureCliAuthentication
+                        cli_auth = AzureCliAuthentication()
+                        self._ws = Workspace.from_config(self.aml_config, auth=cli_auth)
+                    else:
+                        self._ws = Workspace.from_config(self.aml_config)
+                    break
+                except:
+                    if i == 4:
+                        raise
         return self._ws
 
     @property
@@ -416,7 +426,7 @@ class AMLClient(object):
             ssh_commands = ['ssh {}@{} -p {}'.format(user_name,
                                      n['publicIpAddress'],
                                      n['port']) for n in target_nodes]
-            cmd = ssh_commands[0].split('' )
+            cmd = ssh_commands[0].split(' ')
         logging.info('all commands:\n{}'.format(pformat(cmd)))
         cmd_run(cmd, stdin=None, shell=True)
 
@@ -424,11 +434,19 @@ class AMLClient(object):
                   with_details=False, with_log=False, log_full=False,
                   detect_error_if_failed=False):
         run = create_aml_run(self.experiment, run_id)
+        return self.query_run(
+            run, with_details=with_details,
+            with_log=with_log, log_full=log_full,
+            detect_error_if_failed=detect_error_if_failed)
+
+    def query_run(self, run, with_details=False, with_log=False, log_full=False,
+                  detect_error_if_failed=False):
         info = parse_run_info(run,
                               with_details=with_details,
                               with_log=with_log,
                               log_full=log_full,
                               )
+        info['cluster'] = self.cluster
         if info['status'] == self.status_failed and detect_error_if_failed:
             messages = detect_aml_error_message(info['appID'])
             if messages is not None:
@@ -443,6 +461,8 @@ class AMLClient(object):
         if run_id is None:
             # all_run is ordered by created time, latest first
             iter_run = self.experiment.get_runs()
+        elif isinstance(run_id, list):
+            iter_run = [create_aml_run(self.experiment, i) for i in run_id]
         else:
             iter_run = [create_aml_run(self.experiment, run_id)]
 
@@ -451,16 +471,12 @@ class AMLClient(object):
                 break
             if by_status and run.status != by_status:
                 continue
-            info = parse_run_info(run,
+            info = self.query_run(run,
                                   with_details=with_details,
                                   with_log=with_log,
                                   log_full=log_full,
+                                  detect_error_if_failed=detect_error_if_failed
                                   )
-            info['cluster'] = self.cluster
-            if info['status'] == self.status_failed and detect_error_if_failed:
-                messages = detect_aml_error_message(info['appID'])
-                if messages is not None:
-                    info['result'] = ','.join(messages)
             yield info
 
     @deprecated('use iter_query')
@@ -683,7 +699,7 @@ class AMLClient(object):
             k8s = dict()
             id_rsa = op.expanduser('~/.ssh/id_rsa.pub')
             if op.isfile(id_rsa):
-                k8s['enable_ssh'] = True
+                k8s['enable_ssh'] = False
                 k8s['ssh_public_key'] = read_to_buffer(
                     id_rsa).decode()
             k8sconfig.configuration = k8s
@@ -739,16 +755,64 @@ class AMLClient(object):
         # upload it
         self.config_param['code_path']['cloud_blob'].az_upload2(random_abs_qd, rel_code_path)
 
-    def upload(self, file_or_folder):
+    def list(self, file_or_folder):
+        file_or_folder = clean_prefix(file_or_folder)
         p = get_root_folder_in_curr_dir(file_or_folder)
         key = '{}_folder'.format(p)
         assert key in self.config_param, self.config_param.keys()
-        self.config_param[key]['cloud_blob'].az_sync(
+        path_in_blob = op.join(self.config_param[key]['path'], file_or_folder[len(p) + 1:])
+        logging.info('path in blob: {}'.format(path_in_blob))
+        infos = self.config_param[key]['cloud_blob'].list_blob_info(path_in_blob)
+        for i in infos:
+            i['name'] = i['name'][len(path_in_blob):]
+        from qd.qd_common import print_table
+        print_table(infos)
+
+    def rm(self, file_or_folder):
+        file_or_folder = clean_prefix(file_or_folder)
+        p = get_root_folder_in_curr_dir(file_or_folder)
+        key = '{}_folder'.format(p)
+        assert key in self.config_param, self.config_param.keys()
+        path_in_blob = op.join(self.config_param[key]['path'], file_or_folder[len(p) + 1:])
+        logging.info('path in blob: {}'.format(path_in_blob))
+        self.config_param[key]['cloud_blob'].rm_prefix(path_in_blob)
+
+    def upload(self, file_or_folder, from_cluster=None):
+        file_or_folder = clean_prefix(file_or_folder)
+        if from_cluster is None:
+            self.upload_from_local(file_or_folder)
+        else:
+            self.upload_from_another(file_or_folder, from_cluster)
+
+    def upload_from_another(self, file_or_folder, from_cluster):
+        p = get_root_folder_in_curr_dir(file_or_folder)
+        key = '{}_folder'.format(p)
+        assert key in self.config_param, self.config_param.keys()
+        self.config_param[key]['cloud_blob'].upload(
+            op.join(from_cluster.config_param[key]['path'], file_or_folder[len(p) + 1:]),
+            op.join(self.config_param[key]['path'], file_or_folder[len(p) + 1:]),
+            from_blob=from_cluster.config_param[key]['cloud_blob'],
+        )
+
+    def file_exists(self, file_name):
+        p = get_root_folder_in_curr_dir(file_name)
+        key = '{}_folder'.format(p)
+        assert key in self.config_param, self.config_param.keys()
+        return self.config_param[key]['cloud_blob'].file_exists(
+            op.join(self.config_param[key]['path'], file_name[len(p) + 1:]),
+        )
+
+    def upload_from_local(self, file_or_folder):
+        p = get_root_folder_in_curr_dir(file_or_folder)
+        key = '{}_folder'.format(p)
+        assert key in self.config_param, self.config_param.keys()
+        self.config_param[key]['cloud_blob'].upload(
             file_or_folder,
             op.join(self.config_param[key]['path'], file_or_folder[len(p) + 1:]),
         )
 
-    def download(self, file_or_folder):
+    def download(self, file_or_folder, as_prefix=False):
+        file_or_folder = clean_prefix(file_or_folder)
         p = get_root_folder_in_curr_dir(file_or_folder)
         key = '{}_folder'.format(p)
         assert key in self.config_param
@@ -781,7 +845,17 @@ def get_log_folder():
     return os.environ.get('AML_LOG_FOLDER', 'assets')
 
 def retriable_error_codes():
-    return ['ECC', 'illegal_cuda_access']
+    return [
+        'ECC',
+        'init_access',
+        'waiting',
+        'Init',
+        'before',
+        'ORTE_comm',
+        'init',
+        'blobIO',
+        'NoSpace',
+    ]
 
 @try_once
 def detect_aml_error_message(app_id):
@@ -792,16 +866,47 @@ def detect_aml_error_message(app_id):
     assert len(folders) == 1, 'not unique: {}'.format(', '.join(folders))
     folder = folders[0]
     has_nvidia_smi = False
+    num_waiting = 0
     for log_file in glob.glob(op.join(folder, '*')):
         all_line = read_to_buffer(log_file).decode().split('\n')
         for i, line in enumerate(all_line):
+            if 'RuntimeError: CUDA driver initialization failed' in line:
+                error_codes.add('Init')
+            if 'FileNotFoundError: [Errno 2] No such file or directory' in line:
+                error_codes.add('FileNotFound')
+            if 'Signal code: Address not mapped' in line:
+                error_codes.add('before')
+            if 'cuda runtime error (3) : initialization error' in line:
+                error_codes.add('Init')
+            if 'has not done sshd setup wait' in line:
+                num_waiting += 1
+                if num_waiting > 1000:
+                    error_codes.add('waiting')
+            if 'RuntimeError: cuda runtime error (3) : initialization error at' in line:
+                error_codes.add('init')
             if "raise RuntimeError('NaN encountered!')" in line:
                 error_codes.add('NaN')
             if 'ValueError: regression_loss is NaN' in line:
                 error_codes.add('RegNaN')
+            if 'ORTE has lost communication with a remote daemon.' in line:
+                error_codes.add('ORTE_comm')
+            if 'RuntimeError: NCCL error in' in line or \
+                    'RuntimeError: CUDA error: misaligned address' in line or \
+                    'RuntimeError: Connection reset by peer' in line or \
+                    'NCCL error in' in line or \
+                    'CUDA error: all CUDA-capable devices' in line:
+                if any('_default_pg.barrier()' in l for l in all_line[
+                        i - 100:
+                        i]):
+                    error_codes.add('Init')
             if 'RuntimeError: CUDA out of memory' in line or \
                     'CUDA error: out of memory' in line:
-                error_codes.add('OOM')
+                if any('_default_pg.barrier()' in l for l in all_line[
+                        i - 100:
+                        i]):
+                    error_codes.add('Init')
+                else:
+                    error_codes.add('OOM')
             if 'No module named' in line:
                 error_codes.add('ModuleErr')
             if 'copy_if failed to synchronize' in line:
@@ -813,7 +918,12 @@ def detect_aml_error_message(app_id):
             if 'ECC error' in line:
                 error_codes.add('ECC')
             if 'an illegal memory access was encountered' in line:
-                error_codes.add('illegal_cuda_access')
+                if any('barrier()' in l for l in all_line[
+                        i - 100:
+                        i]):
+                    error_codes.add('init_access')
+                else:
+                    error_codes.add('illegal_access')
             if 'CUDA error' in line:
                 error_codes.add('cuda')
             if 'Error' in line and \
@@ -828,6 +938,12 @@ def detect_aml_error_message(app_id):
                 error_codes.add('daemon')
             if "AttributeError: module 'maskrcnn_benchmark._C'" in line:
                 error_codes.add('mask compile')
+            if 'OSError: [Errno 5] Input/output error' in line:
+                error_codes.add('blobIO')
+            if 'OSError: [Errno 24] Too many open files' in line:
+                error_codes.add('TooMany')
+            if 'OSError: [Errno 28] No space left on device:' in line and 'tmp' in line:
+                error_codes.add('NoSpace')
         # check how many gpus by nvidia-smi
         import re
         num_gpu = len([line for line in all_line if re.match('.*N/A.*Default', line) is
@@ -938,10 +1054,9 @@ class MultiAMLClient(object):
 def execute(task_type, **kwargs):
     if task_type in ['q', 'query']:
         if len(kwargs.get('remainders', [])) > 0:
-            assert len(kwargs['remainders']) == 1
             c = create_aml_client(**kwargs)
             all_info = list(c.iter_query(
-                run_id=kwargs['remainders'][0],
+                run_id=kwargs['remainders'],
                 with_log=kwargs.get('with_log', True),
                 log_full=kwargs.get('log_full', True),
                 with_details=kwargs.get('with_details', True),
@@ -989,9 +1104,28 @@ def execute(task_type, **kwargs):
         for full_expid in kwargs['remainders']:
             c.download(full_expid)
     elif task_type in ['upload', 'u']:
+        if not kwargs.get('from_cluster'):
+            c = create_aml_client(**kwargs)
+            for data in kwargs['remainders']:
+                c.upload(data)
+        else:
+            param = copy.deepcopy(kwargs)
+            param.pop('from_cluster')
+            c = create_aml_client(**param)
+            param = copy.deepcopy(kwargs)
+            param['cluster'] = param['from_cluster']
+            param.pop('from_cluster')
+            from_c = create_aml_client(**param)
+            for data in kwargs['remainders']:
+                c.upload(data, from_cluster=from_c)
+    elif task_type in ['ls']:
         c = create_aml_client(**kwargs)
         for data in kwargs['remainders']:
-            c.upload(data)
+            c.list(data)
+    elif task_type in ['rm']:
+        c = create_aml_client(**kwargs)
+        for data in kwargs['remainders']:
+            c.rm(data)
     elif task_type == 'blame':
         c = create_aml_client(**kwargs)
         c.blame()
@@ -1052,6 +1186,7 @@ def parse_args():
                 'initi', # incremental init
                 'initic', # incremental & compile
                 'blame', 'resubmit',
+                     'ls', 'rm',
                 's', 'summary', 'i', 'inject'])
     parser.add_argument('-no-wl', dest='with_log', action='store_false')
     parser.add_argument('-no-dt', dest='with_details', action='store_false')
@@ -1059,6 +1194,8 @@ def parse_args():
     parser.add_argument('-hold', dest='sleep_if_fail', default=False, action='store_true')
     parser.add_argument('-c', '--cluster', default=argparse.SUPPRESS, type=str)
     parser.add_argument('-rt', '--resubmit_to', default=argparse.SUPPRESS, type=str)
+    parser.add_argument('-f', '--from_cluster', default=argparse.SUPPRESS, type=str)
+    parser.add_argument('-ca', '--compile_args', default=argparse.SUPPRESS, type=str)
     parser.add_argument('-p', '--param', help='parameter string, yaml format',
             type=str)
     parser.add_argument('-n', '--num_gpu', default=argparse.SUPPRESS, type=int)

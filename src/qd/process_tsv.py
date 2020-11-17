@@ -3,7 +3,7 @@ try:
 except:
     # if it comes here, it is python3
     pass
-from tqdm import tqdm
+from qd.qd_common import qd_tqdm as tqdm
 import argparse
 import base64
 import copy
