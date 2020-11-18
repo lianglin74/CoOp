@@ -188,6 +188,7 @@
    ```
 
 4. How to submit the job
+
    The first step is to upload the code to azure blob by running the following
    command
    ```bash
@@ -232,49 +233,48 @@
        `python -m torch.distributed.launch train.py`.
 
 5. Data management (optional)
-
-  In the config file, we have a mapping of the local folder and the folder in
-  the azure blob. Thus, we can upload and download the data based on this
-  mapping. If the local folder is also a blobfuse folder, then there is no need
-  to upload/download. Here, we mainly focus on the scenario where the local
-  folder is not a blob fuse folder. Let's say the local folder name is `data`
-  and we have an entry of `data_folder` in the config, which tells the data
-  folder will be a blobfuse folder in AML env.
-  - list the files starting with some prefix
-    ```
-    a ls data/voc20
-    ```
-    Note, the prefix here is `data/voc20`, which means we should have a
-    definition of `data_folder` in the configuration
-  - upload local file/folder of `data/voc20` to azure blob
-    ```
-    a u data/voc20
-    ```
-  - download the file/folder of `data/coco` from blob to local folder
-    ```
-    a d data/coco
-    ```
-    Note
-    -  `u` means upload; `d` means download
-    - it will automatically identify if it is a file or folder. Thus, there is no
-      need to specify special parameters here.
-  - delete a file or folder in the blob defined by the clsuter config
-    ```
-    a rm data/coco
-    ```
-    Be careful as you can not revert
-    this operation or cannot recover the data if the deletion is a mistake.
-  - transformer the file or folder between two blobs
-    ```
-    a -c eu -f we3v32 u data/voc20
-    ```
-    Here, `-c` means current cluster name. In this case, it will by default
-    find the config through `aux_data/aml/eu.yaml`. `-f` means `from cluster`,
-    which means the data source. Each cluster has a definition of the blob
-    information. Thus, this tool can figure out all details to transfer the
-    data from another cluster's setting to this cluster's blob setting. It
-    will also automatically detect whether to take it like a folder or a file.
-  
+   In the config file, we have a mapping of the local folder and the folder in
+   the azure blob. Thus, we can upload and download the data based on this
+   mapping. If the local folder is also a blobfuse folder, then there is no need
+   to upload/download. Here, we mainly focus on the scenario where the local
+   folder is not a blob fuse folder. Let's say the local folder name is `data`
+   and we have an entry of `data_folder` in the config, which tells the data
+   folder will be a blobfuse folder in AML env.
+   - list the files starting with some prefix
+     ```
+     a ls data/voc20
+     ```
+     Note, the prefix here is `data/voc20`, which means we should have a
+     definition of `data_folder` in the configuration
+   - upload local file/folder of `data/voc20` to azure blob
+     ```
+     a u data/voc20
+     ```
+   - download the file/folder of `data/coco` from blob to local folder
+     ```
+     a d data/coco
+     ```
+     Note
+     -  `u` means upload; `d` means download
+     - it will automatically identify if it is a file or folder. Thus, there is no
+       need to specify special parameters here.
+   - delete a file or folder in the blob defined by the clsuter config
+     ```
+     a rm data/coco
+     ```
+     Be careful as you can not revert
+     this operation or cannot recover the data if the deletion is a mistake.
+   - transformer the file or folder between two blobs
+     ```
+     a -c eu -f we3v32 u data/voc20
+     ```
+     Here, `-c` means current cluster name. In this case, it will by default
+     find the config through `aux_data/aml/eu.yaml`. `-f` means `from cluster`,
+     which means the data source. Each cluster has a definition of the blob
+     information. Thus, this tool can figure out all details to transfer the
+     data from another cluster's setting to this cluster's blob setting. It
+     will also automatically detect whether to take it like a folder or a file.
+   
    
 
 ## Philly
