@@ -233,6 +233,7 @@
        `python -m torch.distributed.launch train.py`.
 
 5. Data management (optional)
+
    In the config file, we have a mapping of the local folder and the folder in
    the azure blob. Thus, we can upload and download the data based on this
    mapping. If the local folder is also a blobfuse folder, then there is no need
