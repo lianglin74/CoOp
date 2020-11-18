@@ -265,7 +265,7 @@
      ```
      Be careful as you can not revert
      this operation or cannot recover the data if the deletion is a mistake.
-   - transformer the file or folder between two blobs
+   - transform the file or folder between two blobs
      ```
      a -c eu -f we3v32 u data/voc20
      ```
