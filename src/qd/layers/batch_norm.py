@@ -6,6 +6,24 @@ from torch.autograd.function import Function
 import torch.distributed as dist
 
 
+class LayerBatchNorm(torch.nn.Module):
+    def __init__(self, num_features, eps=1e-5, momentum=0.1, affine=True,
+                 track_running_stats=True):
+        super().__init__()
+        self.bn = torch.nn.BatchNorm1d(num_features,
+                             eps, momentum, affine,
+                             track_running_stats)
+
+    def forward(self, x):
+        origin_shape = x.shape
+        need_reshape = len(origin_shape) > 2
+        if need_reshape:
+            x = x.view(-1, self.bn.num_features)
+        x = self.bn(x)
+        if need_reshape:
+            x = x.view(origin_shape)
+        return x
+
 class ConvergingBatchNorm(torch.nn.modules.batchnorm._BatchNorm):
     def __init__(self, policy, max_iter, gamma=None, *args, **kwargs):
         super().__init__(*args, **kwargs)

@@ -397,6 +397,24 @@ def zip_qd(out_zip):
             '\*src/qd_classifier/.cache/\*']
     cmd_run(cmd, working_dir=os.getcwd(), shell=True)
 
+def func_retry_agent(info, func, *args, **kwargs):
+    i = 0
+    num = info.get('retry_times', -1)
+    throw_if_fail = info.get('throw_if_fail')
+    while True:
+        try:
+            return func(*args, **kwargs)
+        except Exception:
+            logging.info('fails: try {}-th time'.format(i))
+            i = i + 1
+            if num > 0 and i >= num:
+                if throw_if_fail:
+                    raise
+                else:
+                    break
+            import time
+            time.sleep(5)
+
 def limited_retry_agent(num, func, *args, **kwargs):
     for i in range(num):
         try:
@@ -412,16 +430,10 @@ def limited_retry_agent(num, func, *args, **kwargs):
             time.sleep(5)
 
 def retry_agent(func, *args, **kwargs):
-    i = 0
-    while True:
-        try:
-            return func(*args, **kwargs)
-            break
-        except Exception as e:
-            logging.info('fails: try {}-th time'.format(i))
-            i = i + 1
-            import time
-            time.sleep(5)
+    return func_retry_agent(
+        {'retry_times': -1},
+        func, *args, **kwargs,
+    )
 
 def ensure_copy_folder(src_folder, dst_folder):
     ensure_directory(dst_folder)
@@ -1230,10 +1242,10 @@ def parse_test_data_with_version(predict_file):
         return result
     #model_iter_0040760.TaxCaptionBot.trainval.predict.report
     all_pattern = [
-        'model_iter_[0-9]*\.(.*)\.(trainval|train|test)\..*predict\.(?:ir_acc|caption)\.report',
+        'model_iter_[0-9]*\.(.*)\.(trainval|train|test)\..*predict\.(?:ir_acc|caption|vqa_acc)\.report',
         'model(?:_iter)?_-?[0-9]*[e]?\.(.*)\.(trainval|train|test)\.(\.v[0-9])?.*(?:predict|report|tsv)',
         'model(?:_iter)?_-?[0-9]*[e]?\.(?:caffemodel|pth\.tar|pth|pt)\.(.*)\.(trainval|train|test)\.(\.v[0-9])?(?:predict|report)',
-        'model_iter_[0-9]*\.(.*)\.([a-zA-Z0-9]+)\..*predict\.(?:ir_acc|caption)\.report',
+        'model_iter_[0-9]*\.(.*)\.([a-zA-Z0-9]+)\..*predict\.(?:ir_acc|caption|vqa_acc)\.report',
     ]
     for p in all_pattern:
         match_result = re.match(p, predict_file)
@@ -2002,8 +2014,7 @@ def load_from_yaml_file(file_name):
         result = load_from_yaml_file(b)
         assert isinstance(result, dict)
         del data['_base_']
-        from qd.qd_common import dict_get_all_path
-        all_key = dict_get_all_path(data)
+        all_key = get_all_path(data)
         for k in all_key:
             v = dict_get_path_value(data, k)
             dict_update_path_value(result, k, v)
@@ -2258,7 +2269,7 @@ def dict_ensure_path_key_converted(a):
 
 def query_path_by_suffix(job_in_scheduler, suffix, default=None):
     found = []
-    for p in dict_get_all_path(job_in_scheduler, leaf_only=False):
+    for p in get_all_path(job_in_scheduler, leaf_only=False):
         if p.endswith(suffix):
             v = dict_get_path_value(job_in_scheduler, p)
             found.append(v)
@@ -2272,6 +2283,28 @@ def query_path_by_suffix(job_in_scheduler, suffix, default=None):
     else:
         return default
 
+def get_all_path(d, with_type=False, leaf_only=True):
+    assert not with_type, 'will not support'
+    all_path = []
+
+    if isinstance(d, dict):
+        for k, v in d.items():
+            all_sub_path = get_all_path(
+                v, with_type, leaf_only=leaf_only)
+            all_path.extend([k + '$' + p for p in all_sub_path])
+            if not leaf_only or len(all_sub_path) == 0:
+                all_path.append(k)
+    elif isinstance(d, tuple) or isinstance(d, list):
+        for i, _v in enumerate(d):
+            all_sub_path = get_all_path(
+                _v, with_type,
+                leaf_only=leaf_only)
+            all_path.extend(['{}$'.format(i) + p for p in all_sub_path])
+            if not leaf_only or len(all_sub_path) == 0:
+                all_path.append('{}'.format(i))
+    return all_path
+
+@deprecated('use get_all_path')
 def dict_get_all_path(d, with_type=False, leaf_only=True):
     all_path = []
     for k, v in viewitems(d):
@@ -2670,7 +2703,7 @@ def attach_itp_mmask_log_if_is(all_log, job_info):
 
 def attach_itp_log_if_is(all_log, job_info):
     for log in reversed(all_log):
-        pattern = r'.*<stdout>:(.*),.* (?:trainer|mmask_pretrain|image_text_retrieval)\.py.*(?:do_train|do_train_dict|train|old_train)\(\): eta:[ ]*(.*) iter: [0-9]*[ ]*speed: ([0-9\.]*).*'
+        pattern = r'.*<stdout>:(.*),.* (?:trainer|mmask_pretrain|image_text_retrieval|vqa)\.py.*(?:do_train|do_train_dict|train|old_train)\(\): eta:[ ]*(.*) iter: [0-9]*[ ]*speed: ([0-9\.]*).*'
         result = re.match(pattern, log)
         if result and result.groups():
             log_time, left, speed = result.groups()
@@ -2687,7 +2720,7 @@ def attach_itp_log_if_is(all_log, job_info):
 
 def attach_aml_maskrcnn_log_if_is(all_log, job_info):
     for log in reversed(all_log):
-        pattern = r'(.*),.* (?:mmask_pretrain|trainer)\.py.*(?:old_train|do_train|do_train_dict)\(\): eta: (.*) iter: [0-9]*[ ]*speed: ([0-9\.]*).*'
+        pattern = r'(.*),.* (?:mmask_pretrain|trainer|vqa)\.py.*(?:old_train|train|do_train|do_train_dict)\(\): eta: (.*) iter: [0-9]*[ ]*speed: ([0-9\.]*).*'
 
         result = re.match(pattern, log)
         if result and result.groups():

@@ -20,7 +20,15 @@ from collections import OrderedDict
 
 def sumarize_data_by_float(x):
     if isinstance(x, torch.Tensor):
-        return float(x.abs().mean())
+        return float(x.float().abs().mean())
+    elif hasattr(x, 'bbox'):
+        # this is boxlist used in maskrcnn
+        x1 = float(x.bbox.float().abs().mean())
+        if hasattr(x, 'extra_fields'):
+            x2 = sumarize_data_by_float(x.extra_fields)
+        return x1 + x2
+    elif isinstance(x, dict):
+        return sum([sumarize_data_by_float(x[sub]) for sub in x])
     elif isinstance(x, list):
         return sum([sumarize_data_by_float(sub) for sub in x])
     elif isinstance(x, tuple):
@@ -47,11 +55,11 @@ class ForwardPassFeatureCache(torch.nn.Module):
     def __init__(self, model):
         super(ForwardPassFeatureCache, self).__init__()
 
-        self.model = model
+        self.module = model
         self.model_to_start_time = OrderedDict()
         self.model_to_end_time = OrderedDict()
 
-        self.module_to_name = OrderedDict([(m, n) for n, m in self.model.named_modules()])
+        self.module_to_name = OrderedDict([(m, n) for n, m in self.module.named_modules()])
 
         self.module_to_output = OrderedDict()
         self.module_to_input = OrderedDict()
@@ -60,16 +68,16 @@ class ForwardPassFeatureCache(torch.nn.Module):
             self.module_to_input[m] = sumarize_data_by_float(i)
             self.module_to_output[m] = sumarize_data_by_float(o)
 
-        self.model.register_forward_hook(forward_hooker)
-        for _, m in self.model.named_modules():
-            if m is not self.model:
+        self.module.register_forward_hook(forward_hooker)
+        for _, m in self.module.named_modules():
+            if m is not self.module:
                 m.register_forward_hook(forward_hooker)
 
     def forward(self, *args, **kwargs):
         self.module_to_output.clear()
         self.module_to_input.clear()
 
-        result = self.model(*args, **kwargs)
+        result = self.module(*args, **kwargs)
         return result
 
     def sumarize_feature(self):
@@ -78,7 +86,8 @@ class ForwardPassFeatureCache(torch.nn.Module):
                 logging.info('module not exist')
                 continue
             name = self.module_to_name[module]
-            logging.info('name = {}; summary = {}'.format(name, out))
+            in_s = self.module_to_input[module]
+            logging.info('name = {}; in = {}; out = {}'.format(name, in_s, out))
 
 def create_forward_pass_feature_cache(m):
     return ForwardPassFeatureCache(m)

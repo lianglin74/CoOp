@@ -9,13 +9,18 @@ import matplotlib.pyplot as plt
 from random import random
 import logging
 from qd.qd_common import is_pil_image
+from PIL import Image
+
+
+def cvimg_to_pil(im):
+    im = cv2.cvtColor(im, cv2.COLOR_BGR2RGB)
+    return Image.fromarray(im)
 
 def copy_make_border(im, top, bottom, left, right):
     if is_pil_image(im):
         w, h = im.size
         w2 = w + left + right
         h2 = top + bottom + h
-        from PIL import Image
         im2 = Image.new('RGB', (w2, h2))
         im2.paste(im, (left, top, left + w, top + h))
         return im2

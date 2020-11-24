@@ -545,6 +545,7 @@ def query_acc_by_full_expid(all_full_expid,
             'i2t$R@1',
             'i2t$R@10',
             'i2t$R@5',
+            'acc',
         ]
     acc = [a for a in acc if a['metric_name'] in metric_names]
     if must_have_any_in_predict is not None:

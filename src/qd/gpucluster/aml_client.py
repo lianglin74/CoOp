@@ -122,8 +122,8 @@ def parse_run_info(run, with_details=True,
     logging.info(info['portal_url'])
 
     param_keys = ['data', 'net', 'expid', 'full_expid']
-    from qd.qd_common import dict_get_all_path
-    all_path = dict_get_all_path(info)
+    from qd.qd_common import get_all_path
+    all_path = get_all_path(info)
     for k in param_keys:
         ps = [p for p in all_path if p.endswith('${}'.format(k))]
         if len(ps) == 1:

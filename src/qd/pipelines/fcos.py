@@ -50,6 +50,18 @@ class FCOSPipeline(MaskClassificationPipeline):
             'max_box': 300,
         })
 
+        from fcos_core.config import _default_cfg
+        # the cfg could be modified by other places and we have to do this
+        # trick to restore to its default. Gradually, we can remove the
+        # dependence on this global variable of cfg.
+        cfg.merge_from_other_cfg(_default_cfg)
+        if dict_has_path(kwargs, 'SOLVER$WARMUP_ITERS') and \
+                isinstance(dict_get_path_value(kwargs, 'SOLVER$WARMUP_ITERS'),
+                           str):
+            x = dict_get_path_value(kwargs, 'SOLVER$WARMUP_ITERS')
+            x = self.parse_iter(x)
+            dict_update_path_value(kwargs, 'SOLVER$WARMUP_ITERS', x)
+
         fcos_root = op.join('aux_data', 'FCOS_configs')
         if self.net.startswith('retina'):
             config_file = op.join(fcos_root, 'retinanet', self.net + '.yaml')
@@ -57,12 +69,15 @@ class FCOSPipeline(MaskClassificationPipeline):
             config_file = op.join(fcos_root, 'fcos', self.net + '.yaml')
         elif self.net.startswith('reppoint'):
             config_file = op.join(fcos_root, 'reppoint', self.net + '.yaml')
+        elif '__' in self.net:
+            config_file = op.join(fcos_root, self.net.replace('__', '/') + '.yaml')
         else:
             config_file = op.join(fcos_root, self.net + '.yaml')
 
         param = load_from_yaml_file(config_file)
         import copy
         self.default_net_param = copy.deepcopy(param)
+        self.custom_net_param = copy.deepcopy(self.kwargs)
         dict_update_nested_dict(self.kwargs, param, overwrite=False)
 
         fcos_on = self.net.startswith('fcos')
@@ -78,9 +93,10 @@ class FCOSPipeline(MaskClassificationPipeline):
         dict_update_path_value(self.kwargs,
                                'SOLVER$MAX_ITER',
                                max_iter)
-        dict_update_path_value(self.kwargs,
-                               'SOLVER$STEPS',
-                               (6*max_iter//9, 8*max_iter//9))
+        if not dict_has_path(self.custom_net_param, 'SOLVER$STEPS'):
+            dict_update_path_value(self.kwargs,
+                                   'SOLVER$STEPS',
+                                   (6*max_iter//9, 8*max_iter//9))
         train_arg = {'data': self.data,
                 'split': 'train',
                 'bgr2rgb': self.bgr2rgb}
@@ -109,8 +125,7 @@ class FCOSPipeline(MaskClassificationPipeline):
                                'DATALOADER$NUM_WORKERS',
                                self.num_workers)
         min_size_train = tuple(range(self.min_size_range32[0], self.min_size_range32[1] + 32, 32))
-        dict_update_path_value(self.kwargs, 'INPUT$MIN_SIZE_TRAIN',
-                min_size_train)
+        dict_update_path_value(self.kwargs, 'INPUT$MIN_SIZE_TRAIN', min_size_train)
         if self.affine_resize:
             if self.affine_resize == 'AF':
                 # AF: affine
@@ -162,16 +177,126 @@ class FCOSPipeline(MaskClassificationPipeline):
             cc.append('{}'.format(cfg.MODEL.ROI_BOX_HEAD.CLASSIFICATION_ACTIVATE))
         if cfg.MODEL.ROI_HEADS.NMS_ON_MAX_CONF_AGNOSTIC:
             cc.append('nmsMax')
+        if cfg.MODEL.ROI_HEADS.NM_FILTER == 3:
+            # master branch-style maskrcnn code implementation. especially used
+            # for feature extraction. That is, each region has only one box
+            # while for non-extraction scenario, each regin can have multiple
+            # boxes, each of which has different class names. In this case, use
+            # NMS_ON_MAX_CONF_AGNOSTIC
+            cc.append('MnmsMax')
+        elif cfg.MODEL.ROI_HEADS.NM_FILTER == 4:
+            cc.append('mlnms')
+        else:
+            assert cfg.MODEL.ROI_HEADS.NM_FILTER == 0
         if self.cfg.MODEL.RPN.FPN_POST_NMS_CONF_TH_TEST > 0:
             cc.append('rpnTh{}'.format(
                 self.cfg.MODEL.RPN.FPN_POST_NMS_CONF_TH_TEST))
         default_fpn_post_nms_top_n_test = (dict_get_path_value(self.default_net_param,
             'MODEL$RPN$FPN_POST_NMS_TOP_N_TEST') if dict_has_path(self.default_net_param,
                 'MODEL$RPN$FPN_POST_NMS_TOP_N_TEST') else 2000)
+        default_pre_nms_top_n_test = (dict_get_path_value(self.default_net_param,
+            'MODEL$RPN$PRE_NMS_TOP_N_TEST') if dict_has_path(self.default_net_param,
+                'MODEL$RPN$PRE_NMS_TOP_N_TEST') else 6000)
+        if cfg.MODEL.RPN.PRE_NMS_TOP_N_TEST != default_pre_nms_top_n_test:
+            cc.append('rpPre{}'.format(cfg.MODEL.RPN.PRE_NMS_TOP_N_TEST))
         if cfg.MODEL.RPN.FPN_POST_NMS_TOP_N_TEST != default_fpn_post_nms_top_n_test:
             cc.append('FPNpost{}'.format(cfg.MODEL.RPN.FPN_POST_NMS_TOP_N_TEST))
         if cfg.MODEL.ROI_HEADS.SCORE_THRESH != 0.05:
             cc.append('roidth{}'.format(cfg.MODEL.ROI_HEADS.SCORE_THRESH))
+        if cfg.MODEL.ROI_HEADS.DETECTIONS_PER_IMG != 100:
+            cc.append('roidDets{}'.format(cfg.MODEL.ROI_HEADS.DETECTIONS_PER_IMG))
+        if cfg.TEST.DETECTIONS_PER_IMG != 100:
+            cc.append('upto{}'.format(cfg.TEST.DETECTIONS_PER_IMG))
+
+        default_post_nms_top_n_test = (dict_get_path_value(self.default_net_param,
+            'MODEL$RPN$POST_NMS_TOP_N_TEST') if dict_has_path(self.default_net_param,
+                'MODEL$RPN$POST_NMS_TOP_N_TEST') else 1000)
+        if cfg.MODEL.RPN.POST_NMS_TOP_N_TEST != default_post_nms_top_n_test:
+            cc.append('rpPost{}'.format(cfg.MODEL.RPN.POST_NMS_TOP_N_TEST))
+        if cfg.MODEL.ROI_HEADS.NMS != 0.5:
+            cc.append('roidNMS{}'.format(cfg.MODEL.ROI_HEADS.NMS))
+
+        #if cfg.MODEL.RETINANET.INFERENCE_TH != 0.05:
+            #cc.append('retinath{}'.format(cfg.MODEL.RETINANET.INFERENCE_TH))
+        #if cfg.MODEL.RETINANET.PRE_NMS_TOP_N != 1000:
+            #cc.append('retprenms{}'.format(cfg.MODEL.RETINANET.PRE_NMS_TOP_N))
+
+        if cfg.MODEL.RPN.NMS_POLICY.TYPE == 'nms':
+            if cfg.MODEL.RPN.NMS_THRESH != cfg.MODEL.RPN.NMS_POLICY.THRESH:
+                cfg.MODEL.RPN.NMS_POLICY.THRESH = cfg.MODEL.RPN.NMS_THRESH
+        if cfg.MODEL.RPN.NMS_POLICY.TYPE != 'nms':
+            cc.append(cfg.MODEL.RPN.NMS_POLICY.TYPE)
+        if cfg.MODEL.RPN.NMS_THRESH != 0.7:
+            cc.append('rpnnmspolicy{}'.format(cfg.MODEL.RPN.NMS_THRESH))
+        if cfg.MODEL.RPN.NMS_POLICY.ALPHA != 0.5:
+            cc.append('rpA{}'.format(cfg.MODEL.RPN.NMS_POLICY.ALPHA))
+        if cfg.MODEL.RPN.NMS_POLICY.GAMMA != 0.5:
+            cc.append('rpG{}'.format(cfg.MODEL.RPN.NMS_POLICY.GAMMA))
+        if cfg.MODEL.RPN.NMS_POLICY.NUM != 2:
+            cc.append('rpN{}'.format(cfg.MODEL.RPN.NMS_POLICY.NUM))
+
+        if cfg.MODEL.RPN.NMS_POLICY.ALPHA2 != 0.1:
+            cc.append('rpA2{}'.format(cfg.MODEL.RPN.NMS_POLICY.ALPHA2))
+        if cfg.MODEL.RPN.NMS_POLICY.GAMMA2 != 0.1:
+            cc.append('rpG2{}'.format(cfg.MODEL.RPN.NMS_POLICY.GAMMA2))
+        if cfg.MODEL.RPN.NMS_POLICY.NUM2 != 1:
+            cc.append('rpN2{}'.format(cfg.MODEL.RPN.NMS_POLICY.NUM2))
+        if cfg.MODEL.RPN.NMS_POLICY.COMPOSE_FINAL_RERANK:
+            cc.append('rpnnmsRerank')
+
+        #if cfg.MODEL.ROI_HEADS.NMS_POLICY.TYPE != 'nms':
+            #cc.append(cfg.MODEL.ROI_HEADS.NMS_POLICY.TYPE)
+        #if cfg.MODEL.ROI_HEADS.NMS_POLICY.THRESH != 0.5:
+            #cc.append('roinmspolicy{}'.format(cfg.MODEL.ROI_HEADS.NMS_POLICY.THRESH))
+
+        #if cfg.MODEL.ROI_HEADS.NMS_POLICY.ALPHA != 0.5:
+            #cc.append('roinmsAlpha{}'.format(cfg.MODEL.ROI_HEADS.NMS_POLICY.ALPHA))
+        #if cfg.MODEL.ROI_HEADS.NMS_POLICY.GAMMA != 0.5:
+            #cc.append('roinmsGamma{}'.format(cfg.MODEL.ROI_HEADS.NMS_POLICY.GAMMA))
+        #if cfg.MODEL.ROI_HEADS.NMS_POLICY.NUM != 2:
+            #cc.append('roinmsNum{}'.format(cfg.MODEL.ROI_HEADS.NMS_POLICY.NUM))
+
+        #if cfg.MODEL.ROI_HEADS.NMS_POLICY.ALPHA2 != 0.1:
+            #cc.append('roinmsAlpha2{}'.format(cfg.MODEL.ROI_HEADS.NMS_POLICY.ALPHA2))
+        #if cfg.MODEL.ROI_HEADS.NMS_POLICY.GAMMA2 != 0.1:
+            #cc.append('roinmsGamma2{}'.format(cfg.MODEL.ROI_HEADS.NMS_POLICY.GAMMA2))
+        #if cfg.MODEL.ROI_HEADS.NMS_POLICY.NUM2 != 1:
+            #cc.append('roinmsNum2{}'.format(cfg.MODEL.ROI_HEADS.NMS_POLICY.NUM2))
+        #if cfg.MODEL.ROI_HEADS.NMS_POLICY.COMPOSE_FINAL_RERANK:
+            #cc.append('roinmsRerank')
+
+        #if cfg.MODEL.RETINANET.NMS_POLICY.TYPE != 'nms':
+            #cc.append(cfg.MODEL.RETINANET.NMS_POLICY.TYPE)
+        #if cfg.MODEL.RETINANET.NMS_POLICY.THRESH != 0.4:
+            #cc.append('rnpolicy{}'.format(cfg.MODEL.RETINANET.NMS_POLICY.THRESH))
+
+        #if cfg.MODEL.RETINANET.NMS_POLICY.ALPHA != 0.4:
+            #cc.append('rnAlpha{}'.format(cfg.MODEL.RETINANET.NMS_POLICY.ALPHA))
+        #if cfg.MODEL.RETINANET.NMS_POLICY.GAMMA != 0.4:
+            #cc.append('rnGamma{}'.format(cfg.MODEL.RETINANET.NMS_POLICY.GAMMA))
+        #if cfg.MODEL.RETINANET.NMS_POLICY.NUM != 1:
+            #cc.append('rnNum{}'.format(cfg.MODEL.RETINANET.NMS_POLICY.NUM))
+
+        #if cfg.MODEL.RETINANET.NMS_POLICY.ALPHA2 != 0.1:
+            #cc.append('rnAlpha2{}'.format(cfg.MODEL.RETINANET.NMS_POLICY.ALPHA2))
+        #if cfg.MODEL.RETINANET.NMS_POLICY.GAMMA2 != 0.1:
+            #cc.append('rnGamma2{}'.format(cfg.MODEL.RETINANET.NMS_POLICY.GAMMA2))
+        #if cfg.MODEL.RETINANET.NMS_POLICY.NUM2 != 0:
+            #cc.append('rnNum2{}'.format(cfg.MODEL.RETINANET.NMS_POLICY.NUM2))
+        #if cfg.MODEL.RETINANET.NMS_POLICY.THRESH2 != 0.4:
+            #cc.append('rnTh2{}'.format(cfg.MODEL.RETINANET.NMS_POLICY.THRESH2))
+        #if cfg.MODEL.RETINANET.NMS_POLICY.COMPOSE_FINAL_RERANK:
+            #cc.append('rnRerank')
+            #if cfg.MODEL.RETINANET.NMS_POLICY.COMPOSE_FINAL_RERANK_TYPE != 'nms':
+                #cc.append(cfg.MODEL.RETINANET.NMS_POLICY.COMPOSE_FINAL_RERANK_TYPE)
+        if cfg.INPUT.SMART_RESIZE_ON_MIN_IN_TEST:
+            cc.append('smartresize')
+
+        if self.bn_train_mode_test:
+            cc.append('trainmode')
+
+        if cfg.MODEL.ROI_HEADS.MIN_DETECTIONS_PER_IMG != 0:
+            cc.append('min{}'.format(cfg.MODEL.ROI_HEADS.MIN_DETECTIONS_PER_IMG))
 
     def get_train_data_loader(self, start_iter):
         #from fcos_core.data import make_data_loader
@@ -191,6 +316,9 @@ class FCOSPipeline(MaskClassificationPipeline):
                                   is_distributed=self.distributed)
         return loaders[0]
 
+    def predict_iter_forward(self, model, inputs):
+        with torch.no_grad():
+            return model(inputs)
 
     def get_train_model(self):
         from fcos_core.modeling.detector import build_detection_model

@@ -113,6 +113,25 @@ def concat_tsv_files(tsvs, out_tsv):
                 all_idx.append(str(int(idx) + sizes[i - 1]))
     write_to_file('\n'.join(all_idx), op.splitext(out_tsv)[0] + '.lineidx')
 
+def merge_data_feature_tsv(from_data, to_data, feature_version):
+    assert from_data.startswith(to_data)
+    from_dataset = TSVDataset(from_data)
+    to_dataset = TSVDataset(to_data)
+    src_tsvs = load_list_file(from_dataset.get_data(
+        'trainX', 'feature', feature_version))
+    dest_tsvs = load_list_file(to_dataset.get_data(
+        'trainX',
+        'feature',
+        feature_version))
+    assert len(dest_tsvs) == 1
+    dest_tsv = dest_tsvs[0]
+    logging.info(pformat(src_tsvs))
+    logging.info(pformat(dest_tsv))
+    if op.isfile(dest_tsv):
+        logging.info('skip to merge as exists')
+    else:
+        concat_tsv_files(src_tsvs, dest_tsv)
+
 def train_test_split(data_from, data_to, split_from='train', num_test=5000):
     populate_dataset_details(data_from)
     dataset_from = TSVDataset(data_from)
@@ -2179,24 +2198,48 @@ def try_json_parse(s):
     except ValueError:
         return s
 
-def iter_full_expid_pred(full_expid, predict_file, start_id, threshold):
+def get_label_type(full_expid, predict_file):
+    label_type = 'label'
+    for row in tsv_reader(
+        op.join('output', full_expid, 'snapshot', predict_file)):
+        rects = json.loads(row[-1])
+        if len(rects) > 0:
+            if 'caption' in rects[0]:
+                label_type = 'caption'
+                break
+    return label_type
+
+def iter_full_expid_pred(
+    full_expid, predict_file, start_id, threshold,
+        label_type):
     test_data, test_data_split = parse_test_data(predict_file)
     pred_tsv = TSVFile(op.join('output', full_expid, 'snapshot', predict_file))
     num_total = len(pred_tsv)
     while start_id < 0:
         start_id += num_total
     test_dataset = TSVDataset(test_data)
-    iter_image_gt = test_dataset.iter_data(test_data_split,
-                                       filter_idx=range(start_id, num_total))
-    for i, (image_key, str_gt, str_im) in enumerate(iter_image_gt):
-        pred_key, str_pred = pred_tsv[i]
-        assert pred_key == image_key
+    iter_image = test_dataset.iter_data(
+        test_data_split,
+        filter_idx=range(start_id, num_total))
+    iter_gt = test_dataset.iter_data(test_data_split, t=label_type,
+                                     filter_idx=range(start_id, num_total))
+    for i, (row_image, row_gt) in enumerate(zip(iter_image, iter_gt)):
+        key = row_gt[0]
+        str_im = row_image[-1]
+        str_gt = row_gt[-1]
+        pred_key, str_pred = pred_tsv[i + start_id]
+        assert pred_key == key, (i,pred_key,key)
         im = img_from_base64(str_im)
         rects_pred = [r for r in json.loads(str_pred) if r['conf'] > threshold]
         rects_gt = json.loads(str_gt)
         if not isinstance(rects_gt, list):
             rects_gt = [{'class': str(rects_gt)}]
-        yield image_key, im, rects_gt, rects_pred, -1
+        yield {
+            'key': key,
+            'im': im,
+            'rects_gt': rects_gt,
+            'rects_pred': rects_pred,
+        }
 
 def visualize_predict_no_draw(full_expid, predict_file, label, start_id,
         threshold):
@@ -2455,11 +2498,11 @@ def visualize_box_no_draw(data, split, version, label, start_id, color_map={},
     for row_image, row_label in zip(rows_image, rows_label):
         key = row_image[0]
         assert key == row_label[0], (key, row_label[0])
-        assert len(row_image) == 3
         assert len(row_label) == 2
         label_str = row_label[-1]
         img_str = row_image[-1]
         im = img_from_base64(img_str)
+        assert im is not None
         origin = np.copy(im)
         rects = try_json_parse(label_str)
         if type(rects) is list:
@@ -5813,6 +5856,16 @@ def inject_accuracy_one(full_expid):
             assert len(all_meter) == 1
             acc = all_meter[0]
             del acc['name']
+        elif report_file.endswith('caption.report'):
+            acc = json.loads(read_to_buffer(report_file))
+        elif any(report_file.endswith(k) for k in ['ir_acc.report', 'vqa_acc.report']):
+            acc = load_from_yaml_file(report_file)
+            from qd.qd_common import get_all_path, dict_get_path_value
+            all_path = get_all_path(acc)
+            acc = {p: dict_get_path_value(acc, p) for p in all_path}
+        elif report_file.endswith('attr.report'):
+            x = json.loads(read_to_buffer(report_file))
+            acc = {'attr': x['overall']['0.5']['map']}
         else:
             map_json_file = report_file + '.map.json'
             if op.isfile(map_json_file):
@@ -5845,6 +5898,16 @@ def inject_accuracy_one(full_expid):
                 c.insert_acc(**curr)
 
 def find_predict_file(report_file, all_predict):
+    for k in ['.ir_acc.report',
+              '.vqa_acc.report',
+              '.caption.report',
+              '.attr.report'
+              ]:
+        if report_file.endswith(k):
+            pred = report_file[:-len(k)] + '.tsv'
+            if pred in all_predict:
+                return pred
+
     found = False
     for p in all_predict:
         if p + '.report' == report_file:
@@ -6992,6 +7055,162 @@ def duplicate_balance_fg_classes(
     out_dataset.write_data(info.items(), split, t='generate_info')
 
     populate_dataset_details(out_data)
+
+def split_dataset(
+    data, num_split, out_data,
+    split_types=(None, 'label', 'hw', 'caption'),
+    splits=('train', 'trainval', 'test'),
+):
+    dataset = TSVDataset(data)
+    out_dataset = TSVDataset(out_data)
+    for split in splits:
+        if not dataset.has(split):
+            continue
+        num_rows = dataset.num_rows(split)
+        each_size = (num_rows + num_split - 1) //  num_split
+        shuffle = []
+        t_to_tsvs = defaultdict(list)
+        for i in range(num_split):
+            start = i * each_size
+            end = start + each_size
+            end = min(end, num_rows)
+            for t in split_types:
+                logging.info('split = {}; i = {}; t = {}'.format(
+                    split, i, t))
+                def gen_rows():
+                    for j, row in enumerate(dataset.iter_data(
+                        split, t=t,
+                        filter_idx=range(start,
+                                         end),
+                            progress=True)):
+                        if t is None:
+                            shuffle.append((i, j))
+                        yield row
+                ssplit = '{}_{}_{}'.format(split, i, num_split)
+                if out_dataset.has(ssplit, t):
+                    iter_in_file = out_dataset.iter_data(ssplit, t)
+                    for in_file, curr in zip(iter_in_file, gen_rows()):
+                        assert in_file == curr
+                else:
+                    out_dataset.write_data(gen_rows(), split=ssplit, t=t)
+                t_to_tsvs[str(t)].append(out_dataset.get_data(ssplit, t))
+        if op.isfile(out_dataset.get_shuffle_file(split)):
+            iter_in_file = tsv_reader(out_dataset.get_shuffle_file(split))
+            for x, y in zip(iter_in_file, shuffle):
+                assert x == y
+        else:
+            tsv_writer(shuffle, out_dataset.get_shuffle_file(split))
+        for t in split_types:
+            split_x = '{}X'.format(split)
+            target_file = out_dataset.get_data(split_x, t=t)
+            if op.isfile(target_file):
+                assert '\n'.join(t_to_tsvs[str(t)]) == read_to_buffer(target_file).decode()
+            else:
+                write_to_file('\n'.join(t_to_tsvs[str(t)]), target_file)
+    ensure_copy_file(dataset.get_labelmap_file(), out_dataset.get_labelmap_file())
+
+def merge_dataset(source_infos, target_info, ps):
+    target_dataset = TSVDataset(target_info['data'])
+    for p in ps:
+        tsv_list = []
+        shuffle = []
+        for source in source_infos:
+            dataset = TSVDataset(source['data'])
+            tsv_file = dataset.get_data(source['split'], t=p['type'],
+                                version=p.get('version'))
+            tsv_offset = len(tsv_list)
+            if op.isfile(tsv_file):
+                num = dataset.num_rows(source['split'])
+
+                shuffle.extend([(tsv_offset, i) for i in range(num)])
+                tsv_list.append(tsv_file)
+            else:
+                tsv_x = dataset.get_data(source['split'] + 'X', t=p['type'], version=p.get('version'))
+                curr_list = load_list_file(tsv_x)
+                curr_shuffle = dataset.get_shuffle_file(source['split'])
+                shuffle.extend([(int(i) + tsv_offset, j) for i, j in tsv_reader(curr_shuffle)])
+                tsv_list.extend(curr_list)
+        out_tsvx = target_dataset.get_data(
+            target_info['split'] + 'X', p['type'], version=p.get('version'))
+        if not op.isfile(out_tsvx):
+            write_to_file('\n'.join(tsv_list), out_tsvx)
+        else:
+            es = load_list_file(out_tsvx)
+            assert len(tsv_list) == len(es)
+            for e, c in zip(es, tsv_list):
+                assert e == c
+        if p.get('type') is None:
+            shuffle_f = target_dataset.get_shuffle_file(target_info['split'])
+            if not op.isfile(shuffle_f):
+                tsv_writer(shuffle, shuffle_f)
+            else:
+                for in_file, curr in zip(tsv_reader(shuffle_f), shuffle):
+                    assert in_file[0] == str(curr[0])
+                    assert in_file[1] == str(curr[1])
+
+    # labelmap
+    target_labelmap = target_dataset.get_labelmap_file()
+    lss = [TSVDataset(source['data']).load_labelmap() for source in source_infos]
+    labelmap = list(set([l for ls in lss for l in ls]))
+    labelmap = sorted(labelmap)
+    if not op.isfile(target_labelmap):
+        write_to_file('\n'.join(labelmap), target_labelmap)
+    else:
+        existing = load_list_file(target_labelmap)
+        assert len(existing) == len(labelmap)
+        for e, l in zip(existing, labelmap):
+            assert e == l
+
+def tuple_merge_pred_label_to_gt(x):
+    pred, data, split, in_version, out_version = x
+    merge_pred_label_to_gt(pred, data, split, in_version, out_version)
+
+def merge_pred_label_to_gt(pred, data, split, in_version, out_version):
+    dataset = TSVDataset(data)
+    def gen_rows():
+        iter_pred = tsv_reader(pred)
+        iter_gt = dataset.iter_data(split, 'label', version=in_version)
+        for row_pred, row_gt in tqdm(zip(iter_pred, iter_gt)):
+            assert row_pred[0] == row_gt[0]
+            pred_rects = json.loads(row_pred[1])
+            gt = json.loads(row_gt[1])
+            for p in pred_rects:
+                if 'zlib_feature' in p:
+                    del p['zlib_feature']
+                if 'attr_labels' in p:
+                    del p['attr_labels']
+                if 'attr_scores' in p:
+                    del p['attr_scores']
+            gt.extend(pred_rects)
+            yield row_pred[0], json_dump(gt)
+    #assert not dataset.has(split, 'label', version=out_version)
+    dataset.write_data(gen_rows(), split, 'label', version=out_version)
+
+def generate_caption_linelist(data, split):
+    dataset = TSVDataset(data)
+    iter_caption = dataset.iter_data(split, 'caption')
+    iter_shuffle = tsv_reader(dataset.get_shuffle_file(split))
+
+    def gen_rows():
+        for (idx_source, idx_row), (key, s) in tqdm(zip(iter_shuffle,
+                                                        iter_caption)):
+            cs = json.loads(s)
+            for idx_caption in range(len(cs)):
+                yield idx_source, idx_row, idx_caption
+    if not dataset.has(split, 'caption_linelist'):
+        dataset.write_data(gen_rows(), split, 'caption_linelist')
+
+def generate_num_caption(data, split, version=None):
+    dataset = TSVDataset(data)
+    iter_caption = dataset.iter_data(split, 'caption', version=version)
+
+    def gen_rows():
+        for (key, s) in tqdm(iter_caption):
+            cs = json.loads(s)
+            yield key, len(cs)
+
+    if not dataset.has(split, 'num_caption', version=version):
+        dataset.write_data(gen_rows(), split, 'num_caption', version=version)
 
 if __name__ == '__main__':
     from qd.qd_common import parse_general_args

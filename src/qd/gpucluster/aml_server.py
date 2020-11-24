@@ -117,20 +117,6 @@ def releaseLock(locked_file_descriptor):
     ''' release exclusive lock file access '''
     locked_file_descriptor.close()
 
-def ensure_ssh_server_running():
-    ssh_folder = op.expanduser('~/.ssh')
-    cmd_run(['ls', ssh_folder], succeed=False)
-
-    y = cmd_run(['service', 'ssh', 'status'],
-            succeed=True, return_output=True)
-    y = y.decode()
-    if 'sshd is not running' in y:
-        cmd_run(['service', 'ssh', 'restart'],
-                succeed=True)
-    elif 'active (running)' in y or 'sshd is running' in y:
-        logging.info('ssh is running. ignore to start')
-    else:
-        logging.info('unknown ssh server satus: \n{}'.format(y))
 
 def parse_gpu_usage_dict(result):
     import re
@@ -183,7 +169,6 @@ def wrap_all(code_zip, code_root,
     cmd_run(['ifconfig'])
     cmd_run(['df', '-h'])
     cmd_run(['ls', '/dev'])
-    cmd_run(['blobfuse', '-v'])
 
     lock_fd = acquireLock()
     logging.info('got the lock')
@@ -207,9 +192,9 @@ def wrap_all(code_zip, code_root,
 
         # compile the source code
         compile_qd(code_root, compile_args)
-    ensure_ssh_server_running()
     releaseLock(lock_fd)
 
+    cmd_run(['ls', '-llh'], code_root)
     # after the code is compiled, let's check the lib version
     cmd_run(['pip', 'freeze'])
     logging.info(command)

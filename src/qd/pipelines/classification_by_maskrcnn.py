@@ -15,6 +15,7 @@ import time
 from qd.qd_pytorch import replace_module
 from qd.layers.group_batch_norm import GroupBatchNorm, get_normalize_groups
 from qd.qd_common import json_dump
+from qd.qd_common import qd_tqdm as tqdm
 
 
 class MaskClassificationPipeline(ModelPipeline):
@@ -31,7 +32,10 @@ class MaskClassificationPipeline(ModelPipeline):
             })
         self.step_lr = self.parse_iter(self.step_lr)
         self.max_iter = self.parse_iter(self.max_iter)
-        self.num_class = len(self.get_labelmap())
+
+    @property
+    def num_class(self):
+        return len(self.get_labelmap())
 
     def get_train_model(self):
         # prepare the model
@@ -186,6 +190,9 @@ class MaskClassificationPipeline(ModelPipeline):
             if stage == 'train' and self.infinite_sampler:
                 from qd.opt.sampler import InfiniteSampler
                 sampler = InfiniteSampler(len(dataset))
+            elif stage == 'train' and self.composite_rank_aware_sampler:
+                from qd.opt.sampler import CompositeRankAwareSampler
+                sampler = CompositeRankAwareSampler(dataset)
             else:
                 #from maskrcnn_benchmark.data import samplers
                 import qd.data_layer.samplers as samplers
@@ -352,15 +359,13 @@ class MaskClassificationPipeline(ModelPipeline):
         return model
 
     def predict_iter(self, dataloader, model, softmax_func, meters):
-        from tqdm import tqdm
         start = time.time()
         if self.predict_extract:
             model = self.wrap_feature_extract(model)
         if self.debug_feature:
             from qd.layers.forward_pass_feature_cache import ForwardPassFeatureCache
             model = ForwardPassFeatureCache(model)
-        for i, data_from_loader in tqdm(enumerate(dataloader),
-                total=len(dataloader)):
+        for i, data_from_loader in tqdm(enumerate(dataloader), total=len(dataloader)):
             is_dict_data = isinstance(data_from_loader, dict)
             if not is_dict_data:
                 # this is the deprecated cases. Dictionary should be better for
@@ -369,9 +374,6 @@ class MaskClassificationPipeline(ModelPipeline):
             else:
                 inputs = data_from_loader
                 keys = data_from_loader
-
-            #logging.info('debugging')
-            #inputs = torch_load('/tmp/i')
 
             if self.test_max_iter is not None and i >= self.test_max_iter:
                 # this is used for speed test, where we only would like to run a
@@ -445,8 +447,11 @@ class MaskClassificationPipeline(ModelPipeline):
             logging.info('after merging bn = {}'.format(model))
         from qd.layers import ForwardPassTimeChecker
         model = ForwardPassTimeChecker(model)
+        logging.info('writing {}'.format(sub_predict_file))
         tsv_writer(self.predict_iter(dataloader, model, softmax_func, meters),
                 sub_predict_file)
+        from qd.tsv_io import TSVFile
+        logging.info(TSVFile(sub_predict_file).num_rows())
 
         speed_yaml = sub_predict_file + '.speed.yaml'
         from qd.qd_common import write_to_yaml_file
@@ -463,7 +468,8 @@ class MaskClassificationPipeline(ModelPipeline):
             from qd.process_tsv import concat_tsv_files
             cache_files = [self.get_rank_specific_tsv(predict_result_file, i)
                 for i in range(self.mpi_size)]
-            concat_tsv_files(cache_files, predict_result_file)
+            before_reorder = predict_result_file + '.before.reorder.tsv'
+            concat_tsv_files(cache_files, before_reorder)
             from qd.process_tsv import delete_tsv_files
             delete_tsv_files(cache_files)
         if is_main_process():
@@ -474,7 +480,8 @@ class MaskClassificationPipeline(ModelPipeline):
             # predictions.
             ordered_keys = dataloader.dataset.get_keys()
             from qd.tsv_io import reorder_tsv_keys
-            reorder_tsv_keys(predict_result_file, ordered_keys, predict_result_file)
+            reorder_tsv_keys(before_reorder, ordered_keys, predict_result_file)
+            delete_tsv_files([before_reorder])
 
             # during prediction, we also computed the time cost. Here we
             # merge the time cost

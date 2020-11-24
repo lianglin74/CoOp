@@ -12,15 +12,22 @@ class ForwardPassTimeChecker(torch.nn.Module):
 
         self.module_start_times = []
         self.module_costs = []
+        from collections import defaultdict
+        self.started_module2count = defaultdict(int)
 
         def forward_pre_hooker(m, i):
             self.module_start_times.append((m, time.time()))
+            self.started_module2count[m] += 1
 
         def forward_hooker(m, i, o):
             end_time = time.time()
             start_m, start_time = self.module_start_times.pop()
+            self.started_module2count[start_m] -= 1
             assert start_m == m
-            self.module_costs.append((m, end_time - start_time))
+            if self.started_module2count[start_m] == 0:
+                # in some cases, a module will call itself multiple times, and
+                # we only count the one which is the most outside
+                self.module_costs.append((m, end_time - start_time))
 
         self.meters = MeanSigmaMetricLogger(delimiter="\n")
 
