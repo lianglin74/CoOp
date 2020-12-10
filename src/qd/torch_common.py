@@ -643,3 +643,12 @@ def stack_ignore_last_dim_sparse_tensor(ts):
         ignore,
     )
 
+def set_seed(seed, n_gpu):
+    import random
+    random.seed(seed)
+    import numpy as np
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if n_gpu > 0:
+        torch.cuda.manual_seed_all(seed)
+

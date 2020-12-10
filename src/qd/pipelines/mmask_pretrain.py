@@ -55,16 +55,8 @@ from qd.mask.modeling.captioning.utils_data import make_data_loader
 from qd.mask.modeling.captioning.utils_solver import get_optimizer, get_scheduler
 from qd.mask.layers.bert import BertTokenizer, BertConfig, BertImgForPreTraining
 from qd.qd_common import get_mpi_rank, get_mpi_size
-from qd.torch_common import to
+from qd.torch_common import to, set_seed
 
-
-def set_seed(seed, n_gpu):
-    random.seed(seed)
-    import numpy as np
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if n_gpu > 0:
-        torch.cuda.manual_seed_all(seed)
 
 def save_checkpoint(model, tokenizer, args, epoch, iteration, num_trial=10):
     checkpoint_dir = op.join(

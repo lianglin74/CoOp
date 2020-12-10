@@ -34,7 +34,6 @@ from qd.qd_pytorch import GaussianBlur
 from qd.qd_common import merge_dict_to_cfg
 from qd.qd_common import load_from_yaml_file
 from qd.qd_common import dict_update_nested_dict
-from mmask.config import cfg
 from qd.qd_common import (dict_has_path, dict_get_path_value,
                           dict_update_path_value)
 from qd.qd_common import dump_to_yaml_str
@@ -47,17 +46,21 @@ import datetime
 import torch
 from tqdm import tqdm
 
-from mmask.utils.comm import synchronize, is_main_process
-from mmask.utils.comm import get_rank, get_world_size
-from mmask.utils.miscellaneous import mkdir, set_seed
-from mmask.utils.miscellaneous import delete_tsv_files, concat_tsv_files
-from mmask.utils.metric_logger import MetricLogger
-from mmask.structures.tsv_file_ops import tsv_writer, reorder_tsv_keys
-from mmask.modeling.captioning.utils import check_yaml_file
-from mmask.modeling.captioning.utils_data import make_data_loader
-from mmask.modeling.captioning.utils_solver import get_optimizer, get_scheduler
-from mmask.layers.bert import BertTokenizer, BertConfig, BertForImageCaptioning
-from mmask.modeling.captioning.utils_caption_evaluate import (
+from qd.mask.utils.comm import is_main_process
+from qd.torch_common import synchronize
+from qd.mask.utils.comm import get_rank, get_world_size
+from qd.qd_common import ensure_directory
+from qd.torch_common import to, set_seed
+from qd.process_tsv import delete_tsv_files
+from qd.process_tsv import concat_tsv_files
+from qd.mask.utils.metric_logger import MetricLogger
+from qd.tsv_io import tsv_writer
+from qd.tsv_io import reorder_tsv_keys
+from qd.mask.modeling.captioning.utils import check_yaml_file
+from qd.mask.modeling.captioning.utils_data import make_data_loader
+from qd.mask.modeling.captioning.utils_solver import get_optimizer, get_scheduler
+from qd.mask.layers.bert import BertTokenizer, BertConfig, BertForImageCaptioning
+from qd.mask.modeling.captioning.utils_caption_evaluate import (
         evaluate_on_coco_caption, ScstRewardCriterion)
 
 from qd.tsv_io import convert_data_to_yaml
@@ -69,7 +72,7 @@ def save_checkpoint(model, tokenizer, args, epoch, iteration, num_trial=10):
         'model_iter_{:07d}'.format(iteration))
     if not is_main_process():
         return checkpoint_dir
-    mkdir(checkpoint_dir)
+    ensure_directory(checkpoint_dir)
     model_to_save = model.module if hasattr(model, 'module') else model
     for i in range(num_trial):
         try:
@@ -143,9 +146,12 @@ def train(args, train_dataloader, val_dataloader, model, tokenizer):
             model.train()
             inputs = {
                 'input_ids': batch[0], 'attention_mask': batch[1],
-                'token_type_ids': batch[2], 'img_feats': batch[3], 
+                'token_type_ids': batch[2], 'img_feats': batch[3],
                 'masked_pos': batch[4], 'masked_ids': batch[5]
             }
+            if iteration == 1:
+                for k, v in inputs.items():
+                    logging.info('{} = {}'.format(k, v.shape))
             outputs = model(**inputs)
             loss, logits = outputs[:2]
             masked_ids = inputs['masked_ids']
@@ -153,7 +159,7 @@ def train(args, train_dataloader, val_dataloader, model, tokenizer):
             batch_score = compute_score_with_logits(logits, masked_ids)
             batch_acc = torch.sum(batch_score.float()) / torch.sum(inputs['masked_pos'])
         else:
-            loss = scst_train_iter(args, train_dataloader, model, scst_criterion, 
+            loss = scst_train_iter(args, train_dataloader, model, scst_criterion,
                     img_keys, batch, tokenizer)
             batch_acc = scst_criterion.get_score()
 
@@ -166,18 +172,13 @@ def train(args, train_dataloader, val_dataloader, model, tokenizer):
         optimizer.step()
         scheduler.step()
 
-        batch_time = time.time() - end
-        end = time.time()
-        meters.update_metrics(
-            {'time_info': {'compute': batch_time, 'data': data_time}}
-        )
-        meters.update_params(
-            {'params': {'learning_rate': optimizer.param_groups[0]['lr']}}
-        )
         if iteration % args.logging_steps == 0 or iteration == max_iter:
-            avg_time = meters.meters['time_info']['compute'].global_avg
-            eta_seconds = avg_time * (max_iter - iteration)
-            eta_string = str(datetime.timedelta(seconds=int(eta_seconds)))
+            if 'time_info' in meters.meters:
+                avg_time = meters.meters['time_info']['compute'].global_avg
+                eta_seconds = avg_time * (max_iter - iteration)
+                eta_string = str(datetime.timedelta(seconds=int(eta_seconds)))
+            else:
+                eta_string = 'Unknown'
             logging.info(
                 meters.delimiter.join(
                 ['eta : {eta}', 'iter: {iter}', 'max mem : {memory:.0f}',]
@@ -205,6 +206,15 @@ def train(args, train_dataloader, val_dataloader, model, tokenizer):
                         #json.dump(eval_log, f)
                 #if get_world_size() > 1:
                     #torch.distributed.barrier()
+        batch_time = time.time() - end
+        if iteration > 2:
+            meters.update_metrics(
+                {'time_info': {'compute': batch_time, 'data': data_time}}
+            )
+        meters.update_params(
+            {'params': {'learning_rate': optimizer.param_groups[0]['lr']}}
+        )
+        end = time.time()
 
     total_training_time = time.time() - start_training_time
     total_time_str = str(datetime.timedelta(seconds=total_training_time))
@@ -303,39 +313,39 @@ def get_evaluate_file(predict_file):
     assert predict_file.endswith('.tsv')
     return op.splitext(predict_file)[0] + '.eval.json'
 
-def evaluate(args,
-             val_dataloader,
-             model,
-             tokenizer,
-             output_dir):
-    predict_file = args.predict_file
-    #predict_file = get_predict_file(output_dir, args,
-            #val_dataloader.dataset.yaml_file)
-    if op.isfile(predict_file):
-        logging.info('Skip predict. {} already exists'.format(predict_file))
-    else:
-        test(args, val_dataloader, model, tokenizer, predict_file)
+#def evaluate(self, args,
+             #val_dataloader,
+             #model,
+             #tokenizer,
+             #output_dir):
+    #predict_file = args.predict_file
+    ##predict_file = get_predict_file(output_dir, args,
+            ##val_dataloader.dataset.yaml_file)
+    #if op.isfile(predict_file):
+        #logging.info('Skip predict. {} already exists'.format(predict_file))
+    #else:
+        #test(self, args, val_dataloader, model, tokenizer, predict_file)
 
-    synchronize()
+    #synchronize()
 
-    #evaluate_file = get_evaluate_file(predict_file)
-    #if is_main_process():
-        ##caption_file = val_dataloader.dataset.get_caption_file_in_coco_format()
-        #caption_file = args.caption_file_in_coco_format
-        #if op.isfile(evaluate_file):
-            #logging.info('Skip evaluation. {} already exists'.format(evaluate_file))
-        #else:
-            #data = val_dataloader.dataset.yaml_file.split('/')[-2]
-            #if 'nocaps' not in data:
-                #result = evaluate_on_coco_caption(predict_file, caption_file, outfile=evaluate_file)
-                #logging.info('evaluation result: {}'.format(str(result)))
-                #logging.info('evaluation result saved to {}'.format(evaluate_file))
-    if get_world_size() > 1:
-        torch.distributed.barrier()
-    return evaluate_file
+    ##evaluate_file = get_evaluate_file(predict_file)
+    ##if is_main_process():
+        ###caption_file = val_dataloader.dataset.get_caption_file_in_coco_format()
+        ##caption_file = args.caption_file_in_coco_format
+        ##if op.isfile(evaluate_file):
+            ##logging.info('Skip evaluation. {} already exists'.format(evaluate_file))
+        ##else:
+            ##data = val_dataloader.dataset.yaml_file.split('/')[-2]
+            ##if 'nocaps' not in data:
+                ##result = evaluate_on_coco_caption(predict_file, caption_file, outfile=evaluate_file)
+                ##logging.info('evaluation result: {}'.format(str(result)))
+                ##logging.info('evaluation result saved to {}'.format(evaluate_file))
+    #if get_world_size() > 1:
+        #torch.distributed.barrier()
+    #return evaluate_file
 
-def test(args, test_dataloader, model, tokenizer, predict_file):
-    if op.isfile(predict_file):
+def test(self, args, test_dataloader, model, tokenizer, predict_file):
+    if op.isfile(predict_file) and not self.force_predict:
         logging.info('Skip predict. {} already exists'.format(predict_file))
         return
 
@@ -384,6 +394,8 @@ def test(args, test_dataloader, model, tokenizer, predict_file):
             'decoding_constraint_flag': args.decoding_constraint,
             'bad_ending_ids': bad_ending_ids,
         })
+    from qd.layers import ForwardPassTimeChecker
+    model = ForwardPassTimeChecker(model)
     def gen_rows():
         time_meter = 0
         # restore existing results for long running inference tasks
@@ -407,12 +419,21 @@ def test(args, test_dataloader, model, tokenizer, predict_file):
                     for k in img_keys:
                         yield k, exist_key2pred[k]
                     continue
-                batch = tuple(t.to(args.device) for t in batch)
+                if self.test_max_iter is not None and step >= self.test_max_iter:
+                    # this is used for speed test, where we only would like to run a
+                    # few images
+                    break
+                batch = tuple(t.to(self.device) for t in batch)
                 inputs = {
                     'input_ids': batch[0], 'attention_mask': batch[1],
                     'token_type_ids': batch[2], 'img_feats': batch[3],
                     'masked_pos': batch[4],
                 }
+                if step == 0:
+                    for k, v in inputs.items():
+                        logging.info('{} = {}'.format(
+                            k, v.shape if isinstance(v, torch.Tensor)
+                            else v))
                 if args.use_cbs:
                     inputs.update({
                         'fsm': batch[5],
@@ -438,6 +459,12 @@ def test(args, test_dataloader, model, tokenizer, predict_file):
         logging.info("Inference model computing time: {} seconds per batch".format(time_meter / (step+1)))
 
     tsv_writer(gen_rows(), cache_file)
+    speed_yaml = cache_file + '.speed.yaml'
+    from qd.qd_common import write_to_yaml_file
+    write_to_yaml_file(model.get_time_info(), speed_yaml)
+    from qd.qd_common import create_vis_net_file
+    create_vis_net_file(speed_yaml,
+            op.splitext(speed_yaml)[0] + '.vis.txt')
     synchronize()
     #if world_size > 1:
         #torch.distributed.barrier()
@@ -447,6 +474,21 @@ def test(args, test_dataloader, model, tokenizer, predict_file):
         concat_tsv_files(cache_files, predict_file)
         delete_tsv_files(cache_files)
         reorder_tsv_keys(predict_file, test_dataloader.dataset.image_keys, predict_file)
+
+        speed_cache_files = [c + '.speed.yaml' for c in cache_files]
+        speed_yaml = predict_file + '.speed.yaml'
+        from qd.qd_common import merge_speed_info
+        merge_speed_info(speed_cache_files, speed_yaml)
+        from qd.qd_common import try_delete
+        for x in speed_cache_files:
+            try_delete(x)
+        vis_files = [op.splitext(c)[0] + '.vis.txt' for c in speed_cache_files]
+        from qd.qd_common import merge_speed_vis
+        merge_speed_vis(vis_files,
+                op.splitext(speed_yaml)[0] + '.vis.txt')
+        for x in vis_files:
+            try_delete(x)
+
     synchronize()
     #if world_size > 1:
         #torch.distributed.barrier()
@@ -507,16 +549,7 @@ def check_arguments(args):
         for test_yaml in args.test_yaml:
             check_yaml_file(op.join(args.data_dir, test_yaml))
 
-def main(args):
-    # Setup CUDA, GPU & distributed training
-    args.distributed = args.num_gpus > 1
-    args.device = torch.device(args.device)
-
-    check_arguments(args)
-    mkdir(args.output_dir)
-    set_seed(args.seed, args.num_gpus)
-    logging.info("Using {} GPUs".format(args.num_gpus))
-
+def load_tokenizer_model(args):
     # Load pretrained model and tokenizer
     config_class, model_class, tokenizer_class = BertConfig, BertForImageCaptioning, BertTokenizer
     if args.do_train:
@@ -536,32 +569,45 @@ def main(args):
         config.drop_worst_ratio = args.drop_worst_ratio
         config.drop_worst_after = args.drop_worst_after
         # update model structure if specified in arguments
-        update_params = ['img_feature_dim', 'num_hidden_layers', 'hidden_size', 'num_attention_heads', 'intermediate_size']
-        model_structure_changed = [False] * len(update_params)
+        update_params = ['img_feature_dim',
+                         'num_hidden_layers',
+                         'hidden_size',
+                         'num_attention_heads',
+                         'intermediate_size',
+                         'use_img_layernorm',
+                         'img_layer_norm_eps',
+                         ]
+        #model_structure_changed = [False] * len(update_params)
         for idx, param in enumerate(update_params):
             arg_param = getattr(args, param)
             # bert-base-uncased do not have img_feature_dim
             config_param = getattr(config, param) if hasattr(config, param) else -1
-            if arg_param > 0 and arg_param != config_param:
+            if arg_param is not None and arg_param != -1 and arg_param != config_param:
                 logging.info("Update config parameter {}: {} -> {}".format(param, config_param, arg_param))
                 setattr(config, param, arg_param)
-                model_structure_changed[idx] = True
-        if any(model_structure_changed):
-            assert config.hidden_size % config.num_attention_heads == 0
-            if args.load_partial_weights:
-                # can load partial weights when changing layer only.
-                assert not any(model_structure_changed[2:]), "Cannot load partial weights " \
-                    "when any of ({}) is changed.".format(', '.join(update_params[2:]))
-                model = model_class.from_pretrained(args.model_name_or_path, 
-                    from_tf=bool('.ckpt' in args.model_name_or_path), config=config)
-                logging.info("Load partial weights for bert layers.")
-            else:
-                model = model_class(config=config) # init from scratch
-                logging.info("Init model from scratch.")
-        else:
-            model = model_class.from_pretrained(args.model_name_or_path, 
+                #model_structure_changed[idx] = True
+        #if any(model_structure_changed):
+            #assert config.hidden_size % config.num_attention_heads == 0
+            ##if args.load_partial_weights:
+                ### can load partial weights when changing layer only.
+                ##assert not any(model_structure_changed[2:]), "Cannot load partial weights " \
+                    ##"when any of ({}) is changed.".format(', '.join(update_params[2:]))
+            #model = model_class.from_pretrained(args.model_name_or_path,
+                #from_tf=bool('.ckpt' in args.model_name_or_path), config=config)
+                ##logging.info("Load partial weights for bert layers.")
+            ##else:
+            ##model = model_class(config=config) # init from scratch
+            ##logging.info("Init model from scratch.")
+        #else:
+        if args.model_name_or_path and op.isfile(
+                op.join(args.model_name_or_path, 'pytorch_model.bin')):
+            logging.info('init from {}'.format(args.model_name_or_path))
+            model = model_class.from_pretrained(args.model_name_or_path,
                 from_tf=bool('.ckpt' in args.model_name_or_path), config=config)
-            logging.info("Load pretrained model: {}".format(args.model_name_or_path))
+        else:
+            model = model_class(config=config) # init from scratch
+        assert model is not None
+        logging.info("Load pretrained model: {}".format(args.model_name_or_path))
     else:
         checkpoint = args.eval_model_dir
         assert op.isdir(checkpoint)
@@ -570,10 +616,77 @@ def main(args):
         tokenizer = tokenizer_class.from_pretrained(checkpoint)
         logging.info("Evaluate the following checkpoint: %s", checkpoint)
         model = model_class.from_pretrained(checkpoint, config=config)
+    return tokenizer, model
+
+def main(self, args):
+    # Setup CUDA, GPU & distributed training
+    args.distributed = args.num_gpus > 1
+    args.device = torch.device(args.device)
+
+    check_arguments(args)
+    ensure_directory(args.output_dir)
+    set_seed(args.seed, args.num_gpus)
+    logging.info("Using {} GPUs".format(args.num_gpus))
+
+    tokenizer, model = load_tokenizer_model(args)
+    model = self.model_surgery(model)
+    logging.info(model)
+    #config_class, model_class, tokenizer_class = BertConfig, BertForImageCaptioning, BertTokenizer
+    #if args.do_train:
+        #config = config_class.from_pretrained(args.config_name if args.config_name else \
+                #args.model_name_or_path, num_labels=2, finetuning_task='image_captioning')
+        #if args.scst:
+            ## avoid using too much memory
+            #config.output_hidden_states = True
+        #tokenizer = tokenizer_class.from_pretrained(args.tokenizer_name if args.tokenizer_name \
+                #else args.model_name_or_path, do_lower_case=args.do_lower_case)
+        #config.img_feature_type = 'frcnn'
+        #config.hidden_dropout_prob = args.drop_out
+        #config.loss_type = 'classification'
+        #config.tie_weights = args.tie_weights
+        #config.freeze_embedding = args.freeze_embedding
+        #config.label_smoothing = args.label_smoothing
+        #config.drop_worst_ratio = args.drop_worst_ratio
+        #config.drop_worst_after = args.drop_worst_after
+        ## update model structure if specified in arguments
+        #update_params = ['img_feature_dim', 'num_hidden_layers', 'hidden_size', 'num_attention_heads', 'intermediate_size']
+        #model_structure_changed = [False] * len(update_params)
+        #for idx, param in enumerate(update_params):
+            #arg_param = getattr(args, param)
+            ## bert-base-uncased do not have img_feature_dim
+            #config_param = getattr(config, param) if hasattr(config, param) else -1
+            #if arg_param > 0 and arg_param != config_param:
+                #logging.info("Update config parameter {}: {} -> {}".format(param, config_param, arg_param))
+                #setattr(config, param, arg_param)
+                #model_structure_changed[idx] = True
+        #if any(model_structure_changed):
+            #assert config.hidden_size % config.num_attention_heads == 0
+            #if args.load_partial_weights:
+                ## can load partial weights when changing layer only.
+                #assert not any(model_structure_changed[2:]), "Cannot load partial weights " \
+                    #"when any of ({}) is changed.".format(', '.join(update_params[2:]))
+                #model = model_class.from_pretrained(args.model_name_or_path, 
+                    #from_tf=bool('.ckpt' in args.model_name_or_path), config=config)
+                #logging.info("Load partial weights for bert layers.")
+            #else:
+                #model = model_class(config=config) # init from scratch
+                #logging.info("Init model from scratch.")
+        #else:
+            #model = model_class.from_pretrained(args.model_name_or_path, 
+                #from_tf=bool('.ckpt' in args.model_name_or_path), config=config)
+            #logging.info("Load pretrained model: {}".format(args.model_name_or_path))
+    #else:
+        #checkpoint = args.eval_model_dir
+        #assert op.isdir(checkpoint)
+        #config = config_class.from_pretrained(checkpoint)
+        #config.output_hidden_states = args.output_hidden_states
+        #tokenizer = tokenizer_class.from_pretrained(checkpoint)
+        #logging.info("Evaluate the following checkpoint: %s", checkpoint)
+        #model = model_class.from_pretrained(checkpoint, config=config)
 
     total_params = sum(p.numel() for p in model.parameters())
     logging.info('Model total parameters: {}'.format(total_params))
-    model.to(args.device)
+    model.to(self.device)
 
     args = restore_training_settings(args)
     logging.info("Training/evaluation parameters %s", args)
@@ -599,18 +712,17 @@ def main(args):
                 #evaluate(args, test_dataloader, model, tokenizer, last_checkpoint)
 
     elif args.do_test or args.do_eval:
-        for test_yaml in args.test_yaml:
-            logging.info("Evaluate on dataset: " + test_yaml)
-            test_dataloader = make_data_loader(args, test_yaml,
-                tokenizer, args.distributed, is_train=False)
+        logging.info("Evaluate on dataset: " + args.test_yaml)
+        test_dataloader = make_data_loader(args, args.test_yaml,
+            tokenizer, args.distributed, is_train=False)
 
-            assert not args.do_eval
-            predict_file = args.predict_file
-            #predict_file = get_predict_file(checkpoint, args,
-                    #test_dataloader.dataset.yaml_file)
-            test(args, test_dataloader, model, tokenizer, predict_file)
-            #else:
-                #evaluate(args, test_dataloader, model, tokenizer, checkpoint)
+        assert not args.do_eval
+        predict_file = args.predict_file
+        #predict_file = get_predict_file(checkpoint, args,
+                #test_dataloader.dataset.yaml_file)
+        test(self, args, test_dataloader, model, tokenizer, predict_file)
+        #else:
+            #evaluate(args, test_dataloader, model, tokenizer, checkpoint)
 
 
 def iter_caption_to_json(iter_caption, json_file):
@@ -640,10 +752,21 @@ class MMaskCaptionPipeline(MaskClassificationPipeline):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._default.update({
+            'add_od_labels': True,
+            'num_hidden_layers': -1,
+            'max_seq_length': 70,
+            'tie_weights': False,
+            'train_split': 'train',
+            'max_img_seq_length': 50,
+            'num_beams': 1,
+            'scst': False,
+            'cider_cached_tokens': 'data/coco_caption/gt/coco-train-words.p',
         })
 
     def append_predict_param(self, cc):
         super().append_predict_param(cc)
+        if self.num_beams != 1:
+            cc.append('beam{}'.format(self.num_beams))
         #def get_predict_file(output_dir, args, data_yaml_file):
             #cc = ['pred']
             ## example data_yaml_file: datasets/coco_caption/test.yaml
@@ -651,7 +774,6 @@ class MMaskCaptionPipeline(MaskClassificationPipeline):
             #if data != 'coco_caption':
                 #cc.append(data)
             #cc.append(op.splitext(op.basename(data_yaml_file))[0])
-            #cc.append('beam{}'.format(args.num_beams))
             #cc.append('max{}'.format(args.max_gen_length))
             #if args.add_od_labels:
                 #cc.append('wlabels')
@@ -673,7 +795,18 @@ class MMaskCaptionPipeline(MaskClassificationPipeline):
         pass
 
     def get_test_data_loader(self):
-        pass
+        # not ready
+        yaml_file = op.join(self.output_folder, 'test_yaml', '{}_{}'.format(self.test_data, self.test_split))
+        if self.mpi_rank == 0:
+            convert_data_to_yaml(
+                self.test_data, self.test_split, yaml_file, is_train=False,
+                label_version=self.train_label_version,
+                feature_version=self.train_feature_version,
+            )
+        synchronize()
+        test_dataloader = make_data_loader(args, test_yaml,
+            tokenizer, args.distributed, is_train=False)
+        return test_dataloader
 
     def train(self):
         train_yaml = self.train_yaml
@@ -684,7 +817,7 @@ class MMaskCaptionPipeline(MaskClassificationPipeline):
                 assert self.train_feature_tsv is None, 'no longer supported'
                 convert_data_to_yaml(
                     data=self.data,
-                    split='train',
+                    split=self.train_split,
                     yaml=train_yaml,
                     label=self.train_label_tsv,
                     feature=self.train_feature_tsv,
@@ -694,16 +827,22 @@ class MMaskCaptionPipeline(MaskClassificationPipeline):
             synchronize()
 
         logging.info('train_yaml = {}'.format(train_yaml))
+        max_seq_length = self.max_seq_length
+        if not self.add_od_labels:
+            max_seq_a_length = max_seq_length
+        else:
+            max_seq_a_length = 40
 
+        assert self.img_feature_dim is not None
         param = {
             'adam_epsilon': 1e-08,
-            'add_od_labels': True,
-            'cider_cached_tokens': 'coco_caption/gt/coco-train-words.p',
+            'add_od_labels': self.add_od_labels,
+            'cider_cached_tokens': self.cider_cached_tokens,
             'train_shuffle': True,
             'config_name': '',
             'data_dir': '.',
             'decoding_constraint': False,
-            'device': 'cuda',
+            'device': self.device,
             'do_eval': False,
             'do_lower_case': True,
             'do_test': True,
@@ -716,12 +855,11 @@ class MMaskCaptionPipeline(MaskClassificationPipeline):
             'evaluate_during_training': False,
             'freeze_embedding': False,
             'hidden_size': -1,
-            'img_feature_dim': 1030,
+            'img_feature_dim': self.img_feature_dim,
             'intermediate_size': -1,
             'label_smoothing': 0.1,
             'learning_rate': self.base_lr,
             'length_penalty': 1,
-            'load_partial_weights': False,
             'local_rank': self.mpi_local_rank,
             'logging_steps': 20,
             'num_gpus': self.mpi_size,
@@ -729,16 +867,16 @@ class MMaskCaptionPipeline(MaskClassificationPipeline):
             'mask_type': 'seq2seq',
             'max_gen_length': 20,
             'max_grad_norm': 1.0,
-            'max_img_seq_length': 50,
+            'max_img_seq_length': self.max_img_seq_length,
             'max_masked_tokens': 3,
-            'max_seq_a_length': 40,
-            'max_seq_length': 70,
+            'max_seq_a_length': max_seq_a_length,
+            'max_seq_length': max_seq_length,
             'min_constraints_to_satisfy': 2,
             'model_name_or_path': self.basemodel,
             'no_sort_by_conf': False,
             'num_attention_heads': -1,
             'num_beams': 1,
-            'num_hidden_layers': -1,
+            'num_hidden_layers': self.num_hidden_layers,
             'num_keep_best': 1,
             'num_return_sequences': 1,
             'num_train_epochs': self.max_epoch,
@@ -747,7 +885,7 @@ class MMaskCaptionPipeline(MaskClassificationPipeline):
             'on_memory': False,
             'output_dir': self.output_folder,
             'output_hidden_states': False,
-            'per_gpu_eval_batch_size': 64,
+            'per_gpu_eval_batch_size': self.test_batch_size,
             'per_gpu_train_batch_size': self.effective_batch_size // self.mpi_size,
             'remove_bad_endings': False,
             'repetition_penalty': 1,
@@ -755,12 +893,12 @@ class MMaskCaptionPipeline(MaskClassificationPipeline):
             'sc_baseline_type': 'greedy',
             'sc_train_sample_n': 5,
             'scheduler': 'linear',
-            'scst': False,
+            'scst': self.scst,
             'seed': 88,
             'temperature': 1,
             'test_yaml': [
             ],
-            'tie_weights': False,
+            'tie_weights': self.tie_weights,
             'tokenizer_name': '',
             'top_k': 0,
             'top_p': 1,
@@ -771,13 +909,15 @@ class MMaskCaptionPipeline(MaskClassificationPipeline):
             'val_yaml': '',
             'warmup_steps': 0,
             'weight_decay': self.weight_decay,
+            'use_img_layernorm': self.use_img_layernorm,
+            'img_layer_norm_eps': 1e-5,
         }
 
         from pprint import pformat
         logging.info('param = \n{}'.format(pformat(param)))
         from qd.qd_common import make_namespace_by_dict
         args = make_namespace_by_dict(param)
-        checkpoint_dir = main(args)
+        checkpoint_dir = main(self, args)
         last_model_link = self.get_last_model_link_file()
         from qd.qd_common import write_to_file
         write_to_file(
@@ -785,7 +925,9 @@ class MMaskCaptionPipeline(MaskClassificationPipeline):
             last_model_link)
 
     def predict(self, model_path, predict_result_file):
-        yaml_file = op.join(self.output_folder, 'test_yaml', '{}_{}'.format(self.test_data, self.test_split))
+        from qd.qd_common import hash_sha1
+        yaml_file = op.join(self.output_folder, 'test_yaml', '{}_{}_{}'.format(
+            self.test_data, self.test_split, hash_sha1(model_path)[-10:]))
         if self.mpi_rank == 0:
             convert_data_to_yaml(
                 self.test_data, self.test_split, yaml_file, is_train=False,
@@ -793,14 +935,21 @@ class MMaskCaptionPipeline(MaskClassificationPipeline):
                 feature_version=self.train_feature_version,
             )
         synchronize()
+
+        max_seq_length = self.max_seq_length
+        if not self.add_od_labels:
+            max_seq_a_length = max_seq_length
+        else:
+            max_seq_a_length = 40
+
         param = {
             'adam_epsilon': 1e-08,
-            'add_od_labels': True,
-            'cider_cached_tokens': 'coco_caption/gt/coco-train-words.p',
+            'add_od_labels': self.add_od_labels,
+            'cider_cached_tokens': self.cider_cached_tokens,
             'config_name': '',
             'data_dir': '.',
             'decoding_constraint': False,
-            'device': 'cuda',
+            'device': self.device,
             'do_eval': False,
             'do_lower_case': True,
             'do_test': True,
@@ -818,7 +967,6 @@ class MMaskCaptionPipeline(MaskClassificationPipeline):
             'label_smoothing': 0.1,
             'learning_rate': self.base_lr,
             'length_penalty': 1,
-            'load_partial_weights': False,
             'local_rank': self.mpi_local_rank,
             'logging_steps': 20,
             'num_gpus': self.mpi_size,
@@ -826,16 +974,16 @@ class MMaskCaptionPipeline(MaskClassificationPipeline):
             'mask_type': 'seq2seq',
             'max_gen_length': 20,
             'max_grad_norm': 1.0,
-            'max_img_seq_length': 50,
+            'max_img_seq_length': self.max_img_seq_length,
             'max_masked_tokens': 3,
-            'max_seq_a_length': 40,
-            'max_seq_length': 70,
+            'max_seq_a_length': max_seq_a_length,
+            'max_seq_length': max_seq_length,
             'min_constraints_to_satisfy': 2,
             'model_name_or_path': self.basemodel,
             'no_sort_by_conf': False,
             'num_attention_heads': -1,
-            'num_beams': 1,
-            'num_hidden_layers': -1,
+            'num_beams': self.num_beams,
+            'num_hidden_layers': self.num_hidden_layers,
             'num_keep_best': 1,
             'num_return_sequences': 1,
             'num_train_epochs': self.max_epoch,
@@ -844,7 +992,7 @@ class MMaskCaptionPipeline(MaskClassificationPipeline):
             'on_memory': False,
             'output_dir': self.output_folder,
             'output_hidden_states': False,
-            'per_gpu_eval_batch_size': 64,
+            'per_gpu_eval_batch_size': self.test_batch_size,
             'per_gpu_train_batch_size': self.effective_batch_size // self.mpi_size,
             'remove_bad_endings': False,
             'repetition_penalty': 1,
@@ -852,14 +1000,12 @@ class MMaskCaptionPipeline(MaskClassificationPipeline):
             'sc_baseline_type': 'greedy',
             'sc_train_sample_n': 5,
             'scheduler': 'linear',
-            'scst': False,
+            'scst': self.scst,
             'seed': 88,
             'temperature': 1,
-            'test_yaml': [
-                yaml_file
-            ],
+            'test_yaml': yaml_file,
             'predict_file': predict_result_file,
-            'tie_weights': False,
+            'tie_weights': self.tie_weights,
             'tokenizer_name': '',
             'top_k': 0,
             'top_p': 1,
@@ -876,7 +1022,7 @@ class MMaskCaptionPipeline(MaskClassificationPipeline):
         logging.info('param = \n{}'.format(pformat(param)))
         from qd.qd_common import make_namespace_by_dict
         args = make_namespace_by_dict(param)
-        main(args)
+        main(self, args)
 
     def get_train_model(self):
         pass
