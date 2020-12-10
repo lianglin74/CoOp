@@ -1212,6 +1212,31 @@ class BertImgForPreTraining(BertPreTrainedModel):
 
         self.apply(self.init_weights)
         self.tie_weights()
+        #self.loss_fct = CrossEntropyLoss(ignore_index=-1)
+        def create_loss_module(t):
+            if t == 'BCE':
+                from qd.layers.loss import BCELogitsNormByEachPositive
+                loss_fct = BCELogitsNormByEachPositive()
+            elif t == 'HotCE':
+                from qd.layers.loss import MultiHotCrossEntropyWithNegLoss
+                loss_fct = MultiHotCrossEntropyWithNegLoss()
+            else:
+                from qd.layers.loss import MultiDimCrossEntropyLoss
+                assert t in ['classification', None]
+                loss_fct = MultiDimCrossEntropyLoss(ignore_index=-1)
+            return loss_fct
+        if hasattr(config, 'loss_type') and config.loss_type is not None:
+            ml_loss_type, matching_loss = config.loss_type.split('_')
+            self.ml_loss = create_loss_module(ml_loss_type)
+            self.matching_loss = create_loss_module(matching_loss)
+        else:
+            self.ml_loss = create_loss_module(None)
+            self.matching_loss = create_loss_module(None)
+
+        if hasattr(config, 'prior_prob'):
+            prior_prob = config.prior_prob
+            from qd.torch_common import set_sigmoid_prob_prior_bias
+            set_sigmoid_prob_prior_bias(self.cls.predictions.bias, prior_prob)
 
     def tie_weights(self):
         """ Make sure we are sharing the input and output embeddings.
@@ -1235,15 +1260,21 @@ class BertImgForPreTraining(BertPreTrainedModel):
 
         outputs = (prediction_scores, seq_relationship_score,) + outputs[2:]  # add hidden states and attention if they are here
 
-        if masked_lm_labels is not None and next_sentence_label is not None:
-            loss_fct = CrossEntropyLoss(ignore_index=-1)
-            masked_lm_loss = loss_fct(prediction_scores.view(-1, self.config.vocab_size), masked_lm_labels.view(-1))
-            next_sentence_loss = loss_fct(seq_relationship_score.view(-1, self.num_seq_relations), next_sentence_label.view(-1))
-            total_loss = masked_lm_loss + next_sentence_loss
-            outputs = (total_loss,) + outputs + (masked_lm_loss,)
+        #if masked_lm_labels is not None and next_sentence_label is not None:
+            #masked_lm_loss = self.loss_fct(prediction_scores.view(-1, self.config.vocab_size), masked_lm_labels.view(-1))
+            #next_sentence_loss = self.loss_fct(seq_relationship_score.view(-1, self.num_seq_relations), next_sentence_label.view(-1))
+        masked_lm_loss = self.ml_loss(prediction_scores, masked_lm_labels)
+        next_sentence_loss = self.matching_loss(seq_relationship_score, next_sentence_label)
+
+        #total_loss = masked_lm_loss + next_sentence_loss
+        #outputs = (total_loss,) + outputs + (masked_lm_loss,)
 
         #return outputs  # (loss), prediction_scores, seq_relationship_score, (hidden_states), (attentions)
-        return outputs[0]
+        #return outputs[0]
+        return {
+            'masked_lm_loss': masked_lm_loss,
+            'next_sentence_loss': next_sentence_loss,
+        }
 
 @add_start_docstrings("""Bert Model with a `language modeling` head on top. """,
     BERT_START_DOCSTRING, BERT_INPUTS_DOCSTRING)
@@ -1415,8 +1446,8 @@ class ImageBertForSequenceClassification(BertPreTrainedModel):
         self.apply(self.init_weights)
         if hasattr(config, 'prior_prob'):
             prior_prob = config.prior_prob
-            bias_value = -math.log((1 - prior_prob) / prior_prob)
-            torch.nn.init.constant_(self.classifier.bias, bias_value)
+            from qd.torch_common import set_sigmoid_prob_prior_bias
+            set_sigmoid_prob_prior_bias(self.classifier.bias, prior_prob)
 
     def init_code_embedding(self, em):
         self.bert.code_embeddings.weight.data = em.clone()

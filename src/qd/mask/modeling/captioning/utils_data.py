@@ -35,6 +35,9 @@ def build_dataset(yaml_file, tokenizer, args, is_train=True, is_pretrain=False):
                 img_feature_dim=args.img_feature_dim,
                 max_img_seq_len=tensorizer.max_img_seq_len,
                 feat_sort_by_conf=not args.no_sort_by_conf,
+                label_type=args.dataset_type,
+                img_feat_label_type=args.img_feat_label_type,
+                region_loss_for_unmatched=args.region_loss_for_unmatched,
             )
         else:
             return PretrainCaptionTSVDataset(
@@ -52,6 +55,7 @@ def build_dataset(yaml_file, tokenizer, args, is_train=True, is_pretrain=False):
                 on_memory=args.on_memory,
                 img_feature_dim=args.img_feature_dim,
                 qa2caption=args.qa2caption,
+                label_type=args.dataset_type,
             )
     else:
         if args.use_cbs:
@@ -112,9 +116,12 @@ def make_data_loader(args, yaml_file, tokenizer, is_distributed=True,
     batch_sampler = make_batch_data_sampler(
         sampler, images_per_gpu, num_iters, start_iter
     )
+
+    from qd.data_layer.builder import collate_fn
     data_loader = torch.utils.data.DataLoader(
         dataset, num_workers=args.num_workers, batch_sampler=batch_sampler,
         pin_memory=True,
+        collate_fn=collate_fn,
     )
     return data_loader
 
