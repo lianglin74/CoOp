@@ -1,0 +1,6 @@
+[submodule "src/qd/mask/modeling/captioning/cider"]
+	path = src/qd/mask/modeling/captioning/cider
+	url = git@github.com:xiaoweihu/cider.git
+[submodule "src/qd/mask/modeling/captioning/coco_caption"]
+	path = src/qd/mask/modeling/captioning/coco_caption
+	url = git@github.com:LuoweiZhou/coco-caption.git
