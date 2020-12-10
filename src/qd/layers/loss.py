@@ -3,6 +3,8 @@ from torch import nn
 import logging
 from collections import OrderedDict
 from qd.torch_common import accuracy
+from qd.torch_common import SparseTensor
+from qd.torch_common import IgnoreLastDimSparseTensor
 
 
 class ExclusiveMultiHotCrossEntropyLoss(torch.nn.Module):
@@ -157,12 +159,18 @@ class SmoothBCEWithLogitsNegLoss(nn.Module):
 
 class BCEWithLogitsNegLoss(nn.Module):
     def __init__(self, reduction=None):
-        super(BCEWithLogitsNegLoss, self).__init__()
+        super().__init__()
         self.reduction = reduction
 
     def forward(self, feature, target):
         return bce_with_logits_neg_loss(feature, target,
                                         self.reduction)
+
+class MultiDimCrossEntropyLoss(nn.CrossEntropyLoss):
+    def forward(self, x, y):
+        x = x.reshape((-1, x.shape[-1]))
+        y = y.reshape(-1)
+        return super().forward(x, y)
 
 def bce_with_logits_neg_loss(feature, target, reduction=None):
     target = target.float()
@@ -170,12 +178,15 @@ def bce_with_logits_neg_loss(feature, target, reduction=None):
     weight[target == -1] = 0
     weight_sum = torch.sum(weight)
     if weight_sum == 0:
-        return 0
+        return torch.tensor(0, device=feature.device, dtype=feature.dtype, requires_grad=True)
     else:
         criterion = nn.BCEWithLogitsLoss(weight, reduction='sum')
         loss = criterion(feature, target)
         if reduction == 'sum':
             return loss
+        elif reduction == 'pos':
+            return criterion / ((target > 0.99).sum() + 1e-5)
+            raise NotImplementedError
         else:
             return loss / weight_sum
 
@@ -291,6 +302,81 @@ class DistilCrossEntropyLoss(nn.Module):
         loss = nn.functional.kl_div(log_soft, soft_target, reduction='batchmean')
         return loss
 
+class BCELogitsNormByEachPositive(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.iter = 0
+
+    def forward_fast(self, feature, target, verbose):
+        assert isinstance(target, IgnoreLastDimSparseTensor)
+        # ignore the element if the corresponding target value is -1
+        feature_shape = feature.shape
+        batch_size = feature.shape[0]
+        count = target.keep_first_sum()
+
+        count = count.clamp(min=1)
+        weight = torch.ones(feature_shape[:-1],
+                            device=feature.device)
+        if weight.dim() == 2 and count.dim() == 1:
+            count = count[:, None]
+        weight /= count
+
+        target2d = target.reshape((-1, feature_shape[-1]))
+        valid = torch.ones((target2d.shape[0],), dtype=torch.long, device=feature.device)
+        valid[target2d.ignore_index] = 0
+        valid = valid.bool()
+        feature = feature.view((-1, feature_shape[-1]))
+        feature = feature[valid]
+        weight = weight.view(-1)
+        weight = weight[valid]
+        target = target2d.remove_ignore_2d_to_dense()
+        weight = weight[:,None].expand_as(feature)
+
+        loss = nn.functional.binary_cross_entropy_with_logits(
+            feature, target, weight=weight, reduction='sum')
+        if verbose:
+            with torch.no_grad():
+                pos_value = feature[target > 0.9].mean()
+                neg_value = feature[target == 0].mean()
+                logging.info('pos = {}; neg = {}'.format(pos_value, neg_value))
+        return loss / batch_size
+
+    def forward(self, feature, target):
+        verbose = (self.iter % 100) == 0
+        self.iter += 1
+        if isinstance(target, IgnoreLastDimSparseTensor):
+            return self.forward_fast(feature, target, verbose)
+        elif isinstance(target, (torch.sparse.FloatTensor, SparseTensor)):
+            target = target.to_dense()
+        return self.forward_dense(feature, target, verbose)
+
+        #if isinstance(target, (IgnoreLastDimSparseTensor, torch.sparse.FloatTensor, SparseTensor)):
+            #target = target.to_dense()
+        #return self.forward_dense(feature, target)
+
+    def forward_dense(self, feature, target, verbose=False):
+        # the following is a slow version
+        batch_size = feature.shape[0]
+        assert target.shape[0] == batch_size
+        feature = feature.view((batch_size, -1))
+        target = target.view((batch_size, -1))
+        target = target.float()
+        weight = torch.ones_like(target)
+        weight[target < 0] = 0
+        if verbose:
+            with torch.no_grad():
+                pos_value = feature[target > 0.9].mean()
+                neg_value = feature[target == 0].mean()
+                logging.info('pos = {}; neg = {}'.format(pos_value, neg_value))
+        loss = nn.functional.binary_cross_entropy_with_logits(
+            feature, target, weight=weight, reduction='none')
+
+        weight = target.clone().detach()
+        weight[target < 0] = 0
+        weight = weight.view((batch_size, -1))
+        loss = (loss.view((batch_size, -1)).sum(dim=1) / weight.sum(dim=1).clamp(min=1))
+        return loss.mean()
+
 class BCELogitsNormByPositive(nn.Module):
     def __init__(self):
         super().__init__()
@@ -306,9 +392,31 @@ class BCELogitsNormByPositive(nn.Module):
         return nn.functional.binary_cross_entropy_with_logits(
             feature, target, reduction='sum') / (target.sum().float() + 1e-5)
 
+class MultiHotCrossEntropyWithNegLoss(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, feature, target):
+        if isinstance(target, (
+            torch.sparse.FloatTensor,
+            SparseTensor,
+            IgnoreLastDimSparseTensor
+        )):
+            target = target.to_dense()
+        soft_dim = feature.shape[-1]
+        assert target.shape[-1] == soft_dim
+        feature = feature.reshape((-1, soft_dim))
+        target = target.reshape((-1, soft_dim))
+        pos = target.sum(dim=1) >= 0
+        feature = feature[pos]
+        target = target[pos]
+        loss = -(target * nn.functional.log_softmax(feature, dim=1)).sum(dim=1)
+        loss = loss / target.sum(dim=1).clamp(min=1)
+        return loss.mean()
+
 class MultiHotCrossEntropyLoss(nn.Module):
     def __init__(self):
-        super(MultiHotCrossEntropyLoss, self).__init__()
+        super().__init__()
 
     def forward(self, feature, target):
         return multi_hot_cross_entropy(feature, target)
