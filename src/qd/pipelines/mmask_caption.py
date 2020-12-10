@@ -62,10 +62,11 @@ from qd.mask.modeling.captioning.utils_solver import get_optimizer, get_schedule
 from qd.mask.layers.bert import BertTokenizer, BertConfig, BertForImageCaptioning
 from qd.mask.modeling.captioning.utils_caption_evaluate import (
         evaluate_on_coco_caption, ScstRewardCriterion)
+from qd.qd_common import get_mpi_size
 
 from qd.tsv_io import convert_data_to_yaml
 
-def save_checkpoint(model, tokenizer, args, epoch, iteration, num_trial=10):
+def save_checkpoint(model, tokenizer, args, iteration, num_trial=10):
     checkpoint_dir = op.join(
         args.output_dir,
         'snapshot',
@@ -93,28 +94,27 @@ def compute_score_with_logits(logits, labels):
     return logits == labels
 
 
-def plot_validation_curve(res_file):
-    import matplotlib
-    matplotlib.use('pdf')
-    import matplotlib.pyplot as plt
-    with open(res_file, 'r') as f:
-        res = json.load(f)
-    epochs = [r['epoch'] for r in res]
-    iters = [r['iteration'] for r in res]
-    iters_per_epoch = max(iters) / (max(epochs) + 1)
-    epochs = [i / iters_per_epoch for i in iters]
-    metrics = ['Bleu_4', 'METEOR', 'CIDEr', 'SPICE']
-    for i, metric in enumerate(metrics):
-        plt.subplot(2, 2, i + 1)
-        plt.plot(epochs, [r[metric] for r in res], 'r*-')
-        plt.title(metric)
-    plt.savefig(op.splitext(res_file)[0] + '.png') 
+#def plot_validation_curve(res_file):
+    #import matplotlib
+    #matplotlib.use('pdf')
+    #import matplotlib.pyplot as plt
+    #with open(res_file, 'r') as f:
+        #res = json.load(f)
+    #epochs = [r['epoch'] for r in res]
+    #iters = [r['iteration'] for r in res]
+    #iters_per_epoch = max(iters) / (max(epochs) + 1)
+    #epochs = [i / iters_per_epoch for i in iters]
+    #metrics = ['Bleu_4', 'METEOR', 'CIDEr', 'SPICE']
+    #for i, metric in enumerate(metrics):
+        #plt.subplot(2, 2, i + 1)
+        #plt.plot(epochs, [r[metric] for r in res], 'r*-')
+        #plt.title(metric)
+    #plt.savefig(op.splitext(res_file)[0] + '.png') 
 
 
 def train(args, train_dataloader, val_dataloader, model, tokenizer):
     meters = MetricLogger(delimiter='  ')
     max_iter = len(train_dataloader)
-    iters_per_epoch = max_iter // args.num_train_epochs
     optimizer = get_optimizer(model, args.weight_decay, 
         args.learning_rate, args.adam_epsilon
     )
@@ -138,6 +138,7 @@ def train(args, train_dataloader, val_dataloader, model, tokenizer):
     #best_score = 0
     start_training_time = time.time()
     end = time.time()
+    log_start = time.time()
     for iteration, (img_keys, batch) in enumerate(train_dataloader):
         iteration += 1
         data_time = time.time() - end
@@ -164,13 +165,16 @@ def train(args, train_dataloader, val_dataloader, model, tokenizer):
             batch_acc = scst_criterion.get_score()
 
         loss_dict = {'loss': loss, 'acc': batch_acc}
-        meters.update_metrics({'loss': loss_dict})
+        #meters.update_metrics({'loss': loss_dict})
+        meters.update(**loss_dict)
 
         optimizer.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
         optimizer.step()
         scheduler.step()
+
+        batch_time = time.time() - end
 
         if iteration % args.logging_steps == 0 or iteration == max_iter:
             if 'time_info' in meters.meters:
@@ -179,16 +183,32 @@ def train(args, train_dataloader, val_dataloader, model, tokenizer):
                 eta_string = str(datetime.timedelta(seconds=int(eta_seconds)))
             else:
                 eta_string = 'Unknown'
+            eta_seconds = batch_time * (max_iter - iteration)
+            eta_string = str(datetime.timedelta(seconds=int(eta_seconds)))
+            speed = get_mpi_size() * args.logging_steps * len(batch[0]) / (time.time() - log_start)
             logging.info(
                 meters.delimiter.join(
-                ['eta : {eta}', 'iter: {iter}', 'max mem : {memory:.0f}',]
-                ).format(eta=eta_string, iter=iteration, 
-                memory=torch.cuda.max_memory_allocated() / 1024.0 / 1024.0) 
-                + '\n    ' + meters.get_logs(iteration)
+                    [
+                        "eta: {eta}",
+                        "iter: {iter}",
+                        'speed: {speed:.1f} images/sec',
+                        "{meters}",
+                        "lr: {lr:.6f}",
+                        "max mem: {memory:.0f}",
+                    ]
+                ).format(
+                    eta=eta_string,
+                    iter=iteration,
+                    speed=speed,
+                    meters=str(meters),
+                    lr=optimizer.param_groups[0]["lr"],
+                    memory=torch.cuda.max_memory_allocated() / 1024.0 / 1024.0,
+                )
             )
+            log_start = time.time()
         if (args.save_steps > 0 and iteration % args.save_steps == 0) or iteration == max_iter:
-            epoch = iteration // iters_per_epoch
-            checkpoint_dir = save_checkpoint(model, tokenizer, args, epoch, iteration)
+            #epoch = iteration // iters_per_epoch
+            checkpoint_dir = save_checkpoint(model, tokenizer, args, iteration)
             #if args.evaluate_during_training:
                 #logging.info("Perform evaluation at iteration: %d" % (iteration))
                 #evaluate_file = evaluate(args, val_dataloader, model, tokenizer, checkpoint_dir)
@@ -206,21 +226,21 @@ def train(args, train_dataloader, val_dataloader, model, tokenizer):
                         #json.dump(eval_log, f)
                 #if get_world_size() > 1:
                     #torch.distributed.barrier()
-        batch_time = time.time() - end
         if iteration > 2:
-            meters.update_metrics(
-                {'time_info': {'compute': batch_time, 'data': data_time}}
+            meters.update(
+                batch_time=batch_time,
+                data_time=data_time,
             )
-        meters.update_params(
-            {'params': {'learning_rate': optimizer.param_groups[0]['lr']}}
-        )
         end = time.time()
 
-    total_training_time = time.time() - start_training_time
-    total_time_str = str(datetime.timedelta(seconds=total_training_time))
-    logging.info('Total training time: {} ({:.4f} s / iter)'.format(
-        total_time_str, total_training_time / max_iter)
-    )
+
+    if max_iter == 0:
+        checkpoint_dir = save_checkpoint(model, tokenizer, args, 0)
+    #total_training_time = time.time() - start_training_time
+    #total_time_str = str(datetime.timedelta(seconds=total_training_time))
+    #logging.info('Total training time: {} ({:.4f} s / iter)'.format(
+        #total_time_str, total_training_time / max_iter)
+    #)
     return checkpoint_dir
 
 
