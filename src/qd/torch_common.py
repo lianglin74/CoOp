@@ -10,7 +10,40 @@ from torch import nn
 import logging
 from qd.qd_common import get_mpi_local_rank, get_mpi_local_size
 from qd.qd_common import ensure_directory
+import math
 
+
+def set_sigmoid_prob_prior_bias(bias, prior_prob):
+    assert prior_prob > 0 and prior_prob != 1
+    if prior_prob > 1:
+        prior_prob = 1. / prior_prob
+    bias_value = -math.log((1 - prior_prob) / prior_prob)
+    torch.nn.init.constant_(bias, bias_value)
+
+def convert_single_label_to_one_hot_label(single_labels, label_size):
+    if single_labels.dim() == 0:
+        single_labels = single_labels[None]
+    hot = torch.ones((len(single_labels), label_size),
+                     dtype=single_labels.dtype) * -1
+    bool_pos = single_labels != -1
+    num_pos = bool_pos.sum()
+    if num_pos > 0:
+        pos_label = single_labels[bool_pos]
+        pos_hot = torch.zeros((num_pos, label_size), dtype=single_labels.dtype)
+        pos_hot.scatter_(1, pos_label.long()[:, None], 1)
+        hot[bool_pos] = pos_hot
+    return hot
+
+def to(d, device):
+    if isinstance(d, tuple) or isinstance(d, list):
+        return [to(x, device) for x in d]
+    elif isinstance(d, dict):
+        return dict((k, to(v, device)) for k, v in d.items())
+    elif isinstance(d, torch.Tensor) or hasattr(d, 'to'):
+        #return d.to(device, non_blocking=True)
+        return d.to(device)
+    else:
+        return d
 
 def init_random_seed(random_seed):
     import random
@@ -415,5 +448,198 @@ def max_reduce_(x):
     if get_mpi_size() > 1:
         torch.distributed.all_reduce(x, torch.distributed.ReduceOp.MAX)
 
+class FlopCountModel(torch.nn.Module):
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+    def forward(self, args, kwargs):
+        y = self.model(*args, **kwargs)
+        return y
 
+def count_flops(model, *args, **kwargs):
+    if isinstance(model, torch.nn.parallel.DistributedDataParallel):
+        model = model.module
+    model.eval()
+    model = FlopCountModel(model)
+    from fvcore.nn import flop_count
+    y = flop_count(model, (args, kwargs,))
+    return y
+
+class SparseTensor(object):
+    # torch.sparse.FloatTensor does not support pin_memory, which could be
+    # required in dataloader with pin_memory=True
+    def __init__(self, idx, value, size):
+        assert idx.dtype == torch.long
+        if idx.dim() == 1:
+            idx = idx[None,]
+        assert idx.dim() == 2
+        assert idx.shape[0] == len(size)
+        self.idx = idx
+        self.value = value
+        self.size = size
+        assert isinstance(size, (tuple, list))
+
+    def to_dense(self):
+        return torch.sparse.FloatTensor(self.idx, self.value, self.size).to_dense()
+
+    def to(self, *args, **kwargs):
+        self.idx = self.idx.to(*args, **kwargs)
+        self.value = self.value.to(*args, **kwargs)
+        return self
+
+    def __repr__(self):
+        return 'SparseTensor(idx.shape={}, value.shape={}, size={})'.format(
+            self.idx.shape,
+            self.value.shape,
+            self.size,
+        )
+
+    @property
+    def shape(self):
+        return self.size
+
+    def pin_memory(self):
+        return SparseTensor(self.idx.pin_memory(),
+                            self.value.pin_memory(),
+                            self.size)
+    @staticmethod
+    def stack(ts):
+        return stack_sparse_tensor(ts)
+
+def stack_sparse_tensor(ts):
+    ts = list(ts)
+    assert len(ts) > 0
+    assert all(t.size == ts[0].size for t in ts[1:])
+    assert all(isinstance(t, SparseTensor) for t in ts)
+    all_idx = []
+    for i, t in enumerate(ts):
+        extra = torch.full((1, t.idx.shape[1]), i,
+                           dtype=t.idx.dtype,
+                           device=t.idx.device)
+        cat = torch.cat((extra, t.idx))
+        all_idx.append(cat)
+    idx = torch.cat(all_idx, dim=1)
+    value = torch.cat([t.value for t in ts])
+    size = (len(ts),) + ts[0].size
+    return SparseTensor(idx, value, size)
+
+class IgnoreLastDimSparseTensor(object):
+    # this is used to represent the target matrix for binary cross entropy.
+    # Normally there might be lots of all -1 entries to ignore certain samples.
+    # The positive entries are a few only and the matrix is more like a sparse
+    # matrix. ignore_index here means the index array for the first dim to the
+    # second last dim. For example of 2-d tensor, ignore_index should be a 1-d
+    # array. If one element of ignore_index is 1, it means self[1, :] equals
+    # -1.
+    def __init__(self, idx, value, size, ignore_index):
+        self.sparse = SparseTensor(idx, value, size)
+        if len(size) == 2:
+            if ignore_index.dim() == 1:
+                ignore_index = ignore_index[None, :]
+        assert ignore_index.dim() == 2
+        assert ignore_index.shape[0] == len(size) - 1
+        self.ignore_index = ignore_index
+
+    def to_dense(self):
+        mat = self.sparse.to_dense()
+        if mat.dim() == 3:
+            mat[self.ignore_index[0], self.ignore_index[1], :] = -1
+        elif mat.dim() == 2:
+            mat[self.ignore_index[0], :] = -1
+        else:
+            raise NotImplementedError(mat.dim())
+        return mat
+
+    def remove_ignore_2d_to_dense(self):
+        # remove the ignored index and return the dense mat
+        # note, we should not create a full matrix and then index it, in which
+        # case there is large amount of memory footprint.
+        assert len(self.sparse.shape) == 2
+        relation = self.ignore_index[0].view((-1, 1)) < self.sparse.idx[0, :].view((1, -1))
+        small_size = relation.sum(dim=0)
+        idx = self.sparse.idx.clone()
+        idx[0, :] = self.sparse.idx[0, :] - small_size
+        size = self.sparse.shape
+        size = (size[0] - len(self.ignore_index[0]), size[1])
+        return SparseTensor(idx, self.sparse.value, size).to_dense()
+
+    def reshape(self, size):
+        # the last dimension should be kept
+        assert size[-1] == self.sparse.shape[-1]
+        assert len(size) == 2 and size[0] == -1, 'not supported'
+        origin_shape = self.sparse.shape
+        assert size[-1] == origin_shape[-1]
+
+        idx_multiplier = origin_shape[1:-1] + (1,)
+        idx_multiplier = torch.cumprod(torch.tensor(idx_multiplier[::-1],
+                                                    device=self.ignore_index.device), dim=0)
+        idx_multiplier = torch.flip(idx_multiplier, dims=(0,))[:, None]
+        idx = (self.sparse.idx[:-1] * idx_multiplier).sum(dim=0, keepdim=True)
+        idx = torch.cat((idx, self.sparse.idx[-1].view((1, -1))))
+
+        ignore_index = (self.ignore_index * idx_multiplier).sum(
+            dim=0, keepdim=True)
+        return IgnoreLastDimSparseTensor(
+            idx,
+            self.sparse.value,
+            (torch.prod(torch.tensor(origin_shape[:-1])).item(), origin_shape[-1]),
+            ignore_index,
+        )
+
+
+    def keep_first_sum(self):
+        # ignore the rows in ignore_index; sum up the value along the first
+        # dimension
+        idx = self.sparse.idx[0, :][None]
+        value = self.sparse.value
+        size = (self.sparse.shape[0],)
+        return torch.sparse.FloatTensor(idx, value, size).to_dense()
+
+    def to(self, *args, **kwargs):
+        self.sparse = self.sparse.to(*args, **kwargs)
+        self.ignore_index = self.ignore_index.to(*args, **kwargs)
+        return self
+
+    def __repr__(self):
+        return ('IgnoreLastDimSparseTensor(idx.shape={}, '
+                'value.shape={}, size={}, ignore_index.shape={})').format(
+                    self.sparse.idx.shape,
+                    self.sparse.value.shape,
+                    self.sparse.size,
+                    self.ignore_index.shape,
+                )
+
+    @property
+    def shape(self):
+        return self.sparse.size
+
+    def pin_memory(self):
+        return IgnoreLastDimSparseTensor(
+            self.sparse.idx.pin_memory(),
+            self.sparse.value.pin_memory(),
+            self.sparse.size,
+            self.ignore_index.pin_memory(),
+        )
+
+    @staticmethod
+    def stack(ts):
+        return stack_ignore_last_dim_sparse_tensor(ts)
+
+def stack_ignore_last_dim_sparse_tensor(ts):
+    sparse_tensors = [t.sparse for t in ts]
+    stacked_sparse = stack_sparse_tensor(sparse_tensors)
+    all_ignore = []
+    for i, t in enumerate(ts):
+        extra = torch.full((1, t.ignore_index.shape[1]), i,
+                           dtype=t.ignore_index.dtype,
+                           device=t.ignore_index.device)
+        ignore = torch.cat((extra, t.ignore_index))
+        all_ignore.append(ignore)
+    ignore = torch.cat(all_ignore, dim=1)
+    return IgnoreLastDimSparseTensor(
+        stacked_sparse.idx,
+        stacked_sparse.value,
+        stacked_sparse.size,
+        ignore,
+    )
 

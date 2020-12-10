@@ -7,6 +7,7 @@ import torch.distributed as dist
 
 from qd.qd_common import get_mpi_rank, get_mpi_size
 from qd.logger import MetricLogger
+from qd.torch_common import to
 
 
 def reduce_loss_dict(loss_dict):
@@ -155,7 +156,21 @@ def do_train(
     if use_amp:
         scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
 
+    debug = False
+    if debug:
+        from qd.torch_common import init_random_seed
+        init_random_seed(99)
+        from qd.layers.forward_pass_feature_cache import ForwardPassFeatureCache
+        model = ForwardPassFeatureCache(model)
+
     for iteration, (images, targets, _) in enumerate(data_loader, start_iter):
+        if debug:
+            from qd.torch_common import torch_load
+            images = torch_load('/tmp/images.pt')
+            targets = torch_load('/tmp/targets.pt')
+            m = torch_load('/tmp/state_dict.pt')
+            model.module.load_state_dict(m)
+
         if hasattr(images, 'image_sizes') and len(images.image_sizes) == 0:
             logging.error('this should never happen since different workers '
                     'will have different numbers of iterations.')
@@ -190,16 +205,6 @@ def do_train(
         if not no_update:
             optimizer.zero_grad()
 
-        #all_image_target = partition_data(images,
-                #targets, data_partition)
-        #start_fb = time.time()
-        #for curr_images, curr_target in all_image_target:
-            #forward_backward(model, curr_images, curr_target,
-                    #optimizer,
-                    #arguments, checkpointer, use_hvd,
-                    #meters, device, loss_scalar=1./data_partition,
-                    #no_update=no_update)
-        #end_fb = time.time()
         if use_amp:
             with torch.cuda.amp.autocast(enabled=use_amp):
                 loss_dict = model(images, targets)
@@ -228,6 +233,9 @@ def do_train(
                 optimizer.step()
         meters.update(loss=losses, **loss_dict)
 
+        if debug:
+            model.sumarize_feature()
+            import ipdb;ipdb.set_trace(context=15)
 
         #if explicit_average_grad:
             #average_gradients(model)
@@ -309,16 +317,6 @@ def do_train(
                                                    max_iter)
         )
     )
-
-def to(d, device):
-    if isinstance(d, tuple) or isinstance(d, list):
-        return [to(x, device) for x in d]
-    elif isinstance(d, dict):
-        return dict((k, to(v, device)) for k, v in d.items())
-    elif isinstance(d, torch.Tensor):
-        return d.to(device)
-    else:
-        return d
 
 def get_num_image(d):
     if isinstance(d, dict):

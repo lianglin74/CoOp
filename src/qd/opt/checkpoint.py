@@ -257,10 +257,9 @@ class Checkpointer(object):
                 assert 'iteration' in checkpoint
             else:
                 # the following two are used in fb_swav
-                if 'epoch' in checkpoint:
-                    del checkpoint['epoch']
-                if 'amp' in checkpoint:
-                    del checkpoint['amp']
+                for x in ['epoch', 'amp', 'arch']:
+                    if x in checkpoint:
+                        del checkpoint[x]
                 assert len(checkpoint) == 0
             checkpoint = {}
 

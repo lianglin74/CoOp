@@ -391,21 +391,26 @@ class MaskClassificationPipeline(ModelPipeline):
             output = self.predict_iter_forward(model, inputs)
             meters.update(model=time.time() - start)
             start = time.time()
-            if self.predict_extract:
-                for row in self.feature_to_tsv_row(
-                    model.get_features(), self.predict_extract, keys):
-                    yield row
-            else:
-                if softmax_func is not None:
-                    output = softmax_func(output)
-                for row in self.predict_output_to_tsv_row(output, keys,
-                                                          dataloader=dataloader):
-                    yield row
+            for row in self.iter_row_from_forward_out_to_row(keys, model, softmax_func, output, dataloader):
+                yield row
             if self.debug_feature:
                 model.sumarize_feature()
             assert not self.debug_feature
             meters.update(write=time.time() - start)
             start = time.time()
+
+    def iter_row_from_forward_out_to_row(self, keys, model, softmax_func, output, dataloader):
+        if self.predict_extract:
+            for row in self.feature_to_tsv_row(
+                model.get_features(), self.predict_extract, keys):
+                yield row
+        else:
+            if softmax_func is not None:
+                output = softmax_func(output)
+            for row in self.predict_output_to_tsv_row(output, keys,
+                                                      dataloader=dataloader):
+                yield row
+
 
     def predict_iter_forward(self, model, inputs):
         with torch.no_grad():

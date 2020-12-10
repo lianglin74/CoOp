@@ -23,6 +23,10 @@ import progressbar
 from tqdm import tqdm
 
 
+def get_tsv_lineidx(tsv_file):
+    assert tsv_file.endswith('.tsv')
+    return tsv_file[:-3] + 'lineidx'
+
 def rm_tsv(tsv_file):
     if op.isfile(tsv_file):
         os.remove(tsv_file)
@@ -49,10 +53,12 @@ def tsv_mv(src_file, dst_file):
 
 def reorder_tsv_keys(in_tsv_file, ordered_keys, out_tsv_file):
     tsv = TSVFile(in_tsv_file)
-    keys = [tsv.seek_first_column(i) for i in tqdm(range(len(tsv)))]
+    logging.info('loading keys in input')
+    keys = [tsv.seek_first_column(i) for i in tqdm(range(len(tsv)), mininterval=2)]
     key_to_idx = {key: i for i, key in enumerate(keys)}
     def gen_rows():
-        for key in tqdm(ordered_keys):
+        logging.info('writing')
+        for key in tqdm(ordered_keys, mininterval=2):
             idx = key_to_idx[key]
             yield tsv.seek(idx)
     tsv_writer(gen_rows(), out_tsv_file)
@@ -84,6 +90,13 @@ class CompositeTSVFile():
     def __len__(self):
         return len(self.seq)
 
+    def seek_first_column(self, index):
+        idx_source, idx_row = self.seq[index]
+        return self.tsvs[idx_source].seek_first_column(idx_row)
+
+    def get_composite_source_idx(self):
+        return [i for i, _ in self.seq]
+
     def initialize(self):
         '''
         this function has to be called in init function if cache_policy is
@@ -110,9 +123,11 @@ class TSVFile(object):
 
         self._cache()
 
+
     def close(self):
         if self._fp:
             self._fp.close()
+            self._fp = None
         self._lineidx = None
 
     def __del__(self):
@@ -127,6 +142,9 @@ class TSVFile(object):
     def num_rows(self):
         self._ensure_lineidx_loaded()
         return len(self._lineidx)
+
+    def get_key(self, idx):
+        return self.seek_first_column(idx)
 
     def seek(self, idx):
         self._ensure_tsv_opened()
@@ -155,11 +173,11 @@ class TSVFile(object):
     def _ensure_lineidx_loaded(self):
         if self._lineidx is None:
             # please do not check if it is expired. Reason: if we copy the data from somewhere else, the timestamp might not be kepts
-            if not op.isfile(self.lineidx) and not op.islink(self.lineidx):
-                generate_lineidx(self.tsv_file, self.lineidx)
+            #if not op.isfile(self.lineidx) and not op.islink(self.lineidx):
+                #generate_lineidx(self.tsv_file, self.lineidx)
             logging.info('loading lineidx: {}'.format(self.lineidx))
             with open(self.lineidx, 'r') as fp:
-                self._lineidx = [int(i.strip()) for i in tqdm(fp.readlines())]
+                self._lineidx = [int(i.strip()) for i in fp.readlines()]
 
     def _cache(self):
         if self.cache_policy == 'memory':
@@ -169,12 +187,8 @@ class TSVFile(object):
             # the files and cache it to memory. If we load it here in the main
             # thread, it won't copy it to each worker
             logging.info('caching {} to memory'.format(self.tsv_file))
-            try:
-                import cStringIO as StringIO
-            except:
-                # python 3
-                from io import StringIO
-            result = StringIO.StringIO()
+            from io import StringIO
+            result = StringIO()
             total = op.getsize(self.tsv_file)
             import psutil
             avail = psutil.virtual_memory().available
@@ -221,7 +235,10 @@ class TSVFile(object):
             self.pid = os.getpid()
 
         if self.pid != os.getpid():
+            self._fp.close()
             logging.info('re-open {} because the process id changed'.format(self.tsv_file))
+            from qd.qd_common import print_opened_files
+            print_opened_files()
             self._fp = exclusive_open_to_read(self.tsv_file)
             self.pid = os.getpid()
 
@@ -305,7 +322,7 @@ class TSVDataset(object):
     def load_keys(self, split):
         assert self.has(split, 'label')
         result = []
-        for row in tqdm(self.iter_data(split, 'label')):
+        for row in tqdm(self.iter_data(split, 'label'), mininterval=2):
             result.append(row[0])
         return result
 
@@ -391,19 +408,14 @@ class TSVDataset(object):
             else:
                 return op.join(self._data_root, '{}.{}.tsv'.format(split_name,
                     t))
-        elif version > 0:
-            if t is None:
-                return op.join(self._data_root, '{}.v{}.tsv'.format(split_name,
-                    version))
-            else:
-                return op.join(self._data_root, '{}.{}.v{}.tsv'.format(split_name,
-                    t, version))
         elif version == -1:
             if not op.isfile(self.get_data(split_name, t)):
                 return self.get_data(split_name, t)
             v = self.get_latest_version(split_name, t)
             return self.get_data(split_name, t, v)
-
+        else:
+            return op.join(self._data_root, '{}.{}.v{}.tsv'.format(split_name,
+                t, version))
 
     def get_num_train_image(self):
         if op.isfile(self.get_data('trainX')):
@@ -432,7 +444,7 @@ class TSVDataset(object):
             tsv = TSVFile(fname)
             num_rows = len(tsv)
             result = {}
-            for row in tqdm(tsv, total=num_rows):
+            for row in tqdm(tsv, total=num_rows, mininterval=2):
                 assert row[0] not in result
                 assert len(row) == 2
                 ss = row[1].split(' ')
@@ -559,19 +571,18 @@ class TSVDataset(object):
             else:
                 rows_data = self.iter_composite(split, None, version=version,
                         filter_idx=filter_idx)
-                rows_label = self.iter_data(split, 'label', version=version,
-                        filter_idx=filter_idx)
+                logging.info('breaking change: label is ignore for t=None')
+                #rows_label = self.iter_data(split, 'label', version=version,
+                        #filter_idx=filter_idx)
                 if unique:
                     returned = set()
-                for i, (r_data, r_label) in enumerate(zip(rows_data, rows_label)):
-                    r_data[0] = r_label[0]
-                    r_data[1] = r_label[1]
-                    if unique and r_data[0] in returned:
+                for i, r in enumerate(rows_data):
+                    if unique and r[0] in returned:
                         continue
                     else:
-                        yield r_data
+                        yield r
                         if unique:
-                            returned.add(r_data[0])
+                            returned.add(r[0])
                     if progress:
                         pbar.update(i)
         else:
@@ -604,8 +615,12 @@ class TSVDataset(object):
             self._fname_to_tsv[fname] = tsv
         return tsv
 
-    def write_data(self, rows, split, t=None, version=None):
-        tsv_writer(rows, self.get_data(split, t, version))
+    def write_data(self, rows, split, t=None, version=None, generate_info=None):
+        out_tsv = self.get_data(split, t, version)
+        tsv_writer(rows, out_tsv)
+        if generate_info is not None:
+            out_tsv = self.get_data(split, '{}.generate.info'.format(t), version=version)
+            tsv_writer(generate_info, out_tsv)
 
     def update_data(self, rows, split, t, generate_info=None):
         '''
@@ -861,7 +876,7 @@ def create_inverted_list(rows):
     inverted_with_bb_verified = {}
     inverted_with_bb_noverified = {}
     logging.info('creating inverted')
-    for i, row in tqdm(enumerate(rows)):
+    for i, row in tqdm(enumerate(rows), mininterval=2):
         labels = json.loads(row[1])
         if type(labels) is list:
             # detection dataset
@@ -912,6 +927,20 @@ def tsv_shuffle_reader(tsv_file):
 def load_labelmap(data):
     dataset = TSVDataset(data)
     return dataset.load_labelmap()
+
+def get_caption_data_info(name):
+    dataset = TSVDataset(name)
+    splits = ['train', 'trainval', 'test']
+    from collections import defaultdict
+    split_to_versions = defaultdict(list)
+    for split in splits:
+        v = 0
+        while True:
+            if not dataset.has(split, 'caption', v):
+                break
+            split_to_versions[split].append(v)
+            v = v + 1
+    return split_to_versions
 
 def get_all_data_info2(name=None):
     if name is None:
@@ -1012,4 +1041,77 @@ def load_list_file(fname):
     if len(result) > 0 and result[-1] == '':
         result = result[:-1]
     return result
+
+def convert_data_to_yaml(
+    data, split, yaml,
+    is_train=True,
+    label=None,
+    feature=None,
+    qd_format=False,
+    label_version=None,
+    feature_version=None):
+    # used for captioning-related scripts
+    if qd_format:
+        info = {
+            'feature': feature if feature is not None else {
+                'data': data,
+                'split': split,
+                't': 'feature',
+                'version': feature_version,
+            },
+            'hw': {'data': data, 'split': split, 't': 'hw'},
+            'img': {'data': data, 'split': split},
+            'label': label if label is not None else {
+                'data': data,
+                'split': split,
+                't': 'label',
+                'version': label_version,
+            },
+            'caption': {'data': data, 'split': split, 't': 'hw'},
+            'composite': False,
+            'qd_format': True,
+        }
+    else:
+        assert label is None and feature is None
+        # will be deprecated
+        from qd.tsv_io import TSVDataset
+        yaml_folder = op.dirname(yaml)
+        dataset = TSVDataset(data)
+        if not op.isfile(dataset.get_data(split + 'X')):
+            # we prefer to use the composite
+            info = {
+                'feature': op.relpath(dataset.get_data('train', 'feature', version=feature_version), yaml_folder),
+                'label': op.relpath(dataset.get_data(split, 'label', version=label_version), yaml_folder),
+                'hw': op.relpath(dataset.get_data(split, 'hw'), yaml_folder),
+                'img': op.relpath(dataset.get_data(split), yaml_folder),
+                'caption': op.relpath(dataset.get_data(split, 'caption'), yaml_folder),
+                'composite': False,
+            }
+        else:
+            def get_rel_path(p):
+                return op.relpath(op.realpath(p), op.realpath(yaml_folder))
+            splitX = split + 'X'
+            from qd.qd_common import load_list_file
+            info = {
+                'feature': list(map(get_rel_path, load_list_file(dataset.get_data(splitX, 'feature', version=feature_version)))),
+                'label': list(map(get_rel_path, load_list_file(dataset.get_data( splitX, 'label', version=label_version)))),
+                'hw': list(map(get_rel_path, load_list_file(dataset.get_data(splitX, 'hw')))),
+                'img': list(map(get_rel_path, load_list_file(dataset.get_data(splitX)))),
+                'caption': list(map(get_rel_path, load_list_file(dataset.get_data(splitX, 'caption')))),
+                'composite': True,
+            }
+            if is_train:
+                caption_linelist = dataset.get_data(split, 'caption_linelist')
+                assert op.isfile(caption_linelist)
+                info['caption_linelist'] = caption_linelist
+            else:
+                caption_linelist = dataset.get_data(split, 'caption_linelist_test')
+                if not op.isfile(caption_linelist):
+                    from qd.tsv_io import tsv_reader
+                    tsv_writer(((a, b, 0) for a, b in
+                                tsv_reader(dataset.get_shuffle_file(split))),
+                               caption_linelist)
+                info['caption_linelist'] = caption_linelist
+    from qd.qd_common import write_to_yaml_file
+    write_to_yaml_file(info, yaml)
 

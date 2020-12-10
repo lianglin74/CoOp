@@ -3,6 +3,35 @@ from torch.utils.data.sampler import Sampler
 from torch.utils.data.sampler import BatchSampler
 
 
+class CompositeRankAwareSampler(Sampler):
+    def __init__(self, dataset):
+        from qd.qd_common import get_mpi_size
+        from qd.qd_common import get_mpi_rank
+        # the returned value should be a list of integer
+        source_list = dataset.get_composite_source_idx()
+
+        num_source = max(source_list) + 1
+        self.world_size = get_mpi_size()
+        self.rank = get_mpi_rank()
+        assert (num_source % self.world_size) == 0
+
+        num_source_each = num_source // self.world_size
+        start = self.rank * num_source_each
+        end = start + num_source_each
+        self.all_idx = [i for i, idx_s in enumerate(source_list)
+                        if idx_s >= start and idx_s < end]
+        self.curr_idx = 0
+
+    def __iter__(self):
+        while True:
+            if self.curr_idx >= len(self.all_idx):
+                self.curr_idx -= len(self.all_idx)
+            yield self.all_idx[self.curr_idx]
+            self.curr_idx += 1
+
+    def __len__(self):
+        raise ValueError('should not be called')
+
 class InfiniteSampler(Sampler):
     def __init__(self, sample_size, shuffle_at_init=True):
         from qd.qd_common import get_mpi_size
@@ -12,7 +41,6 @@ class InfiniteSampler(Sampler):
         self.world_size = get_mpi_size()
         self.rank = get_mpi_rank()
         self.idx = self.rank
-        self.sample_idx = list(range(sample_size))
         self.shuffle_at_init = shuffle_at_init
 
     def __iter__(self):

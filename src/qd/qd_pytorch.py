@@ -23,6 +23,7 @@ from qd.tsv_io import tsv_writer, tsv_reader
 from qd.tsv_io import TSVFile, CompositeTSVFile
 from qd.tsv_io import TSVDataset
 from shutil import copyfile
+from deprecated import deprecated
 import os
 import os.path as op
 import copy
@@ -66,6 +67,9 @@ from qd.torch_common import get_aml_mpi_host_names
 from qd.torch_common import get_philly_mpi_hosts
 from qd.torch_common import torch_save, torch_load
 from qd.torch_common import freeze_parameters
+from qd.torch_common import init_random_seed
+from qd.torch_common import attach_module_name_
+from qd.layers.batch_norm import LayerBatchNorm
 from qd.layers.loss import MultiHotCrossEntropyLoss
 from qd.layers.loss import multi_hot_cross_entropy
 from qd.torch_common import concat_all_gather
@@ -610,16 +614,19 @@ class DictTransformMaskResize(object):
     def __init__(self, min_size,
                  max_size,
                  depends_on_iter=False,
-                 treat_min_as_max=False):
+                 treat_min_as_max=False,
+                 smart_resize_on_min=False
+                 ):
         if not isinstance(min_size, (list, tuple)):
             min_size = (min_size,)
         self.min_size = min_size
         self.max_size = max_size
         self.depends_on_iter = depends_on_iter
         self.treat_min_as_max = treat_min_as_max
+        self.smart_resize_on_min = smart_resize_on_min
         assert depends_on_iter, 'no need to set it as False'
 
-    def gett_size_min_as_max(self, image_size, iteration):
+    def get_size_min_as_max(self, image_size, iteration):
         w, h = image_size
         max_size = self.min_size[iteration % len(self.min_size)]
 
@@ -653,10 +660,19 @@ class DictTransformMaskResize(object):
 
         return (oh, ow)
 
+    def get_smart_resize_on_min(self, image_size):
+        w, h = image_size
+        alpha = math.sqrt(1. * self.min_size * self.min_size / w / h)
+        w2 = int(w * alpha)
+        h2 = int(h * alpha)
+        return h2, w2
+
     def __call__(self, dict_data):
         image, target = dict_data['image'], dict_data['rects']
         if self.treat_min_as_max:
-            size = self.gett_size_min_as_max(image.size, dict_data['iteration'])
+            size = self.get_size_min_as_max(image.size, dict_data['iteration'])
+        elif self.smart_resize_on_min:
+            size = self.get_smart_resize_on_min(image.size)
         else:
             size = self.get_size(image.size, dict_data['iteration'])
         image = F.resize(image, size)
@@ -818,6 +834,9 @@ class TSVSplit(Dataset):
         key, str_label = self.label_tsv[index]
         return key, str_label, str_image
 
+    def get_composite_source_idx(self):
+        return self.tsv.get_composite_source_idx()
+
     def __len__(self):
         return len(self.tsv)
 
@@ -914,13 +933,31 @@ class TSVSplitImage(TSVSplit):
                 cache_policy)
         self.transform = transform
         # load the label map
-        dataset = TSVDataset(data)
-        if labelmap is None:
-            labelmap = load_list_file(dataset.get_labelmap_file())
-        elif type(labelmap) is str:
-            labelmap = load_list_file(labelmap)
-        assert type(labelmap) is list
-        self.label_to_idx = {l: i for i, l in enumerate(labelmap)}
+        self._arg_labelmap = labelmap
+        self.data = data
+        self._labelmap = None
+        self._label_to_idx = None
+
+    @property
+    def labelmap(self):
+        if self._labelmap is None:
+            dataset = TSVDataset(self.data)
+            if self._arg_labelmap is None:
+                labelmap = load_list_file(dataset.get_labelmap_file())
+            elif isinstance(self._arg_labelmap, str):
+                labelmap = load_list_file(self._arg_labelmap)
+            else:
+                labelmap = self._arg_labelmap
+            assert type(labelmap) is list
+            self._labelmap = labelmap
+        return self._labelmap
+
+    @property
+    def label_to_idx(self):
+        if self._label_to_idx is None:
+            self._label_to_idx = {l: i for i, l in enumerate(
+                self.labelmap)}
+        return self._label_to_idx
 
     def get_keys(self):
         return [self.label_tsv[i][0] for i in range(len(self.label_tsv))]
@@ -1055,6 +1092,25 @@ class TSVSplitImageMultiLabel(TSVSplitImage):
             cache_policy=None, labelmap=None):
         super(TSVSplitImageMultiLabel, self).__init__(data, split, version,
                 transform, cache_policy, labelmap)
+
+    def __getitem__(self, data_dict):
+        if isinstance(data_dict, int):
+            idx = data_dict
+        else:
+            idx = data_dict['idx']
+        r = {'idx': idx, 'index': idx}
+        key, str_label, str_im = super(TSVSplitImage, self).__getitem__(idx)
+
+        img = img_from_base64(str_im)
+        r['image'] = img
+
+        label = self._tsvcol_to_label(str_label)
+        r['label'] = label
+
+        r['key'] = key
+        if self.transform is not None:
+            r = self.transform(r)
+        return r
 
     def _tsvcol_to_label(self, col):
         rects = json.loads(col)
@@ -1495,12 +1551,6 @@ def ensure_create_evaluate_meta_file(evaluate_file):
         if op.isfile(from_file) and worth_create(from_file, simple_file):
             copyfile(from_file, simple_file)
 
-def init_random_seed(random_seed):
-    random.seed(random_seed)
-    np.random.seed(random_seed)
-    torch.manual_seed(random_seed)
-    torch.cuda.manual_seed_all(random_seed)
-
 def get_acc_for_plot(eval_file):
     if 'coco_box' in eval_file:
         return load_from_yaml_file(eval_file)
@@ -1645,7 +1695,7 @@ class TorchTrain(object):
             'log_step': 100,
             'evaluate_method': 'map',
             'test_split': 'test',
-            'num_workers': 4,
+            'num_workers': 8,
             'test_normalize_module': 'softmax',
             'restore_snapshot_iter': -1,
             'ovthresh': [-1],
@@ -1726,8 +1776,6 @@ class TorchTrain(object):
         # adapt the batch size based on the mpi_size
         self.is_master = self.mpi_rank == 0
 
-        assert (self.test_batch_size % self.mpi_size) == 0, self.test_batch_size
-        self.test_batch_size = self.test_batch_size // self.mpi_size
         self.train_dataset = TSVDataset(self.data)
 
         self.initialized = False
@@ -1854,6 +1902,25 @@ class TorchTrain(object):
                         ))
         else:
             assert self.convert_bn is None, self.convert_bn
+        if self.convert_ln == 'LBN':
+            model = replace_module(model,
+                    lambda m: isinstance(m, torch.nn.LayerNorm),
+                    lambda m: LayerBatchNorm(
+                        m.normalized_shape[0],
+                        eps=m.eps,
+                        affine=m.elementwise_affine
+                        ))
+        elif self.convert_ln == 'LBN_noE':
+            attach_module_name_(model)
+            model = replace_module(model,
+                    lambda m: isinstance(m, torch.nn.LayerNorm) and
+                                   not m.name_from_root.endswith('bert.embeddings.LayerNorm'),
+                    lambda m: LayerBatchNorm(
+                        m.normalized_shape[0],
+                        eps=m.eps,
+                        affine=m.elementwise_affine
+                        ))
+
         if self.fc_as_mlp:
             # this is used, normally for self-supervised learning scenarios
             replace_fc_with_mlp_(model)
@@ -1887,7 +1954,6 @@ class TorchTrain(object):
 
         # assign a name to each module so that we can use it in each module to
         # print debug information
-        from qd.torch_common import attach_module_name_
         attach_module_name_(model)
         return model
 
@@ -1895,13 +1961,13 @@ class TorchTrain(object):
         if self._initialized:
             return
 
+        if self.file_system_sharing:
+            logging.info('using file system for tensor sharing')
+            torch.multiprocessing.set_sharing_strategy('file_system')
+
         if self.cudnn_benchmark:
             torch.backends.cudnn.benchmark = True
 
-        # in torch 0.4, torch.randperm only supports cpu. if we set it as
-        # cuda.Float by default, it will crash there
-        #torch.set_default_tensor_type('torch.cuda.FloatTensor')
-        #torch.set_default_tensor_type('torch.FloatTensor')
         if self.use_hvd:
             # work with world size == 1, also
             import horovod.torch as hvd
@@ -1914,12 +1980,13 @@ class TorchTrain(object):
             if not self.use_hvd:
                 dist_url = self.get_dist_url()
                 init_param = {'backend': self.dist_backend,
-                        'init_method': dist_url,
-                        'rank': self.mpi_rank,
-                        'world_size': self.mpi_size}
+                              'init_method': dist_url,
+                              'rank': self.mpi_rank,
+                              'world_size': self.mpi_size}
+                print('init param: \n{}'.format(pformat(init_param)))
+                logging.info('device id = {}'.format(self.device_id))
                 # always set the device at the very beginning
                 torch.cuda.set_device(self.device_id)
-                logging.info('init param: \n{}'.format(pformat(init_param)))
                 if not dist.is_initialized():
                     dist.init_process_group(**init_param)
                 # sometimes, the init hangs, and thus we print some logs for
@@ -2256,6 +2323,9 @@ class TorchTrain(object):
             elif self.loss_type == 'kl_ce':
                 from qd.layers.loss import KLCrossEntropyLoss
                 criterion = KLCrossEntropyLoss()
+            elif self.loss_type == 'multi_klce':
+                from qd.layers.loss import MultiKLCrossEntropyLoss
+                criterion = MultiKLCrossEntropyLoss()
             elif self.loss_type == 'l2':
                 from qd.layers.loss import L2Loss
                 criterion = L2Loss()
@@ -2281,6 +2351,9 @@ class TorchTrain(object):
         elif self.dataset_type == 'multi_hot':
             if self.loss_type == 'BCEWithLogitsLoss':
                 criterion = nn.BCEWithLogitsLoss().cuda()
+            elif self.loss_type == 'BCELogitsNormByPositive':
+                from qd.layers.loss import BCELogitsNormByPositive
+                criterion = BCELogitsNormByPositive()
             elif self.loss_type == 'MultiHotCrossEntropyLoss':
                 criterion = MultiHotCrossEntropyLoss()
             else:
@@ -2292,15 +2365,27 @@ class TorchTrain(object):
             raise NotImplementedError
         return criterion
 
-    def _get_checkpoint_file(self, epoch=None, iteration=None):
+    def get_last_model_link_file(self):
+        last_model_link = op.join(self.output_folder, 'snapshot', 'model_iter_last.link')
+        return last_model_link
+
+    def get_checkpoint_file(self, epoch=None, iteration=None):
         if iteration is None and epoch is None and self.model_file is not None:
             return self.model_file
+        last_model_link = self.get_last_model_link_file()
+        if iteration is None and epoch is None and op.isfile(last_model_link):
+            last_model_file = read_to_buffer(last_model_link).decode().strip()
+            return op.join(op.dirname(last_model_link), last_model_file)
         assert epoch is None, 'not supported'
         if iteration is None:
             iteration = self.max_iter
         iteration = self.parse_iter(iteration)
         return op.join(self.output_folder, 'snapshot',
                 "model_iter_{:07d}.pt".format(iteration))
+
+    @deprecated('use get_checkpoint_file')
+    def _get_checkpoint_file(self, epoch=None, iteration=None):
+        return self.get_checkpoint_file(epoch, iteration)
 
     def _get_model(self, pretrained, num_class):
         if self.net in ['MobileNetV3', 'MobileNetV3Small']:
@@ -2336,6 +2421,7 @@ class TorchTrain(object):
                 if self.efficient_net_simple_padding:
                     efficient_det.g_simple_padding = True
                 else:
+                    raise ValueError
                     efficient_det.g_simple_padding = False
                 from qd.layers.efficient_det import EfficientNet
                 model = EfficientNet.from_name(
@@ -2475,7 +2561,7 @@ class TorchTrain(object):
     def ensure_train(self):
         self._ensure_initialized()
 
-        last_model_file = self._get_checkpoint_file()
+        last_model_file = self.get_checkpoint_file()
         logging.info('last model file = {}'.format(last_model_file))
         if op.isfile(last_model_file) and not self.force_train:
             logging.info('skip to train')
@@ -2497,7 +2583,9 @@ class TorchTrain(object):
             from qd.qd_common import zip_qd, try_delete
             # we'd better to delete it since it seems like zip will read/write
             # if there is
-            try_delete(op.join(self.output_folder, 'source_code.zip'))
+            source_code = op.join(self.output_folder, 'source_code.zip')
+            if op.isfile(source_code):
+                try_delete(source_code)
             zip_qd(op.join(self.output_folder, 'source_code'))
         synchronize()
 
@@ -2513,7 +2601,7 @@ class TorchTrain(object):
             if self.init_from['type'] == 'best_model':
                 c = TorchTrain(full_expid=self.init_from['full_expid'],
                         load_parameter=True)
-                model_file = c._get_checkpoint_file()
+                model_file = c.get_checkpoint_file()
                 logging.info('loading from {}'.format(model_file))
                 checkpoint = torch_load(model_file)
                 model.load_state_dict(checkpoint['state_dict'])
@@ -2619,7 +2707,7 @@ class TorchTrain(object):
         self.init_model(model)
 
         optimizer = torch.optim.SGD(model.parameters(), self.base_lr,
-                                    momentum=0.9,
+                                    momentum=self.momentum,
                                     weight_decay=1e-4)
         if self.use_hvd:
             import horovod.torch as hvd
@@ -2654,7 +2742,7 @@ class TorchTrain(object):
                     'net': self.net,
                     'state_dict': model.state_dict(),
                     'optimizer' : optimizer.state_dict(),
-                }, self._get_checkpoint_file(iteration='{}e'.format(epoch + 1)))
+                }, self.get_checkpoint_file(iteration='{}e'.format(epoch + 1)))
 
     def train_epoch(self, train_loader, model, optimizer, epoch,
             max_iter=None):
@@ -2712,7 +2800,7 @@ class TorchTrain(object):
 
     def _get_predict_file(self, model_file=None):
         if model_file is None:
-            model_file = self._get_checkpoint_file(iteration=self.max_iter)
+            model_file = self.get_checkpoint_file(iteration=self.max_iter)
         cc = [model_file, self.test_data, self.test_split]
         self.append_predict_param(cc)
         if self.test_max_iter is not None:
@@ -2761,7 +2849,7 @@ class TorchTrain(object):
             self.standarize_intermediate_models()
             need_wait_models = self.pred_eval_intermediate_models()
             all_step = self.get_all_steps()
-            all_eval_file = [self._get_evaluate_file(self._get_predict_file(self._get_checkpoint_file(iteration=i)))
+            all_eval_file = [self._get_evaluate_file(self._get_predict_file(self.get_checkpoint_file(iteration=i)))
                 for i in all_step]
             iter_to_eval = dict((i, get_acc_for_plot(eval_file))
                     for i, eval_file in zip(all_step, all_eval_file) if
@@ -2777,7 +2865,7 @@ class TorchTrain(object):
 
     def save_to_tensorboard(self):
         all_step = self.get_all_steps()
-        all_eval_file = [self._get_evaluate_file(self._get_predict_file(self._get_checkpoint_file(iteration=s)))
+        all_eval_file = [self._get_evaluate_file(self._get_predict_file(self.get_checkpoint_file(iteration=s)))
             for s in all_step]
         all_step_eval_result = [(s, get_acc_for_plot(e)) for s, e in zip(all_step,
             all_eval_file) if op.isfile(e)]
@@ -2795,9 +2883,15 @@ class TorchTrain(object):
         wt.close()
 
     def is_train_finished(self):
-        last_model = self._get_checkpoint_file()
-        logging.info('checking if {} exists'.format(last_model))
-        return op.isfile(last_model) or op.islink(last_model)
+        last_model = self.get_checkpoint_file()
+        if not op.isfile(last_model) and \
+                not op.islink(last_model) and \
+                not op.isdir(last_model):
+            logging.info('{} is not a file and not a folder'.format(
+                last_model
+            ))
+            return False
+        return True
 
     def update_acc_iter(self, iter_to_eval):
         if self.mpi_rank == 0:
@@ -2839,7 +2933,7 @@ class TorchTrain(object):
         ready_predict = []
         all_step = self.get_all_steps()
         for step in all_step[:-1]:
-            model_file = self._get_checkpoint_file(iteration=step)
+            model_file = self.get_checkpoint_file(iteration=step)
             if not op.isfile(model_file):
                 ready_predict.append(0)
                 continue
@@ -2863,7 +2957,7 @@ class TorchTrain(object):
         all_step = self.get_all_steps()[:-1]
         all_ready_predict_step = [step for step, status in zip(all_step, ready_predict) if status == 1]
         for step in all_ready_predict_step:
-            model_file = self._get_checkpoint_file(iteration=step)
+            model_file = self.get_checkpoint_file(iteration=step)
             pred = self.ensure_predict(model_file=model_file)
             self.ensure_evaluate(pred)
         return len([x for x in ready_predict if x == 0])
@@ -2878,7 +2972,7 @@ class TorchTrain(object):
                 if curr >= self.max_iter:
                     break
                 original_model = self._get_old_check_point_file(curr)
-                new_model = self._get_checkpoint_file(iteration=curr)
+                new_model = self.get_checkpoint_file(iteration=curr)
                 # use copy since the continous training requires the original
                 # format in maskrcnn
                 from qd.qd_common import ensure_copy_file
@@ -2903,13 +2997,13 @@ class TorchTrain(object):
             logging.warn('use model_file rather than epoch or iteration, pls')
             if epoch is None:
                 epoch = self.max_epoch
-            model_file = self._get_checkpoint_file(iteration=iteration)
+            model_file = self.get_checkpoint_file(iteration=iteration)
         else:
             if model_file is None:
-                model_file = self._get_checkpoint_file()
+                model_file = self.get_checkpoint_file()
             assert model_file is not None
         predict_result_file = self._get_predict_file(model_file)
-        if not op.isfile(model_file):
+        if not op.isfile(model_file) and not op.isdir(model_file):
             logging.info('ignore to run predict since {} does not exist'.format(
                 model_file))
             return predict_result_file
@@ -3017,7 +3111,7 @@ class TorchTrain(object):
         # through. No need to run initilaization here actually.
         #self._ensure_initialized()
         if not predict_file:
-            model_file = self._get_checkpoint_file()
+            model_file = self.get_checkpoint_file()
             predict_file = self._get_predict_file(model_file)
         evaluate_file = self._get_evaluate_file(predict_file)
         if evaluate_file is None:
@@ -3050,6 +3144,27 @@ class TorchTrain(object):
                     report_file=evaluate_file,
                     ovthresh=self.ovthresh, # this is in self.kwargs already
                     **other_param)
+        elif self.evaluate_method == 'attr':
+            # only for visualgenome
+            def gen_rows():
+                for key, str_rects in tsv_reader(predict_file):
+                    rects = json.loads(str_rects)
+                    rects2 = []
+                    for r in rects:
+                        for l, s in zip(r['attr_labels'], r['attr_scores']):
+                            rects2.append({'rect': r['rect'], 'class': str(l), 'conf': s})
+                    from qd.qd_common import json_dump
+                    yield key, json_dump(rects2)
+            out_tsv = op.splitext(predict_file)[0] + '.attr.tsv'
+            tsv_writer(gen_rows(), out_tsv)
+            from qd.deteval import deteval_iter
+            deteval_iter(
+                    dataset.iter_data('test', 'attr',
+                        version=None),
+                    out_tsv,
+                    report_file=evaluate_file,
+                    ovthresh=[0.5],
+                    force_evaluate=True)
         elif self.evaluate_method == 'coco_box':
             from qd.cocoeval import convert_gt_to_cocoformat
             from qd.cocoeval import convert_to_cocoformat

@@ -287,6 +287,14 @@ def save_image(im, file_name, quality=None):
 def load_image(file_name):
     return cv2.imread(file_name)
 
+def load_image_by_pil(file_name):
+    return Image.open(file_name).convert('RGB')
+
+def pil_to_cvim(pil_image):
+    open_cv_image = np.array(pil_image)
+    open_cv_image = open_cv_image[:, :, ::-1]
+    return open_cv_image
+
 def show_image(im):
     show_images([im], 1, 1)
 
