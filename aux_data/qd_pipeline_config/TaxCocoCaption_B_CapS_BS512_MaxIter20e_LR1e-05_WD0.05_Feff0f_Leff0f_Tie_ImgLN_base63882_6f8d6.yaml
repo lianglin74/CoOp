@@ -1,0 +1,38 @@
+all_test_data:
+- test_data: TaxCocoCaption
+  test_split': test
+param:
+  add_od_labels: true
+  base_lr: 1.0e-05
+  basemodel: output/TaxCCSBUCocoGQAFlk30VqaVGqaSplit_B_VLP_BS2048_MaxIter100e_LR0.0004_Warm5e_Feff0f_Leff0f_ImgLN_based4a73/snapshot/model_iter_0339800
+  data: TaxCocoCaption
+  dist_url_tcp_port: 26510
+  effective_batch_size: 512
+  env:
+    candidate_clusters:
+    - eu
+    - we3v32
+    cluster: we3v32
+    compile_args: -no-mask -no-od -no-fcos -no-mmdet
+    num_gpu: 8
+    run_type: save_config
+    skip_data_upload: true
+  evaluate_method: caption
+  expid: CapS_BS512_MaxIter20e_LR1e-05_WD0.05_Feff0f_Leff0f_Tie_ImgLN_base63882
+  expid_prefix: CapS
+  full_expid: TaxCocoCaption_B_CapS_BS512_MaxIter20e_LR1e-05_WD0.05_Feff0f_Leff0f_Tie_ImgLN_base63882
+  img_feature_dim: 1030
+  log_step: 100
+  max_iter: 20e
+  net: B
+  num_hidden_layers: -1
+  pipeline_type:
+    from: qd.pipelines.mmask_caption
+    import: MMaskCaptionPipeline
+  test_batch_size: 16
+  tie_weights: true
+  train_feature_version: eff0f
+  train_label_version: eff0f
+  use_img_layernorm: true
+  weight_decay: 0.05
+type: pipeline_train_eval_multi
