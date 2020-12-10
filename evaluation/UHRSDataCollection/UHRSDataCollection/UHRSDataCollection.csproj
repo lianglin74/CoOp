@@ -49,13 +49,21 @@
     <Prefer32Bit>true</Prefer32Bit>
   </PropertyGroup>
   <ItemGroup>
-    <Reference Include="Microsoft.Search.UHRS.Client, Version=3.1.6.0, Culture=neutral, PublicKeyToken=a4c07866cec96fd2, processorArchitecture=MSIL">
-      <HintPath>..\packages\UHRS.Client.Library.3.1.6\lib\amd64\Microsoft.Search.UHRS.Client.dll</HintPath>
-      <Private>True</Private>
+    <Reference Include="Microsoft.Identity.Client, Version=4.8.1.0, Culture=neutral, PublicKeyToken=0a613f4dd989e8ae, processorArchitecture=MSIL">
+      <HintPath>..\packages\Microsoft.Identity.Client.4.8.1\lib\net45\Microsoft.Identity.Client.dll</HintPath>
+    </Reference>
+    <Reference Include="Microsoft.Search.UHRS.Client, Version=4.13.0.0, Culture=neutral, PublicKeyToken=a4c07866cec96fd2, processorArchitecture=MSIL">
+      <HintPath>..\packages\UHRS.Client.Library.4.13.0\lib\net45\Microsoft.Search.UHRS.Client.dll</HintPath>
+    </Reference>
+    <Reference Include="Microsoft.Search.UHRS.Services.Plugin.Contracts, Version=4.13.0.0, Culture=neutral, PublicKeyToken=bd7a0952a0d4639f, processorArchitecture=MSIL">
+      <HintPath>..\packages\UHRS.Client.Library.4.13.0\lib\net45\Microsoft.Search.UHRS.Services.Plugin.Contracts.dll</HintPath>
     </Reference>
     <Reference Include="System" />
     <Reference Include="System.Core" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.IdentityModel" />
     <Reference Include="System.ServiceModel" />
+    <Reference Include="System.Windows.Forms" />
     <Reference Include="System.Xml.Linq" />
     <Reference Include="System.Data.DataSetExtensions" />
     <Reference Include="Microsoft.CSharp" />

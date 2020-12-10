@@ -79,7 +79,7 @@ namespace CVUHRS
                 try
                 {
                     UHRSServiceClientSetup.SetServerAddress(ServerAddress); //necessary because the second call doesn't actually use its parameter...
-                    UHRSServiceClientSetup.WinLogin(ServerAddress);
+                    UHRSServiceClientSetup.WinLoginAD(ServerAddress);
                     isSuccess = true;
                 }
                 catch (Exception ex)
@@ -96,7 +96,7 @@ namespace CVUHRS
             const int retryIntervalSec = 10;
             const int numMaxTries = 50;
             Console.WriteLine("[{0}] Downloading task {1}, {2}", DateTime.Now, taskGroupId, taskId);
-            string sf = Streaming.PreparePlainTaskFile(taskGroupId, taskId);
+            string sf = Streaming.PreparePlainTaskFile(null, taskGroupId, taskId);
             var count = 0;
             bool isSuccess = false;
             while (!isSuccess && count++ < numMaxTries)
@@ -146,6 +146,7 @@ namespace CVUHRS
                     using (Stream reader = new FileStream(UHRSServiceClientSetup.CheckFileForIllegalCharacters(taskFilePath), FileMode.Open))
                     {
                         taskId = Streaming.SubmitPlainTask(false, true, false, false, -1, 1.0, numJudgements, null, priority,
+                            Microsoft.Search.UHRS.Client.DataStreamingReference.JudgeHitAppQualificationStatus.Production,
                             false, taskGroupId, taskName, true, minConsensus, maxConsensus,
                             PlainTaskUploadType.Normal, null, false, 0.0, reader);
                     }
