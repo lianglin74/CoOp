@@ -32,3 +32,5 @@ traceback2
 tb-nightly
 yacs
 torchlars
+boto3
+anytree
