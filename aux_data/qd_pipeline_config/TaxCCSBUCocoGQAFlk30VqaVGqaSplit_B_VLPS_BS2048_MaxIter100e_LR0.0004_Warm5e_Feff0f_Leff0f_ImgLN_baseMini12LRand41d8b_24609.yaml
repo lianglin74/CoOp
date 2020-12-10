@@ -8,16 +8,6 @@ param:
   data: TaxCCSBUCocoGQAFlk30VqaVGqaSplit
   dist_url_tcp_port: 21344
   effective_batch_size: 2048
-  env:
-    availability_check: true
-    candidate_clusters:
-    - we3v32
-    - eu
-    cluster: we3v32
-    compile_args: -no-mask -no-od -no-fcos -no-mmdet -no-mmask
-    num_gpu: 32
-    run_type: save_config
-    skip_data_upload: true
   expid: VLPS_BS2048_MaxIter100e_LR0.0004_Warm5e_Feff0f_Leff0f_ImgLN_baseMini12LRand41d8b
   expid_prefix: VLPS
   full_expid: TaxCCSBUCocoGQAFlk30VqaVGqaSplit_B_VLPS_BS2048_MaxIter100e_LR0.0004_Warm5e_Feff0f_Leff0f_ImgLN_baseMini12LRand41d8b

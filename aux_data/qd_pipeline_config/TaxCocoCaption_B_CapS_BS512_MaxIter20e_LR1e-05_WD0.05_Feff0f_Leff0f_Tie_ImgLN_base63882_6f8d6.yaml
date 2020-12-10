@@ -8,15 +8,6 @@ param:
   data: TaxCocoCaption
   dist_url_tcp_port: 26510
   effective_batch_size: 512
-  env:
-    candidate_clusters:
-    - eu
-    - we3v32
-    cluster: we3v32
-    compile_args: -no-mask -no-od -no-fcos -no-mmdet
-    num_gpu: 8
-    run_type: save_config
-    skip_data_upload: true
   evaluate_method: caption
   expid: CapS_BS512_MaxIter20e_LR1e-05_WD0.05_Feff0f_Leff0f_Tie_ImgLN_base63882
   expid_prefix: CapS
