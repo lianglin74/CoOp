@@ -57,6 +57,8 @@ def analyze_verify_box_task(result_files, result_file_type, outfile_res,
     """
     # load results
     df_records = load_task_results(result_files, result_file_type)
+    if not df_records:
+        return None, None
 
     # analyze worker quality
     bad_worker_ids = analyze_worker_quality(df_records, worker_quality_file,
@@ -198,6 +200,8 @@ def load_task_results(result_files, result_file_type, start_time=None):
         for resultfile in filtered_files:
             results = results.append(pd.read_csv(resultfile, sep='\t'))
         logging.info('{:d} lines loaded.'.format(len(results)))
+        if len(results) == 0:
+            return None
         df_records = results[['HitID', 'JudgeID', 'output',
                               'input_content', 'JudgmentSubmitTime']].rename(
                      columns={'HitID': 'HITId', 'JudgeID': 'WorkerId',

@@ -168,8 +168,10 @@ def analyze_completed_task(res_file):
                             None, worker_quality_file=None,
                             min_num_judges_per_hit=1, min_num_hp=5,
                             accuracy_threshold=0.85, neg_threshold=None)
+    id2ans = {}
     # summary columns are: image_info, url, bboxes, answers Counter
-    id2ans = {parts[0]: [json.loads(parts[3]), parts[1], json.loads(parts[2])] for parts in summary}
+    if summary:
+        id2ans = {parts[0]: [json.loads(parts[3]), parts[1], json.loads(parts[2])] for parts in summary}
     return id2ans
 
 def main():
