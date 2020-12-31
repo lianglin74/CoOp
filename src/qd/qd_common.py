@@ -146,7 +146,7 @@ def find_float_tolorance_unequal(d1, d2):
             return []
         else:
             return ['0']
-    if type(d1) in [dict, OrderedDict] and type(d2) in [dict, OrderedDict]:
+    if isinstance(d1, (dict, OrderedDict)) and isinstance(d2, (dict, OrderedDict)):
         if len(d1) != len(d2):
             return ['0']
         path_d1 = dict_get_all_path(d1, with_type=True)
@@ -161,6 +161,14 @@ def find_float_tolorance_unequal(d1, d2):
                 for r in curr_result:
                     result.append(p + '$' + r)
         return result
+    if isinstance(d1, np.ndarray) and isinstance(d2, np.ndarray):
+        diff = np.absolute((d1 - d2)).sum()
+        s = np.absolute(d1).sum()
+        equal = diff < 1e-5 * s
+        if equal:
+            return []
+        else:
+            return ['0']
     if type(d1) in [tuple, list] and type(d2) in [tuple, list]:
         if len(d1) != len(d2):
             return ['-1']
@@ -406,6 +414,7 @@ def func_retry_agent(info, func, *args, **kwargs):
             return func(*args, **kwargs)
         except Exception:
             logging.info('fails: try {}-th time'.format(i))
+            print_trace()
             i = i + 1
             if num > 0 and i >= num:
                 if throw_if_fail:
@@ -413,7 +422,8 @@ def func_retry_agent(info, func, *args, **kwargs):
                 else:
                     break
             import time
-            time.sleep(5)
+            import random
+            time.sleep(random.random() * 5)
 
 def limited_retry_agent(num, func, *args, **kwargs):
     for i in range(num):
@@ -600,7 +610,10 @@ def cmd_run(list_cmd,
                     env=e,
                     cwd=working_dir)
         logging.info('finished the cmd run')
-        return message.decode('utf-8')
+        try:
+            return message.decode('utf-8')
+        except UnicodeDecodeError:
+            return message.decode('latin-1')
 
 def parallel_imap(func, all_task, num_worker=16):
     if num_worker > 0:
@@ -608,7 +621,7 @@ def parallel_imap(func, all_task, num_worker=16):
         from pathos.multiprocessing import Pool
         m = Pool(num_worker)
         result = []
-        for x in tqdm(m.imap(func, all_task), total=len(all_task)):
+        for x in qd_tqdm(m.imap(func, all_task), total=len(all_task)):
             result.append(x)
         # there are some error comes out from os.fork() and which says
         # OSError: [Errno 24] Too many open files.
@@ -1242,9 +1255,9 @@ def parse_test_data_with_version(predict_file):
         return result
     #model_iter_0040760.TaxCaptionBot.trainval.predict.report
     all_pattern = [
-        'model_iter_[0-9]*\.(.*)\.(trainval|train|test)\..*predict\.(?:ir_acc|caption|vqa_acc)\.report',
-        'model(?:_iter)?_-?[0-9]*[e]?\.(.*)\.(trainval|train|test)\.(\.v[0-9])?.*(?:predict|report|tsv)',
-        'model(?:_iter)?_-?[0-9]*[e]?\.(?:caffemodel|pth\.tar|pth|pt)\.(.*)\.(trainval|train|test)\.(\.v[0-9])?(?:predict|report)',
+        'model(?:_iter)?_-?[0-9]*[e]?\.(?:caffemodel|pth\.tar|pth|pt)\.(.*)\.(trainval|train|test|val)\.(\.v[0-9])?(?:predict|report)',
+        'model_iter_[0-9]*\.(.*)\.(trainval|train|test|val)\..*predict\.(?:ir_acc|caption|vqa_acc)\.report',
+        'model(?:_iter)?_-?[0-9]*[e]?\.(.*)\.(trainval|train|test|val)\.(\.v[0-9])?.*(?:predict|report|tsv)',
         'model_iter_[0-9]*\.(.*)\.([a-zA-Z0-9]+)\..*predict\.(?:ir_acc|caption|vqa_acc)\.report',
     ]
     for p in all_pattern:
@@ -1364,7 +1377,7 @@ def generate_lineidx(filein, idxout):
         fsize = os.fstat(tsvin.fileno()).st_size
         fpos = 0
         fbar_last_pos = 0
-        fbar = tqdm(total=fsize, unit_scale=True)
+        fbar = qd_tqdm(total=fsize, unit_scale=True)
         while fpos!=fsize:
             tsvout.write(str(fpos)+"\n");
             tsvin.readline()
@@ -2161,7 +2174,7 @@ def encoded_from_img(im, quality=None, save_type=None):
         else:
             x = cv2.imencode('.{}'.format(save_type), im)[1]
     else:
-        if save_type == 'jpg':
+        if save_type in ['jpg', None]:
             save_type = 'JPEG'
         import io
         x = io.BytesIO()
@@ -2304,7 +2317,6 @@ def get_all_path(d, with_type=False, leaf_only=True):
                 all_path.append('{}'.format(i))
     return all_path
 
-@deprecated('use get_all_path')
 def dict_get_all_path(d, with_type=False, leaf_only=True):
     all_path = []
     for k, v in viewitems(d):
@@ -2323,13 +2335,14 @@ def dict_get_all_path(d, with_type=False, leaf_only=True):
                 all_path.append(k)
         elif isinstance(v, tuple) or isinstance(v, list):
             for i, _v in enumerate(v):
+                prefix = '' if not with_type else 'i'
                 if isinstance(_v, (dict, list)):
                     all_sub_path = dict_get_all_path(
                         _v, with_type,
                         leaf_only=leaf_only)
-                    all_path.extend([k + '${}$'.format(i) + p for p in all_sub_path])
+                    all_path.extend([k + '${}{}$'.format(prefix, i) + p for p in all_sub_path])
                 else:
-                    all_path.append(k + '${}'.format(i))
+                    all_path.append(k + '${}{}'.format(prefix, i))
             if not leaf_only:
                 all_path.append(k)
         else:
@@ -2703,7 +2716,7 @@ def attach_itp_mmask_log_if_is(all_log, job_info):
 
 def attach_itp_log_if_is(all_log, job_info):
     for log in reversed(all_log):
-        pattern = r'.*<stdout>:(.*),.* (?:trainer|mmask_pretrain|image_text_retrieval|vqa)\.py.*(?:do_train|do_train_dict|train|old_train)\(\): eta:[ ]*(.*) iter: [0-9]*[ ]*speed: ([0-9\.]*).*'
+        pattern = r'.*<stdout>:(.*),.*(?:base_trainer|trainer|mmask_pretrain|image_text_retrieval|vqa)\.py.*(?:do_train|_logistics|do_train_dict|train|old_train)\(\): eta:[ ]*(.*) iter: [0-9]*[ ]*speed: ([0-9\.]*).*'
         result = re.match(pattern, log)
         if result and result.groups():
             log_time, left, speed = result.groups()
@@ -2808,7 +2821,7 @@ def attach_log_parsing_result(job_info):
 def print_offensive_folder(folder):
     all_folder = os.listdir(folder)
     name_to_size = {}
-    for i, f in enumerate(tqdm(all_folder)):
+    for i, f in enumerate(qd_tqdm(all_folder)):
         sec = 60 * 10
         f = op.join(folder, f)
         size = run_if_not_cached(get_folder_size, f, sec)
