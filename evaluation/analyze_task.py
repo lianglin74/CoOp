@@ -57,7 +57,7 @@ def analyze_verify_box_task(result_files, result_file_type, outfile_res,
     """
     # load results
     df_records = load_task_results(result_files, result_file_type)
-    if not df_records:
+    if df_records is None:
         return None, None
 
     # analyze worker quality
