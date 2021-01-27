@@ -37,12 +37,12 @@ import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader, RandomSampler, SequentialSampler
 from qd.qd_common import qd_tqdm as tqdm
 
-from mmask.utils.miscellaneous import set_seed
-from mmask.layers.bert import BertTokenizer, BertConfig
-from mmask.layers.bert.modeling_bert import ImageBertForSequenceClassification
+from qd.torch_common import set_seed
+from qd.mask.layers.bert import BertTokenizer, BertConfig
+from qd.layers.bert.modeling_bert import ImageBertForSequenceClassification
 
-from mmask.solver import AdamW, WarmupLinearSchedule
-from mmask.solver import WarmupConstantSchedule
+from qd.mask.solver import AdamW, WarmupLinearSchedule
+from qd.mask.solver import WarmupConstantSchedule
 
 from torch.utils.data.distributed import DistributedSampler
 
