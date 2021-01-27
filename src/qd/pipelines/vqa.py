@@ -343,7 +343,8 @@ def save_checkpoint(model, tokenizer, args, output_dir):
 def train(self, args, train_dataset, model, tokenizer):
     from qd.data_layer.samplers import DistributedSampler
     if self.max_epoch is not None and self.max_epoch > 0:
-        t_total = len(train_dataset) * self.max_epoch // (self.effective_batch_size)
+        t_total = int(len(train_dataset) * self.max_epoch //
+                      (self.effective_batch_size))
     else:
         t_total = self.max_iter
     bs_each_gpu = self.effective_batch_size // self.mpi_size

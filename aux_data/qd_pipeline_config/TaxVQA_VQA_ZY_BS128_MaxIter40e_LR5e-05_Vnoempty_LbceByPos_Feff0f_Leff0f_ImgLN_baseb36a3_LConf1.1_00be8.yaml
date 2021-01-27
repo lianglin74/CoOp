@@ -1,0 +1,37 @@
+all_test_data:
+- test_data: TaxVQA
+  test_split: trainval
+param:
+  base_lr: 5.0e-05
+  basemodel: output/TaxCCSBUCocoGQAFlk30VqaVGqaOpenImageSplit_B_VLP_BS2048_MaxIter100e_LR0.0004_Warm5e_Feff0f_Leff3PlusGt_ImgLN_baseMini12Ld4a73/snapshot/model_iter_0672100
+  data: TaxVQA
+  dist_url_tcp_port: 20488
+  effective_batch_size: 128
+  env:
+    candidate_clusters:
+    - we3v32
+    - eu
+    cluster: we3v32
+    compile_args: -no-mask -no-od -no-fcos -no-mmdet
+    num_gpu: 8
+    run_type: save_config
+    skip_data_upload: true
+  expid: ZY_BS128_MaxIter40e_LR5e-05_Vnoempty_LbceByPos_Feff0f_Leff0f_ImgLN_baseb36a3_LConf1.1
+  expid_prefix: ZY
+  full_expid: TaxVQA_VQA_ZY_BS128_MaxIter40e_LR5e-05_Vnoempty_LbceByPos_Feff0f_Leff0f_ImgLN_baseb36a3_LConf1.1
+  img_feature_dim: 1030
+  log_step: 100
+  loss_type: bceByPos
+  max_iter: 40e
+  net: VQA
+  od_label_conf: 1.1
+  pipeline_type:
+    from: qd.pipelines.vqa
+    import: VQAPipeline
+  prior_prob: 0.01
+  test_batch_size: 32
+  train_caption_version: noempty
+  train_feature_version: eff0f
+  train_label_version: eff0f
+  use_img_layernorm: true
+type: pipeline_train_eval_multi
