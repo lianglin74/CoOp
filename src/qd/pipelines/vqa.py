@@ -608,7 +608,6 @@ class VQAPipeline(MaskClassificationPipeline):
             'drop_out': 0.3,
             'od_label_conf': 0.,
             # set od_label_conf = 1.1 to ignore od labels
-            #'add_od_labels': True,
         })
 
     def append_predict_param(self, cc):
@@ -699,7 +698,6 @@ class VQAPipeline(MaskClassificationPipeline):
             result = [json.loads(s) for _, s in tsv_reader(predict_file)]
             from qd.qd_common import write_to_file, json_dump
             write_to_file(json_dump(result), out_file)
-            pass
         else:
             return self.evaluate_acc(self, predict_file, evaluate_file)
 
