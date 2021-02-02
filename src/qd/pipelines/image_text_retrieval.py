@@ -37,22 +37,17 @@ from torch.utils.data import Dataset, DataLoader, RandomSampler, SequentialSampl
 from qd.qd_common import qd_tqdm as tqdm
 import logging
 
-from mmask.utils.miscellaneous import set_seed
-from mmask.layers.bert import BertTokenizer, BertConfig
-from mmask.layers.bert.modeling_bert import ImageBertForSequenceClassification
+from qd.torch_common import set_seed
+from qd.mask.layers.bert import BertTokenizer, BertConfig
+from qd.mask.layers.bert.modeling_bert import ImageBertForSequenceClassification
 
-from mmask.solver import AdamW, WarmupLinearSchedule
-from mmask.solver import WarmupConstantSchedule
+from qd.mask.solver import AdamW, WarmupLinearSchedule
+from qd.mask.solver import WarmupConstantSchedule
 
 from qd.data_layer.dataset import TSVSplitProperty
 from qd.qd_common import decode_np
 from qd.torch_common import synchronize
 
-
-def decode_feature_to_tensor(row):
-    all_feature = [decode_np(f['zlib_feature']) for f in json.loads(row[1])]
-    feature = torch.tensor(all_feature).float()
-    return feature
 
 class RetrievalDataset(Dataset):
     """ Image/Text Retrieval Dataset"""
@@ -74,6 +69,7 @@ class RetrievalDataset(Dataset):
         self.data = data
 
         self.caption_tsv = TSVSplitProperty( self.data, split=split, t='caption')
+        self.hw_tsv = TSVSplitProperty( self.data, split=split, t='hw')
         self.feature_tsv = TSVSplitProperty( self.data, split=split, t='feature', version=args.feature_version)
 
         if args.add_od_labels:
@@ -185,11 +181,47 @@ class RetrievalDataset(Dataset):
         segment_ids = torch.tensor(segment_ids, dtype=torch.long)
         return (input_ids, attention_mask, segment_ids, img_feat)
 
+    def load_hw(self, img_idx):
+        _, x = self.hw_tsv[img_idx]
+        try:
+            h, w = map(int, x.split(' '))
+            result = {'height': h, 'width': w}
+        except:
+            result = json.loads(x)
+            if isinstance(result, (list, tuple)):
+                assert len(result) == 1
+                result = result[0]
+        return result
+
+    def get_spatial_features(self, feat_info, img_idx):
+        hw_info = self.load_hw(img_idx)
+        img_height, img_width = hw_info['height'], hw_info['width']
+        spatial_feats = []
+        for f in feat_info:
+            # spatial features follow OSCAR pre-processing
+            box = f['rect'] # xyxy
+            box_width = box[2] - box[0]
+            box_height = box[3] - box[1]
+            scaled_width = box_width / img_width
+            scaled_height = box_height / img_height
+            scaled_x = box[0] / img_width
+            scaled_y = box[1] / img_height
+            spatial_feat = np.array([scaled_x, scaled_y, scaled_x + scaled_width,
+                scaled_y + scaled_height, scaled_width, scaled_height], dtype=np.float32)
+            spatial_feats.append(spatial_feat)
+        return spatial_feats
+
+    def feature_row_to_tensor(self, feature_row, img_idx):
+        feat_info = json.loads(feature_row[1])
+        feats = [decode_np(f['zlib_feature']).astype(np.float32) for f in feat_info]
+        spatial_feats = self.get_spatial_features(feat_info, img_idx)
+        return torch.Tensor(np.concatenate((feats, spatial_feats), 1))
+
     def __getitem__(self, index):
         if self.is_train:
             img_idx, cap_idxs = self.get_image_caption_index(index)
             feature_row = self.feature_tsv[img_idx]
-            feature = decode_feature_to_tensor(feature_row)
+            feature = self.feature_row_to_tensor(feature_row, img_idx)
             caption_row = self.caption_tsv[cap_idxs[0]]
             caption_infos = json.loads(caption_row[1])
             caption = caption_infos[cap_idxs[1]]['caption']
@@ -208,7 +240,8 @@ class RetrievalDataset(Dataset):
                 example_neg = self.tensorize_example(caption_neg, feature, text_b=od_labels)
             else:
                 # randomly select a negative image
-                feature_neg = decode_feature_to_tensor(self.feature_tsv[img_idx_neg])
+                feature_neg = self.feature_row_to_tensor(
+                    self.feature_tsv[img_idx_neg], img_idx_neg)
                 od_labels_neg = self.get_od_labels(img_idx_neg)
                 example_neg = self.tensorize_example(caption, feature_neg, text_b=od_labels_neg)
 
@@ -217,7 +250,7 @@ class RetrievalDataset(Dataset):
         else:
             img_idx, cap_idxs = self.get_image_caption_index(index)
             feature_row = self.feature_tsv[img_idx]
-            feature = decode_feature_to_tensor(feature_row)
+            feature = self.feature_row_to_tensor(feature_row, img_idx)
             caption_row = self.caption_tsv[cap_idxs[0]]
             caption = json.loads(caption_row[1])[cap_idxs[1]]['caption']
             od_labels = self.get_od_labels(img_idx)
@@ -302,6 +335,8 @@ def train(self, args, train_dataset, val_dataset, model, tokenizer):
                 * self.max_epoch // (args.train_batch_size * self.mpi_size)
     else:
         t_total = self.max_iter
+    # max_epoch could be float
+    t_total = int(t_total)
 
     train_sampler = DistributedSampler(
         train_dataset,
@@ -578,6 +613,7 @@ class ImageTextRetrievalPipeline(MaskClassificationPipeline):
         super().__init__(**kwargs)
         self._default.update({
             'evaluate_method': 'ir_acc',
+            'img_feature_dim': 2054,
         })
 
     def append_predict_param(self, cc):
@@ -612,7 +648,7 @@ class ImageTextRetrievalPipeline(MaskClassificationPipeline):
             'do_lower_case': True,
             'drop_out': 0.1,
             'max_img_seq_length': 50,
-            'img_feature_dim': 2054,
+            'img_feature_dim': self.img_feature_dim,
             'img_feature_type': 'frcnn',
             'per_gpu_train_batch_size': self.effective_batch_size // self.mpi_size,
             'output_mode': 'classification',
@@ -673,7 +709,7 @@ class ImageTextRetrievalPipeline(MaskClassificationPipeline):
             'do_lower_case': True,
             'drop_out': 0.1,
             'max_img_seq_length': 50,
-            'img_feature_dim': 2054,
+            'img_feature_dim': self.img_feature_dim,
             'img_feature_type': 'frcnn',
             'output_mode': 'classification',
             'num_labels': 2,
