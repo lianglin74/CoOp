@@ -110,9 +110,13 @@ def parse_run_info(run, with_details=True,
         if len(master_logs) > 0:
             logging.info('parsing the log for {}'.format(info['appID']))
             info['master_log'] = master_logs[0]
-            info['latest_log'] = cmd_run(['tail', '-c', '2097152',
-                info['master_log']],
-                return_output=True)
+            if op.isfile(info['master_log']):
+                x = cmd_run(['tail', '-c', '2097152',
+                    info['master_log']],
+                    return_output=True)
+            else:
+                x =''
+            info['latest_log'] = x
             from qd.qd_common import attach_log_parsing_result
             attach_log_parsing_result(info)
 
@@ -166,7 +170,11 @@ def download_run_logs(run_info, full=True):
     for k, v in run_info['logFiles'].items():
         target_file = op.join(log_folder, run_info['appID'], k)
         from qd.qd_common import url_to_file_by_curl
-        url_fsize = get_url_fsize(v)
+        try:
+            url_fsize = get_url_fsize(v)
+        except:
+            all_log_file.append(target_file)
+            continue
         if url_fsize == 0:
             continue
         if op.isfile(target_file):
@@ -179,8 +187,11 @@ def download_run_logs(run_info, full=True):
                     end_size = None
                 else:
                     end_size = min(url_fsize, start_size + 1024 * 1024 * 10)
-                url_to_file_by_curl(v, extra_target_file, start_size,
-                                    end_size)
+                try:
+                    url_to_file_by_curl(v, extra_target_file, start_size,
+                                        end_size)
+                except:
+                    pass
                 if op.isfile(extra_target_file):
                     concat_files([target_file, extra_target_file], target_file)
                     try_delete(extra_target_file)
@@ -189,7 +200,10 @@ def download_run_logs(run_info, full=True):
                 end_size = None
             else:
                 end_size = min(url_fsize, 1024 * 100)
-            url_to_file_by_curl(v, target_file, 0, end_size)
+            try:
+                url_to_file_by_curl(v, target_file, 0, end_size)
+            except:
+                pass
         all_log_file.append(target_file)
 
     log_status = {'status': run_info['status'],
@@ -280,6 +294,9 @@ class AMLClient(object):
                  aks_compute=False,
                  sleep_if_fail=False,
                  compile_args='',
+                 preemption_allowed=False,
+                 aks_compute_global_dispatch=False,
+                 aks_compute_global_dispatch_arg=None,
                  **kwargs):
         self.kwargs = kwargs
         self.cluster = kwargs.get('cluster', 'aml')
@@ -342,6 +359,10 @@ class AMLClient(object):
         self.aks_compute = aks_compute
         self.sleep_if_fail = sleep_if_fail
         self.compile_args = compile_args
+
+        self.preemption_allowed = preemption_allowed
+        self.aks_compute_global_dispatch = aks_compute_global_dispatch
+        self.aks_compute_global_dispatch_arg = aks_compute_global_dispatch_arg or {}
 
     def __repr__(self):
         return self.compute_target_name
@@ -644,8 +665,12 @@ class AMLClient(object):
 
         from azureml.train.estimator import Estimator
         from azureml.train.dnn import PyTorch
-        import azureml
-        env = azureml.core.runconfig.EnvironmentDefinition()
+        if self.aks_compute_global_dispatch:
+            from azureml.core import Environment
+            env = Environment('myenv')
+        else:
+            import azureml
+            env = azureml.core.runconfig.EnvironmentDefinition()
         env.docker.enabled = True
         env.docker.base_image = self.docker['image']
         env.docker.shm_size = '1024g'
@@ -675,24 +700,24 @@ class AMLClient(object):
 
         if self.use_custom_docker:
             estimator10 = Estimator(
-                    source_directory=self.source_directory,
-                    compute_target=self.compute_target,
-                    script_params=script_params,
-                    entry_script=self.entry_script,
-                    environment_definition=env,
-                    node_count=node_count,
-                    distributed_training=mpi_config,
-                    )
+                source_directory=self.source_directory,
+                compute_target=self.compute_target,
+                script_params=script_params,
+                entry_script=self.entry_script,
+                environment_definition=env,
+                node_count=node_count,
+                distributed_training=mpi_config,
+            )
         else:
             estimator10 = PyTorch(
-                    source_directory=self.source_directory,
-                    compute_target=self.compute_target,
-                    script_params=script_params,
-                    entry_script=self.entry_script,
-                    environment_definition=env,
-                    node_count=node_count,
-                    distributed_training=mpi_config,
-                    )
+                source_directory=self.source_directory,
+                compute_target=self.compute_target,
+                script_params=script_params,
+                entry_script=self.entry_script,
+                environment_definition=env,
+                node_count=node_count,
+                distributed_training=mpi_config,
+            )
         if self.aks_compute:
             from azureml.contrib.core.k8srunconfig import K8sComputeConfiguration
             k8sconfig = K8sComputeConfiguration()
@@ -702,8 +727,21 @@ class AMLClient(object):
                 k8s['enable_ssh'] = False
                 k8s['ssh_public_key'] = read_to_buffer(
                     id_rsa).decode()
+            k8s['preemption_allowed'] = self.preemption_allowed
+            #k8s['gpu_count'] = 8
             k8sconfig.configuration = k8s
             estimator10.run_config.cmk8scompute = k8sconfig
+
+            if self.aks_compute_global_dispatch:
+                from azureml.contrib.core.gjdrunconfig import GlobalJobDispatcherConfiguration
+                estimator10.run_config.global_job_dispatcher = GlobalJobDispatcherConfiguration(
+                    compute_type="AmlK8s",
+                    **self.aks_compute_global_dispatch_arg
+                    # vm_size = ["Standard_ND40rs_v2","Standard_ND40s_v2"],
+                    # region = ["eastus", "westus2"],
+                    # my_resource_only = False,
+                    # low_priority_vm_tolerant = True,
+                )
 
         r = self.experiment.submit(estimator10)
         logging.info('job id = {}, cmd = \n{}'.format(r.id, cmd))
@@ -753,7 +791,7 @@ class AMLClient(object):
 
         rel_code_path = self.config_param['code_path']['path']
         # upload it
-        self.config_param['code_path']['cloud_blob'].az_upload2(random_abs_qd, rel_code_path)
+        self.config_param['code_path']['cloud_blob'].upload(random_abs_qd, rel_code_path)
 
     def list(self, file_or_folder):
         file_or_folder = clean_prefix(file_or_folder)
@@ -799,6 +837,30 @@ class AMLClient(object):
         key = '{}_folder'.format(p)
         assert key in self.config_param, self.config_param.keys()
         return self.config_param[key]['cloud_blob'].file_exists(
+            op.join(self.config_param[key]['path'], file_name[len(p) + 1:]),
+        )
+
+    def dir_exists(self, file_name):
+        p = get_root_folder_in_curr_dir(file_name)
+        key = '{}_folder'.format(p)
+        assert key in self.config_param, self.config_param.keys()
+        return self.config_param[key]['cloud_blob'].dir_exists(
+            op.join(self.config_param[key]['path'], file_name[len(p) + 1:]),
+        )
+
+    def exists(self, file_or_dir):
+        p = get_root_folder_in_curr_dir(file_or_dir)
+        key = '{}_folder'.format(p)
+        assert key in self.config_param, self.config_param.keys()
+        return self.config_param[key]['cloud_blob'].exists(
+            op.join(self.config_param[key]['path'], file_or_dir[len(p) + 1:]),
+        )
+
+    def query_file_info(self, file_name):
+        p = get_root_folder_in_curr_dir(file_name)
+        key = '{}_folder'.format(p)
+        assert key in self.config_param, self.config_param.keys()
+        return self.config_param[key]['cloud_blob'].query_info(
             op.join(self.config_param[key]['path'], file_name[len(p) + 1:]),
         )
 
@@ -867,91 +929,96 @@ def detect_aml_error_message(app_id):
     folder = folders[0]
     has_nvidia_smi = False
     num_waiting = 0
-    for log_file in glob.glob(op.join(folder, '*')):
-        all_line = read_to_buffer(log_file).decode().split('\n')
-        for i, line in enumerate(all_line):
-            if 'RuntimeError: CUDA driver initialization failed' in line:
-                error_codes.add('Init')
-            if 'FileNotFoundError: [Errno 2] No such file or directory' in line:
-                error_codes.add('FileNotFound')
-            if 'Signal code: Address not mapped' in line:
-                error_codes.add('before')
-            if 'cuda runtime error (3) : initialization error' in line:
-                error_codes.add('Init')
-            if 'has not done sshd setup wait' in line:
-                num_waiting += 1
-                if num_waiting > 1000:
-                    error_codes.add('waiting')
-            if 'RuntimeError: cuda runtime error (3) : initialization error at' in line:
-                error_codes.add('init')
-            if "raise RuntimeError('NaN encountered!')" in line:
-                error_codes.add('NaN')
-            if 'ValueError: regression_loss is NaN' in line:
-                error_codes.add('RegNaN')
-            if 'ORTE has lost communication with a remote daemon.' in line:
-                error_codes.add('ORTE_comm')
-            if 'RuntimeError: NCCL error in' in line or \
-                    'RuntimeError: CUDA error: misaligned address' in line or \
-                    'RuntimeError: Connection reset by peer' in line or \
-                    'NCCL error in' in line or \
-                    'CUDA error: all CUDA-capable devices' in line:
-                if any('_default_pg.barrier()' in l for l in all_line[
-                        i - 100:
-                        i]):
+    for r, _, files in os.walk(folder):
+        for f in files:
+            log_file = op.join(r, f)
+            from qd.qd_common import decode_to_str
+            all_line = decode_to_str(read_to_buffer(log_file)).split('\n')
+            for i, line in enumerate(all_line):
+                if 'Output size is too small' in line:
+                    error_codes.add('InputSmall')
+                if 'RuntimeError: CUDA driver initialization failed' in line:
                     error_codes.add('Init')
-            if 'RuntimeError: CUDA out of memory' in line or \
-                    'CUDA error: out of memory' in line:
-                if any('_default_pg.barrier()' in l for l in all_line[
-                        i - 100:
-                        i]):
+                if 'FileNotFoundError: [Errno 2] No such file or directory' in line:
+                    error_codes.add('FileNotFound')
+                if 'Signal code: Address not mapped' in line:
+                    error_codes.add('before')
+                if 'cuda runtime error (3) : initialization error' in line:
                     error_codes.add('Init')
-                else:
-                    error_codes.add('OOM')
-            if 'No module named' in line:
-                error_codes.add('ModuleErr')
-            if 'copy_if failed to synchronize' in line:
-                error_codes.add('copy_if')
-            if 'RuntimeError: connect() timed out' in line:
-                error_codes.add('connect')
-            if 'unhandled cuda error' in line:
-                error_codes.add('cuda')
-            if 'ECC error' in line:
-                error_codes.add('ECC')
-            if 'an illegal memory access was encountered' in line:
-                if any('barrier()' in l for l in all_line[
-                        i - 100:
-                        i]):
-                    error_codes.add('init_access')
-                else:
-                    error_codes.add('illegal_access')
-            if 'CUDA error' in line:
-                error_codes.add('cuda')
-            if 'Error' in line and \
-                'TrackUserError:context_managers.TrackUserError' not in line and \
-                'WARNING: Retrying' not in line:
-                #start = max(0, i - 10)
-                start = max(0, i)
-                end = min(i + 1, len(all_line))
+                if 'has not done sshd setup wait' in line:
+                    num_waiting += 1
+                    if num_waiting > 1000:
+                        error_codes.add('waiting')
+                if 'RuntimeError: cuda runtime error (3) : initialization error at' in line:
+                    error_codes.add('init')
+                if "raise RuntimeError('NaN encountered!')" in line:
+                    error_codes.add('NaN')
+                if 'ValueError: regression_loss is NaN' in line:
+                    error_codes.add('RegNaN')
+                if 'ORTE has lost communication with a remote daemon.' in line:
+                    error_codes.add('ORTE_comm')
+                if 'RuntimeError: NCCL error in' in line or \
+                        'RuntimeError: CUDA error: misaligned address' in line or \
+                        'RuntimeError: Connection reset by peer' in line or \
+                        'NCCL error in' in line or \
+                        'CUDA error: all CUDA-capable devices' in line:
+                    if any('_default_pg.barrier()' in l for l in all_line[
+                            i - 100:
+                            i]):
+                        error_codes.add('Init')
+                if 'RuntimeError: CUDA out of memory' in line or \
+                        'CUDA error: out of memory' in line:
+                    if any('_default_pg.barrier()' in l for l in all_line[
+                            i - 100:
+                            i]):
+                        error_codes.add('Init')
+                    else:
+                        error_codes.add('OOM')
+                if 'No module named' in line:
+                    error_codes.add('ModuleErr')
+                if 'copy_if failed to synchronize' in line:
+                    error_codes.add('copy_if')
+                if 'RuntimeError: connect() timed out' in line:
+                    error_codes.add('connect')
+                if 'unhandled cuda error' in line:
+                    error_codes.add('cuda')
+                if 'ECC error' in line:
+                    error_codes.add('ECC')
+                if 'an illegal memory access was encountered' in line:
+                    if any('barrier()' in l for l in all_line[
+                            i - 100:
+                            i]):
+                        error_codes.add('init_access')
+                    else:
+                        error_codes.add('illegal_access')
+                if 'CUDA error' in line:
+                    error_codes.add('cuda')
+                if 'Error' in line and \
+                    'TrackUserError:context_managers.TrackUserError' not in line and \
+                    'WARNING: Retrying' not in line:
+                    #start = max(0, i - 10)
+                    start = max(0, i)
+                    end = min(i + 1, len(all_line))
+                    logging.info(log_file)
+                    logging.info('\n'.join(all_line[start: end]))
+                if 'Error response from daemon' in line:
+                    error_codes.add('daemon')
+                if "AttributeError: module 'maskrcnn_benchmark._C'" in line:
+                    error_codes.add('mask compile')
+                if 'OSError: [Errno 5] Input/output error' in line:
+                    error_codes.add('blobIO')
+                if 'OSError: [Errno 24] Too many open files' in line:
+                    error_codes.add('TooMany')
+                if 'OSError: [Errno 28] No space left on device:' in line and 'tmp' in line:
+                    error_codes.add('NoSpace')
+            # check how many gpus by nvidia-smi
+            import re
+            num_gpu = len([line for line in all_line if re.match('.*N/A.*Default', line) is
+                not None])
+            has_nvidia_smi =  any(('nvidia-smi' in line for line in all_line))
+            if has_nvidia_smi and num_gpu != 4:
                 logging.info(log_file)
-                logging.info('\n'.join(all_line[start: end]))
-            if 'Error response from daemon' in line:
-                error_codes.add('daemon')
-            if "AttributeError: module 'maskrcnn_benchmark._C'" in line:
-                error_codes.add('mask compile')
-            if 'OSError: [Errno 5] Input/output error' in line:
-                error_codes.add('blobIO')
-            if 'OSError: [Errno 24] Too many open files' in line:
-                error_codes.add('TooMany')
-            if 'OSError: [Errno 28] No space left on device:' in line and 'tmp' in line:
-                error_codes.add('NoSpace')
-        # check how many gpus by nvidia-smi
-        import re
-        num_gpu = len([line for line in all_line if re.match('.*N/A.*Default', line) is
-            not None])
-        has_nvidia_smi =  any(('nvidia-smi' in line for line in all_line))
-        if has_nvidia_smi and num_gpu != 4:
-            logging.info(log_file)
-            logging.info(num_gpu)
+                logging.info(num_gpu)
     return list(error_codes)
 
 
