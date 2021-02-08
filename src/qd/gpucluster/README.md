@@ -95,6 +95,18 @@
    compute_target: NC24RSV3 
    # if it is the ITP cluster, please set it as true
    aks_compute: false
+   # uncomment the following if you'd like to use the global dispatcher feature
+   # preemption_allowed: true
+   # aks_compute_global_dispatch: true
+   # for the augment, one example is as follows
+   ##vm_size:
+   #    #- Standard_ND40rs_v2
+   #    ##- DGX-2
+   #    ##- DGX-1
+   ##region:
+   #    #- westus2
+   #    ##- redmond
+   # aks_compute_global_dispatch_arg: {}
    docker:
        # the custom docker. If use_custom_docker is False, this will be ignored
        image: amsword/setup:py36pt16
