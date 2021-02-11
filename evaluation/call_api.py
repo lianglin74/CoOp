@@ -142,7 +142,8 @@ def post_process_aws(response, im_height, im_width):
     return tags, dets, tags_w_parent, dets_w_parent
 
 
-def call_gcloud(imgfile, det_file, key_col=0, img_col=2, detection="detection"):
+def call_gcloud(imgfile, det_file, key_col=0, img_col=2, detection="detection",
+        max_results=100):
     """
     Calls Google Could to get object detection results.
     https://cloud.google.com/vision/docs/detecting-objects
@@ -150,8 +151,6 @@ def call_gcloud(imgfile, det_file, key_col=0, img_col=2, detection="detection"):
     Remember to: export GOOGLE_APPLICATION_CREDENTIALS=[PATH to auth file],
     or on Windows, set GOOGLE_APPLICATION_CREDENTIALS=[PATH to auth file]
     """
-    if not qd_common.worth_create(imgfile, det_file):
-        return
     if 'GOOGLE_APPLICATION_CREDENTIALS' not in os.environ:
         os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = op.expanduser('~/auth/trialtest-eee4b10b60a8.json')
 
@@ -168,13 +167,15 @@ def call_gcloud(imgfile, det_file, key_col=0, img_col=2, detection="detection"):
                 im_h, im_w, im_c = img_arr.shape
                 tic = time.time()
                 if detection == "detection":
-                    resp = client.object_localization(image=img).localized_object_annotations
+                    resp = client.object_localization(image=img,
+                            max_results=max_results).localized_object_annotations
                     res = post_process_gcloud(resp, im_h, im_w)
                 elif detection == "logo":
                     resp = client.logo_detection(image=img).logo_annotations
                     res = post_process_gcloud_logo(resp)
                 elif detection == "tag":
-                    resp = client.label_detection(image=img).label_annotations
+                    resp = client.label_detection(image=img,
+                            max_results=max_results).label_annotations
                     res = post_process_gcloud_tag(resp)
                 else:
                     raise ValueError("Invalid detection type: {}".format(detection))
@@ -225,7 +226,8 @@ def post_process_gcloud_logo(response, prefix="logo of "):
 def post_process_gcloud_tag(response):
     all_res = []
     for obj in response:
-        all_res.append({"mid": obj.mid, "class": obj.description, "conf": obj.score})
+        all_res.append({"mid": obj.mid, "class": obj.description, "conf":
+            obj.score, "topicality": obj.topicality})
     return all_res
 
 def call_cvapi(uri, is_b64=False, model='tag'):
@@ -424,18 +426,26 @@ def call_clarifai_parallel(imgfile, key_col, img_col, model, outfile,
 
 def test():
     datas = [
-        ['GettyImages2k_with_bb', 'test'], ['linkedin1k_with_bb', 'test'],
-        ['MIT1K_with_bb', 'test'], ['Top100Instagram_with_bb', 'test'],
+        #['GettyImages2k_with_bb', 'test'], ['linkedin1k_with_bb', 'test'],
+        #['MIT1K_with_bb', 'test'],
+        #['Top100Instagram_with_bb', 'test'],
         #['GettyImages2k', 'test'], ['linkedin1k', 'test'],
-        #['MIT1K-GUID', 'test'], ['Top100Instagram-GUID', 'test'],
+        ['MIT1K-GUID', 'test'],
+        #['Top100Instagram-GUID', 'test'],
         #['OpenImageV4LogoTest', 'test'],['OpenImageV4LogoTest1', 'test'],
         #['old_capeval_2k_test', 'test'],
     ]
     services = [
         #'clarifai',
         'google',
-        'amazon',
-        'microsoft',
+        #'amazon',
+        #'microsoft',
+    ]
+    targets = [
+        'tag',
+        #'logo',
+        #'caption',
+        #'detection',
     ]
     #target = 'tag'
     #target = 'logo'
@@ -453,34 +463,42 @@ def test():
         key_col = 0
         img_col = 2
         predict_files = []
-        for service in services:
-            outfile = op.join(dirpath, '{}.{}.tsv'.format(service,
-                        target))
-            predict_files.append(outfile)
-            if op.isfile(outfile):
-                logging.info('{} already exist'.format(outfile))
-                continue
-            if service == 'microsoft':
-                call_cvapi_parallel(imgfile, key_col, img_col, target,
-                        outfile, is_debug=False)
-            elif service == 'amazon':
-                response_file = op.join(dirpath, 'amazon.resp.tsv')
-                det_file = op.join(dirpath, 'amazon.detection.tsv')
-                tag_file = op.join(dirpath, 'amazon.tag.tsv')
-                call_aws(imgfile, response_file, det_file, tag_file, key_col,
-                        img_col)
-            elif service == 'google':
-                call_gcloud(imgfile, outfile, key_col, img_col,
-                        target)
-            elif service == 'clarifai':
-                assert target == 'tag'
-                call_clarifai_parallel(urlfile, 0, 1, target,
-                        outfile, is_debug=False)
+        for target in targets:
+            if target == 'tag':
+                collection_name = 'uhrs_tag_verification'
+            elif target == 'detection':
+                collection_name = 'uhrs_bounding_box_verification'
 
-        from evaluation.db_task import submit_to_verify
-        for predict_file in predict_files:
-            submit_to_verify(data, split, predict_file, collection_name,
-                    conf_thres=0, gt_version=-1, is_urgent=True)
+            time_str = datetime.datetime.now().strftime('%Y%m%d')
+            for service in services:
+                outfile = op.join(dirpath, '{}.{}.{}.tsv'.format(time_str, service,
+                            target))
+                predict_files.append(outfile)
+                if op.isfile(outfile):
+                    logging.info('{} already exist'.format(outfile))
+                    continue
+
+                if service == 'microsoft':
+                    call_cvapi_parallel(imgfile, key_col, img_col, target,
+                            outfile, is_debug=True)
+                elif service == 'amazon':
+                    response_file = op.join(dirpath, '{}.amazon.resp.tsv'.format(time_str))
+                    det_file = op.join(dirpath, '{}.amazon.detection.tsv'.format(time_str))
+                    tag_file = op.join(dirpath, '{}.amazon.tag.tsv'.format(time_str))
+                    call_aws(imgfile, response_file, det_file, tag_file, key_col,
+                            img_col)
+                elif service == 'google':
+                    call_gcloud(imgfile, outfile, key_col, img_col,
+                            target)
+                elif service == 'clarifai':
+                    assert target == 'tag'
+                    call_clarifai_parallel(urlfile, 0, 1, target,
+                            outfile, is_debug=False)
+
+            #from evaluation.db_task import submit_to_verify
+            #for predict_file in predict_files:
+                #submit_to_verify(data, split, predict_file, collection_name,
+                        #conf_thres=0, gt_version=-1, is_urgent=True)
 
 
 def example():
@@ -567,7 +585,6 @@ def main():
     elif service == 'google':
         call_gcloud(imgfile, outfile, key_col, img_col,
                 target)
-
 
 
 if __name__ == '__main__':
