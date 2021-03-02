@@ -702,7 +702,6 @@ def tsv_writers(all_values, tsv_file_names, sep='\t'):
             tsv_file_name_tmps]
     fpidxs = [open(tsv_lineidx_file_tmp, 'w') for tsv_lineidx_file_tmp in
             tsv_lineidx_file_tmps]
-    assert all_values is not None
     idxs = [0 for _ in fps]
     for values in all_values:
         assert values is not None
@@ -713,6 +712,10 @@ def tsv_writers(all_values, tsv_file_names, sep='\t'):
             fp.write(v)
             fpidx.write(str(idxs[i]) + '\n')
             idxs[i] = idxs[i]+ len(v)
+    for f in fps:
+        f.close()
+    for f in fpidxs:
+        f.close()
     # the following might crash if there are two processes which are writing at
     # the same time. One process finishes the renaming first and the second one
     # will crash. In this case, we know there must be some errors when you run
