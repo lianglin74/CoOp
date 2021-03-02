@@ -48,6 +48,10 @@ import copy
 from deprecated import deprecated
 import io
 
+def get_mem_usage_in_bytes():
+    import os, psutil
+    process = psutil.Process(os.getpid())
+    return process.memory_info().rss  # in bytes
 
 def encode_np(x):
     compressed_array = io.BytesIO()
@@ -335,12 +339,20 @@ def compile_by_docker(src_zip, docker_image, dest_zip):
     ensure_directory(op.dirname(dest_zip))
     copy_file(out_zip, dest_zip)
 
-def zip_qd(out_zip):
+def zip_qd(out_zip, options=None):
     ensure_directory(op.dirname(out_zip))
-    cmd = ['zip',
-            '-uyrv',
-            out_zip,
-            '*',
+    cmd = [
+        'zip',
+        '-uyrv',
+        out_zip,
+        '*',
+    ]
+    if options:
+        cmd.extend(options)
+    else:
+        cmd.extend([
+            '-x',
+            '\*src/CCSCaffe/\*',
             '-x',
             '\*src/build/lib.linux-x86_64-2.7/\*',
             '-x',
@@ -402,7 +414,8 @@ def zip_qd(out_zip):
             '-x',
             '\*.git\*',
             '-x',
-            '\*src/qd_classifier/.cache/\*']
+            '\*src/qd_classifier/.cache/\*',
+        ])
     cmd_run(cmd, working_dir=os.getcwd(), shell=True)
 
 def func_retry_agent(info, func, *args, **kwargs):
@@ -558,6 +571,12 @@ def ensure_copy_file(src, dest):
     if not op.isfile(dest):
         copy_file(src, dest)
 
+def decode_to_str(x):
+    try:
+        return x.decode('utf-8')
+    except UnicodeDecodeError:
+        return x.decode('latin-1')
+
 def cmd_run(list_cmd,
             return_output=False,
             env=None,
@@ -565,8 +584,10 @@ def cmd_run(list_cmd,
             stdin=sp.PIPE,
             shell=False,
             dry_run=False,
+            silent=False,
             ):
-    logging.info('start to cmd run: {}'.format(' '.join(map(str, list_cmd))))
+    if not silent:
+        logging.info('start to cmd run: {}'.format(' '.join(map(str, list_cmd))))
     # if we dont' set stdin as sp.PIPE, it will complain the stdin is not a tty
     # device. Maybe, the reson is it is inside another process.
     # if stdout=sp.PIPE, it will not print the result in the screen
@@ -607,13 +628,12 @@ def cmd_run(list_cmd,
                     shell=True)
         else:
             message = sp.check_output(list_cmd,
-                    env=e,
-                    cwd=working_dir)
-        logging.info('finished the cmd run')
-        try:
-            return message.decode('utf-8')
-        except UnicodeDecodeError:
-            return message.decode('latin-1')
+                                      env=e,
+                                      cwd=working_dir,
+                                      )
+        if not silent:
+            logging.info('finished the cmd run')
+        return decode_to_str(message)
 
 def parallel_imap(func, all_task, num_worker=16):
     if num_worker > 0:
@@ -1237,7 +1257,7 @@ def get_all_tree_data():
 
 def parse_test_data_with_version_with_more_param(predict_file):
     pattern = \
-        'model(?:_iter)?_-?[0-9]*[e]?\.(?:caffemodel|pth\.tar|pth|pt)\.(.*)\.(trainval|train|test)\..*?(\.v[0-9])?\.(?:predict|report)'
+        'model(?:_iter)?_-?[0-9]*[e]?\.(?:caffemodel|pth\.tar|pth|pt)\.(.*)\.(trainval|train|test|train_[0-9]*_[0-9]*)\..*?(\.v[0-9])?\.(?:predict|report)'
     match_result = re.match(pattern, predict_file)
     if match_result:
         assert match_result
@@ -2027,7 +2047,7 @@ def load_from_yaml_file(file_name):
         result = load_from_yaml_file(b)
         assert isinstance(result, dict)
         del data['_base_']
-        all_key = get_all_path(data)
+        all_key = get_all_path(data, with_list=False)
         for k in all_key:
             v = dict_get_path_value(data, k)
             dict_update_path_value(result, k, v)
@@ -2119,7 +2139,9 @@ def parse_basemodel_with_depth(net):
         return net[: i]
 
 def worth_create(base, derived, buf_second=0):
-    if not op.isfile(base) and not op.isdir(base):
+    if not op.isfile(base) and \
+            not op.islink(base) and \
+            not op.isdir(base):
         return False
     if os.path.isfile(derived) and \
             os.path.getmtime(derived) > os.path.getmtime(base) - buf_second:
@@ -2296,22 +2318,24 @@ def query_path_by_suffix(job_in_scheduler, suffix, default=None):
     else:
         return default
 
-def get_all_path(d, with_type=False, leaf_only=True):
+def get_all_path(d, with_type=False, leaf_only=True, with_list=True):
     assert not with_type, 'will not support'
     all_path = []
 
     if isinstance(d, dict):
         for k, v in d.items():
             all_sub_path = get_all_path(
-                v, with_type, leaf_only=leaf_only)
+                v, with_type, leaf_only=leaf_only, with_list=with_list)
             all_path.extend([k + '$' + p for p in all_sub_path])
             if not leaf_only or len(all_sub_path) == 0:
                 all_path.append(k)
-    elif isinstance(d, tuple) or isinstance(d, list):
+    elif (isinstance(d, tuple) or isinstance(d, list)) and with_list:
         for i, _v in enumerate(d):
             all_sub_path = get_all_path(
                 _v, with_type,
-                leaf_only=leaf_only)
+                leaf_only=leaf_only,
+                with_list=with_list,
+            )
             all_path.extend(['{}$'.format(i) + p for p in all_sub_path])
             if not leaf_only or len(all_sub_path) == 0:
                 all_path.append('{}'.format(i))
@@ -2362,10 +2386,15 @@ def dict_has_path(d, p, with_type=False):
     cur_dict = d
     while True:
         if len(ps) > 0:
-            if not isinstance(cur_dict, dict):
-                return False
             k = dict_parse_key(ps[0], with_type)
-            if k in cur_dict:
+            if isinstance(cur_dict, dict) and k in cur_dict:
+                cur_dict = cur_dict[k]
+                ps = ps[1:]
+            elif isinstance(cur_dict, list):
+                try:
+                    k = int(k)
+                except:
+                    return False
                 cur_dict = cur_dict[k]
                 ps = ps[1:]
             else:
@@ -2781,16 +2810,19 @@ def attach_gpu_utility_from_log(all_log, job_info):
         pattern = '.*_server.py:.*monitor.*\[(.*)\]'
         result = re.match(pattern, log)
         if result and result.groups():
-            all_info = json.loads('[{}]'.format(result.groups()[0].replace('\'', '\"')))
-            min_gpu_mem = min([i['mem_used'] for i in all_info])
-            max_gpu_mem = max([i['mem_used'] for i in all_info])
-            min_gpu_util = min([i['gpu_util'] for i in all_info])
-            max_gpu_util = max([i['gpu_util'] for i in all_info])
-            # GB
-            job_info['mem_used'] = '{}-{}'.format(round(min_gpu_mem/1024, 1),
-                    round(max_gpu_mem/1024., 1))
-            job_info['gpu_util'] = '{}-{}'.format(min_gpu_util, max_gpu_util)
-            return True
+            try:
+                all_info = json.loads('[{}]'.format(result.groups()[0].replace('\'', '\"')))
+                min_gpu_mem = min([i['mem_used'] for i in all_info])
+                max_gpu_mem = max([i['mem_used'] for i in all_info])
+                min_gpu_util = min([i['gpu_util'] for i in all_info])
+                max_gpu_util = max([i['gpu_util'] for i in all_info])
+                # GB
+                job_info['mem_used'] = '{}-{}'.format(round(min_gpu_mem/1024, 1),
+                        round(max_gpu_mem/1024., 1))
+                job_info['gpu_util'] = '{}-{}'.format(min_gpu_util, max_gpu_util)
+                return True
+            except:
+                return False
     return False
 
 def attach_log_parsing_result(job_info):
@@ -2817,6 +2849,28 @@ def attach_log_parsing_result(job_info):
         return
     if attach_mmask_caption_itp_multi_line_log_if_is(all_log, job_info):
         return
+    # the following is designed to cover any examples
+    if attach_any_log(all_log, job_info):
+        return
+
+def attach_any_log(all_log, job_info):
+    # 2021-01-28 00:18:54 [1,0]<stdout>:2021-01-28 00:18:53,508.508 e2e_caption.py:215      train(): eta: 5:06:24  iter: 22500  speed: 1830.0 images/sec  masked_loss: 1.0380 (1.6665)  align_loss: 2.7429 (2.8080)  loss: 3.7827 (4.4745)  acc: 0.7164 (0.6381)  total_norm: 0.7945 (nan)  batch_time: 0.2787 (0.2807)  data_time: 0.0001 (0.0002)  lr: 0.149141  max mem: 6778
+    # 2021-01-28 18:50:37,295.295 e2e_caption.py:215      train(): eta: 5:27:53  iter: 11200  speed: 1890.2 images/sec  masked_loss: 1.8492 (1.9500)  loss: 1.8492 (1.9500)  acc: 0.5547 (0.5341)  total_norm: 0.7941 (nan)  batch_time: 0.2742 (0.2708)  data_time: 0.0002 (0.0002)  lr: 0.174684  max mem: 6726
+    for log in reversed(all_log):
+        pattern = r'([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}).*\.py.*(?:do_train|_logistics|do_train_dict|train|old_train)\(\): eta:[ ]*(.*) iter: [0-9]*[ ]*speed: ([0-9\.]*).*'
+        result = re.match(pattern, log)
+        if result and result.groups():
+            log_time, left, speed = result.groups()
+            job_info['speed'] = speed
+            from dateutil.parser import parse
+            log_time = parse(log_time)
+            job_info['log_time'] = log_time
+            # log_time here is UTC. convert it to local time
+            d, h = parse_eta_in_hours(left)
+            job_info['left'] = '{}-{:.1f}h'.format(d, h)
+            job_info['eta'] = calc_eta(d, h)
+            return True
+    return False
 
 def print_offensive_folder(folder):
     all_folder = os.listdir(folder)
@@ -3022,7 +3076,7 @@ def merge_class_names_by_location_id(anno):
             r['class'] = [r['class']]
             r['class'].extend((rects[i]['class'] for i in range(1,
                 len(rects))))
-            r['conf'] = [r['conf']]
+            r['conf'] = [r.get('conf', 1)]
             r['conf'].extend((rects[i].get('conf', 1) for i in range(1,
                 len(rects))))
             merged_anno.append(r)
@@ -3031,7 +3085,7 @@ def merge_class_names_by_location_id(anno):
         assert all('location_id' not in a for a in anno)
         for a in anno:
             a['class'] = [a['class']]
-            a['conf'] = [a['conf']]
+            a['conf'] = [a.get('conf', 1.)]
         return anno
 
 def softnms_c(rects, threshold=0, method=2, **kwargs):
@@ -3138,13 +3192,15 @@ class DummyCfg(object):
     def clone(self):
         return
 
-def get_frame_info():
+def get_frame_info(last=0):
     import inspect
     frame = inspect.currentframe()
     frames = inspect.getouterframes(frame)
-    frame = frames[1].frame
+    frame = frames[1 + last].frame
     args, _, _, vs = inspect.getargvalues(frame)
     info = {i: vs[i] for i in args}
+    info['_func'] = frame.f_code.co_name
+    info['_filepath'] = frame.f_code.co_filename
     return info
 
 def print_frame_info():
@@ -3341,6 +3397,17 @@ def print_opened_files():
     import psutil
     proc = psutil.Process()
     logging.info(pformat(proc.open_files()))
+
+def save_parameters(param, folder):
+    time_str = datetime.now().strftime('%Y_%m_%d_%H_%M_%S')
+
+    write_to_yaml_file(param, op.join(folder,
+        'parameters_{}.yaml'.format(time_str)))
+    # save the env parameters
+    # convert it to dict for py3
+    write_to_yaml_file(dict(os.environ), op.join(folder,
+        'env_{}.yaml'.format(time_str)))
+
 
 if __name__ == '__main__':
     init_logging()

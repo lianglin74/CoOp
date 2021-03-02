@@ -20,8 +20,11 @@ except ImportError:
     # python 3
     pass
 import progressbar
-from tqdm import tqdm
+from qd.qd_common import qd_tqdm as tqdm
 
+
+def get_default_splits():
+    return ['train', 'trainval', 'test', 'val']
 
 def get_tsv_lineidx(tsv_file):
     assert tsv_file.endswith('.tsv')
@@ -75,20 +78,39 @@ def read_to_character(fp, c):
             result.append(s)
     return ''.join(result)
 
+def open_close(files):
+    for f in files:
+        with open(f, 'r'):
+            pass
 class CompositeTSVFile():
     def __init__(self, list_file, seq_file, cache_policy=False):
         self.seq_file = seq_file
         self.list_file = list_file
         self.cache_policy = cache_policy
-        self.initialized = False
-        self.initialize()
+        self.seq = None
+        self.tsvs = []
+        self.ensure_initialized()
+
+    def __repr__(self):
+        return 'CompositeTSVFile(list_file={}, seq_file={})'.format(
+            self.seq_file,
+            self.list_file
+        )
 
     def __getitem__(self, index):
+        self.ensure_initialized()
         idx_source, idx_row = self.seq[index]
         return self.tsvs[idx_source].seek(idx_row)
 
     def __len__(self):
+        self.ensure_initialized()
         return len(self.seq)
+
+    def release(self):
+        # this is to ensure we released all the resources
+        self.seq = None
+        for t in self.tsvs:
+            t.close()
 
     def seek_first_column(self, index):
         idx_source, idx_row = self.seq[index]
@@ -97,17 +119,20 @@ class CompositeTSVFile():
     def get_composite_source_idx(self):
         return [i for i, _ in self.seq]
 
-    def initialize(self):
+    def ensure_initialized(self):
         '''
         this function has to be called in init function if cache_policy is
         enabled. Thus, let's always call it in init funciton to make it simple.
         '''
-        if self.initialized:
-            return
-        self.seq = [(int(idx_source), int(idx_row)) for idx_source, idx_row in
-                tsv_reader(self.seq_file)]
-        self.tsvs = [TSVFile(f, self.cache_policy) for f in load_list_file(self.list_file)]
-        self.initialized = True
+        if self.seq is None:
+            if isinstance(self.list_file, str) and \
+                    isinstance(self.seq_file, str):
+                self.seq = [(int(idx_source), int(idx_row)) for idx_source, idx_row in
+                        tsv_reader(self.seq_file)]
+                self.tsvs = [TSVFile(f, self.cache_policy) for f in load_list_file(self.list_file)]
+            else:
+                self.seq = self.list_file
+                self.tsvs = self.seq_file
 
 class TSVFile(object):
     def __init__(self, tsv_file, cache_policy=None):
@@ -116,6 +141,9 @@ class TSVFile(object):
         self._fp = None
         self._lineidx = None
         self.cache_policy= cache_policy
+        self.close_fp_after_read = False
+        if os.environ.get('QD_TSV_CLOSE_FP_AFTER_READ'):
+            self.close_fp_after_read = bool(os.environ['QD_TSV_CLOSE_FP_AFTER_READ'])
         # the process always keeps the process which opens the
         # file. If the pid is not equal to the currrent pid, we will re-open
         # teh file.
@@ -123,15 +151,24 @@ class TSVFile(object):
 
         self._cache()
 
-
-    def close(self):
+    def close_fp(self):
         if self._fp:
             self._fp.close()
             self._fp = None
+
+    def release(self):
+        self.close_fp()
         self._lineidx = None
 
+    def close(self):
+        #@deprecated('use close_fp to make it more clear not to release lineidx')
+        self.close_fp()
+        # we don't need to set self._lineidx as None, as we may re-open it.
+        # in that case, there will be no need to re-load self._lineidx
+        #self._lineidx = None
+
     def __del__(self):
-        self.close()
+        self.release()
 
     def __str__(self):
         return "TSVFile(tsv_file='{}')".format(self.tsv_file)
@@ -155,7 +192,10 @@ class TSVFile(object):
             logging.info('{}-{}'.format(self.tsv_file, idx))
             raise
         self._fp.seek(pos)
-        return [s.strip() for s in self._fp.readline().split('\t')]
+        result = [s.strip() for s in self._fp.readline().split('\t')]
+        if self.close_fp_after_read:
+            self.close_fp()
+        return result
 
     def seek_first_column(self, idx):
         self._ensure_tsv_opened()
@@ -250,9 +290,8 @@ class TSVDataset(object):
                 data_root = os.environ['QD_DATA_ROOT']
             else:
                 proj_root = op.dirname(op.dirname(op.dirname(op.realpath(__file__))))
-                data_root = op.join(proj_root, 'data', name)
-        else:
-            data_root = op.join(data_root, name)
+                data_root = op.join(proj_root, 'data')
+        data_root = op.join(data_root, name)
         self._data_root = op.relpath(data_root)
         self._fname_to_tsv = {}
 
@@ -391,6 +430,12 @@ class TSVDataset(object):
         assert v >= 0
         return v
 
+    def get_gen_info_data(self, split, t=None, version=None):
+        return self.get_data(split, '{}.generate.info'.format(t), version=version)
+
+    def get_file(self, fname):
+        return op.join(self._data_root, fname)
+
     def get_data(self, split_name, t=None, version=None):
         '''
         e.g. split_name = train, t = label
@@ -402,7 +447,7 @@ class TSVDataset(object):
         if t is None:
             # in this case, it is an image split, which has no version
             version = None
-        if version is None or version == 0:
+        if version is None or version in [0,'None','0']:
             if t is None:
                 return op.join(self._data_root, '{}.tsv'.format(split_name))
             else:
@@ -615,6 +660,20 @@ class TSVDataset(object):
             self._fname_to_tsv[fname] = tsv
         return tsv
 
+    def safe_write_data(self, rows, split, t=None, version=None,
+                        generate_info=None, force=False):
+        assert force or not self.has(split, t, version)
+        if generate_info is None:
+            from qd.qd_common import get_frame_info
+            info = get_frame_info(last=1)
+            def gen_info():
+                for k, v in info.items():
+                    if isinstance(v, str):
+                        yield k, v
+            generate_info = gen_info()
+        self.write_data(rows, split, t, version,
+                        generate_info=generate_info)
+
     def write_data(self, rows, split, t=None, version=None, generate_info=None):
         out_tsv = self.get_data(split, t, version)
         tsv_writer(rows, out_tsv)
@@ -663,7 +722,7 @@ class TSVDataset(object):
 
     def load_composite_source_data_split(self, split):
         splitX = split + 'X'
-        pattern = 'data/(.*)/(trainval|train|test)\.tsv'
+        pattern = 'data/(.*)/(.*)\.tsv'
         tsv_sources = [l for l, in tsv_reader(self.get_data(splitX))]
         matched_result = [re.match(pattern, l).groups()
                 for l in tsv_sources]
@@ -687,6 +746,67 @@ def csv_writer(values, file_name):
     tsv_writer(values, file_name, sep=',')
     return
 
+class TSVSplitProperty(object):
+    '''
+    one instance of this class mean one tsv file or one composite tsv, it could
+    be label tsv, or hw tsv, or image tsv
+    '''
+    def __init__(self, data, split, t=None, version=0, cache_policy=None):
+        self.data = data
+        self.split = split
+        self.t = t
+        self.version = version
+        dataset = TSVDataset(data)
+        single_tsv = dataset.get_data(split, t, version)
+        is_single_tsv = op.isfile(single_tsv)
+        if is_single_tsv:
+            self.tsv = TSVFile(dataset.get_data(split, t, version),
+                    cache_policy)
+        else:
+            splitX = split + 'X'
+            list_file = dataset.get_data(splitX, t, version=version)
+            seq_file = dataset.get_shuffle_file(split)
+            assert op.isfile(list_file) and op.isfile(seq_file), (
+                '{}, {}/{} not available'.format(single_tsv, list_file, seq_file)
+            )
+            self.tsv = CompositeTSVFile(list_file, seq_file, cache_policy)
+
+    def __repr__(self):
+        return 'TSVSplitProperty(tsv={})'.format(
+            self.tsv
+        )
+
+    def __getitem__(self, index):
+        row = self.tsv[index]
+        return row
+
+    def __len__(self):
+        return len(self.tsv)
+
+    def num_rows(self):
+        return len(self)
+
+    def __iter__(self):
+        self.curr_idx = 0
+        return self
+
+    def get_key(self, i):
+        return self.tsv.seek_first_column(i)
+
+    def __next__(self):
+        if self.curr_idx < len(self):
+            result = self[self.curr_idx]
+            self.curr_idx += 1
+            return result
+        else:
+            raise StopIteration
+
+    def seek_first_column(self, idx):
+        return self.tsv.seek_first_column(idx)
+
+    def get_composite_source_idx(self):
+        return self.tsv.get_composite_source_idx()
+
 def tsv_writers(all_values, tsv_file_names, sep='\t'):
     # values: a list of [row1, row2]. each row goes to each tsv_file_name
     for tsv_file_name in tsv_file_names:
@@ -698,6 +818,7 @@ def tsv_writers(all_values, tsv_file_names, sep='\t'):
     tsv_lineidx_file_tmps = [tsv_lineidx_file + '.tmp' for tsv_lineidx_file in
             tsv_lineidx_files]
     sep = sep.encode()
+    assert all_values is not None
     fps = [open(tsv_file_name_tmp, 'wb') for tsv_file_name_tmp in
             tsv_file_name_tmps]
     fpidxs = [open(tsv_lineidx_file_tmp, 'w') for tsv_lineidx_file_tmp in
@@ -933,7 +1054,7 @@ def load_labelmap(data):
 
 def get_caption_data_info(name):
     dataset = TSVDataset(name)
-    splits = ['train', 'trainval', 'test']
+    splits = get_default_splits()
     from collections import defaultdict
     split_to_versions = defaultdict(list)
     for split in splits:
@@ -951,7 +1072,8 @@ def get_all_data_info2(name=None):
     else:
         dataset = TSVDataset(name)
         valid_split_versions = []
-        splits = ['train', 'trainval', 'test']
+        splits = get_default_splits()
+
         for split in splits:
             v = 0
             while True:
