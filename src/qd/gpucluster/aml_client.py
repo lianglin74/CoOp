@@ -339,6 +339,8 @@ class AMLClient(object):
                     v['datastore_name'] = '{}_{}'.format(
                             v['cloud_blob'].account_name,
                             v['cloud_blob'].container_name)
+                    if v.get('blob_cache_timeout') is not None:
+                        v['datastore_name'] += '_t{}'.format(v['blob_cache_timeout'])
                 elif v['storage_type'] == 'file':
                     v['datastore_name'] = 'file_{}_{}'.format(
                             v['cloud_blob'].account_name,
@@ -570,11 +572,15 @@ class AMLClient(object):
                 cloud_blob = v['cloud_blob']
                 if v['storage_type'] == 'blob':
                     logging.info('registering blob {}'.format(v['datastore_name']))
-                    ds = Datastore.register_azure_blob_container(workspace=self.ws,
-                                                                 datastore_name=v['datastore_name'],
-                                                                 container_name=cloud_blob.container_name,
-                                                                 account_name=cloud_blob.account_name,
-                                                                 account_key=cloud_blob.account_key)
+                    ds = Datastore.register_azure_blob_container(
+                        workspace=self.ws,
+                        datastore_name=v['datastore_name'],
+                        container_name=cloud_blob.container_name,
+                        account_name=cloud_blob.account_name,
+                        account_key=cloud_blob.account_key,
+                        blob_cache_timeout=v.get('blob_cache_timeout'),
+                        overwrite=True,
+                    )
                 else:
                     assert v['storage_type'] == 'file'
                     ds = Datastore.register_azure_file_share(workspace=self.ws,
