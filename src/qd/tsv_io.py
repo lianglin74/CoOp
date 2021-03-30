@@ -78,18 +78,28 @@ def read_to_character(fp, c):
             result.append(s)
     return ''.join(result)
 
-def open_close(files):
-    for f in files:
-        with open(f, 'r'):
-            pass
-class CompositeTSVFile():
-    def __init__(self, list_file, seq_file, cache_policy=False):
+class CompositeTSVFile(object):
+    def __init__(self, list_file, seq_file, cache_policy=False,
+                 hold_buffer=0,
+                 ):
+        # list_file can be a loaded or constructed pair of index, rather than a
+        # filename to load. In this case, seq_file will be a list of dataset,
+        # which should implement len() and __getitem__() so that we can
+        # reference it.
         self.seq_file = seq_file
         self.list_file = list_file
         self.cache_policy = cache_policy
         self.seq = None
         self.tsvs = []
-        self.ensure_initialized()
+        # please do ont call ensure_initialized here. we wil always do it
+        # lazily. we may load a huge amount of seq, which could be super slow
+        # when spawning multiple processes.
+
+        # this means, how many tsv fp pointer we will hold. If it is 0 or less
+        # than 0, we will hold all fp pointers we need. If it is larger than 0,
+        # we only hold some, which are kept in self.hold_sources
+        self.hold_buffer = hold_buffer
+        self.hold_sources = []
 
     def __repr__(self):
         return 'CompositeTSVFile(list_file={}, seq_file={})'.format(
@@ -99,8 +109,23 @@ class CompositeTSVFile():
 
     def __getitem__(self, index):
         self.ensure_initialized()
-        idx_source, idx_row = self.seq[index]
-        return self.tsvs[idx_source].seek(idx_row)
+        idx_source, idx_row = map(int, self.seq[index])
+        start = time.time()
+        result = self.tsvs[idx_source].seek(idx_row)
+        end = time.time()
+        if end - start > 10:
+            logging.info('too long to load fname = {}, source={}, row={}'.format(
+                self.tsvs[idx_source],
+                idx_source,
+                idx_row,
+            ))
+        if self.hold_buffer > 0:
+            if idx_source not in self.hold_sources:
+                if len(self.hold_sources) >= self.hold_buffer:
+                    close_idx_source = self.hold_sources.pop(0)
+                    self.tsvs[close_idx_source].close_fp()
+                self.hold_sources.append(idx_source)
+        return result
 
     def __len__(self):
         self.ensure_initialized()
@@ -113,22 +138,18 @@ class CompositeTSVFile():
             t.close()
 
     def seek_first_column(self, index):
-        idx_source, idx_row = self.seq[index]
+        self.ensure_initialized()
+        idx_source, idx_row = map(int, self.seq[index])
         return self.tsvs[idx_source].seek_first_column(idx_row)
 
     def get_composite_source_idx(self):
-        return [i for i, _ in self.seq]
+        return [int(i) for i, _ in self.seq]
 
     def ensure_initialized(self):
-        '''
-        this function has to be called in init function if cache_policy is
-        enabled. Thus, let's always call it in init funciton to make it simple.
-        '''
         if self.seq is None:
             if isinstance(self.list_file, str) and \
                     isinstance(self.seq_file, str):
-                self.seq = [(int(idx_source), int(idx_row)) for idx_source, idx_row in
-                        tsv_reader(self.seq_file)]
+                self.seq = TSVFile(self.seq_file)
                 self.tsvs = [TSVFile(f, self.cache_policy) for f in load_list_file(self.list_file)]
             else:
                 self.seq = self.list_file
