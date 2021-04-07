@@ -2,6 +2,7 @@ import yaml
 from collections import OrderedDict
 import progressbar
 import json
+import traceback
 import sys
 import os
 import math
@@ -26,7 +27,6 @@ from pprint import pformat
 import numpy as np
 import os.path as op
 import re
-from google.protobuf import text_format
 import base64
 import cv2
 import psutil
@@ -53,6 +53,12 @@ def get_mem_usage_in_bytes():
     process = psutil.Process(os.getpid())
     return process.memory_info().rss  # in bytes
 
+def print_type_memory_usage():
+    from pympler import muppy, summary
+    all_objects = muppy.get_objects()
+    sum1 = summary.summarize(all_objects)
+    summary.print_(sum1)
+
 def encode_np(x):
     compressed_array = io.BytesIO()
     np.savez_compressed(compressed_array, x)
@@ -65,6 +71,10 @@ def decode_np(s):
 def print_trace():
     import traceback
     traceback.print_exc()
+
+def get_trace():
+    import traceback
+    return traceback.format_exc()
 
 def try_once(func):
     def func_wrapper(*args, **kwargs):
@@ -527,7 +537,8 @@ def remove_dir(d):
     ensure_remove_dir(d)
 
 def ensure_remove_file(d):
-    os.remove(d)
+    if op.isfile(d) or op.islink(d):
+        os.remove(d)
 
 def ensure_remove_dir(d):
     is_dir = op.isdir(d)
@@ -585,6 +596,7 @@ def cmd_run(list_cmd,
             shell=False,
             dry_run=False,
             silent=False,
+            process_input=None,
             ):
     if not silent:
         logging.info('start to cmd run: {}'.format(' '.join(map(str, list_cmd))))
@@ -614,10 +626,10 @@ def cmd_run(list_cmd,
                     shell=True)
         else:
             p = sp.Popen(list_cmd,
-                    stdin=sp.PIPE,
+                    stdin=stdin,
                     env=e,
                     cwd=working_dir)
-        message = p.communicate()
+        message = p.communicate(input=process_input)
         if p.returncode != 0:
             raise ValueError(message)
     else:
@@ -750,7 +762,6 @@ def url_to_str(url):
             url, err.code, err.msg))
         return None
     except:
-        import traceback
         logging.error("url: {}; unknown {}".format(
             url, traceback.format_exc()))
         return None
@@ -1044,6 +1055,13 @@ def print_as_html(table, html_output):
         cols=cols)
     write_to_file(r, html_output)
 
+def jinja_render(template, **kwargs):
+    from jinja2 import Environment, FileSystemLoader
+    j2_env = Environment(loader=FileSystemLoader('./'), trim_blocks=True)
+    return j2_env.get_template(template).render(
+        **kwargs,
+    )
+
 def parse_general_args():
     parser = argparse.ArgumentParser(description='General Parser')
     parser.add_argument('-c', '--config_file', help='config file',
@@ -1111,15 +1129,23 @@ def concat_files(ins, out):
     os.rename(out_tmp, out)
 
 def get_mpi_rank():
+    if 'RANK' in os.environ:
+        return int(os.environ['RANK'])
     return int(os.environ.get('OMPI_COMM_WORLD_RANK', '0'))
 
 def get_mpi_size():
+    if 'WORLD_SIZE' in os.environ:
+        return int(os.environ['WORLD_SIZE'])
     return int(os.environ.get('OMPI_COMM_WORLD_SIZE', '1'))
 
 def get_mpi_local_rank():
+    if 'LOCAL_RANK' in os.environ:
+        return int(os.environ['LOCAL_RANK'])
     return int(os.environ.get('OMPI_COMM_WORLD_LOCAL_RANK', '0'))
 
 def get_mpi_local_size():
+    if 'LOCAL_SIZE' in os.environ:
+        return int(os.environ['LOCAL_SIZE'])
     return int(os.environ.get('OMPI_COMM_WORLD_LOCAL_SIZE', '1'))
 
 def load_class_ap(full_expid, predict_file):
@@ -1617,16 +1643,36 @@ def calculate_iou(rect0, rect1):
         return 1.
     return 1. * i / (a0 + a1 - i)
 
+#def process_run(func, *args, **kwargs):
+    #def internal_func(queue):
+        #result = func(*args, **kwargs)
+        #queue.put(result)
+    #queue = mp.Queue()
+    #p = Process(target=internal_func, args=(queue,))
+    #p.start()
+    #p.join()
+    #assert p.exitcode == 0
+    #return queue.get()
+
+class ExceptionWrapper(object):
+    def __init__(self, m):
+        self.message = m
+
 def process_run(func, *args, **kwargs):
     def internal_func(queue):
-        result = func(*args, **kwargs)
-        queue.put(result)
+        try:
+            result = func(*args, **kwargs)
+            queue.put(result)
+        except Exception:
+            queue.put(ExceptionWrapper(traceback.format_exc()))
     queue = mp.Queue()
     p = Process(target=internal_func, args=(queue,))
     p.start()
     p.join()
-    assert p.exitcode == 0
-    return queue.get()
+    result = queue.get()
+    if isinstance(result, ExceptionWrapper):
+        raise Exception(result.message)
+    return result
 
 def setup_yaml():
     """ https://stackoverflow.com/a/8661021 """
@@ -1642,7 +1688,7 @@ def init_logging():
 
     ch = logging.StreamHandler(stream=sys.stdout)
     ch.setLevel(logging.INFO)
-    logger_fmt = logging.Formatter('%(asctime)s.%(msecs)03d %(filename)s:%(lineno)s %(funcName)10s(): %(message)s')
+    logger_fmt = logging.Formatter('%(asctime)s.%(msecs)03d %(process)d:%(filename)s:%(lineno)s %(funcName)10s(): %(message)s')
     ch.setFormatter(logger_fmt)
 
     root = logging.getLogger()
@@ -1748,8 +1794,8 @@ def parse_yolo_log_acc(log_file):
     return all_ious, all_probs, all_obj, all_noobj, all_recall, all_count
 
 
-def read_lines(file_name):
-    with open(file_name, 'r') as fp:
+def read_lines(file_name, **kwargs):
+    with open(file_name, 'r', **kwargs) as fp:
         for line in fp:
             yield line
 
@@ -2302,6 +2348,14 @@ def dict_ensure_path_key_converted(a):
             if isinstance(v, dict):
                 dict_ensure_path_key_converted(v)
 
+def query_values_by_path_suffix(job_in_scheduler, suffix, default=None):
+    found = []
+    for p in get_all_path(job_in_scheduler, leaf_only=False):
+        if p.endswith(suffix):
+            v = dict_get_path_value(job_in_scheduler, p)
+            found.append(v)
+    return found
+
 def query_path_by_suffix(job_in_scheduler, suffix, default=None):
     found = []
     for p in get_all_path(job_in_scheduler, leaf_only=False):
@@ -2489,8 +2543,11 @@ def natural_key(text):
             continue
     return result
 
-def natural_sort(strs):
-    strs.sort(key=natural_key)
+def natural_sort(strs, key=None):
+    if key is None:
+        strs.sort(key=natural_key)
+    else:
+        strs.sort(key=lambda s: natural_key(key(s)))
 
 def get_pca(x, com):
     x -= np.mean(x, axis = 0)
@@ -3192,6 +3249,12 @@ class DummyCfg(object):
     def clone(self):
         return
 
+def save_frame_yaml(fn):
+    assert not op.isfile(fn)
+    assert fn.endswith('.yaml')
+    info = get_frame_info(1)
+    write_to_yaml_file(info, fn)
+
 def get_frame_info(last=0):
     import inspect
     frame = inspect.currentframe()
@@ -3393,10 +3456,13 @@ def qd_tqdm(*args, **kwargs):
 
     return tqdm(*args, **kwargs)
 
-def print_opened_files():
+def get_opened_files():
     import psutil
     proc = psutil.Process()
-    logging.info(pformat(proc.open_files()))
+    return proc.open_files()
+
+def print_opened_files():
+    logging.info(pformat(get_opened_files()))
 
 def save_parameters(param, folder):
     time_str = datetime.now().strftime('%Y_%m_%d_%H_%M_%S')
@@ -3408,6 +3474,167 @@ def save_parameters(param, folder):
     write_to_yaml_file(dict(os.environ), op.join(folder,
         'env_{}.yaml'.format(time_str)))
 
+def exclusive_open_to_read(fname, mode='r'):
+    disable_lock = os.environ.get('QD_DISABLE_EXCLUSIVE_READ_BY_LOCK')
+    if disable_lock is not None:
+        disable_lock = int(disable_lock)
+    if not disable_lock:
+        user_name = get_user_name()
+        from qd.qd_common import acquireLock, releaseLock
+        lock_fd = acquireLock(op.join('/tmp',
+            '{}_lock_{}'.format(user_name, hash_sha1(fname))))
+    #try:
+    # in AML, it could fail with Input/Output error. If it fails, we will
+    # use azcopy as a fall back solution for reading
+    fp = limited_retry_agent(10, open, fname, mode)
+    #except:
+        #if 'FILE_OPEN_AZCOPY_BLOB_ACCOUNT_PATH' in os.environ:
+            #return azcopy_read(fname)
+        #else:
+            #raise
+    if not disable_lock:
+        releaseLock(lock_fd)
+    return fp
+
+def inject_log_to_board(fname, folder, pattern, keys):
+    logging.info(pattern)
+    from qd.qd_common import iter_match_document
+
+    from torch.utils.tensorboard import SummaryWriter
+    wt = SummaryWriter(log_dir=folder)
+    x_keys = [k['key'] for k in keys if k['is_x']]
+    x_key_time = any([
+        k for k in keys
+        if k['is_x'] and k.get('type') == 'time'
+    ])
+    if len(x_keys) == 1:
+        x_key = x_keys[0]
+    if len(x_keys) == 0:
+        x_key = None
+    added = 0
+    for i, r in enumerate(iter_match_document(pattern, fname)):
+        info = {}
+        for k, x in zip(keys, r):
+            if not k.get('type'):
+                info[k['key']] = float(x)
+            elif k['type'] == 'time':
+                info[k['key']] = datetime.datetime.strptime(
+                    x, '%Y-%m-%d %H:%M:%S')
+        added += 1
+        for k, v in info.items():
+            if x_key and k == x_key:
+                continue
+            args = {'tag': k, 'scalar_value': v}
+            if not x_key_time:
+                if x_key:
+                    args['global_step'] = info[x_key]
+                else:
+                    args['global_step'] = i
+            else:
+                args['walltime'] = (info[x_key]-datetime.datetime(1970,1,1)).total_seconds()
+            wt.add_scalar(**args)
+            #wt.add_scalar(tag=k, scalar_value=v, global_step=info[x_key])
+    logging.info(added)
+
+def auto_parse_log_line(line):
+    must_have = ['iter', 'speed', 'loss', 'lr']
+    result = {}
+    if not all(m in line for m in must_have):
+        # in this case, we will try to parse if there is like acc = {}
+        if '=' not in line:
+            return result
+        parts = line.split(':')
+        for p in parts:
+            if '=' in p:
+                sub_parts = p.split('=')
+                if len(sub_parts) != 2:
+                    continue
+                k, v = map(lambda x: x.strip(), sub_parts)
+                try:
+                    result[k] = float(v)
+                except:
+                    continue
+        if len(result) > 0:
+            matched = re.match('([0-9-\s:]*)', list(line.split(','))[0])
+            x = matched.groups()[0]
+            result['time'] = datetime.strptime(
+                x.strip(), '%Y-%m-%d %H:%M:%S')
+        return result
+    else:
+        parts = line.split('  ')
+        #([0-9-\s:]*)
+        for p in parts:
+            kv = list(map(lambda x: x.strip(), p.split(':')))
+            if len(kv) != 2:
+                continue
+            key = kv[0]
+            vs = list(map(lambda x: x.strip(' ()'), kv[1].split(' ')))
+            for idx_v, v in enumerate(vs):
+                try:
+                    v1 = float(vs[0])
+                    if len(vs) > 1:
+                        result[key + '_{}'.format(idx_v)] = v1
+                    else:
+                        result[key] = v1
+                except:
+                    continue
+        if len(result):
+            matched = re.match('([0-9-\s:]*)', line)
+            x = matched.groups()[0]
+            result['time'] = datetime.strptime(
+                x.strip(), '%Y-%m-%d %H:%M:%S')
+
+        return result
+
+def auto_inject_log_to_board(fname, folder):
+    from torch.utils.tensorboard import SummaryWriter
+    wt = SummaryWriter(log_dir=folder)
+    from qd.qd_common import read_lines
+    num = 0
+    started = False
+    from collections import defaultdict
+    counter = defaultdict(int)
+    for line in read_lines(fname, errors='ignore'):
+        if not started and '_ensure_lineidx_loaded' in line:
+            started = True
+        if not started:
+            continue
+        info = auto_parse_log_line(line)
+        if len(info) == 0:
+            continue
+        for k, v in info.items():
+            if k in ['time', 'iter']:
+                continue
+            args = {'tag': k, 'scalar_value': v}
+            if 'iter' in info:
+                args['global_step'] = int(info['iter'])
+            else:
+                args['global_step'] = counter[k]
+                counter[k] += 1
+            args['walltime'] = (info['time'] - datetime(1970,1,1)).total_seconds()
+            num += 1
+            wt.add_scalar(**args)
+    logging.info('injected {}'.format(num))
+
+def auto_inject_multi_log_to_board(infos, out_folder):
+    for info in infos:
+        if 'full_expid' in info:
+            full_expid = info['full_expid']
+            files = glob.glob(op.join('output', full_expid, '*_rank0.txt'))
+        elif 'job_id' in info:
+            pattern = op.join('assets', info['job_id'], 'azureml-logs', '70_driver_log_0.txt')
+            files = glob.glob(pattern)
+            pattern = op.join('assets', info['job_id'], 'azureml-logs',
+                              '*0_stdout.txt')
+            files.extend(glob.glob(pattern))
+        name = info['name']
+        if len(files) > 1:
+            file_sizes = [(f, get_file_size(f)) for f in files]
+            f, _ = max(file_sizes, key=lambda x: x[1])
+        else:
+            assert len(files) == 1, len(files)
+            f = files[0]
+        auto_inject_log_to_board(f, op.join(out_folder, name))
 
 if __name__ == '__main__':
     init_logging()
