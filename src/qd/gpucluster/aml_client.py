@@ -3,6 +3,7 @@ from pprint import pformat
 import logging
 import os
 
+from qd.qd_common import print_table
 from deprecated import deprecated
 from qd.qd_common import load_from_yaml_file, dict_update_nested_dict
 from qd.qd_common import cmd_run
@@ -14,6 +15,7 @@ from qd.qd_common import get_file_size, get_url_fsize
 from qd.qd_common import concat_files, try_delete
 from qd.qd_common import dict_has_path
 from qd.cloud_storage import create_cloud_storage
+from qd.qd_common import dict_get_path_value
 import copy
 
 
@@ -50,14 +52,20 @@ def update_by_run_details(info, details):
         info['elapsedFinished'] = round(d, 2)
     if dict_has_path(details, 'runDefinition$arguments') and len(details['runDefinition']['arguments']) > 0:
         xs = [i for i, k in enumerate(details['runDefinition']['arguments']) if k == '--command']
-        assert len(xs) == 1
-        i = xs[0]
-        cmd = details['runDefinition']['arguments'][i + 1]
-        info['cmd'] = cmd
-        info['cmd_param'] = decode_general_cmd(cmd)
+        if len(xs) == 1:
+            i = xs[0]
+            cmd = details['runDefinition']['arguments'][i + 1]
+            info['cmd'] = cmd
+            info['cmd_param'] = decode_general_cmd(cmd)
     if dict_has_path(details, 'runDefinition$environment$docker$baseImage'):
         info['docker_image'] = details['runDefinition']['environment']['docker']['baseImage']
-    if dict_has_path(details, 'runDefinition$mpi$processCountPerNode') and \
+    if dict_has_path(details,
+                     'runDefinition$cmk8sCompute$configuration$gpu_count'):
+        info['num_gpu'] = dict_get_path_value(
+            details,
+            'runDefinition$cmk8sCompute$configuration$gpu_count'
+        )
+    elif dict_has_path(details, 'runDefinition$mpi$processCountPerNode') and \
             dict_has_path(details, 'runDefinition$nodeCount'):
         info['num_gpu'] = details['runDefinition']['mpi']['processCountPerNode'] * \
                 details['runDefinition']['nodeCount']
@@ -131,7 +139,6 @@ def parse_run_info(run, with_details=True,
     for k in param_keys:
         ps = [p for p in all_path if p.endswith('${}'.format(k))]
         if len(ps) == 1:
-            from qd.qd_common import dict_get_path_value
             v = dict_get_path_value(info, ps[0])
         else:
             v = None
@@ -175,7 +182,7 @@ def download_run_logs(run_info, full=True):
         except:
             all_log_file.append(target_file)
             continue
-        if url_fsize == 0:
+        if url_fsize is None or url_fsize == 0:
             continue
         if op.isfile(target_file):
             start_size = get_file_size(target_file)
@@ -271,7 +278,10 @@ def get_root_folder_in_curr_dir(fname):
     return p
 
 def clean_prefix(file_or_folder):
+    end_slash = file_or_folder.endswith('/')
     file_or_folder = op.normpath(file_or_folder)
+    if end_slash:
+        file_or_folder += '/'
     if file_or_folder.startswith('./'):
         file_or_folder = file_or_folder[2:]
     elif file_or_folder.startswith('/'):
@@ -297,6 +307,7 @@ class AMLClient(object):
                  preemption_allowed=False,
                  aks_compute_global_dispatch=False,
                  aks_compute_global_dispatch_arg=None,
+                 unique_gjd_cluster=False,
                  **kwargs):
         self.kwargs = kwargs
         self.cluster = kwargs.get('cluster', 'aml')
@@ -365,6 +376,11 @@ class AMLClient(object):
         self.preemption_allowed = preemption_allowed
         self.aks_compute_global_dispatch = aks_compute_global_dispatch
         self.aks_compute_global_dispatch_arg = aks_compute_global_dispatch_arg or {}
+        self.unique_gjd_cluster = unique_gjd_cluster
+
+        self.zip_options = kwargs.get('zip_options')
+
+        self.command_prefix = kwargs.get('command_prefix')
 
     def __repr__(self):
         return self.compute_target_name
@@ -470,7 +486,7 @@ class AMLClient(object):
                               log_full=log_full,
                               )
         info['cluster'] = self.cluster
-        if info['status'] == self.status_failed and detect_error_if_failed:
+        if detect_error_if_failed:
             messages = detect_aml_error_message(info['appID'])
             if messages is not None:
                 info['result'] = ','.join(messages)
@@ -544,10 +560,12 @@ class AMLClient(object):
                     with_details=with_details,
                     with_log=self.with_log or with_log,
                     log_full=with_log)
-            if info['status'] == self.status_failed:
-                messages = detect_aml_error_message(info['appID'])
-                if messages is not None:
-                    info['result'] = ','.join(messages)
+            # we will not do this as we don't have a flag to say whether we can
+            # run this
+            #if info['status'] == self.status_failed:
+                #messages = detect_aml_error_message(info['appID'])
+                #if messages is not None:
+                    #info['result'] = ','.join(messages)
             info['cluster'] = self.cluster
             logging.info(pformat(info))
             return [info]
@@ -616,6 +634,7 @@ class AMLClient(object):
         cloud.az_sync(local_folder, remote_folder)
 
     def sync_full_expid_from_local_by_exist(self, full_expid):
+        # use self.upload(op.join(output, full_expid))
         cloud = self.config_param['output_folder']['cloud_blob']
         local_folder = op.join('output', full_expid)
         remote_folder = op.join(self.config_param['output_folder']['path'],
@@ -654,6 +673,9 @@ class AMLClient(object):
         if not cloud.exists(target_path):
             cloud.az_upload2(fname, target_path)
 
+    def low_priority(self):
+        return self.preemption_allowed
+
     @deprecated('use upload_file')
     def upload_qd_model(self, model_file):
         self.upload_file(model_file)
@@ -691,8 +713,10 @@ class AMLClient(object):
         if num_gpu is None:
             num_gpu = self.num_gpu
 
-        # this env is only used by some code with torch.distributed.launch
-        env.environment_variables.update({'WORLD_SIZE': num_gpu})
+        # this env is only used by some code with torch.distributed.launch.
+        # please do not include these code as the custom code could overwrite
+        # it. one example is local_master_launcher.py
+        #env.environment_variables.update({'WORLD_SIZE': num_gpu})
 
         if num_gpu <= self.gpu_per_node:
             mpi_config.process_count_per_node = num_gpu
@@ -734,11 +758,11 @@ class AMLClient(object):
                 k8s['ssh_public_key'] = read_to_buffer(
                     id_rsa).decode()
             k8s['preemption_allowed'] = self.preemption_allowed
-            #k8s['gpu_count'] = 8
             k8sconfig.configuration = k8s
             estimator10.run_config.cmk8scompute = k8sconfig
 
             if self.aks_compute_global_dispatch:
+                k8s['gpu_count'] = num_gpu
                 from azureml.contrib.core.gjdrunconfig import GlobalJobDispatcherConfiguration
                 estimator10.run_config.global_job_dispatcher = GlobalJobDispatcherConfiguration(
                     compute_type="AmlK8s",
@@ -756,9 +780,6 @@ class AMLClient(object):
     def inject(self, run_id=None):
         all_info = self.query(run_id, max_runs=5000)
         from qd.db import update_cluster_job_db
-        for info in all_info:
-            if 'logFiles' in info:
-                del info['logFiles']
 
         collection_name = self.kwargs.get('inject_collection', 'phillyjob')
         failed_jobs = [info for info in all_info if info['status'] == self.status_failed]
@@ -788,7 +809,7 @@ class AMLClient(object):
         logging.info('{}'.format(random_qd))
         from qd.qd_common import zip_qd
         # zip it
-        zip_qd(random_abs_qd)
+        zip_qd(random_abs_qd, self.zip_options)
 
         if compile_in_docker:
             from qd.qd_common import compile_by_docker
@@ -809,8 +830,9 @@ class AMLClient(object):
         infos = self.config_param[key]['cloud_blob'].list_blob_info(path_in_blob)
         for i in infos:
             i['name'] = i['name'][len(path_in_blob):]
-        from qd.qd_common import print_table
-        print_table(infos)
+        from qd.qd_common import natural_sort
+        natural_sort(infos, key=lambda i: i['name'])
+        return infos
 
     def rm(self, file_or_folder):
         file_or_folder = clean_prefix(file_or_folder)
@@ -890,15 +912,21 @@ class AMLClient(object):
             tmp_first=False
         )
 
-    @deprecated('use download')
     def download_latest_qdoutput(self, full_expid):
         src_path = op.join(self.config_param['output_folder']['path'],
                 full_expid)
         target_folder = op.join('output', full_expid)
 
+        ignore_base_fname_patterns = 'aux_data/cron_jobs/ignore_download_pattern.txt'
+        if op.isfile(ignore_base_fname_patterns):
+            from qd.qd_common import load_list_file
+            ignore_base_fname_patterns = load_list_file(ignore_base_fname_patterns)
+        else:
+            ignore_base_fname_patterns = None
         self.config_param['output_folder']['cloud_blob'].blob_download_qdoutput(
             src_path,
             target_folder,
+            ignore_base_fname_patterns=ignore_base_fname_patterns,
         )
 
 def inject_to_tensorboard(info):
@@ -1176,6 +1204,10 @@ def execute(task_type, **kwargs):
         c = create_aml_client(**kwargs)
         for full_expid in kwargs['remainders']:
             c.download(full_expid)
+    elif task_type in ['do']:
+        c = create_aml_client(**kwargs)
+        for full_expid in kwargs['remainders']:
+            c.download_latest_qdoutput(full_expid)
     elif task_type in ['upload', 'u']:
         if not kwargs.get('from_cluster'):
             c = create_aml_client(**kwargs)
@@ -1194,7 +1226,8 @@ def execute(task_type, **kwargs):
     elif task_type in ['ls']:
         c = create_aml_client(**kwargs)
         for data in kwargs['remainders']:
-            c.list(data)
+            infos = c.list(data)
+            print_table(infos)
     elif task_type in ['rm']:
         c = create_aml_client(**kwargs)
         for data in kwargs['remainders']:
@@ -1252,6 +1285,7 @@ def parse_args():
                 'qr', # query running jobs
                 'd', 'download',
                 'u', 'upload',
+                     'do',
                 'monitor',
                 'parse',
                 'init',

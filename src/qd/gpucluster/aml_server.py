@@ -77,14 +77,19 @@ def root_user():
     logging.info('user = {}'.format(user))
     return user == 'root'
 
+def user_path_sudo(cmd):
+    path = os.environ['PATH']
+    assert isinstance(cmd, list)
+    cmd = ['env', 'PATH={}'.format(path)] + cmd
+    if not root_user():
+        cmd = ['sudo', '-E'] + cmd
+    return cmd
 
 def compile_qd(folder, compile_args):
     path = os.environ['PATH']
 
-    cmd = ['env', 'PATH={}'.format(path), 'pip', 'install',
-            '-r', 'requirements.txt']
-    if not root_user():
-        cmd.insert(0, 'sudo')
+    cmd = ['pip', 'install', '-r', 'requirements.txt']
+    cmd = user_path_sudo(cmd)
     cmd_run(cmd,
         working_directory=folder,
         succeed=False)
@@ -136,6 +141,13 @@ def monitor():
         cmd_result = cmd_run(['nvidia-smi'], return_output=True).decode()
         gpu_result = parse_gpu_usage_dict(cmd_result)
         logging.info('{}'.format(gpu_result))
+        import shutil
+        disk = shutil.disk_usage('/')
+        info = []
+        info.append('Total = {:.1f}G'.format(disk.total / 1024. ** 3))
+        info.append('Free = {:.1f}G'.format(disk.free / 1024. ** 3))
+        info.append('Used = {:.1f}G'.format(disk.used / 1024. ** 3))
+        logging.info('disk usage of /: {}'.format(', '.join(info)))
         import time
         time.sleep(60 * 30) # every 30 minutes
 
