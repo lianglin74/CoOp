@@ -1,0 +1,54 @@
+all_test_data:
+- test_data: TaxCCSBUCocoVGCapSplit
+  test_split: test
+param:
+  add_od_labels: false
+  base_lr: 0.0001
+  basemodel: output/imagenet2012Full_timm_vit_base_patch32_384_CLS_Pretrained_BS1024_MaxIter0_LR0.8_Crop384_cosine_Tvit_WD1e-05_Warm5e_CR_Lsmooth_ce_AMP_Pct1.0/snapshot/model_iter_0000000.pt.convert.caption.pt
+  crop_pct: 1.0
+  data: TaxCCSBUCocoVGCapSplit
+  dist_url_tcp_port: 29305
+  drop_out: 0
+  effective_batch_size: 4096
+  env:
+    candidate_clusters:
+    - eu
+    - we3v32
+    - we2v32
+    - wev32
+    cluster: g8
+    compile_args: -no-mask -no-od -no-fcos -no-mmdet
+    num_gpu: 32
+    run_type: save_config
+  evaluate_method: caption
+  expid: CAPU_BS4096_MaxIter40e_LR0.0001_Crop384_Tvit_WD0.01_Warm4e_AMP_noL_TextVitB32_38429bc1_base63070_S0_VitEmb_vit_base_patch32_384_SS0.8_bidirectional_NPad_Pct1.0_A70_DropO0_PertImg0.5_NoColor_NoFlip
+  expid_prefix: CAPU
+  full_expid: TaxCCSBUCocoVGCapSplit_B_CAPU_BS4096_MaxIter40e_LR0.0001_Crop384_Tvit_WD0.01_Warm4e_AMP_noL_TextVitB32_38429bc1_base63070_S0_VitEmb_vit_base_patch32_384_SS0.8_bidirectional_NPad_Pct1.0_A70_DropO0_PertImg0.5_NoColor_NoFlip
+  ignore_predict: true
+  ignore_project_image: true
+  image_encoder_type: VitEmb_vit_base_patch32_384
+  input_small_scale: 0.8
+  log_step: 100
+  mask_type: bidirectional
+  max_img_seq_length: 0
+  max_iter: 40e
+  max_seq_a_length: 70
+  net: B
+  no_color_jitter: true
+  no_flip: true
+  pad_to_max: false
+  pert_img_prob: 0.5
+  pipeline_type:
+    from: qd.pipelines.caption_uni_pipeline
+    import: CaptionUniPipeline
+  prefetch_factor: 20
+  test_batch_size: 16
+  test_crop_size: 384
+  text_encoder_type: ./models/timm_vit_bert_token/base_patch32_384
+  train_crop_size: 384
+  train_transform: vit
+  use_amp: true
+  use_img_layernorm: false
+  warmup_steps: 4e
+  weight_decay: 0.01
+type: pipeline_train_eval_multi
