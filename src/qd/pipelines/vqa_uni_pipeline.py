@@ -301,6 +301,7 @@ class VQAUniPipeline(UniPipeline):
 
             'ignore_project_image': False,
             'pad_to_max': True,
+            'fusion_timm_param_drop_out_all': None,
         })
         self._tokenizer = None
         self._answermap = None
@@ -433,6 +434,12 @@ class VQAUniPipeline(UniPipeline):
             num_labels=len(self.answermap),
             finetuning_task='vqa_text',
         )
+        if self.cfg.fusion_timm_param_drop_out_all:
+            if not hasattr(config, 'timm_param'):
+                config.timm_param = {}
+            config.timm_param['drop_rate'] = self.cfg.fusion_timm_param_drop_out_all
+            config.timm_param['attn_drop_rate'] = self.cfg.fusion_timm_param_drop_out_all
+            config.timm_param['drop_path_rate'] = self.cfg.fusion_timm_param_drop_out_all
         # discrete code
         config.img_feature_dim = self.cfg.img_feature_dim
         config.img_feature_type = 'faster_r-cnn'

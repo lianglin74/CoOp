@@ -1,3 +1,4 @@
+from qd.torch_common import torch_load, torch_save
 from qd.mask.layers.bert import BertForImageCaptioning
 from qd.qd_common import execute_func
 import os.path as op
@@ -26,12 +27,30 @@ from qd.pipelines.uni_pipeline import UniPipeline
 from torch import nn
 
 
+def convert_vit_cls_model_to_caption(cls_model, cap_model):
+    # this function is used to convert cls_uni_pipeline model to captioning
+    # model where there is no seperate image encoder, so that we can load this
+    # pre-trained model
+    cls_model = torch_load(cls_model)
+    model = cls_model['model']
+
+    prefix = 'module.'
+    out = {}
+    for k, v in model.items():
+        while k.startswith(prefix):
+            k = k[len(prefix):]
+        if k.startswith('blocks.'):
+            k = 'module.bert.encoder.' + k
+        else:
+            k = 'image_encoder.module.' + k
+        out[k] = v
+    torch_save(out, cap_model)
+
 def compute_score_with_logits(logits, labels):
     logits = torch.max(logits, -1)[1].data # argmax
     return logits == labels
 
 def construct_basemodel_image_joint(image_path, joint_path, out):
-    from qd.torch_common import torch_load, torch_save
     if op.isfile(out):
         logging.info('{} exists'.format(out))
         return
@@ -67,6 +86,13 @@ class ImageCaptioning(nn.Module):
         self.test_extra_input = test_extra_input
         self.image_encoder = image_encoder
         self.cfg = cfg
+        if cfg.pert_img_prob is not None and cfg.pert_img_prob > 0:
+            # we need an image text matching loss on the pooled output
+            # number of relationship is always 1, we use BCE loss
+            self.seq_relationship = nn.Linear(model.bert.pooler.dense.weight.shape[0], 1)
+            assert self.cfg.mask_type != 'seq2seq', 'matching loss is useless'
+        else:
+            self.seq_relationship = None
 
     def construct_attn_mask(self, data):
         img_feats = data['img_feats']
@@ -78,11 +104,19 @@ class ImageCaptioning(nn.Module):
         num_token = input_ids.shape[-1]
         device = input_ids.device
         top_right = torch.ones((batch_size, num_token, num_img_feats), device=device)
-        if self.cfg.mask_type in ['seq2seq', 'seq2seq_off']:
+        if self.cfg.mask_type == 'seqbid':
+            mask_type = data.pop('mask_type')
+            bottom_left = torch.ones((batch_size, num_img_feats, num_token), device=device)
+            # if mask_type is 1, it is seq2seq and we need to zero it out
+            bottom_left[mask_type] = 0
+        elif self.cfg.mask_type in ['seq2seq', 'seq2seq_off']:
             bottom_left = torch.zeros((batch_size, num_img_feats, num_token), device=device)
         else:
             assert self.cfg.mask_type == 'bidirectional'
             bottom_left = torch.ones((batch_size, num_img_feats, num_token), device=device)
+            if attention_mask.dim() == 2:
+                attention_mask = attention_mask.unsqueeze(dim=1)
+                attention_mask = attention_mask.expand(batch_size, num_token, num_token)
         bottom_right = torch.ones((batch_size, num_img_feats, num_img_feats), device=device)
         bottom = torch.cat((bottom_left, bottom_right), dim=2)
 
@@ -113,22 +147,54 @@ class ImageCaptioning(nn.Module):
             #logging.info(diff)
             #logging.info(diff / x)
         if self.training:
+            matched = data.get('matched')
             result = self.module(**data, return_dict=True)
+            loss_dict = {}
+            if matched is not None:
+                matching_loss = self.calc_image_text_matching_loss(result, matched)
+                loss_dict['matching_loss'] = matching_loss
             verbose = (self.iter % 100) == 0
             self.iter += 1
             if verbose:
                 masked_ids = data['masked_ids']
                 masked_ids = masked_ids[masked_ids != 0]
-                batch_score = compute_score_with_logits(result['class_logits'], masked_ids)
-                batch_acc = torch.sum(batch_score.float()) / torch.sum(data['masked_pos'])
-                logging.info('acc = {}'.format(batch_acc))
-            return {
-                'masked_loss': result['masked_loss']
-            }
+                if masked_ids.numel() > 0:
+                    # when we have image text matching pair, there could be a
+                    # chance there is no masked tokens as we ignore it if it is
+                    # not matched. One example is batch size = 2, mismatching
+                    # rate is 0.5.
+                    batch_score = compute_score_with_logits(result['class_logits'], masked_ids)
+                    batch_acc = torch.sum(batch_score.float()) / torch.sum(data['masked_pos'])
+                    logging.info('acc = {}'.format(batch_acc))
+            # for mismatched pair, we ignore the masked token loss in the
+            # self.module, where we clear out the masked pos. That logic can be
+            # moved to collate function also.
+            loss_dict['masked_loss'] = result['masked_loss']
+            return loss_dict
         else:
             data.update(self.test_extra_input)
             result = self.module(**data)
             return result
+
+    def calc_image_text_matching_loss(self, result, matched):
+        logits = self.seq_relationship(result['pooled_output'])
+        return torch.nn.functional.binary_cross_entropy_with_logits(
+            logits, matched.float().reshape(logits.shape))
+
+
+def pert_collate_fn(batch, prob):
+    batch = collate_fn(batch)
+    num_image = batch['image'].shape[0]
+    # by expectation, there is one image which stays the same, and thus, we add
+    # 1 here to compensate
+    shuffle_len = int(num_image * prob) + 1
+    idx = torch.cat((torch.randperm(shuffle_len),
+               torch.arange(shuffle_len, num_image)))
+    old_idx_img = batch.pop('idx_img')
+    new_idx_img = old_idx_img[idx]
+    batch['image'] = batch['image'][idx]
+    batch['matched'] = old_idx_img == new_idx_img
+    return batch
 
 class CaptionUniPipeline(UniPipeline):
     def __init__(self, **kwargs):
@@ -172,7 +238,9 @@ class CaptionUniPipeline(UniPipeline):
             'no_sort_by_conf': False,
 
             'ignore_project_image': False,
-            'real_text_a_in_test': False
+            'real_text_a_in_test': False,
+
+            'pert_img_prob': None,
         })
         self._tokenizer = None
         self._test_caption_tensorizer = None
@@ -183,7 +251,11 @@ class CaptionUniPipeline(UniPipeline):
             self.train_collate_fn = default_collate
             self.test_collate_fn = default_collate
         else:
-            self.train_collate_fn = collate_fn
+            if self.cfg.pert_img_prob is not None:
+                self.train_collate_fn = \
+                    lambda x: pert_collate_fn(x, self.cfg.pert_img_prob)
+            else:
+                self.train_collate_fn = collate_fn
             self.test_collate_fn = collate_fn
 
         max_seq_length = self.cfg.max_seq_length
@@ -277,7 +349,8 @@ class CaptionUniPipeline(UniPipeline):
                       self.test_caption_tensorizer)
         from qd.data_layer.transform import TransCaptionTensorizer
         if not is_train:
-            assert self.cfg.pad_to_max, 'not ready'
+            # in test, we have to do this padding, otherwise it will crash
+            self.cfg.pad_to_max = True
         trans_tensorizer = TransCaptionTensorizer(
             tensorizer,
             with_img_feats=load_feature,
@@ -289,7 +362,6 @@ class CaptionUniPipeline(UniPipeline):
 
         useless_keys = [
             'idx',
-            'idx_img',
             'idx_cap',
             'dataset',
             'label',
@@ -313,19 +385,44 @@ class CaptionUniPipeline(UniPipeline):
             'feats_class_tokens',
             'origin_input_ids',
         ]
+        if self.cfg.pert_img_prob in [0, None] or not is_train:
+            # 'idx_img' could be used in pert_collate_fn in train
+            useless_keys.append('idx_img')
         all_trans.extend([
             RemoveUselessKeys(useless_keys),
             RenameKey({'segment_ids': 'token_type_ids'}),
         ])
         return transforms.Compose(all_trans)
 
-    def get_raw_model(self, is_train):
+    def get_splitbysplit_sampler_prepare_t_versions(self):
+        result = [
+            ('hw', None),
+            ('caption', None),
+        ]
+        max_img_seq_len = self.cfg.max_img_seq_length
+        load_feature = max_img_seq_len > 0
+        if load_feature:
+            raise NotImplementedError
+        else:
+            result.append((None, None))
+
+        if self.cfg.add_od_labels:
+            raise NotImplementedError
+        return result
+
+    def get_fusion_config(self, is_train):
         from qd.mask.layers.bert import BertConfig
         config = BertConfig.from_pretrained(
+            # this class does not support a seperate text encoder and thus
+            # text_encoder_type here means the joint fusion encoder
             self.cfg.text_encoder_type,
             num_labels=2,
             finetuning_task='image_captioning',
         )
+        if 'vit' in self.cfg.text_encoder_type:
+            # this is just to make sure we are using the right variables for
+            # vit model
+            assert self.cfg.drop_out == 0
         config.img_feature_type = 'frcnn'
         config.hidden_dropout_prob = self.cfg.drop_out
         config.loss_type = 'classification'
@@ -338,12 +435,16 @@ class CaptionUniPipeline(UniPipeline):
         config.use_img_layernorm = self.cfg.use_img_layernorm
         config.img_layer_norm_eps = self.cfg.img_layer_norm_eps
         config.ignore_project_image = self.cfg.ignore_project_image
+        return config
+
+    def get_raw_model(self, is_train):
+        config = self.get_fusion_config(is_train)
+        model = BertForImageCaptioning(config=config) # init from scratch
 
         image_encoder = None
         if self.cfg.max_img_seq_length == 0:
             image_encoder = self.get_image_encoder(is_train)
 
-        model = BertForImageCaptioning(config=config) # init from scratch
         if is_train:
             model = ImageCaptioning(model, image_encoder=image_encoder,
                                     cfg=self.cfg)
@@ -387,48 +488,7 @@ class CaptionUniPipeline(UniPipeline):
         return model
 
     def get_image_encoder(self, is_train):
-        if self.cfg.image_encoder_type.startswith('timm_'):
-            net = self.cfg.image_encoder_type[5:]
-            import timm
-            model = timm.create_model(
-                net,
-                output_grid=True,
-                pretrained=False,
-            )
-            if not is_train:
-                model.eval()
-            from qd.torch_common import InputAsDict
-            model = InputAsDict(model)
-        elif self.cfg.image_encoder_type.startswith('vit'):
-            parts = list(self.cfg.image_encoder_type.split('_'))[1:]
-            depth, embed_dim, patch_size, num_heads = 12, 386, 16, 12
-            for p in parts:
-                if p.startswith('d'):
-                    depth = int(p[1:])
-                elif p.startswith('h'):
-                    embed_dim = int(p[1:])
-                elif p.startswith('p'):
-                    patch_size = int(p[1:])
-                elif p.startswith('a'):
-                    num_heads = int(p[1:])
-                else:
-                    raise NotImplementedError
-            if depth == 0:
-                # image encoder has done projection
-                assert self.cfg.ignore_project_image
-                assert not self.cfg.use_img_layernorm
-            model_kwargs = dict(patch_size=patch_size, embed_dim=embed_dim, depth=depth,
-                                num_heads=num_heads)
-            img_size = self.cfg.train_crop_size if is_train else self.cfg.test_crop_size
-            from timm.models.vision_transformer import VisionTransformer
-            model = VisionTransformer(img_size=img_size, num_classes=-1, output_grid=True, **model_kwargs)
-            if not is_train:
-                model.eval()
-            from qd.torch_common import InputAsDict
-            model = InputAsDict(model)
-        else:
-            raise NotImplementedError(self.cfg.image_encoder_type)
-        return model
+        return get_caption_image_encoder(self, is_train)
 
     def predict_output_to_tsv_row(self, data, output):
         all_caps = output[0]  # batch_size * num_keep_best * max_len
@@ -485,6 +545,7 @@ class CaptionUniPipeline(UniPipeline):
                 replace_by_mask_prob=self.cfg.replace_by_mask_prob,
                 replace_by_rand_prob=self.cfg.replace_by_rand_prob,
                 output_isvalid=self.cfg.output_isvalid,
+                mask_token_by_word_in_train=self.cfg.mask_token_by_word_in_train
             )
             self._train_caption_tensorizer = caption_tensorizer
         return self._train_caption_tensorizer
@@ -506,3 +567,14 @@ class CaptionUniPipeline(UniPipeline):
             self._test_caption_tensorizer = caption_tensorizer
         return self._test_caption_tensorizer
 
+    def append_predict_param(self, cc):
+        super().append_predict_param(cc)
+
+        if self.cfg.max_img_seq_length not in [0, 50]:
+            # if it is 0, normally the strucutre is quite different, and there
+            # is no need to specify it here
+            cc.append('image_region{}'.format(self.cfg.max_img_seq_length))
+
+def get_caption_image_encoder(self, is_train):
+    from qd.pipelines.uni_pipeline import get_image_encoder_model
+    return get_image_encoder_model(self, is_train)
