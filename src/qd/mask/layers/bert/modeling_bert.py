@@ -463,6 +463,64 @@ class BertLayer(nn.Module):
         outputs = (layer_output,) + attention_outputs[1:]  # add attentions if we output them
         return outputs
 
+class TIMMVitEncoder(nn.Module):
+    # avoid to use TimmVitEncoder
+    def __init__(self, config):
+        super().__init__()
+        logging.info(config)
+        import timm
+        logging.info('pretrained: {}'.format(config.pretrained))
+        extra_param = getattr(config, 'timm_param', {})
+        model = timm.create_model(
+            config.net, pretrained=config.pretrained,
+            **extra_param,
+        )
+        self.blocks = model.blocks
+
+    def forward(self, hidden_states, attention_mask, head_mask=None,
+                encoder_history_states=None):
+        assert all(m is None for m in head_mask), 'not supported'
+        assert encoder_history_states is None, 'not supported'
+        for blk in self.blocks:
+            hidden_states = blk(hidden_states, attention_mask)
+        return (hidden_states,)
+
+class TimmVitEncoder(nn.Module):
+    # a replacement of BertEncoder, use TIMMVitEncoder, which is simplier. This
+    # class is too flexible and is super easy to make mistake
+    def __init__(self, config):
+        super().__init__()
+        raise ValueError('not well tested')
+        depth = config.num_hidden_layers
+        num_heads = config.num_attention_heads
+        # default is 4 in VisionTransformer
+        mlp_ratio = config.mlp_ratio
+        # default is True in VisionTransformer
+        qkv_bias = config.qkv_bias
+        qk_scale = None
+        drop_path_rate = config.drop_path_rate
+        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
+        from functools import partial
+        # layer_norm_eps default is 1e-6 from VisionTransformer; LayerNorm's
+        # default is 1e-5.
+        norm_layer = partial(nn.LayerNorm, eps=config.layer_norm_eps)
+        embed_dim = config.hidden_size
+        from timm.models.vision_transformer import Block
+        attn_drop_rate = config.attention_probs_dropout_prob
+        drop_rate = config.hidden_dropout_prob
+        self.blocks = nn.ModuleList([
+            Block(
+                dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer)
+            for i in range(depth)])
+
+    def forward(self, hidden_states, attention_mask, head_mask=None,
+                encoder_history_states=None):
+        assert all(m is None for m in head_mask), 'not supported'
+        assert encoder_history_states is None, 'not supported'
+        for blk in self.blocks:
+            hidden_states = blk(hidden_states, attention_mask)
+        return (hidden_states,)
 
 class BertEncoder(nn.Module):
     def __init__(self, config):
@@ -509,7 +567,6 @@ class BertPooler(nn.Module):
         pooled_output = self.dense(first_token_tensor)
         pooled_output = self.activation(pooled_output)
         return pooled_output
-
 
 class BertPredictionHeadTransform(nn.Module):
     def __init__(self, config):
@@ -604,10 +661,6 @@ class BertPreTrainedModel(PreTrainedModel):
             module.weight.data.fill_(1.0)
         if isinstance(module, nn.Linear) and module.bias is not None:
             module.bias.data.zero_()
-
-
-
-
 
 BERT_START_DOCSTRING = r"""    The BERT model was proposed in
     `BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding`_
@@ -706,6 +759,12 @@ class BertModel(BertPreTrainedModel):
         self.encoder = BertEncoder(config)
         self.pooler = BertPooler(config)
 
+        # prefer return_dict as True
+        if hasattr(config, 'return_dict'):
+            self.return_dict = config.return_dict
+        else:
+            self.return_dict = False
+
         self.apply(self.init_weights)
 
     def _resize_token_embeddings(self, new_num_tokens):
@@ -733,7 +792,12 @@ class BertModel(BertPreTrainedModel):
         # So we can broadcast to [batch_size, num_heads, from_seq_length, to_seq_length]
         # this attention mask is more simple than the triangular masking of causal attention
         # used in OpenAI GPT, we just need to prepare the broadcast dimension here.
-        extended_attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
+        if attention_mask.dim() == 2:
+            extended_attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
+        elif attention_mask.dim() == 3:
+            extended_attention_mask = attention_mask.unsqueeze(1)
+        else:
+            raise NotImplementedError
 
         # Since attention_mask is 1.0 for positions we want to attend and 0.0 for
         # masked positions, this operation will create a tensor which is 0.0 for
@@ -805,16 +869,22 @@ class BertImgModel(BertPreTrainedModel):
     def __init__(self, config):
         super(BertImgModel, self).__init__(config)
 
-        self.embeddings = BertEmbeddings(config)
-        self.encoder = BertEncoder(config)
-        self.pooler = BertPooler(config)
-
         model_type = getattr(config, 'model_type', 'bert')
         if model_type == 'mobilebert':
             from .modeling_mobilebert import MobileBertEmbeddings, MobileBertEncoder, MobileBertPooler
             self.embeddings = MobileBertEmbeddings(config)
             self.encoder = MobileBertEncoder(config)
             self.pooler = MobileBertPooler(config)
+        elif model_type == 'timm_vit':
+            self.embeddings = BertEmbeddings(config)
+            self.encoder = TimmVitEncoder(config)
+            # let's simply re-use bert-pooler
+            self.pooler = BertPooler(config)
+        elif model_type == 'TIMM_vit':
+            self.embeddings = BertEmbeddings(config)
+            self.encoder = TIMMVitEncoder(config)
+            # let's simply re-use bert-pooler
+            self.pooler = BertPooler(config)
         else:
             assert model_type == 'bert'
             self.embeddings = BertEmbeddings(config)
@@ -829,21 +899,26 @@ class BertImgModel(BertPreTrainedModel):
         except:
             self.use_img_layernorm = None
 
-        if config.img_feature_type == 'dis_code':
-            self.code_embeddings = nn.Embedding(config.code_voc, config.code_dim, padding_idx=0)
-            self.img_embedding = nn.Linear(config.code_dim, self.config.hidden_size, bias=True)
-        elif config.img_feature_type == 'dis_code_t': # transpose
-            self.code_embeddings = nn.Embedding(config.code_voc, config.code_dim, padding_idx=0)
-            self.img_embedding = nn.Linear(config.code_size, self.config.hidden_size, bias=True)
-        elif config.img_feature_type == 'dis_code_scale': # scaled
-            self.input_embeddings = nn.Linear(config.code_dim, config.code_size, bias=True)
-            self.code_embeddings = nn.Embedding(config.code_voc, config.code_dim, padding_idx=0)
-            self.img_embedding = nn.Linear(config.code_dim, self.config.hidden_size, bias=True)
+        ignore_project_image = hasattr(config, 'ignore_project_image') and config.ignore_project_image
+        if not ignore_project_image:
+            if config.img_feature_type == 'dis_code':
+                self.code_embeddings = nn.Embedding(config.code_voc, config.code_dim, padding_idx=0)
+                self.img_embedding = nn.Linear(config.code_dim, self.config.hidden_size, bias=True)
+            elif config.img_feature_type == 'dis_code_t': # transpose
+                self.code_embeddings = nn.Embedding(config.code_voc, config.code_dim, padding_idx=0)
+                self.img_embedding = nn.Linear(config.code_size, self.config.hidden_size, bias=True)
+            elif config.img_feature_type == 'dis_code_scale': # scaled
+                self.input_embeddings = nn.Linear(config.code_dim, config.code_size, bias=True)
+                self.code_embeddings = nn.Embedding(config.code_voc, config.code_dim, padding_idx=0)
+                self.img_embedding = nn.Linear(config.code_dim, self.config.hidden_size, bias=True)
+            else:
+                self.img_embedding = nn.Linear(self.img_dim, self.config.hidden_size, bias=True)
+                self.dropout = nn.Dropout(config.hidden_dropout_prob)
+                if self.use_img_layernorm:
+                    self.LayerNorm = LayerNormClass(config.hidden_size, eps=config.img_layer_norm_eps)
         else:
-            self.img_embedding = nn.Linear(self.img_dim, self.config.hidden_size, bias=True)
-            self.dropout = nn.Dropout(config.hidden_dropout_prob)
-            if self.use_img_layernorm:
-                self.LayerNorm = LayerNormClass(config.hidden_size, eps=config.img_layer_norm_eps)
+            self.img_embedding = nn.Identity()
+            self.dropout = nn.Identity()
 
         self.apply(self.init_weights)
         # re-initialize img_embedding weight
@@ -933,6 +1008,9 @@ class BertImgModel(BertPreTrainedModel):
                 #scale_output =
                 # add scale ouput
                 img_embedding_output = self.img_embedding(code_emb)
+            elif self.img_feature_type == 'e2e':
+                # there is no need to do any processing
+                pass
             else:
                 #if torch._C._get_tracing_state():
                     ## Ugly workaround to make this work for ONNX.
@@ -1276,6 +1354,95 @@ class BertImgForPreTraining(BertPreTrainedModel):
             'next_sentence_loss': next_sentence_loss,
         }
 
+class E2EBertImgForPreTraining(BertPreTrainedModel):
+    def __init__(self, config):
+        super().__init__(config)
+        from qd.qd_common import execute_func
+        self.image_encoder = execute_func(config.image_encoder)
+        self.text_encoder = execute_func(config.text_encoder)
+        #self.text_encoder = BertModel(config.text_encoder)
+        #self.bert = BertModel(config) # original BERT
+        self.bert = BertImgModel(config)
+        self.cls = BertPreTrainingHeads(config)
+        self.num_seq_relations = config.num_contrast_classes if hasattr(config, "num_contrast_classes") else 2
+
+        self.apply(self.init_weights)
+        self.tie_weights()
+        #self.loss_fct = CrossEntropyLoss(ignore_index=-1)
+        def create_loss_module(t):
+            if t == 'BCE':
+                from qd.layers.loss import BCELogitsNormByEachPositive
+                loss_fct = BCELogitsNormByEachPositive()
+            elif t == 'HotCE':
+                from qd.layers.loss import MultiHotCrossEntropyWithNegLoss
+                loss_fct = MultiHotCrossEntropyWithNegLoss()
+            else:
+                from qd.layers.loss import MultiDimCrossEntropyLoss
+                assert t in ['classification', None]
+                loss_fct = MultiDimCrossEntropyLoss(ignore_index=-1)
+            return loss_fct
+        if hasattr(config, 'loss_type') and config.loss_type is not None:
+            ml_loss_type, matching_loss = config.loss_type.split('_')
+            self.ml_loss = create_loss_module(ml_loss_type)
+            self.matching_loss = create_loss_module(matching_loss)
+        else:
+            self.ml_loss = create_loss_module(None)
+            self.matching_loss = create_loss_module(None)
+
+        if hasattr(config, 'prior_prob'):
+            prior_prob = config.prior_prob
+            from qd.torch_common import set_sigmoid_prob_prior_bias
+            set_sigmoid_prob_prior_bias(self.cls.predictions.bias, prior_prob)
+
+    def tie_weights(self):
+        """ Make sure we are sharing the input and output embeddings.
+            Export to TorchScript can't handle parameter sharing so we are cloning them instead.
+        """
+        if getattr(self.config, 'pretrain_no_tie_weights', False):
+            logging.info('no tie weights for pretrain')
+        else:
+            self._tie_or_clone_weights(self.cls.predictions.decoder,
+                                       self.bert.embeddings.word_embeddings)
+        #self._tie_or_clone_weights(self.cls.predictions.decoder,
+                                   #self.bert.embeddings.word_embeddings)
+
+    def forward(self, input_ids, token_type_ids=None, attention_mask=None, masked_lm_labels=None,
+                next_sentence_label=None, position_ids=None, head_mask=None,
+                img_feats=None,
+                image=None,
+                ):
+        img_feats = self.image_encoder(image)
+        text_feats = self.text_encoder(input_ids,
+                                       position_ids=position_ids,
+                                       token_type_ids=token_type_ids)
+        outputs = self.bert(input_ids=text_feats,
+                            position_ids=position_ids,
+                            token_type_ids=token_type_ids,
+                            attention_mask=attention_mask,
+                            head_mask=head_mask,
+                            img_feats=img_feats)
+
+        sequence_output, pooled_output = outputs[:2]
+        prediction_scores, seq_relationship_score = self.cls(sequence_output, pooled_output)
+
+        outputs = (prediction_scores, seq_relationship_score,) + outputs[2:]  # add hidden states and attention if they are here
+
+        #if masked_lm_labels is not None and next_sentence_label is not None:
+            #masked_lm_loss = self.loss_fct(prediction_scores.view(-1, self.config.vocab_size), masked_lm_labels.view(-1))
+            #next_sentence_loss = self.loss_fct(seq_relationship_score.view(-1, self.num_seq_relations), next_sentence_label.view(-1))
+        masked_lm_loss = self.ml_loss(prediction_scores, masked_lm_labels)
+        next_sentence_loss = self.matching_loss(seq_relationship_score, next_sentence_label)
+
+        #total_loss = masked_lm_loss + next_sentence_loss
+        #outputs = (total_loss,) + outputs + (masked_lm_loss,)
+
+        #return outputs  # (loss), prediction_scores, seq_relationship_score, (hidden_states), (attentions)
+        #return outputs[0]
+        return {
+            'masked_lm_loss': masked_lm_loss,
+            'next_sentence_loss': next_sentence_loss,
+        }
+
 @add_start_docstrings("""Bert Model with a `language modeling` head on top. """,
     BERT_START_DOCSTRING, BERT_INPUTS_DOCSTRING)
 class BertForMaskedLM(BertPreTrainedModel):
@@ -1419,10 +1586,10 @@ class ImageBertForSequenceClassification(BertPreTrainedModel):
         self.num_labels = config.num_labels
         self.loss_type = config.loss_type
         self.config = config
-        if config.img_feature_dim > 0:
-            self.bert = BertImgModel(config)
-        else:
-            self.bert = BertModel(config)
+        #if config.img_feature_dim > 0:
+        self.bert = BertImgModel(config)
+        #else:
+            #self.bert = BertModel(config)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
         if hasattr(config, 'classifier'):
@@ -1621,6 +1788,10 @@ class BertCaptioningLoss(nn.Module):
 
     def forward(self, logits, target):
         self.iter += 1
+        if logits.numel() == 0:
+            # this happens when we ignore masked tokens for unmatched
+            # image-text pairs, in which we may ignore all tokens
+            return torch.tensor(0., requires_grad=True, device=logits.device)
         eps = self.label_smoothing
         n_class = logits.size(1)
         one_hot = torch.zeros_like(logits).scatter(1, target.view(-1, 1), 1)
@@ -1632,20 +1803,21 @@ class BertCaptioningLoss(nn.Module):
             loss, _ = torch.topk(loss,
                     k=int(loss.shape[0] * (1-self.drop_worst_ratio)),
                     largest=False)
-
         loss = loss.mean()
 
         return loss
 
 
+from qd.layers.image_text_align import create_align_loss
+
 @add_start_docstrings("""Bert Model transformer for image captioning""",
     BERT_START_DOCSTRING)
-class BertForImageCaptioning(BertPreTrainedModel):
+class E2EBertForImageCaptioning(BertPreTrainedModel):
     r"""
     Bert for Image Captioning.
     """
-    def __init__(self, config):
-        super(BertForImageCaptioning, self).__init__(config)
+    def __init__(self, config, image_encoder=None, text_encoder=None):
+        super().__init__(config)
         self.config = config
         self.bert = BertImgModel(config)
         self.cls = BertCaptioningHeads(config)

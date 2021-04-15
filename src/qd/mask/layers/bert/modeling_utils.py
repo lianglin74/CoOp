@@ -486,7 +486,9 @@ class PreTrainedModel(nn.Module):
         model = cls(config, *model_args, **model_kwargs)
 
         if state_dict is None and not from_tf:
-            state_dict = torch.load(resolved_archive_file, map_location='cpu')
+            from qd.torch_common import torch_load
+            state_dict = torch_load(resolved_archive_file)
+            #state_dict = torch.load(resolved_archive_file, map_location='cpu')
 
         if from_tf:
             # Directly load from a TensorFlow checkpoint
@@ -830,7 +832,6 @@ class PreTrainedModel(nn.Module):
             #from qd.torch_common import count_flops
             #y = count_flops(self, **model_inputs)
             #logging.info(y)
-            #import ipdb;ipdb.set_trace(context=15)
             outputs = self(**model_inputs)
 
             if cur_len == 1:
