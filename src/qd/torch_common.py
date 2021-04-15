@@ -1,3 +1,5 @@
+import json
+from pprint import pformat
 import torch
 from torch import nn
 from qd.qd_common import get_mpi_rank, get_mpi_size
@@ -12,6 +14,17 @@ from qd.qd_common import get_mpi_local_rank, get_mpi_local_size
 from qd.qd_common import ensure_directory
 import math
 
+
+def hash_tensor_prime_simple(x):
+    assert x.dim() == 2
+    assert x.dtype == torch.long
+    prime = 19
+    idx = torch.arange(x.shape[1], device=x.device)
+    coef = prime ** idx
+    with torch.no_grad():
+        x = x * coef[None, ]
+        x = x.sum(dim=1)
+    return x
 
 def set_sigmoid_prob_prior_bias(bias, prior_prob):
     assert prior_prob > 0 and prior_prob != 1
@@ -33,17 +46,6 @@ def convert_single_label_to_one_hot_label(single_labels, label_size):
         pos_hot.scatter_(1, pos_label.long()[:, None], 1)
         hot[bool_pos] = pos_hot
     return hot
-
-def to(d, device):
-    if isinstance(d, tuple) or isinstance(d, list):
-        return [to(x, device) for x in d]
-    elif isinstance(d, dict):
-        return dict((k, to(v, device)) for k, v in d.items())
-    elif isinstance(d, torch.Tensor) or hasattr(d, 'to'):
-        #return d.to(device, non_blocking=True)
-        return d.to(device)
-    else:
-        return d
 
 def init_random_seed(random_seed):
     import random
@@ -167,23 +169,38 @@ def replace_module(module, condition_func, creator_func):
     del module
     return module_output
 
-def torch_save(t, f):
+def torch_save(t, f, **kwargs):
     ensure_directory(op.dirname(f))
     tmp_f = f + '.tmp'
-    torch.save(t, tmp_f)
+    torch.save(t, tmp_f, **kwargs)
     os.rename(tmp_f, f)
 
 def torch_load(filename):
-    return torch.load(filename, map_location=lambda storage, loc: storage)
+    from qd.qd_common import get_user_name
+    user_name = get_user_name()
+    from qd.qd_common import acquireLock, releaseLock
+    from qd.qd_common import hash_sha1
+    lock_fd = acquireLock(op.join('/tmp',
+        '{}_lock_{}'.format(user_name, hash_sha1(filename))))
 
-def recursive_to_device(x, device):
-    if isinstance(x, torch.Tensor):
-        x = x.to(device)
-    elif isinstance(x, dict):
-        x = {k: recursive_to_device(v, device) for k, v in x.items()}
-    elif isinstance(x, list):
-        x = [recursive_to_device(y, device) for y in x]
-    return x
+    result = torch.load(filename, map_location=lambda storage, loc: storage)
+    releaseLock(lock_fd)
+    return result
+
+def recursive_to_device(d, device, **kwargs):
+    if isinstance(d, tuple) or isinstance(d, list):
+        return [recursive_to_device(x, device, **kwargs) for x in d]
+    elif isinstance(d, dict):
+        return dict((k, recursive_to_device(v, device)) for k, v in d.items())
+    elif isinstance(d, torch.Tensor) or hasattr(d, 'to'):
+        #return d.to(device, non_blocking=True)
+        return d.to(device, **kwargs)
+    else:
+        return d
+
+# use recrusive_to_device, this naming is too short
+def to(d, device):
+    return recursive_to_device(d, device)
 
 def distributed_sinkhorn(sim, eps, niters):
     # sim: B * K. different gpus has different rows.
@@ -323,12 +340,14 @@ def describe_tensor(t, num_dec=2):
     t = t.float()
     if t.numel() == 1:
         return 'value={:.2f}'.format(float(t))
-    format_str = 'min/max/mean={{:.{0}f}}/{{:.{0}f}}/{{:.{0}f}}+-{{:.{0}f}}'.format(
-        num_dec)
+    format_str = \
+        'min/max/mean={{:.{0}e}}/{{:.{0}e}}/{{:.{0}e}}+-{{:.{0}e}}'.format(
+            num_dec)
     return format_str.format(t.min(),
                              t.max(),
                              t.mean(),
-                             t.std())
+                             t.std(),
+                             )
 
 @torch.no_grad()
 def concat_all_gather(tensor):
@@ -364,7 +383,12 @@ def get_master_node_ip():
     elif 'MASTER_IP' in os.environ:
         return os.environ['MASTER_IP']
     else:
-        return get_philly_mpi_hosts()[0]
+        try:
+            return get_philly_mpi_hosts()[0]
+        except:
+            # in local machine, sometimes, we do not have that file, and here
+            # we resort to localhost
+            return 'localhost'
 
 def ensure_init_process_group(device_id=None, port=12345):
     if not dist.is_initialized():
@@ -381,6 +405,7 @@ def ensure_init_process_group(device_id=None, port=12345):
         if device_id is None:
             device_id = get_mpi_local_rank()
         torch.cuda.set_device(device_id)
+        logging.info(init_param)
         dist.init_process_group(**init_param)
 
 def calc_num_node_in_grad_fn(grad_fn):
@@ -412,7 +437,8 @@ def synchronize():
     Helper function to synchronize (barrier) among all processes when
     using distributed training
     """
-    use_hvd = is_hvd_initialized()
+    #use_hvd = is_hvd_initialized()
+    use_hvd = False
     if not use_hvd:
         if not dist.is_available():
             return
@@ -440,9 +466,30 @@ def all_gather_grad_curr(x):
         all_x[get_mpi_rank()] = x
         return torch.cat(all_x, dim=0)
 
+def all_gather_curr_first_grad(x):
+    if get_mpi_size() == 1:
+        return x
+    else:
+        with torch.no_grad():
+            all_x = [torch.zeros_like(x) for _ in range(get_mpi_size())]
+            # note, all_rep should be treated as constent, which means no grad
+            # will be propagated back through all_rep
+            torch.distributed.all_gather(all_x, x)
+        rank = get_mpi_rank()
+        if rank == 0:
+            all_x[0] = x
+        else:
+            all_x[rank] = all_x[0]
+            all_x[0] = x
+        return torch.cat(all_x, dim=0)
+
 def sum_reduce_(x):
     if get_mpi_size() > 1:
         torch.distributed.all_reduce(x)
+
+def sum_single_reduce_(x, dst):
+    if get_mpi_size() > 1:
+        torch.distributed.reduce(x, dst)
 
 def max_reduce_(x):
     if get_mpi_size() > 1:
@@ -651,4 +698,403 @@ def set_seed(seed, n_gpu):
     torch.manual_seed(seed)
     if n_gpu > 0:
         torch.cuda.manual_seed_all(seed)
+
+class InputAsDict(nn.Module):
+    def __init__(self, model):
+        super().__init__()
+        self.module = model
+    def forward(self, data_dict):
+        if isinstance(data_dict, torch.Tensor):
+            im = data_dict
+        else:
+            im = data_dict['image']
+        return self.module(im)
+
+class BoxList(object):
+    # compared with the boxlist in maskrcnn, we remove the image size and
+    # To_REMOVE
+    def __init__(self, bbox, mode="xyxy"):
+        device = bbox.device if isinstance(bbox, torch.Tensor) else torch.device("cpu")
+        bbox = torch.as_tensor(bbox, dtype=torch.float32, device=device)
+        if bbox.ndimension() != 2:
+            raise ValueError(
+                "bbox should have 2 dimensions, got {}".format(bbox.ndimension())
+            )
+        if bbox.size(-1) != 4:
+            raise ValueError(
+                "last dimension of bbox should have a "
+                "size of 4, got {}".format(bbox.size(-1))
+            )
+        if mode not in ("xyxy", "xywh", 'cxywh'):
+            raise ValueError("mode should be 'xyxy' or 'xywh'")
+
+        self.bbox = bbox
+        self.mode = mode
+        self.extra_fields = {}
+
+    def to_list_of_dict(self):
+        assert 'rect' not in self.extra_fields
+        result = [{'rect': b} for b in self.bbox.tolist()]
+        for k, v in self.extra_fields.items():
+            if hasattr(v, 'tolist'):
+                v = v.tolist()
+            for r, sub_v in zip(result, v):
+                r[k] = sub_v
+        return result
+
+    @staticmethod
+    def create_empty_list(mode='xyxy'):
+        bbox = torch.zeros((0, 4))
+        return BoxList(bbox, mode)
+
+    def add_field(self, field, field_data):
+        self.extra_fields[field] = field_data
+
+    def get_field(self, field):
+        return self.extra_fields[field]
+
+    def has_field(self, field):
+        return field in self.extra_fields
+
+    def fields(self):
+        return list(self.extra_fields.keys())
+
+    def _copy_extra_fields(self, bbox):
+        for k, v in bbox.extra_fields.items():
+            self.extra_fields[k] = v
+
+    def convert(self, mode):
+        if mode not in ("xyxy", "xywh", 'cxywh'):
+            raise ValueError("mode should be 'xyxy' or 'xywh'")
+        if mode == self.mode:
+            return self
+        # we only have two modes, so don't need to check
+        # self.mode
+        xmin, ymin, xmax, ymax = self._split_into_xyxy()
+        if mode == "xyxy":
+            bbox = torch.cat((xmin, ymin, xmax, ymax), dim=-1)
+            bbox = BoxList(bbox, mode=mode)
+        elif mode == 'xywh':
+            bbox = torch.cat(
+                (xmin, ymin, xmax - xmin, ymax - ymin), dim=-1
+            )
+            bbox = BoxList(bbox, mode=mode)
+        elif mode == 'cxywh':
+            bbox = torch.cat(
+                ((xmin + xmax) / 2., (ymin + ymax) / 2, xmax - xmin, ymax - ymin), dim=-1
+            )
+            bbox = BoxList(bbox, mode=mode)
+        bbox._copy_extra_fields(self)
+        return bbox
+
+    def _split_into_xyxy(self):
+        if self.mode == "xyxy":
+            xmin, ymin, xmax, ymax = self.bbox.split(1, dim=-1)
+            return xmin, ymin, xmax, ymax
+        elif self.mode == "xywh":
+            xmin, ymin, w, h = self.bbox.split(1, dim=-1)
+            return (
+                xmin,
+                ymin,
+                xmin + w,
+                ymin + h,
+            )
+        elif self.mode == 'cxywh':
+            cx, cy, w, h = self.bbox.split(1, dim=-1)
+            return (
+                cx - w / 2.,
+                cy - h / 2.,
+                cx + w / 2.,
+                cy + h / 2.,
+            )
+        else:
+            raise RuntimeError("Should not be here")
+
+    def resize(self, ratios, *args, **kwargs):
+        """
+        Returns a resized copy of this bounding box
+
+        :param size: The requested size in pixels, as a 2-tuple:
+            (width, height).
+        """
+
+        if ratios[0] == ratios[1]:
+            ratio = ratios[0]
+            scaled_box = self.bbox * ratio
+            bbox = BoxList(scaled_box, mode=self.mode)
+            # bbox._copy_extra_fields(self)
+            for k, v in self.extra_fields.items():
+                if not isinstance(v, torch.Tensor):
+                    v = v.resize(ratio, *args, **kwargs)
+                bbox.add_field(k, v)
+            return bbox
+
+        ratio_width, ratio_height = ratios
+        xmin, ymin, xmax, ymax = self._split_into_xyxy()
+        scaled_xmin = xmin * ratio_width
+        scaled_xmax = xmax * ratio_width
+        scaled_ymin = ymin * ratio_height
+        scaled_ymax = ymax * ratio_height
+        scaled_box = torch.cat(
+            (scaled_xmin, scaled_ymin, scaled_xmax, scaled_ymax), dim=-1
+        )
+        bbox = BoxList(scaled_box, mode="xyxy")
+        # bbox._copy_extra_fields(self)
+        for k, v in self.extra_fields.items():
+            if not isinstance(v, torch.Tensor):
+                v = v.resize(ratios, *args, **kwargs)
+            bbox.add_field(k, v)
+
+        return bbox.convert(self.mode)
+
+    def transpose(self, size, method):
+        """
+        Transpose bounding box (flip or rotate in 90 degree steps)
+        :param method: One of :py:attr:`PIL.Image.FLIP_LEFT_RIGHT`,
+          :py:attr:`PIL.Image.FLIP_TOP_BOTTOM`, :py:attr:`PIL.Image.ROTATE_90`,
+          :py:attr:`PIL.Image.ROTATE_180`, :py:attr:`PIL.Image.ROTATE_270`,
+          :py:attr:`PIL.Image.TRANSPOSE` or :py:attr:`PIL.Image.TRANSVERSE`.
+        """
+
+        image_width, image_height = size
+        xmin, ymin, xmax, ymax = self._split_into_xyxy()
+        import PIL
+        if method == PIL.Image.FLIP_LEFT_RIGHT:
+            transposed_xmin = image_width - xmax
+            transposed_xmax = image_width - xmin
+            transposed_ymin = ymin
+            transposed_ymax = ymax
+        elif method == PIL.Image.FLIP_TOP_BOTTOM:
+            transposed_xmin = xmin
+            transposed_xmax = xmax
+            transposed_ymin = image_height - ymax
+            transposed_ymax = image_height - ymin
+
+        transposed_boxes = torch.cat(
+            (transposed_xmin, transposed_ymin, transposed_xmax, transposed_ymax), dim=-1
+        )
+        bbox = BoxList(transposed_boxes, mode="xyxy")
+        # bbox._copy_extra_fields(self)
+        for k, v in self.extra_fields.items():
+            if not isinstance(v, torch.Tensor):
+                v = v.transpose(method)
+            bbox.add_field(k, v)
+        return bbox.convert(self.mode)
+
+    def crop(self, box):
+        """
+        Cropss a rectangular region from this bounding box. The box is a
+        4-tuple defining the left, upper, right, and lower pixel
+        coordinate.
+        """
+        xmin, ymin, xmax, ymax = self._split_into_xyxy()
+        w, h = box[2] - box[0], box[3] - box[1]
+        cropped_xmin = (xmin - box[0]).clamp(min=0, max=w)
+        cropped_ymin = (ymin - box[1]).clamp(min=0, max=h)
+        cropped_xmax = (xmax - box[0]).clamp(min=0, max=w)
+        cropped_ymax = (ymax - box[1]).clamp(min=0, max=h)
+
+        cropped_box = torch.cat(
+            (cropped_xmin, cropped_ymin, cropped_xmax, cropped_ymax), dim=-1
+        )
+        bbox = BoxList(cropped_box, (w, h), mode="xyxy")
+        # bbox._copy_extra_fields(self)
+        for k, v in self.extra_fields.items():
+            if not isinstance(v, torch.Tensor):
+                v = v.crop(box)
+            bbox.add_field(k, v)
+        return bbox.convert(self.mode)
+
+    def to(self, device, **kwargs):
+        bbox = BoxList(self.bbox.to(device, **kwargs), self.mode)
+        for k, v in self.extra_fields.items():
+            if hasattr(v, "to"):
+                v = v.to(device)
+            bbox.add_field(k, v)
+        return bbox
+
+    def __getitem__(self, item):
+        bbox = BoxList(self.bbox[item], self.mode)
+        for k, v in self.extra_fields.items():
+            bbox.add_field(k, v[item])
+        return bbox
+
+    def __len__(self):
+        return self.bbox.shape[0]
+
+    def clip_to_image(self, size, remove_empty=True):
+        xs = self.bbox.index_select(1, torch.tensor([0, 2], dtype=torch.int64, device=self.bbox.device))\
+                 .clamp(min=0, max=size[0])
+        ys = self.bbox.index_select(1, torch.tensor([1, 3], dtype=torch.int64, device=self.bbox.device))\
+                 .clamp(min=0, max=size[1])
+        self.bbox = torch.stack([xs, ys], dim=2).view(-1, 4)
+        if remove_empty:
+            box = self.bbox
+            keep = (box[:, 3] > box[:, 1]) & (box[:, 2] > box[:, 0])
+            return self[keep]
+        return self
+
+    def area(self):
+        box = self.bbox
+        if self.mode == "xyxy":
+            area = (box[:, 2] - box[:, 0]) * (box[:, 3] - box[:, 1])
+        elif self.mode == "xywh":
+            area = box[:, 2] * box[:, 3]
+        else:
+            raise RuntimeError("Should not be here")
+
+        return area
+
+    def height(self):
+        box = self.bbox
+        if self.mode == "xyxy":
+            height = box[:, 3] - box[:, 1]
+        elif self.mode == "xywh":
+            height = box[:, 3]
+        else:
+            raise RuntimeError("Unknown box mode")
+        return height
+
+    def width(self):
+        box = self.bbox
+        if self.mode == "xyxy":
+            width = box[:, 2] - box[:, 0]
+        elif self.mode == "xywh":
+            width = box[:, 2]
+        else:
+            raise RuntimeError("Unknown box mode")
+        return width
+
+    def copy_with_fields(self, fields, skip_missing=True):
+        bbox = BoxList(self.bbox, self.mode)
+        if not isinstance(fields, (list, tuple)):
+            fields = [fields]
+        for field in fields:
+            if self.has_field(field):
+                bbox.add_field(field, self.get_field(field))
+            elif not skip_missing:
+                raise KeyError("Field '{}' not found in {}".format(field, self))
+        return bbox
+
+    def __repr__(self):
+        s = self.__class__.__name__ + "("
+        s += "num_boxes={}, ".format(len(self))
+        s += "mode={})\n".format(self.mode)
+        s += 'extra_fields={}'.format(self.extra_fields)
+        return s
+
+def load_model_state_ignore_mismatch(model, init_dict):
+    real_init_dict = {}
+    name_to_param = dict(model.named_parameters())
+    name_to_param.update(dict(model.named_buffers()))
+
+    def same_shape(a, b):
+        return len(a.shape) == len(b.shape) and \
+                all(x == y for x, y in zip(a.shape, b.shape))
+
+    num_ignored = 0
+    unique_key_in_init_dict = []
+    keys_shape_mismatch = []
+    for k in init_dict:
+        if k in name_to_param:
+            if same_shape(init_dict[k], name_to_param[k]):
+                real_init_dict[k] = init_dict[k]
+            else:
+                logging.info('{} shape is not consistent, expected: {}; got '
+                             '{}'.format(k, name_to_param[k].shape, init_dict[k].shape))
+                keys_shape_mismatch.append(k)
+        else:
+            unique_key_in_init_dict.append(k)
+            num_ignored = num_ignored + 1
+
+    logging.info('unique keys in init dict = {}; total = {}'.format(
+        pformat(unique_key_in_init_dict), len(unique_key_in_init_dict),
+    ))
+    result = model.load_state_dict(real_init_dict, strict=False)
+    logging.info('unique key (not initialized) in current model = {}'.format(
+        pformat(result.missing_keys),
+    ))
+
+    #logging.info('loaded key = {}'.format(
+        #pformat(list(real_init_dict.keys()))))
+
+class L2NormModule(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.iter = 0
+
+    def forward(self, x):
+        verbose = (self.iter % 100) == 0
+        self.iter += 1
+        if verbose:
+            from qd.torch_common import describe_tensor
+            logging.info(describe_tensor(x))
+        return torch.nn.functional.normalize(x)
+
+def replace_fc_with_mlp_(model, num=1, mlp_bn=False,
+                         with_l2=True):
+    while not hasattr(model, 'fc'):
+        model = model.module
+    module_list = []
+    dim_mlp = model.fc.weight.shape[1]
+    for i in range(num):
+        module_list.append(nn.Linear(dim_mlp, dim_mlp))
+        if mlp_bn:
+            module_list.append(nn.BatchNorm1d(dim_mlp))
+        module_list.append(nn.ReLU())
+    module_list.append(model.fc)
+    if with_l2:
+        module_list.append(L2NormModule())
+    model.fc = nn.Sequential(*module_list)
+
+def evaluate_topk(iter_pred_tsv, iter_label_tsv, key_name='class'):
+    correct = 0
+    total = 0
+    for (key, str_rects), (key_pred, str_pred) in zip(iter_label_tsv, iter_pred_tsv):
+        total = total + 1
+        assert key == key_pred
+        curr_predict = json.loads(str_pred)
+        if len(curr_predict) == 0:
+            continue
+        curr_gt_rects = json.loads(str_rects)
+        if type(curr_gt_rects) is int:
+            # imagenet data
+            curr_gt_rects = [{key_name: str(curr_gt_rects)}]
+        curr_pred_best = curr_predict[max(range(len(curr_predict)), key=lambda
+                                          i: curr_predict[i]['conf'])][key_name]
+        if any(g[key_name] == str(curr_pred_best) for g in curr_gt_rects):
+            correct = correct + 1
+    return 1. * correct / total
+
+def remove_prefix(model, prefix):
+    out = {}
+    for k, v in model.items():
+        while k.startswith(prefix):
+            k = k[len(prefix): ]
+        out[k] = v
+    return out
+
+def adapt_position_encoding(model_file, before, patch_size, after, out_file):
+    model = torch_load(model_file)
+    if 'model' in model:
+        model = model['model']
+    keys = [k for k in model if k.endswith('image_encoder.module.pos_embed')]
+    assert len(keys) == 1
+    key = keys[0]
+    origin_pos_embed = model[key]
+    grid_before = before // patch_size
+    assert (before % patch_size) == 0
+    grid_after = after // patch_size
+    assert (after % patch_size) == 0
+    embed_dim = origin_pos_embed.shape[2]
+    assert origin_pos_embed.shape[1] == grid_before * grid_before + 1
+
+    pos_embed = origin_pos_embed[0, 1:, :].reshape((grid_before, grid_before, embed_dim))
+    new_size = (grid_after, grid_after)
+    pos_embed = torch.nn.functional.interpolate(pos_embed.permute((2, 0, 1)).unsqueeze(0), size=new_size, mode='bicubic')
+    pos_embed = pos_embed.squeeze(0).permute((1, 2, 0)).reshape((-1, embed_dim))
+    pos_embed = torch.cat((origin_pos_embed[0, 0:1, :], pos_embed), dim=0).unsqueeze(0)
+    assert pos_embed.shape == (1, grid_after * grid_after + 1, embed_dim)
+    model[key] = pos_embed
+    torch_save(model, out_file)
 
