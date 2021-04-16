@@ -832,9 +832,260 @@ class BertModel(BertPreTrainedModel):
         sequence_output = encoder_outputs[0]
         pooled_output = self.pooler(sequence_output)
 
-        outputs = (sequence_output, pooled_output,) + encoder_outputs[1:]  # add hidden_states and attentions if they are here
-        return outputs  # sequence_output, pooled_output, (hidden_states), (attentions)
+        if not self.return_dict:
+            outputs = (sequence_output, pooled_output,) + encoder_outputs[1:]  # add hidden_states and attentions if they are here
+            return outputs  # sequence_output, pooled_output, (hidden_states), (attentions)
+        else:
+            result = {
+                'sequence_output': sequence_output,
+                'pooled_output': pooled_output,
+            }
+            if len(encoder_outputs) >= 2:
+                result['hidden_states'] = encoder_outputs[1]
+            if len(encoder_outputs) == 3:
+                result['attentions'] = encoder_outputs[2]
+            assert len(encoder_outputs) <= 3
+            return result
 
+class BertPlainModel(BertPreTrainedModel):
+    # compared with the BertModel, only pooler module changed to a linear
+    # layer, which does not do real pooling
+    def __init__(self, config, output_dim, pooler_bias=True):
+        super().__init__(config)
+
+        self.embeddings = BertEmbeddings(config)
+        self.encoder = BertEncoder(config)
+        output_dim = output_dim or config.hidden_size
+        self.pooler = nn.Linear(
+            config.hidden_size,
+            output_dim,
+            bias=pooler_bias,
+        )
+
+        self.apply(self.init_weights)
+
+    def _resize_token_embeddings(self, new_num_tokens):
+        old_embeddings = self.embeddings.word_embeddings
+        new_embeddings = self._get_resized_embeddings(old_embeddings, new_num_tokens)
+        self.embeddings.word_embeddings = new_embeddings
+        return self.embeddings.word_embeddings
+
+    def _prune_heads(self, heads_to_prune):
+        """ Prunes heads of the model.
+            heads_to_prune: dict of {layer_num: list of heads to prune in this layer}
+            See base class PreTrainedModel
+        """
+        for layer, heads in heads_to_prune.items():
+            self.encoder.layer[layer].attention.prune_heads(heads)
+
+    def forward(self, input_ids, token_type_ids=None, attention_mask=None, position_ids=None, head_mask=None):
+        if attention_mask is None:
+            attention_mask = torch.ones_like(input_ids)
+        if token_type_ids is None:
+            token_type_ids = torch.zeros_like(input_ids)
+
+        # We create a 3D attention mask from a 2D tensor mask.
+        # Sizes are [batch_size, 1, 1, to_seq_length]
+        # So we can broadcast to [batch_size, num_heads, from_seq_length, to_seq_length]
+        # this attention mask is more simple than the triangular masking of causal attention
+        # used in OpenAI GPT, we just need to prepare the broadcast dimension here.
+        if attention_mask.dim() == 2:
+            extended_attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
+        elif attention_mask.dim() == 3:
+            extended_attention_mask = attention_mask.unsqueeze(1)
+        else:
+            raise NotImplementedError
+
+        # Since attention_mask is 1.0 for positions we want to attend and 0.0 for
+        # masked positions, this operation will create a tensor which is 0.0 for
+        # positions we want to attend and -10000.0 for masked positions.
+        # Since we are adding it to the raw scores before the softmax, this is
+        # effectively the same as removing these entirely.
+        extended_attention_mask = extended_attention_mask.to(dtype=next(self.parameters()).dtype) # fp16 compatibility
+        extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
+
+        # Prepare head mask if needed
+        # 1.0 in head_mask indicate we keep the head
+        # attention_probs has shape bsz x n_heads x N x N
+        # input head_mask has shape [num_heads] or [num_hidden_layers x num_heads]
+        # and head_mask is converted to shape [num_hidden_layers x batch x num_heads x seq_length x seq_length]
+        if head_mask is not None:
+            if head_mask.dim() == 1:
+                head_mask = head_mask.unsqueeze(0).unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
+                head_mask = head_mask.expand(self.config.num_hidden_layers, -1, -1, -1, -1)
+            elif head_mask.dim() == 2:
+                head_mask = head_mask.unsqueeze(1).unsqueeze(-1).unsqueeze(-1)  # We can specify head_mask for each layer
+            head_mask = head_mask.to(dtype=next(self.parameters()).dtype) # switch to fload if need + fp16 compatibility
+        else:
+            head_mask = [None] * self.config.num_hidden_layers
+
+        embedding_output = self.embeddings(input_ids, position_ids=position_ids, token_type_ids=token_type_ids)
+        # add img_embedding_output and sum with embedding_output
+        #logger.info('embedding_output: %s' % str(embedding_output.shape))
+
+        encoder_outputs = self.encoder(embedding_output,
+                                       extended_attention_mask,
+                                       head_mask=head_mask)
+        sequence_output = encoder_outputs[0]
+        pooled_output = self.pooler(sequence_output)
+
+        result = {
+            'sequence_output': sequence_output,
+            'pooled_output': pooled_output,
+        }
+        if len(encoder_outputs) >= 2:
+            result['hidden_states'] = encoder_outputs[1]
+        if len(encoder_outputs) == 3:
+            result['attentions'] = encoder_outputs[2]
+        assert len(encoder_outputs) <= 3
+        return result
+
+class BertImgEncoder(BertPreTrainedModel):
+    r"""
+    Outputs: `Tuple` comprising various elements depending on the configuration (config) and inputs:
+        **last_hidden_state**: ``torch.FloatTensor`` of shape ``(batch_size, sequence_length, hidden_size)``
+            Sequence of hidden-states at the output of the last layer of the model.
+        **pooler_output**: ``torch.FloatTensor`` of shape ``(batch_size, hidden_size)``
+            Last layer hidden-state of the first token of the sequence (classification token)
+            further processed by a Linear layer and a Tanh activation function. The Linear
+            layer weights are trained from the next sentence prediction (classification)
+            objective during Bert pretraining. This output is usually *not* a good summary
+            of the semantic content of the input, you're often better with averaging or pooling
+            the sequence of hidden-states for the whole input sequence.
+        **hidden_states**: (`optional`, returned when ``config.output_hidden_states=True``)
+            list of ``torch.FloatTensor`` (one for the output of each layer + the output of the embeddings)
+            of shape ``(batch_size, sequence_length, hidden_size)``:
+            Hidden-states of the model at the output of each layer plus the initial embedding outputs.
+        **attentions**: (`optional`, returned when ``config.output_attentions=True``)
+            list of ``torch.FloatTensor`` (one for each layer) of shape ``(batch_size, num_heads, sequence_length, sequence_length)``:
+            Attentions weights after the attention softmax, used to compute the weighted average in the self-attention heads.
+
+    Examples::
+
+        >>> config = BertConfig.from_pretrained('bert-base-uncased')
+        >>> tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+        >>> model = BertModel(config)
+        >>> input_ids = torch.tensor(tokenizer.encode("Hello, my dog is cute")).unsqueeze(0)  # Batch size 1
+        >>> outputs = model(input_ids)
+        >>> last_hidden_states = outputs[0]  # The last hidden-state is the first element of the output tuple
+
+    """
+    def __init__(self, config):
+        super().__init__(config)
+
+        model_type = getattr(config, 'model_type', 'bert')
+        if model_type == 'mobilebert':
+            from .modeling_mobilebert import MobileBertEmbeddings, MobileBertEncoder, MobileBertPooler
+            self.encoder = MobileBertEncoder(config)
+            self.pooler = MobileBertPooler(config)
+            self.apply(self.init_weights)
+        elif model_type == 'timm_vit':
+            self.encoder = TimmVitEncoder(config)
+            # let's simply re-use bert-pooler
+            self.pooler = BertPooler(config)
+        elif model_type == 'TIMM_vit':
+            self.encoder = TIMMVitEncoder(config)
+            # let's simply re-use bert-pooler
+            self.pooler = BertPooler(config)
+        else:
+            assert model_type == 'bert'
+            self.encoder = BertEncoder(config)
+            self.pooler = BertPooler(config)
+            # do not initialize the weights for Timm as it may load the
+            # pre-trained model
+            self.apply(self.init_weights)
+        # re-initialize img_embedding weight
+        # self.img_embedding.weight.data.normal_(mean=0.0, std=config.img_initializer_range)
+
+    def _resize_token_embeddings(self, new_num_tokens):
+        old_embeddings = self.embeddings.word_embeddings
+        new_embeddings = self._get_resized_embeddings(old_embeddings, new_num_tokens)
+        self.embeddings.word_embeddings = new_embeddings
+        return self.embeddings.word_embeddings
+
+    def _prune_heads(self, heads_to_prune):
+        """ Prunes heads of the model.
+            heads_to_prune: dict of {layer_num: list of heads to prune in this layer}
+            See base class PreTrainedModel
+        """
+        for layer, heads in heads_to_prune.items():
+            self.encoder.layer[layer].attention.prune_heads(heads)
+
+    def forward(self, embedding_output, img_feats,
+                attention_mask=None,
+                head_mask=None,
+                encoder_history_states=None):
+        if attention_mask is None:
+            attention_mask = torch.ones((embedding_output.shape[0], embedding_output.shape[1] + img_feats.shape[1]),
+                                        device=embedding_output.device)
+            #if img_feats is not None: attention_mask = torch.ones_like((input_ids.shape[0], input_ids.shape[1]+img_feats.shape[1]))
+            #else: attention_mask = torch.ones_like(input_ids)
+
+        # We create a 3D attention mask from a 2D tensor mask.
+        # Sizes are [batch_size, 1, 1, to_seq_length]
+        # So we can broadcast to [batch_size, num_heads, from_seq_length, to_seq_length]
+        # this attention mask is more simple than the triangular masking of causal attention
+        # used in OpenAI GPT, we just need to prepare the broadcast dimension here.
+        if attention_mask.dim() == 2:
+            extended_attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
+        elif attention_mask.dim() == 3:
+            extended_attention_mask = attention_mask.unsqueeze(1)
+        else:
+            raise NotImplementedError
+
+        # Since attention_mask is 1.0 for positions we want to attend and 0.0 for
+        # masked positions, this operation will create a tensor which is 0.0 for
+        # positions we want to attend and -10000.0 for masked positions.
+        # Since we are adding it to the raw scores before the softmax, this is
+        # effectively the same as removing these entirely.
+        extended_attention_mask = extended_attention_mask.to(dtype=next(self.parameters()).dtype) # fp16 compatibility
+        extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
+
+        # Prepare head mask if needed
+        # 1.0 in head_mask indicate we keep the head
+        # attention_probs has shape bsz x n_heads x N x N
+        # input head_mask has shape [num_heads] or [num_hidden_layers x num_heads]
+        # and head_mask is converted to shape [num_hidden_layers x batch x num_heads x seq_length x seq_length]
+        if head_mask is not None:
+            if head_mask.dim() == 1:
+                head_mask = head_mask.unsqueeze(0).unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
+                head_mask = head_mask.expand(self.config.num_hidden_layers, -1, -1, -1, -1)
+            elif head_mask.dim() == 2:
+                head_mask = head_mask.unsqueeze(1).unsqueeze(-1).unsqueeze(-1)  # We can specify head_mask for each layer
+            head_mask = head_mask.to(dtype=next(self.parameters()).dtype) # switch to fload if need + fp16 compatibility
+        else:
+            head_mask = [None] * self.config.num_hidden_layers
+
+        # add img_embedding_output and sum with embedding_output
+        #logger.info('embedding_output: %s' % str(embedding_output.shape))
+        if encoder_history_states is not None:
+            if encoder_history_states[0].shape[1] != 0:
+                assert img_feats is None or img_feats.shape[1]==0, "Cannot take image features while using encoder history states"
+
+        if img_feats is not None:
+            img_embedding_output = img_feats
+            # concatenate two embeddings
+            embedding_output = torch.cat((embedding_output, img_embedding_output), 1)
+
+        encoder_outputs = self.encoder(embedding_output,
+                extended_attention_mask, head_mask=head_mask,
+                encoder_history_states=encoder_history_states)
+        sequence_output = encoder_outputs[0]
+        pooled_output = self.pooler(sequence_output)
+
+        result = {
+            'sequence_output': sequence_output,
+            'pooled_output': pooled_output,
+        }
+        if len(encoder_outputs) >= 2:
+            result['hidden_states'] = encoder_outputs[1]
+        if len(encoder_outputs) == 3:
+            result['attentions'] = encoder_outputs[2]
+        assert len(encoder_outputs) <= 3
+        return result
+
+def get_extended_attention_mask(attention_mask):
+    pass
 
 class BertImgModel(BertPreTrainedModel):
     r"""
@@ -1819,10 +2070,633 @@ class E2EBertForImageCaptioning(BertPreTrainedModel):
     def __init__(self, config, image_encoder=None, text_encoder=None):
         super().__init__(config)
         self.config = config
-        self.bert = BertImgModel(config)
+
+        from qd.qd_common import execute_func
+        if image_encoder is not None:
+            self.image_encoder = image_encoder
+        else:
+            self.image_encoder = execute_func(config.image_encoder)
+        if text_encoder is not None:
+            self.text_encoder = text_encoder
+        else:
+            self.text_encoder = execute_func(config.text_encoder)
+
+        #self.bert = BertImgModel(config)
+        self.bert = BertImgEncoder(config)
         self.cls = BertCaptioningHeads(config)
         self.loss = BertCaptioningLoss(config)
 
+        if hasattr(config, 'align_loss') and config.align_loss:
+            self.align_loss = create_align_loss(config.align_loss)
+            self.align_loss_weight = 1.
+            if hasattr(config, 'align_loss_weight'):
+                self.align_loss_weight = config.align_loss_weight
+        else:
+            self.align_loss = None
+
+        # we should not init_weights on image_encoder and text_encoder
+        self.bert.apply(self.init_weights)
+        self.cls.apply(self.init_weights)
+        self.loss.apply(self.init_weights)
+
+        self.tie_weights()
+        assert config.mask_type in ['seq2seq', 'seq2seq_off', 'bidirectional']
+        self.mask_type = config.mask_type
+
+    def tie_weights(self):
+        if hasattr(self.config, 'tie_weights') and self.config.tie_weights:
+            self._tie_or_clone_weights(self.cls.predictions.decoder,
+                                       self.text_encoder.embeddings.word_embeddings)
+        freeze = False
+        if hasattr(self.config, 'freeze_embedding'):
+            freeze = self.config.freeze_embedding
+        self.text_encoder.embeddings.word_embeddings.weight.requires_grad = not freeze
+
+    def forward(self, *args, **kwargs):
+        is_decode = kwargs.get('is_decode', False)
+        inference_mode = kwargs.get('inference_mode', '')
+        if inference_mode:
+            kwargs.pop('inference_mode')
+            if inference_mode == 'prod':
+                raise NotImplementedError
+                return self.prod_generate(*args, **kwargs)
+            if inference_mode == 'prod_no_hidden':
+                raise NotImplementedError
+                return self.prod_no_hidden_generate(*args, **kwargs)
+            assert False, 'unknown inference_mode: {}'.format(inference_mode)
+        if is_decode:
+            return self.generate(*args, **kwargs)
+        else:
+            return self.encode_forward(*args, **kwargs)
+
+    def encode_forward(self, input_ids, image, attention_mask,
+                       masked_pos=None, masked_ids=None,
+                       token_type_ids=None, position_ids=None, head_mask=None,
+                       is_training=True,
+                       encoder_history_states=None,
+                       **kwargs,
+                       ):
+        img_feats = self.image_encoder(image)
+        text_feats = self.text_encoder(
+            input_ids,
+            position_ids=position_ids,
+            token_type_ids=token_type_ids,
+            attention_mask=attention_mask,
+        )
+        batch_size = img_feats.shape[0]
+
+        num_img_feats = img_feats.shape[1]
+        num_token = input_ids.shape[-1]
+        device = input_ids.device
+        top_right = torch.ones((batch_size, num_token, num_img_feats), device=device)
+        if self.mask_type in ['seq2seq', 'seq2seq_off']:
+            bottom_left = torch.zeros((batch_size, num_img_feats, num_token), device=device)
+        else:
+            bottom_left = torch.ones((batch_size, num_img_feats, num_token), device=device)
+        bottom_right = torch.ones((batch_size, num_img_feats, num_img_feats), device=device)
+        bottom = torch.cat((bottom_left, bottom_right), dim=2)
+
+        top = torch.cat((attention_mask, top_right), dim=2)
+        full_attention_mask = torch.cat((top, bottom), dim=1)
+
+        outputs = self.bert(
+            embedding_output=text_feats['sequence_output'],
+            img_feats=img_feats,
+            attention_mask=full_attention_mask,
+            head_mask=head_mask,
+            encoder_history_states=encoder_history_states,
+        )
+
+        if is_training and not torch._C._get_tracing_state():
+            sequence_output = outputs['sequence_output'][:, :masked_pos.shape[-1], :]
+            # num_masks_in_batch * hidden_size
+            sequence_output_masked = sequence_output[masked_pos==1, :]
+            class_logits = self.cls(sequence_output_masked)
+            masked_ids = masked_ids[masked_ids != 0]   # remove padding masks
+            masked_loss = self.loss(class_logits.float(), masked_ids)
+            #outputs = (masked_loss, class_logits,) + outputs[2:]
+            loss_dict = {'masked_loss': masked_loss}
+
+            if self.align_loss is not None:
+                align_loss = self.align_loss(
+                    img_feats,
+                    {
+                        'sequence_output': text_feats['sequence_output'],
+                        'input_ids': input_ids,
+                    })
+                loss_dict['align_loss'] = self.align_loss_weight * align_loss
+
+            outputs = (loss_dict, class_logits,)
+        else:
+            sequence_output = outputs['sequence_output'][:, :input_ids.shape[-1], :]
+            class_logits = self.cls(sequence_output)
+            assert len(outputs) == 2
+            outputs = (class_logits,)
+            #outputs['class_logits'] = class_logits
+        return outputs
+
+    def prepare_inputs_for_generation(self, curr_ids, past=None):
+        # NOTE: if attention is on, it should be the token used to mask words in training
+        mask_token_id = self.mask_token_id
+        batch_size = curr_ids.shape[0]
+        mask_ids = torch.full(
+            (batch_size, 1), mask_token_id, dtype=torch.long, device=curr_ids.device
+        )
+
+        def _slice(t, start, end):
+            if t is None:
+                return t
+            assert t.shape == (batch_size, self.max_seq_len + self.od_labels_len)
+            return t[:, start: end]
+
+        def _remove_elements(t, start, end):
+            if t is None:
+                return t
+            assert t.shape == (batch_size, self.max_seq_len + self.od_labels_len)
+            return torch.cat([t[:, :start], t[:, end:]], dim=1)
+
+        if past is None:
+            input_ids = torch.cat([curr_ids, mask_ids], dim=1)
+
+            curr_len = input_ids.shape[1]
+            #full_len = self.max_seq_len + self.od_labels_len + self.img_seq_len
+            #assert self.full_attention_mask.shape == (batch_size,
+                    #full_len, full_len)
+
+            def _remove_rows_cols(t, row_start, row_end, col_start, col_end):
+                t00 = t[:, :row_start, :col_start]
+                t01 = t[:, :row_start, col_end:]
+                t10 = t[:, row_end:, :col_start]
+                t11 = t[:, row_end:, col_end:]
+                res = torch.cat([torch.cat([t00, t01], dim=2), torch.cat([t10, t11],
+                            dim=2)], dim=1)
+                assert res.shape == (t.shape[0], t.shape[1]-row_end+row_start,
+                        t.shape[2]-col_end+col_start)
+                return res
+
+            seq_start = curr_len
+            seq_end = self.max_seq_len
+            attention_mask = _remove_rows_cols(self.full_attention_mask, seq_start,
+                    seq_end, seq_start, seq_end)
+
+            masked_pos = _remove_elements(self.full_masked_pos, seq_start, seq_end)
+            token_type_ids = _remove_elements(self.full_token_type_ids, seq_start, seq_end)
+            position_ids = _remove_elements(self.full_position_ids, seq_start, seq_end)
+            #img_feats = self.img_feats
+
+            if self.add_od_labels:
+                assert self.od_label_ids.shape[1] == self.od_labels_len
+                input_ids = torch.cat([input_ids, self.od_label_ids], dim=1)
+        else:
+            last_token = curr_ids[:, -1:]
+            # The representation of last token should be re-computed, because
+            # it depends on both self-attention context and input tensor
+            input_ids = torch.cat([last_token, mask_ids], dim=1)
+            start_pos = curr_ids.shape[1] - 1
+            end_pos = start_pos + input_ids.shape[1]
+            masked_pos = _slice(self.full_masked_pos, start_pos, end_pos)
+            token_type_ids = _slice(self.full_token_type_ids, start_pos, end_pos)
+            position_ids = _slice(self.full_position_ids, start_pos, end_pos)
+
+            #img_feats = None
+            assert past[0].shape[0] == batch_size
+            if self.prev_encoded_layers is None:
+                assert start_pos == 1  # the first token after BOS
+                assert past[0].shape[1] == 2 + self.od_labels_len + self.img_seq_len
+                # reorder to [od_labels, img_feats, sentence]
+                self.prev_encoded_layers = [
+                        torch.cat([x[:, 2:, :], x[:, :start_pos,:]], dim=1)
+                        for x in past]
+                s2s = self.full_attention_mask[:, :self.max_seq_len,
+                        :self.max_seq_len]
+                s2i = self.full_attention_mask[:, :self.max_seq_len,
+                        self.max_seq_len:]
+                i2s = self.full_attention_mask[:, self.max_seq_len:,
+                        :self.max_seq_len]
+                i2i = self.full_attention_mask[:, self.max_seq_len:,
+                        self.max_seq_len:]
+                self.full_attention_mask = torch.cat(
+                        [torch.cat([i2i, i2s], dim=2),
+                        torch.cat([s2i, s2s], dim=2)],
+                        dim=1)
+            else:
+                assert start_pos > 1
+                assert past[0].shape[1] == 2
+                self.prev_encoded_layers = [torch.cat([x, p[:, :-1, :]], dim=1)
+                        for x, p in zip(self.prev_encoded_layers, past)]
+
+            attention_mask = self.full_attention_mask[:,
+                self.od_labels_len+self.img_seq_len+start_pos: self.od_labels_len+self.img_seq_len+end_pos,
+                :self.od_labels_len+self.img_seq_len+end_pos]
+
+        return {'input_ids': input_ids, 'image': self.image,
+            'masked_pos': masked_pos, 'attention_mask': attention_mask,
+            'token_type_ids': token_type_ids, 'position_ids': position_ids,
+            'is_training': False,
+            'encoder_history_states': self.prev_encoded_layers}
+
+    def get_output_embeddings(self):
+        return self.decoder
+
+    def generate(self, image, attention_mask, masked_pos, token_type_ids=None,
+            position_ids=None, head_mask=None, input_ids=None, max_length=None,
+            do_sample=None, num_beams=None, temperature=None, top_k=None, top_p=None,
+            repetition_penalty=None, bos_token_id=None, pad_token_id=None,
+            eos_token_ids=None, mask_token_id=None, length_penalty=None,
+            num_return_sequences=None,
+            num_keep_best=1, is_decode=None,
+            add_od_labels=False, od_labels_start_posid=None,
+            use_cbs=False, fsm=None, num_constraints=None,
+            min_constraints_to_satisfy=None, use_hypo=False,
+            decoding_constraint_flag=None, bad_ending_ids=None,
+            ):
+        """ Generates captions given image features
+        """
+        assert is_decode
+        batch_size = image.shape[0]
+        self.max_seq_len = max_length
+        self.mask_token_id = mask_token_id
+        self.prev_encoded_layers = None
+        # NOTE: num_keep_best is not equavilant to num_return_sequences
+        # num_keep_best is the number of hypotheses to keep in beam search
+        # num_return_sequences is the repeating times of input, coupled with
+        # do_sample=True can generate more than one samples per image
+        self.num_keep_best = num_keep_best
+
+        vocab_size = self.config.vocab_size
+        if not use_cbs:
+            num_fsm_states = 1
+        else:
+            b, num_fsm_states, f1, v = fsm.shape
+            assert b==batch_size and v==vocab_size and f1==num_fsm_states
+
+        self.add_od_labels = add_od_labels
+        # avoid position_ids collision of caption and od labels
+        self.od_labels_start_posid = max(od_labels_start_posid, self.max_seq_len)
+        if self.add_od_labels:
+            raise NotImplementedError
+            # get od labels part from input_ids
+            assert input_ids.shape[0] == batch_size
+            od_label_ids = input_ids[:, self.max_seq_len:]
+            self.od_labels_len = input_ids.shape[1] - self.max_seq_len
+            input_ids = None
+        else:
+            self.od_labels_len = 0
+            od_label_ids = None
+            assert input_ids.shape == (batch_size, self.max_seq_len)
+            input_ids = None
+
+        if input_ids is None:
+            input_ids = torch.full(
+                (batch_size, 1), bos_token_id, dtype=torch.long, device=next(self.parameters()).device
+            )
+        else:
+            assert input_ids.dim() == 2, "Input prompt should be of shape (batch_size, sequence length)."
+            assert input_ids.shape[0] == batch_size, "Input batch size must match image features"
+
+        cur_len = input_ids.shape[1]
+        if  num_return_sequences != 1:
+            # Expand input to num return sequences
+            input_ids = self._expand_for_beams(input_ids, num_return_sequences)
+            effective_batch_size = batch_size * num_return_sequences
+        else:
+            effective_batch_size = batch_size
+
+        if position_ids is None:
+            position_ids = torch.arange(self.max_seq_len, dtype=torch.long, device=input_ids.device)
+            posids_len = self.max_seq_len
+            if self.add_od_labels:
+                od_labels_posids = torch.arange(
+                        self.od_labels_start_posid,
+                        self.od_labels_start_posid + self.od_labels_len, dtype=torch.long, device=input_ids.device)
+                position_ids = torch.cat([position_ids, od_labels_posids])
+                posids_len += self.od_labels_len
+            position_ids = position_ids.unsqueeze(0).expand([batch_size, posids_len])
+
+        num_expand = num_beams * num_fsm_states * num_return_sequences
+        self.od_label_ids = self._expand_for_beams(od_label_ids, num_expand)
+        self.image = self._expand_for_beams(image, num_expand)
+        self.full_attention_mask = self._expand_for_beams(attention_mask, num_expand)
+        self.full_masked_pos = self._expand_for_beams(masked_pos, num_expand)
+        self.full_token_type_ids = self._expand_for_beams(token_type_ids, num_expand)
+        self.full_position_ids = self._expand_for_beams(position_ids, num_expand)
+        self.full_head_mask = self._expand_for_beams(head_mask, num_expand)
+
+        if not use_cbs:
+            if num_beams > 1:
+                output = self._generate_beam_search(
+                    input_ids,
+                    cur_len,
+                    max_length,
+                    do_sample,
+                    temperature,
+                    top_k,
+                    top_p,
+                    repetition_penalty,
+                    pad_token_id,
+                    eos_token_ids,
+                    effective_batch_size,
+                    length_penalty,
+                    num_beams,
+                    vocab_size,
+                )
+            else:
+                output = self._generate_no_beam_search(
+                    input_ids,
+                    cur_len,
+                    max_length,
+                    do_sample,
+                    temperature,
+                    top_k,
+                    top_p,
+                    repetition_penalty,
+                    pad_token_id,
+                    eos_token_ids,
+                    effective_batch_size,
+                )
+        else:
+            from qd.mask.modeling.captioning.utils_cbs import (ConstrainedBeamSearch,
+                    select_best_beam_with_constraints)
+            assert self.num_keep_best == 1, 'not supported n_best > 1 for CBS'
+            searcher = ConstrainedBeamSearch(eos_token_ids, max_length,
+                    num_beams, use_hypo=use_hypo,
+                    decoding_constraint_flag=decoding_constraint_flag,
+                    bad_ending_ids=bad_ending_ids)
+            curr_ids, sum_logprobs = searcher.search(
+                    input_ids,
+                    None,
+                    self._decode_step,
+                    fsm,
+            )
+            curr_ids, logprobs = select_best_beam_with_constraints(
+                curr_ids,
+                sum_logprobs,
+                num_constraints,
+                min_constraints_to_satisfy,
+                eos_token_ids,
+            )
+            # (batch_size, n_best, max_len), (batch_size, n_best)
+            output = (curr_ids.unsqueeze(1), logprobs.unsqueeze(1))
+
+        return output
+
+    def _expand_for_beams(self, x, num_expand):
+        if x is None or num_expand == 1:
+            return x
+
+        input_shape = list(x.shape)
+        expanded_shape = input_shape[:1] + [num_expand] + input_shape[1:]
+        x = x.unsqueeze(1).expand(expanded_shape)
+        # (batch_size * num_expand, ...)
+        x = x.contiguous().view([input_shape[0] * num_expand] + input_shape[1:])
+        return x
+
+    def _do_output_past(self, outputs):
+        return len(outputs) > 1
+
+    def prod_generate(self, img_feats, od_label_ids, max_length,
+            bos_token_id, eos_token_ids, mask_token_id, od_labels_start_posid,
+            add_od_labels=True, cls_token_segment_id=0,
+            sequence_a_segment_id=0, sequence_b_segment_id=1,
+            ):
+        """ Generates captions for PROD, batch size=1, num_beams=1.
+            Use faster generation where output_hidden_states = True
+        """
+        batch_size = img_feats.shape[0]
+        assert batch_size == 1
+        device = img_feats.device
+        assert od_label_ids.shape[0] == batch_size
+        od_labels_len = od_label_ids.shape[1]
+        img_seq_len = img_feats.shape[1]
+
+        mask_ids = torch.full(
+            (1, 1), mask_token_id, dtype=torch.long, device=device
+        )
+
+        # prepare inputs
+        cur_ids = torch.full((1, 1), bos_token_id,
+                dtype=torch.long, device=device)
+
+        input_ids = torch.cat([cur_ids, mask_ids, od_label_ids], dim=1)
+        token_type_ids = torch.cat([
+                torch.tensor([[cls_token_segment_id, sequence_a_segment_id]],
+                    dtype=torch.long, device=device),
+                torch.full((1, od_labels_len), sequence_b_segment_id,
+                    dtype=torch.long, device=device)
+                ], dim=1)
+
+        position_ids = torch.arange(2, dtype=torch.long, device=device)
+        od_labels_start_posid = max(od_labels_start_posid, max_length)
+        if add_od_labels:
+            od_labels_posids = torch.arange(
+                    od_labels_start_posid, od_labels_start_posid + od_labels_len,
+                    dtype=torch.long, device=device)
+            position_ids = torch.cat([position_ids, od_labels_posids])
+        posids_len = 2 + od_labels_len
+        position_ids = position_ids.unsqueeze(0).expand([1, posids_len])
+
+        attention_mask = torch.ones(
+                (1, 2+od_labels_len+img_seq_len, 2+od_labels_len+img_seq_len),
+                dtype=torch.long, device=device)
+        attention_mask[:, 0, 1] = 0   # words in sentence can not see words after itself
+        attention_mask[:, 2:, :2] = 0 # od_label, img_feat can not see sentence
+
+        # make empty history states for the first step
+        encoder_history_states = tuple(
+            torch.empty([1, 0, self.config.hidden_size], device=device)
+            for _ in range(self.config.num_hidden_layers)
+        )
+
+        # prepare inputs for >1 steps
+        token_type_ids_after_first = torch.full([1, 2], sequence_a_segment_id,
+                dtype=torch.long, device=device)
+        img_feats_after_first = torch.empty([1, 0, self.config.img_feature_dim],
+                device=device)  # place holder to avoid None
+
+        # initial model inputs for the first step
+        model_inputs = {'input_ids': input_ids, 'img_feats': img_feats,
+            'attention_mask': attention_mask,
+            'token_type_ids': token_type_ids, 'position_ids': position_ids,
+            'is_training': False,
+            'encoder_history_states': encoder_history_states}
+        cur_len = cur_ids.shape[1]
+        sum_logprob = 0
+        while True:
+            outputs = self(**model_inputs)
+
+            assert self._do_output_past(outputs)
+            if cur_len == 1:
+                assert outputs[0].shape[1] == 2 + od_labels_len
+            else:
+                assert cur_len > 1
+                assert outputs[0].shape[1] == 2
+
+            # greedy decoding
+            next_token_idx = 1
+            next_token_logits = outputs[0][:, next_token_idx, :]
+            next_token = torch.argmax(next_token_logits, dim=-1)
+            # Compute scores
+            _scores = F.log_softmax(next_token_logits, dim=-1)  # (batch_size, vocab_size)
+            sum_logprob += _scores[:, next_token].item()
+
+            if next_token in eos_token_ids:
+                break
+            cur_ids = torch.cat([cur_ids, next_token.unsqueeze(-1)], dim=-1)
+            cur_len = cur_ids.shape[1]
+            if cur_len == max_length:
+                break
+
+            # prepare model inputs for the next step
+            past = outputs[1]
+            last_token = cur_ids[:, -1:]
+            input_ids = torch.cat([last_token, mask_ids], dim=1)
+            position_ids = torch.arange(cur_len - 1, cur_len + 1,
+                    dtype=torch.long, device=device)
+            attention_mask = torch.ones([1, 2, od_labels_len+img_seq_len+cur_len+1],
+                    dtype=torch.long, device=device)
+            attention_mask[:, 0, -1] = 0
+            assert past[0].shape[0] == batch_size
+            # special handle for the first step
+            if cur_len == 2:
+                assert past[0].shape[1] == 2 + od_labels_len + img_seq_len
+                # remove the first token after BOS
+                # reorder to [od_labels, img_feats, sentence]
+                encoder_history_states = [
+                        torch.cat([x[:, 2:, :], x[:, :1,:]], dim=1)
+                        for x in past]
+            else:
+                assert cur_len > 2
+                assert past[0].shape[1] == 2
+                encoder_history_states = [torch.cat([x, p[:, :-1, :]], dim=1)
+                        for x, p in zip(encoder_history_states, past)]
+
+            model_inputs = {'input_ids': input_ids,
+                'img_feats': img_feats_after_first,
+                'attention_mask': attention_mask,
+                'token_type_ids': token_type_ids_after_first,
+                'position_ids': position_ids,
+                'is_training': False,
+                'encoder_history_states': encoder_history_states}
+
+        logprob = sum_logprob / cur_ids.shape[1]
+
+        # (batch_size, max_len), (batch_size)
+        return cur_ids, torch.full((1,), logprob, device=device)
+
+    def prod_no_hidden_generate(self, img_feats, od_label_ids, max_length,
+            bos_token_id, eos_token_ids, mask_token_id, od_labels_start_posid,
+            add_od_labels=True, cls_token_segment_id=0,
+            sequence_a_segment_id=0, sequence_b_segment_id=1,
+            ):
+        """ Generates captions for PROD, batch size=1, num_beams=1.
+            Use output_hidden_states = False
+        """
+        batch_size = img_feats.shape[0]
+        assert batch_size == 1
+        device = img_feats.device
+        assert od_label_ids.shape[0] == batch_size
+        od_labels_len = od_label_ids.shape[1]
+        img_seq_len = img_feats.shape[1]
+
+        mask_ids = torch.full(
+            (1, 1), mask_token_id, dtype=torch.long, device=device
+        )
+
+        # prepare inputs
+        cur_ids = torch.full((1, 1), bos_token_id,
+                dtype=torch.long, device=device)
+        od_labels_start_posid = max(od_labels_start_posid, max_length)
+        triangle_mask = torch.tril(torch.ones([max_length, max_length],
+                dtype=torch.long, device=device))
+
+        def _prepare_inputs(cur_ids):
+            cur_len = cur_ids.shape[1]
+            input_ids = torch.cat([cur_ids, mask_ids, od_label_ids], dim=1)
+            token_type_ids = torch.cat([
+                    torch.tensor([[cls_token_segment_id]],
+                        dtype=torch.long, device=device),
+                    torch.full((1, cur_len), sequence_a_segment_id,
+                        dtype=torch.long, device=device),
+                    torch.full((1, od_labels_len), sequence_b_segment_id,
+                        dtype=torch.long, device=device)
+                    ], dim=1)
+
+            token_len = cur_len + 1
+            position_ids = torch.arange(token_len, dtype=torch.long, device=device)
+            if add_od_labels:
+                od_labels_posids = torch.arange(
+                        od_labels_start_posid, od_labels_start_posid + od_labels_len,
+                        dtype=torch.long, device=device)
+                position_ids = torch.cat([position_ids, od_labels_posids])
+            posids_len = token_len + od_labels_len
+            position_ids = position_ids.unsqueeze(0).expand([1, posids_len])
+
+            attention_mask = torch.ones(
+                    (1, token_len+od_labels_len+img_seq_len, token_len+od_labels_len+img_seq_len),
+                    dtype=torch.long, device=device)
+            attention_mask[:, :token_len,
+                    :token_len].copy_(triangle_mask[:token_len, :token_len])
+            attention_mask[:, token_len:, :token_len] = 0 # od_label, img_feat can not see sentence
+            return input_ids, token_type_ids, position_ids, attention_mask
+
+        # initial model inputs for the first step
+        input_ids, token_type_ids, position_ids, attention_mask = \
+                _prepare_inputs(cur_ids)
+        model_inputs = {'input_ids': input_ids, 'img_feats': img_feats,
+            'attention_mask': attention_mask,
+            'token_type_ids': token_type_ids, 'position_ids': position_ids,
+            'is_training': False,
+            }
+        cur_len = cur_ids.shape[1]
+        sum_logprob = 0
+        while True:
+            outputs = self(**model_inputs)
+
+            assert not self._do_output_past(outputs)
+
+            # greedy decoding
+            next_token_idx = cur_len
+            next_token_logits = outputs[0][:, next_token_idx, :]
+            next_token = torch.argmax(next_token_logits, dim=-1)
+            # Compute scores
+            _scores = F.log_softmax(next_token_logits, dim=-1)  # (batch_size, vocab_size)
+            sum_logprob += _scores[:, next_token].item()
+
+            if next_token in eos_token_ids:
+                break
+            cur_ids = torch.cat([cur_ids, next_token.unsqueeze(-1)], dim=-1)
+            cur_len = cur_ids.shape[1]
+            if cur_len == max_length:
+                break
+
+            # prepare model inputs for the next step
+            input_ids, token_type_ids, position_ids, attention_mask = \
+                    _prepare_inputs(cur_ids)
+            model_inputs = {'input_ids': input_ids,
+                'img_feats': img_feats,
+                'attention_mask': attention_mask,
+                'token_type_ids': token_type_ids,
+                'position_ids': position_ids,
+                'is_training': False,
+                }
+
+        logprob = sum_logprob / cur_ids.shape[1]
+
+        # (batch_size, max_len), (batch_size)
+        return cur_ids, torch.full((1,), logprob, device=device)
+
+@add_start_docstrings("""Bert Model transformer for image captioning""",
+    BERT_START_DOCSTRING)
+class BertForImageCaptioning(BertPreTrainedModel):
+    r"""
+    Bert for Image Captioning.
+    """
+    def __init__(self, config):
+        super(BertForImageCaptioning, self).__init__(config)
+        self.config = config
+        self.bert = BertImgModel(config)
+        self.cls = BertCaptioningHeads(config)
+        self.loss = BertCaptioningLoss(config)
         self.apply(self.init_weights)
         self.tie_weights()
 
@@ -1853,7 +2727,8 @@ class E2EBertForImageCaptioning(BertPreTrainedModel):
     def encode_forward(self, input_ids, img_feats, attention_mask,
             masked_pos=None, masked_ids=None,
             token_type_ids=None, position_ids=None, head_mask=None,
-            is_training=True, encoder_history_states=None):
+            is_training=True, encoder_history_states=None, return_dict=False,
+                       matched=None):
         outputs = self.bert(input_ids, img_feats=img_feats, attention_mask=attention_mask,
                 position_ids=position_ids, token_type_ids=token_type_ids,
                 head_mask=head_mask,
@@ -1862,16 +2737,38 @@ class E2EBertForImageCaptioning(BertPreTrainedModel):
         if is_training and not torch._C._get_tracing_state():
             sequence_output = outputs[0][:, :masked_pos.shape[-1], :]
             # num_masks_in_batch * hidden_size
+            if matched is not None:
+                # if it is not matched, we make all the masked pos = 0 to
+                # ignore the loss
+                # do it as in place as we will use it to calculate the acc
+                # somewhere
+                masked_pos.requires_grad = False
+                masked_pos[matched.logical_not()] = 0
+                # make it as padded id and we will remove
+                masked_ids.requires_grad = False
+                masked_ids[matched.logical_not()] = 0
+
             sequence_output_masked = sequence_output[masked_pos==1, :]
             class_logits = self.cls(sequence_output_masked)
             masked_ids = masked_ids[masked_ids != 0]   # remove padding masks
             masked_loss = self.loss(class_logits.float(), masked_ids)
-            outputs = (masked_loss, class_logits,) + outputs[2:]
+            if not return_dict:
+                result = (masked_loss, class_logits,) + outputs[2:]
+            else:
+                result = {
+                    'masked_loss': masked_loss,
+                    'class_logits': class_logits,
+                    'pooled_output': outputs[1],
+                    'masked_ids': masked_ids,
+                }
+                if len(outputs) > 2:
+                    # intermediate layers' infomation
+                    result['inter_info'] = outputs[2:]
         else:
             sequence_output = outputs[0][:, :input_ids.shape[-1], :]
             class_logits = self.cls(sequence_output)
-            outputs = (class_logits,) + outputs[2:]
-        return outputs
+            result = (class_logits,) + outputs[2:]
+        return result
 
     def prepare_inputs_for_generation(self, curr_ids, past=None):
         # NOTE: if attention is on, it should be the token used to mask words in training
