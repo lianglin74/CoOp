@@ -1,3 +1,7 @@
+import time
+import os
+from qd.qd_common import get_mem_usage_in_bytes
+from qd.qd_common import get_opened_files
 from PIL import Image
 import random
 import torch
@@ -5,14 +9,26 @@ import math
 import numpy as np
 import cv2
 import random
-from qd.qd_common import img_from_base64
+from qd.qd_common import img_from_base64, pilimg_from_base64
 import json
 import logging
 import PIL
 from .dataset import TSVSplitProperty
 from torchvision.transforms import transforms
 from qd.torch_common import IgnoreLastDimSparseTensor
+from qd.qd_common import dict_has_path, dict_get_path_value, dict_remove_path
+from qd.qd_common import dict_update_path_value
+from qd.tsv_io import TSVDataset
+import torchvision.transforms.functional as F
 
+
+class Keys:
+    # json.loads(label_row_second_part)
+    # can be loaded by LoadLabel
+    label = 'label'
+    # ConvertToDomainClassIndex
+    class_idx = 'label_idx'
+    pred = 'pred'
 
 class FeatureDecoder(object):
     def __call__(self, row):
@@ -30,10 +46,16 @@ class RenameKey(object):
         if self.ft is None:
             return data
         for k, k1 in self.ft.items():
-            if k in data:
-                v = data[k]
-                data[k1] = v
-                del data[k]
+            # we should not fall to the situation where some data has some key
+            # and some data has not some key. We should either have a key or
+            # not for all data consistently. Thus, for re-naming, we should not
+            # to check whether it has or not. it should always have that key.
+            # otherwise, we should not specify it.
+            #if dict_has_path(data, k):
+            if dict_has_path(data, k):
+                v = dict_get_path_value(data, k)
+                dict_update_path_value(data, k1, v)
+                dict_remove_path(data, k)
         return data
 
 class RemoveUselessKeys(object):
@@ -44,8 +66,8 @@ class RemoveUselessKeys(object):
             self.keys = keys
     def __call__(self, sample):
         for k in self.keys:
-            if k in sample:
-                del sample[k]
+            if dict_has_path(sample, k):
+                dict_remove_path(sample, k)
         return sample
 
 class TwoCropsTransform(object):
@@ -698,7 +720,6 @@ class MultiScaleRandomResizedCrop(object):
         y1 = dict(x.items())
         y2 = dict(x.items())
         i1, j1, h1, w1 = self.get_params(x['image'])
-        import torchvision.transforms.functional as F
         img1 = F.resized_crop(x['image'], i1, j1, h1, w1, self.size, self.interpolation)
         img2 = F.resized_crop(x['image'], i1, j1, h1, w1, [s // 2 for s in self.size], self.interpolation)
         y1['image'] = img1
@@ -746,10 +767,11 @@ class TwoCropsTransform112():
 
 # together with CaptionIdxTSVDataset
 class LoadLabel(object):
-    def __init__(self, data, split, version):
+    def __init__(self, data, split, version, out_key=None):
         from .dataset import TSVSplitProperty
         self.label_tsv = TSVSplitProperty(
             data, split, 'label', version=version)
+        self.out_key = out_key if out_key else Keys.label
 
     def __repr__(self):
         return 'LoadLabel(data={}, split={}, version={})'.format(
@@ -761,16 +783,69 @@ class LoadLabel(object):
         key, str_label = self.label_tsv[idx_img]
         rects = json.loads(str_label)
         assert key == data['key']
-        data['label'] = rects
+        assert self.out_key not in data
+        data[self.out_key] = rects
+        return data
+
+class LoadPredict(object):
+    def __init__(self, pred_file, out_key=None):
+        from qd.tsv_io import TSVFile
+        self.tsv = TSVFile(pred_file)
+        self.out_key = out_key if out_key else Keys.pred
+
+    def __repr__(self):
+        return 'LoadPredict({})'.format(
+            self.tsv.tsv_file
+        )
+
+    def __call__(self, data):
+        idx_img = data['idx_img']
+        key, str_label = self.tsv[idx_img]
+        rects = json.loads(str_label)
+        assert key == data['key']
+        assert self.out_key not in data
+        data[self.out_key] = rects
+        return data
+
+class LoadImage(object):
+    def __init__(self, data, split,
+                 add_key=False, backend='cv', hold_buffer=0) :
+        self.tsv = TSVSplitProperty(data, split, hold_buffer=hold_buffer)
+        from qd.qd_common import print_frame_info
+        print_frame_info()
+        self.add_key = add_key
+        self.bk = backend
+        assert backend in ['cv', 'pil']
+
+    def __call__(self, data):
+        r = self.tsv[data['idx_img']]
+        # for the image, we do not check the key as the key could be different,
+        # which is by design, for some kind of composiste dataset.
+        #key = r[0]
+        str_im = r[-1]
+        if self.bk == 'cv':
+            img = img_from_base64(str_im)
+        else:
+            img = pilimg_from_base64(str_im)
+        assert 'image' not in data
+        data['image'] = img
+        if self.add_key:
+            data['key'] = r[0]
+        if 'future_idx_img' in data:
+            self.tsv.prepare(data['future_idx_img'])
         return data
 
 class LoadHW(object):
-    def __init__(self, data, split):
-        self.tsv = TSVSplitProperty( data, split, 'hw')
+    # idx_img -> height/width
+    def __init__(self, data, split, cache_policy=None):
+        self.tsv = TSVSplitProperty( data, split, 'hw',
+                                    cache_policy=cache_policy)
 
     def __call__(self, data):
         idx_img = data['idx_img']
         key, str_hw = self.tsv[idx_img]
+        if 'key' not in data:
+            data['key'] = key
         assert key == data['key']
         try:
             hw_info = json.loads(str_hw)
@@ -784,19 +859,48 @@ class LoadHW(object):
             data['width'] = w
         return data
 
+class PadFeature(object):
+    def __init__(self, max_features):
+        self.max_features = max_features
+
+    def __call__(self, data):
+        if len(data['img_feats']) < self.max_features:
+            img_padding_len = self.max_features- len(data['img_feats'])
+            padding_matrix = torch.zeros((img_padding_len, data['img_feats'].shape[1]))
+            img_feat = torch.cat((data['img_feats'], padding_matrix), 0)
+            data['img_feats'] = img_feat
+            if 'feats_conf' in data:
+                data['feats_conf'] = torch.cat((data['feats_conf'],
+                                                torch.zeros(img_padding_len)))
+            if 'feats_class' in data:
+                data['feats_class'] += [''] * img_padding_len
+        return data
+
 class LoadFeature(object):
     def __init__(self, data, split, version,
                  img_feature_dim,
                  max_len=50,
                  sort_by_conf=True,
+                 append_box=True,
+                 attach_box=False,
                  ):
         self.tsv = TSVSplitProperty(
             data, split, 'feature', version=version)
         self.sort_by_conf = sort_by_conf
         self.max_len = max_len
         self.img_feature_dim = img_feature_dim
+        self.append_box = append_box
+        self.attach_box = attach_box
+        self.iter = 0
+    def __repr__(self):
+        return ('LoadFeature(tsv={}, '
+                'img_feature_dim={}, max_len={})').format(
+                    self.tsv, self.img_feature_dim, self.max_len)
 
-    def get_spatial_features(self, feat_info, data):
+    def get_spatial_features(self, feat_info, data, with_wh=True,
+                             normalize=True):
+        # normally we should not use with_wh=True as wh is a linear function of
+        # xyxy.
         img_height, img_width = data['height'], data['width']
         spatial_feats = []
         for f in feat_info:
@@ -804,25 +908,51 @@ class LoadFeature(object):
             box = f['rect'] # xyxy
             box_width = box[2] - box[0]
             box_height = box[3] - box[1]
-            scaled_width = box_width / img_width
-            scaled_height = box_height / img_height
-            scaled_x = box[0] / img_width
-            scaled_y = box[1] / img_height
-            spatial_feat = np.array([scaled_x, scaled_y, scaled_x + scaled_width,
-                scaled_y + scaled_height, scaled_width, scaled_height], dtype=np.float32)
+            if normalize:
+                scaled_width = box_width / img_width
+                scaled_height = box_height / img_height
+                scaled_x = box[0] / img_width
+                scaled_y = box[1] / img_height
+            else:
+                scaled_width = box_width
+                scaled_height = box_height
+                scaled_x = box[0]
+                scaled_y = box[1]
+            if with_wh:
+                spatial_feat = np.array([scaled_x,
+                                         scaled_y,
+                                         scaled_x + scaled_width,
+                                         scaled_y + scaled_height,
+                                         scaled_width,
+                                         scaled_height], dtype=np.float32)
+            else:
+                spatial_feat = np.array([scaled_x,
+                                         scaled_y,
+                                         scaled_x + scaled_width,
+                                         scaled_y + scaled_height,
+                                         ], dtype=np.float32)
             spatial_feats.append(spatial_feat)
         return spatial_feats
 
     def __call__(self, data):
+        verbose = self.iter == 0
+        self.iter += 1
+
         idx_img = data['idx_img']
         key, str_feat = self.tsv[idx_img]
         assert key == data['key']
         feat_info = json.loads(str_feat)
 
-        if self.sort_by_conf and any('conf' in f for f in feat_info):
+        if self.sort_by_conf and \
+                any('conf' in f for f in feat_info):
             feat_info = sorted(feat_info, key = lambda x : -x['conf'])
 
+        if verbose:
+            logging.info('# loaded features = {}'.format(len(feat_info)))
+
         if len(feat_info) > self.max_len:
+            # pre-filter so that we can reduce the cost on decoding features if
+            # those features eventually will be ignored.
             if any('conf' in f for f in feat_info):
                 feat_info = feat_info[:self.max_len]
             else:
@@ -834,6 +964,8 @@ class LoadFeature(object):
             data['img_feats'] = torch.zeros((0, self.img_feature_dim))
             data['feats_conf'] = torch.zeros((0,))
             data['feats_class'] = []
+            if self.attach_box:
+                data['img_feats_bbox'] = torch.zeros((0, 4))
             return data
 
         if all('feature' in f for f in feat_info):
@@ -842,22 +974,34 @@ class LoadFeature(object):
         else:
             from qd.qd_common import decode_np
             feats = [decode_np(f['zlib_feature']).astype(np.float32) for f in feat_info]
-        if any('rect' in f for f in feat_info):
+
+        if self.attach_box:
+           data['img_feats_bbox'] = torch.tensor(self.get_spatial_features(
+               feat_info, data, with_wh=False, normalize=False))
+
+        if self.append_box and any('rect' in f for f in feat_info):
             spatial_feats = self.get_spatial_features(feat_info, data)
             data['img_feats'] = torch.Tensor(np.concatenate((feats, spatial_feats), 1))
         else:
             # grid feature, where there is no box location
             data['img_feats'] = torch.Tensor(feats)
+
         assert data['img_feats'].shape[1] == self.img_feature_dim
         data['feats_conf'] = torch.tensor([
             f.get('conf', 1.) for f in feat_info])
-        data['feats_class'] = [f['class'] for f in feat_info]
+        if any('class' in f for f in feat_info):
+            data['feats_class'] = [f['class'] for f in feat_info]
         return data
 
 class LoadCaption(object):
-    def __init__(self, data, split, version):
+    def __init__(self, data, split, version, cache_policy=None):
         super().__init__()
-        self.tsv = TSVSplitProperty(data, split, 'caption', version=version)
+        self.tsv = TSVSplitProperty(data, split, 'caption', version=version,
+                                    cache_policy=cache_policy)
+
+    def __repr__(self):
+        return 'LoadCaption(tsv={})'.format(self.tsv)
+
     def __call__(self, data):
         idx_img = data['idx_img']
         key, str_cap = self.tsv[idx_img]
@@ -929,7 +1073,6 @@ class IdentifyTextAB(object):
         # instance and the negative instance. If we'd like to have different
         # behaviors for the negative instance, we can add options to this
         # function
-        caption_dict = data['caption']
         if self.add_od_labels:
             label_info = data['label']
             for lab in label_info:
@@ -951,7 +1094,14 @@ class IdentifyTextAB(object):
                 od_labels = ' '.join([l['class'].lower() for l in label_info])
         else:
             od_labels = ''
-        if 'caption' in caption_dict:
+        caption_dict = data.get('caption')
+        if caption_dict is None:
+            # in captioning downstream task/test phase, there is no need to
+            # load caption and caption is also not used. Thus, we will set
+            # caption = ''
+            caption = ''
+            data['text_ab_type'] = 'empty_label'
+        elif 'caption' in caption_dict:
             caption = caption_dict['caption']
             data['text_ab_type'] = 'cap_label'
         else:
@@ -965,6 +1115,7 @@ class IdentifyTextAB(object):
             if self.qa2caption is None:
                 caption = question
                 od_labels = answer
+            # Q: quetion, T: tag, A: answer
             elif self.qa2caption == 'QT_A':
                 caption = question + od_labels
                 od_labels = answer
@@ -978,6 +1129,15 @@ class IdentifyTextAB(object):
                 od_labels = answer
             elif self.qa2caption == 'QA_T':
                 caption = question + answer
+            elif self.qa2caption == 'QA_':
+                question += answer
+            elif self.qa2caption == 'AQ_':
+                question = answer + question
+            elif self.qa2caption == 'A_QT':
+                text_a = answer
+                text_b = question + od_labels
+                caption = text_a
+                od_labels = text_b
             else:
                 raise NotImplementedError
             data['text_ab_type'] = 'qa'
@@ -992,6 +1152,12 @@ class RandomPairNegative(object):
         self.pert_labels_prob = pert_labels_prob
         self.pert_prob = pert_caption_prob + pert_labels_prob
         self.load_negative_transform = load_negative_transform
+
+    def __repr__(self):
+        return ('RandomPairNegative(pert_caption_prob={},'
+                'pert_labels_prob={})').format(
+                    self.pert_caption_prob,
+                    self.pert_labels_prob)
 
     def __call__(self, data):
         rand_num = random.random()
@@ -1037,18 +1203,124 @@ class TokenizeTransform(object):
                                         for t in tokens]
         return data
 
-class CaptionTensorizer(object):
+class StudentTensorizer(object):
     def __init__(self, tensorizer):
         self.tensorizer = tensorizer
+
     def __call__(self, data):
-        x = self.tensorizer.tensorize_example(
-                data['text_a'], data['img_feats'], text_b=data['text_b'], return_dict=True,
+        assert data['teacher_text_a'] == data['text_a']
+        x = self.tensorizer.tensorize_student_example_by_teacher_mask(
+            data['text_a'],
+            data['img_feats'],
+            text_b=data['text_b'],
+            teacher_masked_ids=data.get('teacher_masked_ids'),
+            teacher_masked_pos=data.get('teacher_masked_pos'),
+            teacher_input_ids=data.get('teacher_input_ids'),
+            teacher_segment_ids=data.get('teacher_token_type_ids'),
         )
         for k in x:
+            # img_feats are standarized to a fixed length, though this is a bad
+            # design
             assert k not in data or k == 'img_feats'
         data.update(x)
-        data['max_seq_a_len'] = self.tensorizer.max_seq_a_len
+        if 'vocab_size' in data:
+            assert data['vocab_size'] == self.tensorizer.tokenizer.vocab_size
         data['vocab_size'] = self.tensorizer.tokenizer.vocab_size
+        return data
+
+class TransCaptionTensorizer(object):
+    def __init__(self,
+                 tensorizer,
+                 with_img_feats=True,
+                 pad_to_max=True,
+                 pad_image_to_max=True,
+                 real_text_a_in_test=True,
+                 ):
+        self.tensorizer = tensorizer
+        self.with_img_feats = with_img_feats
+        self.pad_to_max = pad_to_max
+        self.pad_image_to_max = pad_image_to_max
+        self.real_text_a_in_test = real_text_a_in_test
+
+    def __repr__(self):
+        return ('TransCaptionTensorizer(tensorizer={}, '
+                'pad_to_max={}, pad_image_to_max={})').format(
+                    self.tensorizer,
+                    self.pad_to_max,
+                    self.pad_image_to_max)
+
+    def __call__(self, data):
+        if self.with_img_feats:
+            x = self.tensorizer.tensorize_example(
+                data['text_a'],
+                data['img_feats'],
+                text_b=data['text_b'],
+                return_dict=True,
+                pad_to_max=self.pad_to_max,
+                pad_image_to_max=self.pad_image_to_max,
+            )
+        else:
+            x = self.tensorizer.tensorize_ab(
+                data['text_a'], text_b=data['text_b'],
+                pad_to_max=self.pad_to_max,
+                real_text_a_in_test=self.real_text_a_in_test,
+            )
+        for k in x:
+            # img_feats are standarized to a fixed length, though this is a bad
+            # design
+            assert k not in data or k == 'img_feats'
+        data.update(x)
+        data['vocab_size'] = self.tensorizer.tokenizer.vocab_size
+        return data
+
+class CaptionTensorizer(TransCaptionTensorizer):
+    pass
+
+class AppendDummyFeature(object):
+    def __init__(self, append_to=100):
+        # only the img_feats is appended to 100. we do not update feats_class
+        # or box.
+        self.append_to = append_to
+
+    def __call__(self, data):
+        image_feature = data['img_feats']
+        assert 'img_feats_valid' not in data
+        data['img_feats_valid'] = image_feature.shape[0]
+        if len(image_feature) < self.append_to:
+            image_loc, image_dim = image_feature.shape
+            tmp_image_feat = torch.zeros((self.append_to, image_dim),
+                                      dtype=image_feature.dtype)
+            tmp_image_feat[0:len(image_feature),] = image_feature
+            data['img_feats'] = tmp_image_feat
+        return data
+
+class LogSystemInfo(object):
+    def __init__(self):
+        self.iter = 0
+        from qd.qd_common import get_mpi_rank
+        self.mpi_rank = get_mpi_rank()
+        self.at_least_time_gap = 60 * 30
+        self.last_verbose = 0
+        self.step = 10000
+
+    def __call__(self, data):
+        verbose = ((self.iter % self.step) == 0) and (self.mpi_rank == 0)
+        #verbose = ((self.iter % 10) == 0) and (self.mpi_rank == 0)
+        self.iter += 1
+        if verbose:
+            t = time.time()
+            if (t - self.last_verbose) < self.at_least_time_gap:
+                self.step *= 2
+                self.iter = 1
+            self.last_verbose = t
+            pid = os.getpid()
+            mem = get_mem_usage_in_bytes()
+            info = []
+            info.append('pid = {}'.format(pid))
+            info.append('mem = {}GB'.format(mem / 1024. ** 3))
+            info.append('open fd = {}'.format('\n'.join(map(str,
+                                                           get_opened_files()))))
+            logging.info('\n'.join(info))
         return data
 
 class PrepareLabel(object):
@@ -1079,7 +1351,9 @@ class PrepareLabel(object):
                 )
 
     def __call__(self, data):
-        img_feats = data['img_feats']
+        has_img_feats = 'img_feats' in data
+        if has_img_feats:
+            img_feats = data['img_feats']
         input_ids = data['input_ids']
         is_matched = not data['text_a_or_b_changed']
         masked_pos = data['masked_pos']
@@ -1087,23 +1361,27 @@ class PrepareLabel(object):
         lm_labels_id_text = torch.ones_like(input_ids) * (-1)
         masked_ids = data['masked_ids']
         if not self.mask_loss_for_unmatched and not is_matched:
-            max_seq_a_len = data['max_seq_a_len']
+            seq_a_padded_len = data['seq_a_padded_len']
             # no masked loss for unmatched part
-            num_masked_cap = sum(masked_pos[:max_seq_a_len]).item()
+            num_masked_cap = sum(masked_pos[:seq_a_padded_len]).item()
             if data['text_changed'] == 'a':
                 # no masked loss for caption
-                masked_pos[:max_seq_a_len] = 0
+                masked_pos[:seq_a_padded_len] = 0
                 masked_ids[:num_masked_cap] = 0
             else:
                 # no masked loss for labels
-                masked_pos[max_seq_a_len:] = 0
+                masked_pos[seq_a_padded_len:] = 0
                 masked_ids[num_masked_cap:] = 0
+        assert (masked_pos == 1).long().sum() == (masked_ids != 0).long().sum()
         lm_labels_id_text[masked_pos==1] = masked_ids[masked_ids!=0]
 
         if self.label_type is None:
             assert self.img_feat_label_type is None
-            lm_labels_id_img = torch.ones(img_feats.shape[0], dtype=torch.long) * (-1)
-            lm_labels_id = torch.cat((lm_labels_id_text, lm_labels_id_img))
+            if has_img_feats:
+                lm_labels_id_img = torch.ones(img_feats.shape[0], dtype=torch.long) * (-1)
+                lm_labels_id = torch.cat((lm_labels_id_text, lm_labels_id_img))
+            else:
+                lm_labels_id = lm_labels_id_text
             data['masked_lm_labels'] = lm_labels_id
             data['next_sentence_label'] = torch.tensor(is_matched).long()
         elif self.label_type == 'hot':
@@ -1198,4 +1476,338 @@ class PrepareLabel(object):
             raise NotImplementedError(self.label_type)
 
         return data
+
+class ConvertToDomainClassIndex(object):
+    def __init__(self, data):
+        dataset = TSVDataset(data)
+        yml = dataset.get_file('domainmap.yaml')
+        import os.path as op
+        if op.isfile(yml):
+            from qd.qd_common import load_from_yaml_file
+            domain_infos = load_from_yaml_file(yml)
+            self.domain_to_idx = {d['data']:idx_domain for idx_domain, d in
+                                  enumerate(domain_infos)}
+            self.domain_to_label_to_idx = {
+                d['data']: {l: i for i, l in enumerate(d['labelmap'])} for d in domain_infos
+            }
+        else:
+            labelmap = dataset.load_labelmap()
+            self.domain_to_idx = {'': 0}
+            self.domain_to_label_to_idx = {'': {l: i for i, l in enumerate(labelmap)}}
+
+    def __call__(self, data):
+        from qd.data_layer.transform import Keys
+        anno = data[Keys.label]
+        classes = torch.full((len(anno), len(self.domain_to_label_to_idx)), -1)
+        if len(self.domain_to_idx) > 0:
+            for idx_rect, obj in enumerate(anno):
+                splits = obj['class'].split('$')
+                assert len(splits) in [1, 2]
+                if len(splits) == 2:
+                    domain, cls = splits
+                    if domain in self.domain_to_idx:
+                        domain_idx = self.domain_to_idx.get(domain)
+                        label_idx = self.domain_to_label_to_idx[domain].get(cls, -2) + 1
+                        classes[idx_rect, domain_idx] = label_idx
+        data[Keys.class_idx] = classes
+        return data
+
+class ConvertLabelToIndex(object):
+    # this one is only used for classification-style dataset
+    def __init__(self, data, in_key):
+        labelmap = TSVDataset(data).load_labelmap()
+        self.label_to_idx = {l: i for i, l in enumerate(labelmap)}
+        self.in_key = in_key
+
+    def __call__(self, data):
+        if isinstance(data[self.in_key], int):
+            return data
+        assert len(data[self.in_key]) == 1
+        cls = data[self.in_key][0]['class']
+        assert not cls.startswith('-')
+        data[self.in_key] = self.label_to_idx.get(cls, -1)
+        return data
+
+class ConvertLabelToMultiHotIndex(object):
+    def __init__(self, data, in_key):
+        labelmap = TSVDataset(data).load_labelmap()
+        self.label_to_idx = {l: i for i, l in enumerate(labelmap)}
+        self.in_key = in_key
+
+    def __call__(self, data):
+        label = torch.zeros(len(self.label_to_idx))
+        rects = data[self.in_key]
+        if type(rects) is int:
+            label[rects] = 1
+        else:
+            all_cls = set(r['class'] for r in rects)
+            # if it starts with -, it means negative
+            all_idx = [self.label_to_idx[c] for c in all_cls if
+                    not c.startswith('-') and c in self.label_to_idx]
+            label[all_idx] = 1
+        data[self.in_key] = label
+        return data
+
+class ConvertToBoxList(object):
+    def __init__(self, in_key):
+        self.in_key = in_key
+    def __call__(self, data):
+        from qd.torch_common import BoxList
+        if len(data[self.in_key]) == 0:
+            data[self.in_key] = BoxList.create_empty_list()
+            return data
+        rects = data[self.in_key]
+        bbox = torch.tensor([r.pop('rect') for r in rects], dtype=torch.float)
+        assert bbox.dim() == 2
+        boxlist = BoxList(bbox, mode='xyxy')
+        from torch.utils.data.dataloader import default_collate
+        extra_fields = default_collate(rects)
+        for k, v in extra_fields.items():
+            boxlist.add_field(k, v)
+        data[self.in_key] = boxlist
+        return data
+
+def get_default_mean():
+    return [0.485, 0.456, 0.406]
+
+def get_default_std():
+    return [0.229, 0.224, 0.225]
+
+def get_data_normalize():
+    normalize = transforms.Normalize(mean=get_default_mean(),
+                                     std=get_default_std())
+    return normalize
+
+class BGR2RGB(object):
+    def __call__(self, im):
+        return im[:, :, [2, 1, 0]]
+
+class FixedPositionCrop(object):
+    def __init__(self, pos, size):
+        self.pos = pos
+        assert isinstance(size, int)
+        self.size = size
+
+        if self.pos == 'top_left':
+            self.get_pos = self.get_pos_for_top_left_crop
+        elif self.pos == 'top_right':
+            self.get_pos = self.get_pos_for_top_right_crop
+        elif self.pos == 'bottom_left':
+            self.get_pos = self.get_pos_for_bottom_left_crop
+        else:
+            assert self.pos == 'bottom_right'
+            self.get_pos = self.get_pos_for_bottom_right_crop
+
+    def get_pos_for_top_left_crop(self, img):
+        return (0, 0)
+    def get_pos_for_top_right_crop(self, img):
+        w, h = img.size
+        return (0, w - self.size)
+    def get_pos_for_bottom_left_crop(self, img):
+        w, h = img.size
+        return (h - self.size, 0)
+    def get_pos_for_bottom_right_crop(self, img):
+        w, h = img.size
+        return (h - self.size, w - self.size)
+
+    def __call__(self, img):
+        crop_top, crop_left = self.get_pos(img)
+        from torchvision.transforms.functional import crop
+        img = crop(img, crop_top, crop_left, self.size, self.size)
+        return img
+
+class MinMaxResizeForTest(object):
+    def __init__(self, min_size, max_size):
+        self.min_size = min_size
+        self.max_size = max_size
+
+    def get_size(self, image_size):
+        w, h = image_size
+        size = self.min_size
+        max_size = self.max_size
+
+        min_original_size = float(min((w, h)))
+        max_original_size = float(max((w, h)))
+        if max_original_size / min_original_size * size > max_size:
+            size = int(round(max_size * min_original_size / max_original_size))
+
+        if (w <= h and w == size) or (h <= w and h == size):
+            return (h, w)
+
+        if w < h:
+            ow = size
+            oh = int(size * h / w)
+        else:
+            oh = size
+            ow = int(size * w / h)
+
+        return (oh, ow)
+
+    def __call__(self, img):
+        size = self.get_size(img.size)
+        image = F.resize(img, size, interpolation=PIL.Image.BICUBIC)
+        return image
+
+def create_crop_transform(crop_position, crop_size):
+    if crop_position is None:
+        crop_transform = transforms.CenterCrop(crop_size)
+    else:
+        crop_transform = FixedPositionCrop(crop_position, crop_size)
+    return crop_transform
+
+def get_inception_test_transform(
+    bgr2rgb=False,
+    resize_size=256,
+    crop_size=224,
+    crop_position=None,
+    with_crop=True,
+    normalize=None,
+    interpolation=Image.BILINEAR,
+    backend='cv',
+):
+    normalize = normalize or get_data_normalize()
+    all_trans = []
+    if backend == 'cv':
+        if bgr2rgb:
+            all_trans.append(BGR2RGB())
+        all_trans.append(transforms.ToPILImage())
+    all_trans.extend([
+        transforms.Resize(resize_size, interpolation),
+    ])
+    if backend == 'pil':
+        if bgr2rgb:
+            all_trans.append(
+                lambda image: image.convert("RGB"),
+            )
+    if with_crop:
+        crop_transform = create_crop_transform(crop_position, crop_size)
+        all_trans.append(crop_transform)
+    all_trans.extend([
+            transforms.ToTensor(),
+            normalize,
+            ])
+    return transforms.Compose(all_trans)
+
+class ODMinMaxTransform(object):
+    def __init__(self, min_size,
+                 max_size,
+                 treat_min_as_max=False,
+                 smart_resize_on_min=False
+                 ):
+        if not isinstance(min_size, (list, tuple)):
+            min_size = (min_size,)
+        self.min_size = min_size
+        self.max_size = max_size
+        self.treat_min_as_max = treat_min_as_max
+        self.smart_resize_on_min = smart_resize_on_min
+
+    def get_size_min_as_max(self, image_size, iteration):
+        w, h = image_size
+        max_size = self.min_size[iteration % len(self.min_size)]
+
+        max_original_size = float(max((w, h)))
+        scale = max_size / max_original_size
+
+        return (int(h * scale), int(w * scale))
+
+    def get_size(self, image_size):
+        w, h = image_size
+        size = random.choice(self.min_size)
+        max_size = self.max_size
+
+        min_original_size = float(min((w, h)))
+        max_original_size = float(max((w, h)))
+        if max_original_size / min_original_size * size > max_size:
+            size = int(round(max_size * min_original_size / max_original_size))
+        # this is not a back-compatible change, as in some cases, it will crash
+        #if size < 16:
+            #size = 16
+
+        if (w <= h and w == size) or (h <= w and h == size):
+            return (h, w)
+
+        if w < h:
+            ow = size
+            oh = int(size * h / w)
+        else:
+            oh = size
+            ow = int(size * w / h)
+
+        return (oh, ow)
+
+    def get_smart_resize_on_min(self, image_size):
+        w, h = image_size
+        alpha = math.sqrt(1. * self.min_size * self.min_size / w / h)
+        w2 = int(w * alpha)
+        h2 = int(h * alpha)
+        return h2, w2
+
+    def __call__(self, image):
+        if self.treat_min_as_max:
+            raise NotImplementedError
+            size = self.get_size_min_as_max(image.size, dict_data['iteration'])
+        elif self.smart_resize_on_min:
+            raise NotImplementedError
+            size = self.get_smart_resize_on_min(image.size)
+        else:
+            size = self.get_size(image.size)
+        image = F.resize(image, size)
+        return image
+
+def get_inception_train_transform(
+    bgr2rgb=False,
+    crop_size=224,
+    small_scale=None,
+    normalize=None,
+    backend='cv',
+    no_color_jitter=False,
+    no_flip=False,
+    no_aspect_dist=False,
+    resize_crop=None,
+    max_size=None,
+):
+    normalize = normalize or get_data_normalize()
+    totensor = transforms.ToTensor()
+    all_trans = []
+    if backend == 'cv':
+        if bgr2rgb:
+            all_trans.append(BGR2RGB())
+        all_trans.append(transforms.ToPILImage())
+    if small_scale is None:
+        small_scale = 0.08
+    scale = (small_scale, 1.)
+    if no_aspect_dist:
+        ratio = (1., 1.)
+    else:
+        ratio = (3. / 4., 4. / 3.)
+    if resize_crop is None:
+        all_trans.append(transforms.RandomResizedCrop(
+            crop_size, scale=scale,
+            ratio=ratio,
+        ))
+    elif resize_crop == 'od_min_max':
+        all_trans.append(ODMinMaxTransform(
+            min_size=crop_size,
+            max_size=max_size,
+        ))
+    else:
+        raise NotImplementedError(resize_crop)
+    if backend == 'pil':
+        if bgr2rgb:
+            all_trans.append(
+                lambda image: image.convert("RGB"),
+            )
+
+    if not no_color_jitter:
+        color_jitter = transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4)
+        all_trans.append(color_jitter)
+
+    if not no_flip:
+        all_trans.append(transforms.RandomHorizontalFlip())
+
+    all_trans.extend([
+        totensor,
+        normalize,])
+    data_augmentation = transforms.Compose(all_trans)
+    return data_augmentation
 

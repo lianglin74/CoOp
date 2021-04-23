@@ -1,10 +1,564 @@
+import random
+import numpy as np
+import time
+import os
+from qd.tsv_io import TSVDataset
+from qd.qd_common import load_list_file
+from qd.tsv_io import get_tsv_lineidx, get_tsv_lineidx_8b
+from qd.qd_common import exclusive_open_to_read
+import os.path as op
+import logging
+import torch.multiprocessing as mp
 import math
+from qd.qd_common import list_to_dict
 import torch
 import torch.distributed as dist
 from torch.utils.data.sampler import Sampler
 from torch._six import int_classes as _int_classes
-from qd.qd_common import get_mpi_rank, get_mpi_size
+from qd.qd_common import get_mpi_rank, get_mpi_size, get_mpi_local_size, get_mpi_local_rank
 
+
+class NodeSplitSampler(Sampler):
+    def __init__(self, dataset, shuffle, random_seed):
+        self.dataset = dataset
+        self.shuffle = shuffle
+        self.random_seed = random_seed
+
+        self.world_size = get_mpi_size()
+        self.local_size = get_mpi_local_size()
+        self.node_size = self.world_size // self.local_size
+        self.rank = get_mpi_rank()
+        self.node_idx = self.rank // self.local_size
+        self.local_rank = get_mpi_local_rank()
+
+    def get_index_on_node(self):
+        # there is no need to cache source_list as we only call this function
+        # once in the whole training life-time
+        source_list = self.dataset.get_composite_source_idx()
+        idx_split = list(enumerate(source_list))
+        idx_split = torch.tensor(idx_split)
+        if self.shuffle:
+            random_idx = self.get_shufle_idx(len(idx_split))
+            idx_split = idx_split[random_idx]
+            max_split = idx_split[:, 1].max() + 1
+            priority = self.get_shufle_idx(max_split)
+            sort_idx = torch.argsort(priority[idx_split[:, 1]])
+            idx_split = idx_split[sort_idx]
+        num_idx_on_node = (len(idx_split) + self.node_size - 1) // self.node_size
+        offset = num_idx_on_node * self.node_idx
+        offset_end = offset + num_idx_on_node
+        offset_end = min(offset_end, len(idx_split))
+        unique_split_index = list(set(idx_split[offset:offset_end, 1].tolist()))
+        logging.info(unique_split_index)
+        return idx_split[offset:offset_end, 0]
+
+    def get_shufle_idx(self, n):
+        g = torch.Generator()
+        g.manual_seed(self.random_seed)
+        random_idx = torch.randperm(n, generator=g)
+        self.random_seed += 99
+        return random_idx
+
+    def get_index_on_rank(self, idx_on_node):
+        if self.shuffle:
+            curr_idx_on_node = idx_on_node[self.get_shufle_idx(len(idx_on_node))]
+        else:
+            curr_idx_on_node = idx_on_node
+        idx_rank_size = (len(curr_idx_on_node) + self.local_size - 1) // self.local_size
+        offset = idx_rank_size * self.local_rank
+        offset_end = offset + idx_rank_size
+        offset_end = min(offset_end, len(curr_idx_on_node))
+        curr_idx_on_node = curr_idx_on_node.tolist()
+        for i in range(offset, offset_end):
+            yield curr_idx_on_node[i]
+
+    def __iter__(self):
+        self.curr_idx = 0
+        idx_on_node = self.get_index_on_node()
+        while True:
+            for i in self.get_index_on_rank(idx_on_node):
+                yield i
+
+    def __len__(self):
+        raise ValueError('should not be called')
+
+class RankSplitSampler(Sampler):
+    def __init__(self, dataset, shuffle, random_seed):
+        self.dataset = dataset
+        self.shuffle = shuffle
+        self.random_seed = random_seed
+
+        self.world_size = get_mpi_size()
+        self.rank = get_mpi_rank()
+
+    def get_index(self):
+        source_list = self.dataset.get_composite_source_idx()
+        idx_split = list(enumerate(source_list))
+        idx_split = torch.tensor(idx_split)
+        if self.shuffle:
+            g = torch.Generator()
+            g.manual_seed(self.random_seed)
+            random_idx = torch.randperm(len(idx_split), generator=g)
+            idx_split = idx_split[random_idx]
+        sort_idx = torch.argsort(idx_split[:, 1])
+        idx_split = idx_split[sort_idx]
+        rank_size = (len(idx_split) + self.world_size - 1) // self.world_size
+        offset = rank_size * self.rank
+        offset_end = offset + rank_size
+        offset_end = min(offset_end, len(idx_split))
+        return idx_split[offset:offset_end, 0].tolist()
+
+    def __iter__(self):
+        self.curr_idx = 0
+        all_idx = self.get_index()
+        while True:
+            if self.curr_idx >= len(all_idx):
+                self.curr_idx -= len(all_idx)
+            yield all_idx[self.curr_idx]
+            self.curr_idx += 1
+
+    def __len__(self):
+        raise ValueError('should not be called')
+
+def prepare_tsv_file_process(queue, unprepare_queue, prepare_by_cat=False):
+    fps = []
+    while True:
+        while queue.qsize() > 0:
+            fname = queue.get()
+            if any(f == fname for f, _ in fps):
+                continue
+            logging.info('preparing {}'.format(fname))
+            fp = exclusive_open_to_read(fname)
+            if prepare_by_cat:
+                os.system('cat {} > /dev/null'.format(fname))
+            logging.info('prepared {}'.format(fname))
+            curr_fps = [fp]
+            lineidx = get_tsv_lineidx(fname)
+            if op.isfile(lineidx):
+                curr_fps.append(exclusive_open_to_read(lineidx))
+                if prepare_by_cat:
+                    os.system('cat {} > /dev/null'.format(lineidx))
+            lineidx8b = get_tsv_lineidx_8b(fname)
+            if op.isfile(lineidx8b):
+                curr_fps.append(exclusive_open_to_read(lineidx8b))
+                if prepare_by_cat:
+                    os.system('cat {} > /dev/null'.format(lineidx8b))
+            fps.append((fname, curr_fps))
+        while unprepare_queue.qsize() > 0:
+            fname = unprepare_queue.get()
+            found = [(i, f) for i, f in enumerate(fps) if f[0] == fname]
+            logging.info('unpreparing {}'.format(fname))
+            for i, fs in found:
+                for f in fs[1]:
+                    f.close()
+                fps.pop(i)
+
+def create_shuffle_group_process(shuffle,
+                                 random_seed, idx_split,
+                                 rank, world_size,
+                                 local_rank, local_size,
+                                 group_size,
+                                 out_queue,
+                                 out_queue_size,
+                                 ):
+    # setting the thread here is not to reduce the speed, but make it runnable.
+    # otherwise, it will hang at some torch api
+    # https://github.com/pytorch/pytorch/issues/3619#issuecomment-515528132
+    logging.info(shuffle)
+    use_np = True
+    use_np = False
+    use_random = True
+    if use_np:
+        idx_split = idx_split.numpy()
+    elif use_random:
+        idx_split = idx_split.tolist()
+    while True:
+        group = create_shuffle_group_on_node(
+            shuffle, random_seed, idx_split, rank, world_size, local_rank,
+            local_size, group_size, use_np, use_random)
+        random_seed += 99
+        for g in group:
+            if use_np:
+                g = dict((k, torch.tensor(v).share_memory_()) for k, v in g.items())
+            else:
+                for k, v in g.items():
+                    v.share_memory_()
+            start = time.time()
+            while out_queue.qsize() >= out_queue_size:
+                logging.info('queue len is too long')
+                time.sleep(1)
+            out_queue.put(g)
+            e = time.time() - start
+            if e > 100:
+                logging.info('taking {} to insert a group'.format(e))
+
+def create_shuffle_group_on_node(
+    shuffle,
+    random_seed,
+    idx_split,
+    rank,
+    world_size,
+    local_rank,
+    local_size,
+    group_size,
+    use_np,
+    use_random,
+):
+    # deterministically shuffle based on epoch
+    if shuffle:
+        if use_np:
+            np.random.seed(random_seed)
+            r = np.random.RandomState(random_seed)
+        elif use_random:
+            random.seed(random_seed)
+        else:
+            g = torch.Generator()
+            g.manual_seed(random_seed)
+
+    if shuffle:
+        # we need to select 1/n data for current rank and thus let's first
+        # shuffle it
+        if use_np:
+            random_idx = r.permutation(len(idx_split))
+        elif use_random:
+            random_idx = list(range(len(idx_split)))
+            random.shuffle(random_idx)
+        else:
+            random_idx = torch.randperm(len(idx_split), generator=g)
+        idx_split = idx_split[random_idx]
+        num_split = idx_split[:, 1].max() + 1
+        if use_np:
+            random_splits = r.permutation(num_split)
+        elif use_random:
+            random_splits = list(range(num_split))
+            random.shuffle(random_splits)
+        else:
+            random_splits = torch.randperm(num_split, generator=g)
+        all_sub = []
+        for s in random_splits:
+            all_sub.append(idx_split[idx_split[:, 1] == s])
+        if use_np:
+            idx_split = np.concatenate(all_sub)
+        else:
+            idx_split = torch.cat(all_sub, dim=0)
+
+    # split by node. Each node should see different portion of the data
+    num_node = world_size // local_size
+    rank_size = (len(idx_split) + num_node - 1) // num_node
+    offset = rank_size * rank
+    offset_end = offset + rank_size
+    offset_end = min(offset_end, len(idx_split))
+    idx_split = idx_split[offset:offset_end]
+
+    if use_np:
+        all_split = np.unique(idx_split[:, 1])
+    elif use_random:
+        all_split = set((s for _, s in idx_split))
+        # set() may not be deterministic, and we need to sort it
+        all_split = sorted(all_split)
+    else:
+        all_split = torch.unique(idx_split[:, 1])
+    num_split = len(all_split)
+    # shuffle the split idx
+    if shuffle:
+        if use_np:
+            all_split = all_split[r.permutation(num_split)]
+        elif use_random:
+            random.shuffle(all_split)
+        else:
+            all_split = all_split[torch.randperm(num_split, generator=g)]
+
+    split_start = 0
+    while True:
+        if split_start >= num_split:
+            break
+        split_end = split_start + group_size
+        split_end = min(num_split, split_end)
+        # merge the index from all splits within this group
+        split_in_group = []
+        split_in_group = all_split[split_start:split_end]
+        if use_random:
+            idx_in_group = [i for i, s in idx_split if s in split_in_group]
+            split_in_group = torch.tensor(split_in_group)
+            idx_in_group = torch.tensor(idx_in_group)
+        else:
+            idx_in_group = [idx_split[idx_split[:, 1] == s, 0] for s in split_in_group]
+            if use_np:
+                idx_in_group = np.concatenate(idx_in_group)
+            else:
+                idx_in_group = torch.cat(idx_in_group)
+        if shuffle and group_size > 1:
+            # shuffle the index within this group
+            assert not use_np
+            idx_in_group = idx_in_group[torch.randperm(
+                len(idx_in_group), generator=g)]
+        # register it
+        yield {
+            'idx_in_group': idx_in_group,
+            'split_in_group': split_in_group,
+        }
+        split_start = split_end
+
+class SplitBySplitSampler(Sampler):
+    # only used in training mode.
+    # by default, every 1 split is one group. Each split means one tsv file.
+    def __init__(self, dataset, group_size=1, shuffle=True, random_seed=9,
+                 num_prepare_process=8,
+                 # which file list should be prepared. data/split will be from
+                 # dataset
+                 prepare_t_versions=[],
+                 prepare_by_cat=False,
+                 ):
+        from qd.qd_common import print_frame_info
+        print_frame_info()
+        self.dataset = dataset
+        self.group_size = group_size
+        self.random_seed = random_seed
+        self.shuffle = shuffle
+
+        self.rank = get_mpi_rank()
+        self.local_rank = get_mpi_local_rank()
+        self.world_size = get_mpi_size()
+        self.local_size = get_mpi_local_size()
+
+        self.node_size = self.world_size // self.local_size
+        self.node_idx = self.rank // self.local_size
+
+        self.shuffle_group_process = None
+
+        # the subprocess will be lazily created
+        self.prepare_processes = None
+        self.prepare_queue = None
+        self.prepare_files = None
+        self.num_prepare_process = num_prepare_process
+        # currently, we only support to prepare one kind of files, but it could
+        # be extendeed to multiple files if we need
+        self.prepare_t_versions = prepare_t_versions
+        self.sub_process_create_shuffle = False
+        self._idx_split = None
+        self.iter_shuffle_group = None
+
+        self.curr_group_buffers = None
+        self.next_group_index = 0
+        self.cache_group_index_on_node = None
+        self.prepare_by_cat = prepare_by_cat
+
+        self.init_prepare()
+
+    def get_composite_source_idx(self):
+        return self.dataset.get_composite_source_idx()
+
+    def get_composite_source_files(self):
+        data = self.dataset.dataset.data
+        split = self.dataset.dataset.split
+        dataset = TSVDataset(data)
+        result = []
+        for t, version in self.prepare_t_versions:
+            tsv = dataset.get_data(split, t, version)
+            if op.isfile(tsv):
+                result.append([tsv])
+            else:
+                x_tsv = dataset.get_data(split + 'X', t, version)
+                assert op.isfile(x_tsv)
+                result.append(load_list_file(x_tsv))
+        return result
+
+    @property
+    def idx_split(self):
+        if self._idx_split is None:
+            logging.info('loading source list')
+            source_list = self.get_composite_source_idx()
+            logging.info('loaded source list')
+            idx_split = list(enumerate(source_list))
+            idx_split = torch.tensor(idx_split)
+            self._idx_split = idx_split
+            #self._idx_split.share_memory_()
+        return self._idx_split
+
+    def create_process_to_create_shuffle_group(self):
+        # don't use this function as it is not working
+        #out_queue = mp.Queue(100)
+        out_queue = mp.SimpleQueue()
+        #out_queue = mp.Queue()
+        #import torch.multiprocessing as pmp
+        p = mp.Process(target=create_shuffle_group_process,
+                       args=(self.shuffle, self.random_seed, self.idx_split,
+                             self.rank, self.world_size,
+                             self.local_rank, self.local_size,
+                             self.group_size,
+                             out_queue,
+                             100,
+                             ))
+        #p.daemon = True
+        p.start()
+        logging.info('shuffle group = {}'.format(p.pid))
+        self.shuffle_group_out_queue = out_queue
+        return p
+
+    def get_shuffle_group(self):
+        # don't use this function as it is not working
+        if self.sub_process_create_shuffle:
+            if self.shuffle_group_process is None:
+                self.shuffle_group_process = self.create_process_to_create_shuffle_group()
+            start = time.time()
+            while self.shuffle_group_out_queue.qsize() == 0:
+                logging.info('queue len is 0')
+                time.sleep(1)
+            group = self.shuffle_group_out_queue.get()
+            end = time.time()
+            if end - start > 60:
+                logging.info('cost {} to get shuffle group'.format(
+                    end - start,
+                ))
+            for k in group:
+                group[k] = group[k].tolist()
+            return group
+        else:
+            while True:
+                for group in create_shuffle_group_on_node(
+                        self.shuffle, self.random_seed, self.idx_split, self.rank,
+                        self.world_size, self.local_rank,
+                        self.local_size, self.group_size, use_np=False,
+                        use_random=False,
+                ):
+                    for k in group:
+                        group[k] = group[k].tolist()
+                    yield group
+                self.random_seed += 99
+
+    #def __del__(self):
+        ## i know this is a bad practice to implement __del__, but so far it is
+        ## not easy to have the process closed.
+        #self.release()
+
+    #def release(self):
+        ## we must call this function
+        #if self.prepare_processes:
+            #for p in self.prepare_processes:
+                #p.terminate()
+            #self.prepare_processes = None
+
+        #if self.shuffle_group_process:
+            #self.shuffle_group_process.terminate()
+            #self.shuffle_group_process = None
+
+    def get_shufle_idx(self, n):
+        g = torch.Generator()
+        g.manual_seed(self.random_seed)
+        random_idx = torch.randperm(n, generator=g)
+        self.random_seed += 99
+        return random_idx
+
+    def get_group_index_on_node(self):
+        # there is no need to cache source_list as we only call this function
+        # once in the whole training life-time
+        idx_split = self.idx_split
+        if self.shuffle:
+            random_idx = self.get_shufle_idx(len(idx_split))
+            idx_split = idx_split[random_idx]
+            max_split = idx_split[:, 1].max() + 1
+            priority = self.get_shufle_idx(max_split)
+            sort_idx = torch.argsort(priority[idx_split[:, 1]])
+            idx_split = idx_split[sort_idx]
+        else:
+            if self.cache_group_index_on_node is not None:
+                return self.cache_group_index_on_node
+        num_idx_on_node = (len(idx_split) + self.node_size - 1) // self.node_size
+        offset = num_idx_on_node * self.node_idx
+        offset_end = offset + num_idx_on_node
+        offset_end = min(offset_end, len(idx_split))
+        idx_split = idx_split[offset:offset_end]
+
+        unique_split_index = list(set(idx_split[:, 1].tolist()))
+        logging.info(unique_split_index)
+        result = [
+            {
+                'idx_in_group': idx_split[idx_split[:, 1] == s][:, 0].tolist(),
+                'split_in_group': [s],
+            }
+            for s in unique_split_index
+        ]
+        if not self.shuffle:
+            self.cache_group_index_on_node = result
+        return result
+
+    def get_next_group_index_on_node(self):
+        if self.curr_group_buffers is None:
+            self.curr_group_buffers = self.get_group_index_on_node()
+            self.next_group_index = 0
+        if self.next_group_index >= len(self.curr_group_buffers):
+            self.curr_group_buffers = self.get_group_index_on_node()
+            self.next_group_index = 0
+        g = self.curr_group_buffers[self.next_group_index]
+        self.next_group_index += 1
+        return g
+
+    def __iter__(self):
+        group_buffers = [
+            self.get_next_group_index_on_node() for _ in range(self.num_prepare_process)
+        ]
+        if self.local_rank == 0:
+            for g in group_buffers:
+                for s in g['split_in_group']:
+                    self.prepare(s)
+        assert len(group_buffers) > 0
+        idx = self.local_rank
+        while True:
+            while idx >= len(group_buffers[0]['idx_in_group']):
+                idx -= len(group_buffers[0]['idx_in_group'])
+                old_g = group_buffers.pop(0)
+                new_g = self.get_next_group_index_on_node()
+                if self.local_rank == 0:
+                    for s in new_g['split_in_group']:
+                        self.prepare(s)
+                    for s in old_g['split_in_group']:
+                        self.unprepare(s)
+                group_buffers.append(new_g)
+            yield group_buffers[0]['idx_in_group'][idx]
+            idx += self.local_size
+
+    def init_prepare(self):
+        if self.prepare_files is None:
+            self.prepare_files = self.get_composite_source_files()
+        if self.prepare_processes is None:
+            from multiprocessing import Process
+            self.prepare_processes = []
+            for _ in range(self.num_prepare_process):
+                prepare_queue = mp.Queue()
+                unprepare_queue = mp.Queue()
+                p = Process(target=prepare_tsv_file_process,
+                        args=(prepare_queue, unprepare_queue,
+                              self.prepare_by_cat,
+                              ))
+                p.daemon = True
+                p.start()
+                self.prepare_processes.append(
+                    (p, prepare_queue, unprepare_queue))
+            self.prepare_f2pidx = {}
+
+    def prepare(self, split):
+        idx = min(range(len(self.prepare_processes)), key=lambda x:
+            self.prepare_processes[x][1].qsize())
+        q = self.prepare_processes[idx][1]
+        size = q.qsize()
+        if size > 100:
+            logging.info('prepare queue is too long {}'.format(size))
+        for ps in self.prepare_files:
+            q.put(ps[split])
+        self.prepare_f2pidx[split] = idx
+
+    def unprepare(self, split):
+        assert self.prepare_processes is not None
+        idx = self.prepare_f2pidx[split]
+        q = self.prepare_processes[idx][2]
+        size = q.qsize()
+        if size > 100:
+            logging.info('unprepare queue is too long {}'.format(size))
+        for ps in self.prepare_files:
+            q.put(ps[split])
+
+    def __len__(self):
+        raise ValueError('should not be called')
 
 class AttachIterationNumberBatchSampler(object):
     def __init__(self, batch_sampler, start_iter, num_iters):
@@ -97,10 +651,17 @@ class IterationBasedBatchSampler(BatchSampler):
     a specified number of iterations have been sampled
     """
 
-    def __init__(self, batch_sampler, num_iterations, start_iter=0):
+    def __init__(self, batch_sampler, num_iterations, start_iter=0,
+                 ):
         self.batch_sampler = batch_sampler
         self.num_iterations = num_iterations
         self.start_iter = start_iter
+
+        if hasattr(batch_sampler, 'batch_size'):
+            self.batch_size = batch_sampler.batch_size
+
+        if hasattr(batch_sampler, 'drop_last'):
+            self.drop_last = batch_sampler.drop_last
 
     def __iter__(self):
         iteration = self.start_iter
