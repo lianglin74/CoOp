@@ -88,12 +88,14 @@ def old_train(self, args, train_dataloader, model, tokenizer):
         args.warmup_steps, max_iter
     )
     use_amp = self.use_amp
+    assert self.device in ['cuda', 'cpu']
     if args.distributed and self.device == 'cuda':
         model = torch.nn.parallel.DistributedDataParallel(
             model, device_ids=[self.mpi_local_rank],
             output_device=self.mpi_local_rank,
             find_unused_parameters=True,
         )
+    logging.info(model)
 
     start_training_time = time.time()
     end = time.time()
@@ -116,18 +118,17 @@ def old_train(self, args, train_dataloader, model, tokenizer):
         batch = to(batch, self.device)
         after_to_device = time.time()
         meters.update(to_device=after_to_device - after_data_load)
-        inputs = batch
         if use_amp:
             optimizer.zero_grad()
             with torch.cuda.amp.autocast(enabled=use_amp):
-                loss_dict = model(**inputs)
+                loss_dict = model(**batch)
                 loss = sum(v for _, v in loss_dict.items())
                 #loss, logits_mask, logits_seq = outputs[0], outputs[1], outputs[2]
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
         else:
-            loss_dict = model(**inputs)
+            loss_dict = model(**batch)
             loss = sum(v for _, v in loss_dict.items())
             #loss, logits_mask, logits_seq = outputs[0], outputs[1], outputs[2]
             optimizer.zero_grad()
@@ -205,11 +206,19 @@ def check_arguments(args):
 
 def load_tokenizer_model(self, args):
     # Load pretrained model and tokenizer
-    config_class, model_class, tokenizer_class = BertConfig, BertImgForPreTraining, BertTokenizer
-    config = config_class.from_pretrained(args.config_name if args.config_name \
-            else args.model_name_or_path)
+    config = BertConfig.from_pretrained(
+        args.config_name if args.config_name \
+        else args.model_name_or_path,
+    )
+    if self.max_img_seq_length == 0:
+        from qd.mask.layers.bert.modeling_bert import E2EBertImgForPreTraining
+        model_class = E2EBertImgForPreTraining
+        config.image_encoder = self.image_encoder
+        config.text_encoder = self.text_encoder
+    else:
+        model_class = BertImgForPreTraining
     assert config is not None
-    tokenizer = tokenizer_class.from_pretrained(args.tokenizer_name if args.tokenizer_name \
+    tokenizer = BertTokenizer.from_pretrained(args.tokenizer_name if args.tokenizer_name \
                     else args.model_name_or_path, do_lower_case=args.do_lower_case)
     config.img_feature_dim = args.img_feature_dim
     config.img_feature_type = 'frcnn'
@@ -245,22 +254,6 @@ def load_tokenizer_model(self, args):
     assert model is not None
     logging.info("Load pretrained model: {}".format(args.model_name_or_path))
 
-    #if any(model_structure_changed):
-        #assert config.hidden_size % config.num_attention_heads == 0
-        #if args.load_partial_weights:
-            ## can load partial weights when changing layer only.
-            #assert not any(model_structure_changed[1:]), "Cannot load partial weights " \
-                    #"when any of ({}) is changed.".format(', '.join(update_params[1:]))
-            #model = model_class.from_pretrained(args.model_name_or_path,
-                    #from_tf=bool('.ckpt' in args.model_name_or_path), config=config)
-            #logging.info("Load partial weights for bert layers.")
-        #else:
-            #model = model_class(config=config) # init from scratch
-            #logging.info("Init model from scratch.")
-    #else:
-        #model = model_class.from_pretrained(args.model_name_or_path,
-                #from_tf=bool('.ckpt' in args.model_name_or_path), config=config)
-        #logging.info("Load pretrained model: {}".format(args.model_name_or_path))
     return tokenizer, model
 
 def main(self, args):
@@ -270,7 +263,6 @@ def main(self, args):
     logging.info("Using {} GPUs".format(args.num_gpus))
 
     tokenizer, model = load_tokenizer_model(self, args)
-    logging.info(model)
 
     if args.freeze_embedding:
         logging.info("Freeze word embedding")
@@ -285,6 +277,60 @@ def main(self, args):
             args.distributed, is_train=True, is_pretrain=True)
     logging.info(train_dataloader.dataset)
     return old_train(self, args, train_dataloader, model, tokenizer)
+
+def get_image_encoder_fd(encoder_type, out_dim,
+                         pretrained=False, **kwargs):
+    if encoder_type.startswith('resnet'):
+        param = {
+            'pretrained': pretrained,
+            'num_classes': out_dim,
+        }
+        param.update(kwargs)
+        return {
+            'from': 'qd.layers.resnet_vl',
+            'import': encoder_type,
+            'param': param,
+        }
+    elif encoder_type.startswith('CLIP'):
+        raise NotImplementedError('should not be here')
+        if encoder_type == 'CLIPresnet50':
+            return {
+                'from': 'qd.layers.CLIP.models',
+                'import': 'ModifiedResNet',
+                'param': {
+                    'layers': (3, 4, 6, 3),
+                    'output_dim': 1024,
+                    'heads': 32,
+                    'input_resolution': 224,
+                    'width': 64,
+                },
+            }
+
+def load_text_encoder(path):
+    from qd.mask.layers.bert.modeling_bert import BertModel
+    r = BertModel.from_pretrained(path)
+    r.return_dict = True
+    return r
+
+def get_text_encoder_fd(text_encoder_type):
+    if op.isfile(op.join(text_encoder_type, 'pytorch_model.bin')):
+        return {
+            'from': 'qd.pipelines.mmask_pretrain',
+            'import': 'load_text_encoder',
+            'param': {
+                'path': text_encoder_type,
+            },
+        }
+    else:
+        config = BertConfig.from_pretrained(text_encoder_type)
+        config.return_dict = True
+        return {
+            'from': 'qd.mask.layers.bert.modeling_bert',
+            'import': 'BertModel',
+            'param': {
+                'config': config
+            },
+        }
 
 class MMaskPretrainPipeline(MaskClassificationPipeline):
     def __init__(self, **kwargs):
@@ -318,7 +364,17 @@ class MMaskPretrainPipeline(MaskClassificationPipeline):
             'loss_type': 'classification_classification',
             'dataset_type': None,
             'region_loss_for_unmatched': True,
+            'mask_type': 'seq2seq',
+            'mask_od_labels': None,
+            'drop_out': 0.1,
         })
+        if self.max_img_seq_length == 0:
+            self.image_encoder = get_image_encoder_fd(
+                self.image_encoder_type,
+            )
+            self.text_encoder = get_text_encoder_fd(
+                self.text_encoder_type,
+            )
 
     def append_predict_param(self, cc):
         pass
@@ -336,7 +392,7 @@ class MMaskPretrainPipeline(MaskClassificationPipeline):
         train_yaml = self.train_yaml
         if train_yaml is None:
             train_yaml = op.join(self.output_folder, 'train_yaml.yaml')
-            if self.mpi_rank == 0:
+            if self.mpi_rank == 0 and not self.qd_format:
                 convert_data_to_yaml(
                     data=self.data,
                     split=self.train_split,
@@ -360,6 +416,9 @@ class MMaskPretrainPipeline(MaskClassificationPipeline):
             max_seq_a_length = 20
             mask_od_labels = True
 
+        if self.mask_od_labels is not None:
+            mask_od_labels = self.mask_od_labels
+
         param = {
             'qd_format': self.qd_format,
             'data': self.data,
@@ -371,17 +430,17 @@ class MMaskPretrainPipeline(MaskClassificationPipeline):
             'qa2caption': self.qa2caption,
             'pert_caption_prob': self.pert_caption_prob,
             'pert_labels_prob': self.pert_labels_prob,
+            'caption_version': self.caption_version,
             'img_feature_dim': self.img_feature_dim,
             'adam_epsilon': self.adam_epsilon,
             'add_od_labels': self.add_od_labels,
             'effective_batch_size': self.effective_batch_size,
             'img_feat_label_type': self.img_feat_label_type,
             'distributed': self.distributed,
-
             'learning_rate': self.base_lr,
             'data_dir': 'data',
             'do_lower_case': True,
-            'drop_out': 0.1,
+            'drop_out': self.drop_out,
             'num_gpus': self.mpi_size,
             'freeze_embedding': False,
             'hidden_size': -1,
@@ -392,7 +451,7 @@ class MMaskPretrainPipeline(MaskClassificationPipeline):
             'mask_loss_for_unmatched': False,
             'mask_od_labels': mask_od_labels,
             'mask_prob': 0.15,
-            'mask_type': 'seq2seq',
+            'mask_type': self.mask_type,
             'max_img_seq_length': self.max_img_seq_length,
             'max_masked_tokens': 5,
             'max_seq_a_length': max_seq_a_length,
@@ -406,7 +465,7 @@ class MMaskPretrainPipeline(MaskClassificationPipeline):
             'on_memory': self.on_memory,
             'output_dir': self.output_folder,
             'per_gpu_train_batch_size': self.effective_batch_size // self.mpi_size,
-            'save_steps': 20000,
+            'save_steps': 50000,
             'scheduler': 'linear',
             'seed': 88,
             'tokenizer_name': self.tokenizer_name,
@@ -449,7 +508,7 @@ class MMaskPretrainPipeline(MaskClassificationPipeline):
                              betas=(.9, .999),
                              adam=False)
         else:
-            raise ValueError(self.optimizer_type)
+            optimizer = super().get_optimizer(model)
         return optimizer
 
     def get_lr_scheduler(self, optimizer, last_epoch=-1):
