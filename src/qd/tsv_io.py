@@ -1,3 +1,8 @@
+import mmap
+from qd.qd_common import exclusive_open_to_read
+import time
+import multiprocessing as mp
+from qd.qd_common import limited_retry_agent
 import logging
 from pprint import pformat
 import glob
@@ -27,8 +32,11 @@ def get_default_splits():
     return ['train', 'trainval', 'test', 'val']
 
 def get_tsv_lineidx(tsv_file):
-    assert tsv_file.endswith('.tsv')
+    #assert tsv_file.endswith('.tsv') or tsv_file.endswith('.txt')
     return tsv_file[:-3] + 'lineidx'
+
+def get_tsv_lineidx_8b(tsv_file):
+    return tsv_file[:-3] + 'lineidx.8b'
 
 def rm_tsv(tsv_file):
     if op.isfile(tsv_file):
@@ -114,10 +122,11 @@ class CompositeTSVFile(object):
         result = self.tsvs[idx_source].seek(idx_row)
         end = time.time()
         if end - start > 10:
-            logging.info('too long to load fname = {}, source={}, row={}'.format(
+            logging.info('too long to load fname = {}, source={}, row={}, time={}'.format(
                 self.tsvs[idx_source],
                 idx_source,
                 idx_row,
+                end - start
             ))
         if self.hold_buffer > 0:
             if idx_source not in self.hold_sources:
@@ -130,6 +139,20 @@ class CompositeTSVFile(object):
     def __len__(self):
         self.ensure_initialized()
         return len(self.seq)
+
+    def __iter__(self):
+        self.ensure_initialized()
+        self.next_row = 0
+        self.seq = iter(self.seq)
+        return self
+
+    def __next__(self):
+        # this function is not well tested. let's have a breakpoint here
+        import ipdb;ipdb.set_trace(context=15)
+        if self.next_row >= len(self):
+            raise StopIteration
+        idx_source, idx_row = map(int, next(self.seq))
+        return self.tsvs[idx_source][idx_row]
 
     def release(self):
         # this is to ensure we released all the resources
@@ -159,34 +182,55 @@ class TSVFile(object):
     def __init__(self, tsv_file, cache_policy=None):
         self.tsv_file = tsv_file
         self.lineidx = op.splitext(tsv_file)[0] + '.lineidx'
+        self.lineidx_8b = self.lineidx + '.8b'
         self._fp = None
+        self._mfp = None
         self._lineidx = None
+        self.fp8b = None
         self.cache_policy= cache_policy
         self.close_fp_after_read = False
         if os.environ.get('QD_TSV_CLOSE_FP_AFTER_READ'):
             self.close_fp_after_read = bool(os.environ['QD_TSV_CLOSE_FP_AFTER_READ'])
+        self.use_mmap = False
+        if os.environ.get('QD_TSV_MMAP'):
+            self.use_mmap = bool(os.environ['QD_TSV_MMAP'])
+        self.use_fuse = False
+        if os.environ.get('QD_TSV_USE_FUSE'):
+            self.use_fuse = int(os.environ['QD_TSV_USE_FUSE'])
+            from qd.cloud_storage import create_cloud_fuse
+            self.fuser = create_cloud_fuse()
+        if self.use_fuse:
+            self.has_lineidx_8b = self.fuser.isfile(self.lineidx_8b)
+        else:
+            self.has_lineidx_8b = op.isfile(self.lineidx_8b)
         # the process always keeps the process which opens the
         # file. If the pid is not equal to the currrent pid, we will re-open
         # teh file.
         self.pid = None
+        self.lineidx_8b_pid = None
+        self.open_once = False
 
         self._cache()
+        self._len = None
 
     def close_fp(self):
         if self._fp:
             self._fp.close()
             self._fp = None
+        if self._mfp:
+            self._mfp.close()
+            self._mfp = None
+        if self.has_lineidx_8b and self.fp8b:
+            self.fp8b.close()
+            self.fp8b = None
 
     def release(self):
         self.close_fp()
         self._lineidx = None
 
     def close(self):
-        #@deprecated('use close_fp to make it more clear not to release lineidx')
+        #@deprecated('use release to make it more clear not to release lineidx')
         self.close_fp()
-        # we don't need to set self._lineidx as None, as we may re-open it.
-        # in that case, there will be no need to re-load self._lineidx
-        #self._lineidx = None
 
     def __del__(self):
         self.release()
@@ -197,33 +241,86 @@ class TSVFile(object):
     def __repr__(self):
         return str(self)
 
+    def __iter__(self):
+        self._ensure_tsv_opened()
+        self.fp_seek(0)
+        self.next_row = 0
+        return self
+
+    def __next__(self):
+        if self.next_row >= len(self):
+            raise StopIteration
+        self.next_row += 1
+        result = self.get_current_column()
+        return result
+
     def num_rows(self):
-        self._ensure_lineidx_loaded()
-        return len(self._lineidx)
+        if self._len is None:
+            if self.has_lineidx_8b:
+                from qd.qd_common import get_file_size
+                self._len = get_file_size(self.lineidx_8b) // 8
+            else:
+                self._ensure_lineidx_loaded()
+                self._len = len(self._lineidx)
+        return self._len
 
     def get_key(self, idx):
         return self.seek_first_column(idx)
 
+    def get_current_column(self):
+        if self.use_mmap:
+            result = [s.strip() for s in self._mfp.readline().decode().split('\t')]
+        else:
+            result = [s.strip() for s in self._fp.readline().split('\t')]
+        return result
+
+    def fp_seek(self, pos):
+        if self.use_mmap:
+            self._mfp.seek(pos)
+        else:
+            self._fp.seek(pos)
+
     def seek(self, idx):
         self._ensure_tsv_opened()
-        self._ensure_lineidx_loaded()
-        try:
-            pos = self._lineidx[idx]
-        except:
-            logging.info('{}-{}'.format(self.tsv_file, idx))
-            raise
-        self._fp.seek(pos)
-        result = [s.strip() for s in self._fp.readline().split('\t')]
+        pos = self.get_offset(idx)
+        self.fp_seek(pos)
+        result = self.get_current_column()
         if self.close_fp_after_read:
             self.close_fp()
         return result
 
     def seek_first_column(self, idx):
         self._ensure_tsv_opened()
-        self._ensure_lineidx_loaded()
-        pos = self._lineidx[idx]
+        pos = self.get_offset(idx)
         self._fp.seek(pos)
         return read_to_character(self._fp, '\t')
+
+    def open(self, fname, mode):
+        if self.use_fuse:
+            return self.fuser.open(fname, mode)
+        else:
+            return exclusive_open_to_read(fname, mode)
+
+    def get_offset(self, idx):
+        # do not use op.isfile() to check whether lineidx_8b exists as it may
+        # incur API call for blobfuse, which will be super slow if we enumerate
+        # a bunch of data
+        if self.has_lineidx_8b:
+            if self.fp8b is None:
+                self.fp8b = self.open(self.lineidx_8b, 'rb')
+                self.lineidx_8b_pid = os.getpid()
+            if self.lineidx_8b_pid != os.getpid():
+                self.fp8b.close()
+                logging.info('re-open {} because the process id changed'.format(
+                    self.lineidx_8b))
+                self.fp8b= self.open(self.lineidx_8b, 'rb')
+                self.lineidx_8b_pid = os.getpid()
+            self.fp8b.seek(idx * 8)
+            return int.from_bytes(self.fp8b.read(8), 'little')
+        else:
+            self._ensure_lineidx_loaded()
+            pos = self._lineidx[idx]
+            return pos
 
     def __getitem__(self, index):
         return self.seek(index)
@@ -236,9 +333,19 @@ class TSVFile(object):
             # please do not check if it is expired. Reason: if we copy the data from somewhere else, the timestamp might not be kepts
             #if not op.isfile(self.lineidx) and not op.islink(self.lineidx):
                 #generate_lineidx(self.tsv_file, self.lineidx)
-            logging.info('loading lineidx: {}'.format(self.lineidx))
-            with open(self.lineidx, 'r') as fp:
-                self._lineidx = [int(i.strip()) for i in fp.readlines()]
+            #with open(self.lineidx, 'r') as fp:
+
+            #with limited_retry_agent(10, open, self.lineidx, 'r') as fp:
+            if self.use_fuse:
+                with self.fuser.open(self.lineidx, 'r') as fp:
+                    self._lineidx = tuple([int(i.strip()) for i in fp.readlines()])
+            else:
+                with exclusive_open_to_read(self.lineidx) as fp:
+                    self._lineidx = tuple([int(i.strip()) for i in fp.readlines()])
+            logging.info('loaded {} from {}'.format(
+                len(self._lineidx),
+                self.lineidx
+            ))
 
     def _cache(self):
         if self.cache_policy == 'memory':
@@ -286,22 +393,60 @@ class TSVFile(object):
         elif self.cache_policy is not None:
             raise ValueError('unkwown cache policy {}'.format(self.cache_policy))
 
+    def get_tsv_fp(self):
+        if self.use_fuse:
+            fp = self.fuser.open(self.tsv_file, 'r')
+            logging.info(fp)
+        else:
+            if not self.open_once:
+                fp = exclusive_open_to_read(self.tsv_file)
+                self.open_once = True
+            else:
+                fp = open(self.tsv_file)
+        if self.use_mmap:
+            mfp = mmap.mmap(fp.fileno(), 0, access=mmap.ACCESS_READ)
+        else:
+            mfp = fp
+        return mfp, fp
+
     def _ensure_tsv_opened(self):
         if self.cache_policy == 'memory':
             assert self._fp is not None
             return
 
         if self._fp is None:
-            self._fp = exclusive_open_to_read(self.tsv_file)
+            self._mfp, self._fp = self.get_tsv_fp()
             self.pid = os.getpid()
 
         if self.pid != os.getpid():
+            self._mfp.close()
             self._fp.close()
             logging.info('re-open {} because the process id changed'.format(self.tsv_file))
             from qd.qd_common import print_opened_files
             print_opened_files()
-            self._fp = exclusive_open_to_read(self.tsv_file)
+            self._mfp, self._fp = self.get_tsv_fp()
             self.pid = os.getpid()
+
+def get_all_associate_files(all_info):
+    result = []
+    for info in all_info:
+        result.extend(get_associate_files(info))
+    return result
+
+def get_associate_files(info):
+    data, split, t, version = info
+    dataset = TSVDataset(data)
+    fname = dataset.get_data(split, t, version)
+    result = []
+    if op.isfile(fname):
+        result.append(fname)
+    else:
+        result.extend(load_list_file(dataset.get_data(split + 'X', t, version)))
+        result.append(dataset.get_shuffle_file(split))
+    import ipdb;ipdb.set_trace(context=15)
+    extra = [get_tsv_lineidx_8b(r) for r in result]
+    result.extend(extra)
+    return result
 
 class TSVDataset(object):
     def __init__(self, name, data_root=None):
@@ -772,7 +917,8 @@ class TSVSplitProperty(object):
     one instance of this class mean one tsv file or one composite tsv, it could
     be label tsv, or hw tsv, or image tsv
     '''
-    def __init__(self, data, split, t=None, version=0, cache_policy=None):
+    def __init__(self, data, split, t=None, version=0, cache_policy=None,
+                 hold_buffer=0):
         self.data = data
         self.split = split
         self.t = t
@@ -790,7 +936,8 @@ class TSVSplitProperty(object):
             assert op.isfile(list_file) and op.isfile(seq_file), (
                 '{}, {}/{} not available'.format(single_tsv, list_file, seq_file)
             )
-            self.tsv = CompositeTSVFile(list_file, seq_file, cache_policy)
+            self.tsv = CompositeTSVFile(list_file, seq_file, cache_policy,
+                                        hold_buffer=hold_buffer)
 
     def __repr__(self):
         return 'TSVSplitProperty(tsv={})'.format(
@@ -808,19 +955,11 @@ class TSVSplitProperty(object):
         return len(self)
 
     def __iter__(self):
-        self.curr_idx = 0
-        return self
+        return iter(self.tsv)
 
     def get_key(self, i):
         return self.tsv.seek_first_column(i)
 
-    def __next__(self):
-        if self.curr_idx < len(self):
-            result = self[self.curr_idx]
-            self.curr_idx += 1
-            return result
-        else:
-            raise StopIteration
 
     def seek_first_column(self, idx):
         return self.tsv.seek_first_column(idx)
@@ -834,6 +973,8 @@ def tsv_writers(all_values, tsv_file_names, sep='\t'):
         ensure_directory(os.path.dirname(tsv_file_name))
     tsv_lineidx_files = [os.path.splitext(tsv_file_name)[0] + '.lineidx'
         for tsv_file_name in tsv_file_names]
+    tsv_lineidx_8b_files = [x + '.8b' for x in tsv_lineidx_files]
+    tsv_lineidx_8b_file_tmps = [x + '.tmp' for x in tsv_lineidx_8b_files]
     tsv_file_name_tmps = [tsv_file_name + '.tmp' for tsv_file_name in
             tsv_file_names]
     tsv_lineidx_file_tmps = [tsv_lineidx_file + '.tmp' for tsv_lineidx_file in
@@ -844,19 +985,23 @@ def tsv_writers(all_values, tsv_file_names, sep='\t'):
             tsv_file_name_tmps]
     fpidxs = [open(tsv_lineidx_file_tmp, 'w') for tsv_lineidx_file_tmp in
             tsv_lineidx_file_tmps]
+    fpidx8bs = [open(x, 'wb') for x in tsv_lineidx_8b_file_tmps]
     idxs = [0 for _ in fps]
     for values in all_values:
         assert values is not None
-        for i, (value, fp, fpidx) in enumerate(zip(values, fps, fpidxs)):
+        for i, (value, fp, fpidx, fpidx8b) in enumerate(zip(values, fps, fpidxs, fpidx8bs)):
             value = map(lambda v: v if type(v) == bytes else str(v).encode(),
                     value)
             v = sep.join(value) + b'\n'
             fp.write(v)
             fpidx.write(str(idxs[i]) + '\n')
+            fpidx8b.write(idxs[i].to_bytes(8, 'little'))
             idxs[i] = idxs[i]+ len(v)
     for f in fps:
         f.close()
     for f in fpidxs:
+        f.close()
+    for f in fpidx8bs:
         f.close()
     # the following might crash if there are two processes which are writing at
     # the same time. One process finishes the renaming first and the second one
@@ -869,18 +1014,23 @@ def tsv_writers(all_values, tsv_file_names, sep='\t'):
     for tsv_lineidx_file_tmp, tsv_lineidx_file in zip(tsv_lineidx_file_tmps,
             tsv_lineidx_files):
         os.rename(tsv_lineidx_file_tmp, tsv_lineidx_file)
+    for x, y in zip(tsv_lineidx_8b_file_tmps, tsv_lineidx_8b_files,):
+        os.rename(x, y)
+
 
 def tsv_writer(values, tsv_file_name, sep='\t'):
     ensure_directory(os.path.dirname(tsv_file_name))
     tsv_lineidx_file = os.path.splitext(tsv_file_name)[0] + '.lineidx'
+    tsv_8b_file = tsv_lineidx_file + '.8b'
     idx = 0
     tsv_file_name_tmp = tsv_file_name + '.tmp'
     tsv_lineidx_file_tmp = tsv_lineidx_file + '.tmp'
+    tsv_8b_file_tmp = tsv_8b_file + '.tmp'
     import sys
     is_py2 = sys.version_info.major == 2
     if not is_py2:
         sep = sep.encode()
-    with open(tsv_file_name_tmp, 'wb') as fp, open(tsv_lineidx_file_tmp, 'w') as fpidx:
+    with open(tsv_file_name_tmp, 'wb') as fp, open(tsv_lineidx_file_tmp, 'w') as fpidx, open(tsv_8b_file_tmp, 'wb') as fp8b:
         assert values is not None
         for value in values:
             assert value is not None
@@ -892,6 +1042,10 @@ def tsv_writer(values, tsv_file_name, sep='\t'):
                 v = sep.join(value) + b'\n'
             fp.write(v)
             fpidx.write(str(idx) + '\n')
+            # although we can use sys.byteorder to retrieve the system-default
+            # byte order, let's use little always to make it consistent and
+            # simple
+            fp8b.write(idx.to_bytes(8, 'little'))
             idx = idx + len(v)
     # the following might crash if there are two processes which are writing at
     # the same time. One process finishes the renaming first and the second one
@@ -900,6 +1054,7 @@ def tsv_writer(values, tsv_file_name, sep='\t'):
     # protect it here.
     os.rename(tsv_file_name_tmp, tsv_file_name)
     os.rename(tsv_lineidx_file_tmp, tsv_lineidx_file)
+    os.rename(tsv_8b_file_tmp, tsv_8b_file)
 
 def tsv_reader(tsv_file_name, sep='\t'):
     with open(tsv_file_name, 'r') as fp:
@@ -1142,25 +1297,6 @@ def load_labels(file_name):
         key_to_rects[key] = rects
         key_to_idx[key] = i
     return key_to_rects, key_to_idx
-
-def exclusive_open_to_read(fname):
-    #user_name = get_user_name()
-    #from qd.qd_common import acquireLock, releaseLock
-    #lock_fd = acquireLock(op.join('/tmp',
-        #'{}_lock_{}'.format(user_name, hash_sha1(fname))))
-    try:
-        # in AML, it could fail with Input/Output error. If it fails, we will
-        # use azcopy as a fall back solution for reading
-        from qd.qd_common import limited_retry_agent
-        fp = limited_retry_agent(10, open, fname, 'r')
-    except:
-        if 'FILE_OPEN_AZCOPY_BLOB_ACCOUNT_PATH' in os.environ:
-            return azcopy_read(fname)
-        else:
-            raise
-
-    #releaseLock(lock_fd)
-    return fp
 
 def azcopy_read(fname):
     # we ignore fname since it could be a mounted blobfuse folder in AML
