@@ -48,6 +48,19 @@ import copy
 from deprecated import deprecated
 import io
 
+def get_sys_memory_usage_info():
+    out = cmd_run(['free'], return_output=True)
+    import ipdb;ipdb.set_trace(context=15)
+    lines = out.split('\n')
+    headers = lines[0].strip().split(' ')
+    headers = [h for h in headers if len(h) > 0]
+    mem = lines[1]
+    x1, x2 = mem.split(':')
+    assert 'Mem' == x1
+    values = [int(i) for i in x2.split(' ') if len(i) > 0]
+    assert len(headers) == len(values)
+    return dict(zip(headers, values))
+
 def get_mem_usage_in_bytes():
     import os, psutil
     process = psutil.Process(os.getpid())
