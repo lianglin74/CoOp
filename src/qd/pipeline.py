@@ -104,15 +104,17 @@ def ensure_upload_all_data(all_data, client, from_cluster=None):
         from_cluster=[from_cluster]
     ensure_aml_data_available(need_to_upload_data, client, from_cluster)
 
-def ensure_upload_init_model(param, philly_client):
+def ensure_upload_init_model(param, client):
     if 'basemodel' not in param:
         return
     basemodel = param['basemodel']
     if basemodel == '' or basemodel.startswith('http'):
         logging.info('No need to upload base model')
         return
+    if client.exists(basemodel):
+        return
     assert(op.isfile(basemodel) or op.isdir(basemodel)), basemodel
-    philly_client.upload_file(basemodel)
+    client.upload_file(basemodel)
 
 def ensure_upload_trained_model(param, aml_client):
     if 'full_expid' in param:
@@ -138,32 +140,48 @@ def smart_create_aml_client(cluster, **kwargs):
 
     return create_aml_client(cluster=choices[0]['cluster'], **kwargs)
 
+def ensure_pipeline_data_available(param, client, from_clients=None):
+    if 'param' not in param:
+        return
+    param = param['param']
+    if 'basemodel' in param:
+        ensure_upload_init_model(param, client)
+    # this is for predict pipeline
+    ensure_upload_trained_model(param, client)
+    needed = []
+    if 'text_encoder_type' in param and \
+            isinstance(param['text_encoder_type'], str) and \
+            op.isdir(param['text_encoder_type']):
+        needed.append(param['text_encoder_type'])
+
+    ensure_aml_data_available(needed, client, from_clients)
+
+def ensure_aml_job_data_available(param, **submit_param):
+    from qd.qd_common import run_if_not_memory_cached
+    aml_client = run_if_not_memory_cached(smart_create_aml_client, **submit_param)
+    candidate_clusters = submit_param.get('candidate_clusters', [])
+    from_amls = [create_aml_client(cluster=_c) for _c in candidate_clusters]
+    all_data = []
+    if 'data' in param.get('param', {}):
+        from qd.pipeline import get_all_related_data_for_gpu_jobs
+        data = param['param']['data']
+        all_data.extend(get_all_related_data_for_gpu_jobs(data))
+    if 'all_test_data' in param:
+        all_data.extend([test_data_info['test_data'] for test_data_info in
+            param['all_test_data']])
+    run_if_not_memory_cached(
+        ensure_upload_all_data,
+        all_data,
+        aml_client,
+        from_amls,
+    )
+    ensure_pipeline_data_available(param, aml_client, from_clients=from_amls)
 
 def aml_func_run(func, param, **submit_param):
     from qd.qd_common import run_if_not_memory_cached
     aml_client = run_if_not_memory_cached(smart_create_aml_client, **submit_param)
-    if not submit_param.get('skip_data_upload'):
-        all_data = []
-        if 'data' in param.get('param', {}):
-            from qd.pipeline import get_all_related_data_for_gpu_jobs
-            data = param['param']['data']
-            all_data.extend(get_all_related_data_for_gpu_jobs(data))
-        if 'all_test_data' in param:
-            all_data.extend([test_data_info['test_data'] for test_data_info in
-                param['all_test_data']])
-        candidate_clusters = submit_param.get('candidate_clusters', [])
-        from_amls = [create_aml_client(cluster=_c) for _c in candidate_clusters]
-        run_if_not_memory_cached(
-            ensure_upload_all_data,
-            all_data,
-            aml_client,
-            from_amls,
-        )
-        if 'basemodel' in param.get('param', {}) and \
-                not submit_param.get('skip_base_upload'):
-            ensure_upload_init_model(param['param'], aml_client)
-        if 'param' in param:
-            ensure_upload_trained_model(param['param'], aml_client)
+    #if not submit_param.get('skip_data_upload'):
+        #ensure_aml_job_data_available(param, **submit_param)
     if isinstance(func, dict):
         param = {
             'info': {
@@ -385,6 +403,18 @@ def generate_expid(param):
     if param['pipeline_type'] == 'MaskRCNNPipeline':
         non_expid_impact_keys.extend(['DATASETS', ''])
 
+    groups = config.get('group', [])
+
+    grouped_keys = set()
+    grouped_hints = []
+    for g in groups:
+        met = all([dict_has_path(param, k) and dict_get_path_value(param, k) == v
+               for k, v in g['condition'].items()])
+        if met:
+            for k in g['condition']:
+                grouped_keys.add(k)
+            grouped_hints.append(g['value'])
+
     # we need to update expid so that the model folder contains the critical
     # param information
     infos = []
@@ -429,6 +459,8 @@ def generate_expid(param):
                     infos.append('{}{}'.format(v, pk))
         elif isinstance(setting, dict):
             k = setting['key']
+            if k in grouped_keys:
+                continue
             if dict_has_path(param, k):
                 pk = dict_get_path_value(param, k)
                 default_value = setting['default']
@@ -507,6 +539,7 @@ def generate_expid(param):
     known_keys.extend((s['key'] for s in direct_add_value_keys if isinstance(s,
         dict)))
     known_keys.extend(k for x in all_group_key_encode for k in x['keys'])
+    known_keys.extend(grouped_keys)
 
     all_path = get_all_path(param)
 
@@ -517,6 +550,7 @@ def generate_expid(param):
 
     if 'expid_prefix' in param:
         infos.insert(0, param['expid_prefix'])
+    infos.extend(grouped_hints)
     return '_'.join(infos)
 
 def create_pipeline(kwargs):
@@ -789,6 +823,11 @@ def run_training_pipeline(swap_params):
         param = copy.deepcopy(param)
         auto.update_pipeline_param(param, param['env'])
         all_param_env.append((param, param['env']))
+
+        if param['env']['run_type'] == 'scheduler' and \
+                not param['env'].get('skip_data_upload'):
+            ensure_aml_job_data_available(param, **param['env'])
+
     logging.info(pformat(all_param_env))
     result = []
 
@@ -986,25 +1025,14 @@ def inject_aml_job_status(clusters, db_query=None):
     client_args = {'with_log': False,
                    }
     db = create_annotation_db()
-    def iter_simple_job_from_aml():
-        # no needed as we can use JobScheduler
-        for c in clusters:
-            client = run_if_not_memory_cached(create_aml_client,
-                                     cluster=c, **client_args)
-            all_info = client.iter_query(
-                max_runs=1000,
-                with_details=True,
-                detect_error_if_failed=False
-            )
-            for info in all_info:
-                yield client, info
     def iter_scheduler():
-        for info in db.iter_general('scheduler', status={'$in': [
+        for info in db.iter_general('scheduler', JobStatus={'$in': [
                 'Submitted']}):
             c = info['env']['cluster']
             client = run_if_not_memory_cached(create_aml_client,
                                               cluster=c, **client_args)
-            yield client.query_one(
+            yield client, client.query_one(
+                info['appID'],
                 with_details=True,
                 detect_error_if_failed=False
             )
@@ -1014,6 +1042,10 @@ def inject_aml_job_status(clusters, db_query=None):
         non_value_keys = [k for k, v in job_in_aml.items() if v is None]
         for k in non_value_keys:
             del job_in_aml[k]
+        # logFiles are a dictionary. The key is the file name. However, mongodb
+        # does not allow a key to be with a dot
+        fs = job_in_aml.get('logFiles', {})
+        job_in_aml['logFiles'] = [{'name': k, 'url': v} for k, v in fs.items()]
 
     def inject_one_job_status(job_in_aml, db):
         job_in_db = None
@@ -1245,11 +1277,18 @@ def ensure_aml_data_available(file_or_dirs, aml, from_amls):
         src_aml = find_in_other_cluster(f)
         if src_aml is None:
             assert op.isfile(f) or op.isdir(f)
-        assert f.startswith('./') or not f.startswith('/')
-        parts = f.split('/')
-        assert len(parts) >= 2
-        path = '/'.join(parts[:2])
-        aml.upload(path, from_cluster=src_aml)
+        if op.isdir(f):
+            # if this is already a dir, just upload it
+            aml.upload(f, from_cluster=src_aml)
+        else:
+            # as there could be tons of files, e.g. GoogleSplit64 to have 64
+            # files, we upload the folder instead to leverage the parallel
+            # uploading of azcopy
+            assert f.startswith('./') or not f.startswith('/')
+            parts = f.split('/')
+            assert len(parts) >= 2
+            path = '/'.join(parts[:2])
+            aml.upload(path, from_cluster=src_aml)
 
 def get_pipeline_waiting_full_expid(waiting_full_expid, basemodel):
     return {
@@ -1270,13 +1309,17 @@ def get_pipeline_waiting_full_expid(waiting_full_expid, basemodel):
         'output': basemodel
     }
 
-def get_cfg(full_expid, key):
+def assert_equal(a1, a2):
+    # this is used in pipeline
+    assert a1 == a2, (a1, a2)
+
+def get_cfg(full_expid, key, default=None):
     pip = load_pipeline(full_expid=full_expid)
     from qd.pipelines.uni_pipeline import UniPipeline
     if isinstance(pip, UniPipeline):
-        return getattr(pip.cfg, key)
+        return pip.cfg.get_dict().get(key, default)
     else:
-        return getattr(pip, key)
+        return getattr(pip, key, default)
 
 def download_aml_log_from_db():
     c = create_annotation_db()
@@ -1316,7 +1359,7 @@ def download_aml_log_from_db():
             for k in keys:
                 if k in job:
                     update_info[k] = job[k]
-        if job['status'] == 'Failed':
+        if job['status'] in ['Failed', 'Running']:
             from qd.gpucluster.aml_client import detect_aml_error_message
             message = detect_aml_error_message(job['appID'])
             if message is not None:
@@ -1324,6 +1367,54 @@ def download_aml_log_from_db():
         if download_all:
             update_info['log_download_status'] = 'Completed'
         c.update_phillyjob(query={'_id': job['_id']}, update=update_info)
+
+def blob_download_all_qdoutput(
+    prefix, c=None, out_folder='output',
+    latest_only=True,
+    too_large_limit_in_gb=None,
+    ignore_base_fname_patterns=None,
+    from_job_scheduler=None,
+):
+    # e.g. prefix = jianfw/work/qd_output/TaxVehicleV1_1_with_bb_e2e_faster_rcnn_R_50_FPN_1x_M_BS8_MaxIter20e_LR0.01
+    # out_folder = 'output'
+    if c is None:
+        c = 'vig'
+    if isinstance(ignore_base_fname_patterns, str):
+        from qd.qd_common import load_list_file
+        ignore_base_fname_patterns = load_list_file(ignore_base_fname_patterns)
+    c = create_cloud_storage(c)
+    from datetime import datetime, timedelta
+    creation_time_larger_than = datetime.utcnow() - timedelta(days=14)
+    if from_job_scheduler:
+        c = create_annotation_db()
+        all_full_expid = []
+        for info in c.iter_general('scheduler',
+                                   **{'create_time': {'$gt': datetime.now() - timedelta(days=14)}}):
+            from qd.qd_common import query_values_by_path_suffix
+            for f in query_values_by_path_suffix(info, '$full_expid'):
+                all_full_expid.append(f)
+        root = prefix
+    else:
+        from qd.cloud_storage import get_root_all_full_expid
+        all_blob_name = list(c.list_blob_names(
+            prefix,
+            creation_time_larger_than=creation_time_larger_than))
+        root, all_full_expid = get_root_all_full_expid(prefix, all_blob_name)
+    #target = 'TaxBingAltText10_B_CLIP_BS2048_MaxIter80e_LR0.01_WD0.0001_SGD_T0.1_AMP_TextMini12LRand41d8b_timm_vit_small_patch16_224_imPre3a612_Aavg_avg_n_bidirectional_MP0_Em1024_Seq100'
+    #all_full_expid = [target]
+    for full_expid in all_full_expid:
+        logging.info(full_expid)
+        src_path = op.join(root, full_expid)
+        target_folder = op.join(out_folder, full_expid)
+        c.blob_download_qdoutput(
+            src_path,
+            target_folder,
+            latest_only=latest_only,
+            creation_time_larger_than=creation_time_larger_than,
+            too_large_limit_in_gb=too_large_limit_in_gb,
+            ignore_base_fname_patterns=ignore_base_fname_patterns,
+        )
+
 
 if __name__ == '__main__':
     from qd.qd_common import parse_general_args

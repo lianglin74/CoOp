@@ -87,17 +87,13 @@ def parse_run_info(run, with_details=True,
     info['appID-s'] = run.id[-5:]
     info['portal_url'] = run.get_portal_url()
     if run.status == 'Queued' and \
-            run.tags.get('amlk8s status') == 'running':
+            'amlk8s status' in run.tags and \
+            run.tags.get('amlk8s status').lower() == 'running':
         # there is a bug in AML/DLTS
         info['status'] = AMLClient.status_running
     if run.status == AMLClient.status_canceled:
         if run.tags.get('amlk8s status') in ['killing', 'failed']:
             info['status'] = AMLClient.status_failed
-        else:
-            if 'amlk8s status' in run.tags and \
-                    run.tags.get('amlk8s status') != 'Terminated':
-                logging.info('unknown status {}'.format(
-                    run.tags.get('amlk8s status')))
     if run.tags.get('ssh'):
         # aks cluster has this field
         info['ssh'] = create_ssh_command_from_aks_ssh_tag(run.tags['ssh'])
@@ -174,7 +170,11 @@ def download_run_logs(run_info, full=True):
     log_folder = get_log_folder()
     log_status_file = op.join(log_folder, run_info['appID'],
             'log_status.yaml')
-    for k, v in run_info['logFiles'].items():
+    if isinstance(run_info['logFiles'], dict):
+        kvs = list(run_info['logFiles'].items())
+    else:
+        kvs = [(x['name'], x['url']) for x in run_info['logFiles']]
+    for k, v in kvs:
         target_file = op.join(log_folder, run_info['appID'], k)
         from qd.qd_common import url_to_file_by_curl
         try:
@@ -909,7 +909,7 @@ class AMLClient(object):
         self.config_param[key]['cloud_blob'].az_download(
             op.join(self.config_param[key]['path'], file_or_folder[len(p) + 1:]),
             file_or_folder,
-            tmp_first=False
+            #tmp_first=False
         )
 
     def download_latest_qdoutput(self, full_expid):
@@ -959,16 +959,22 @@ def detect_aml_error_message(app_id):
     folders = glob.glob(op.join(get_log_folder(), '*{}'.format(app_id),
         'azureml-logs'))
     error_codes = set()
+    if len(folders) == 0:
+        return []
     assert len(folders) == 1, 'not unique: {}'.format(', '.join(folders))
     folder = folders[0]
     has_nvidia_smi = False
     num_waiting = 0
+    from collections import defaultdict
+    printed = defaultdict(int)
     for r, _, files in os.walk(folder):
         for f in files:
             log_file = op.join(r, f)
             from qd.qd_common import decode_to_str
             all_line = decode_to_str(read_to_buffer(log_file)).split('\n')
             for i, line in enumerate(all_line):
+                if 'Got async event : local catastrophic error' in line:
+                    error_codes.add('IBError')
                 if 'Output size is too small' in line:
                     error_codes.add('InputSmall')
                 if 'RuntimeError: CUDA driver initialization failed' in line:
@@ -1027,14 +1033,20 @@ def detect_aml_error_message(app_id):
                         error_codes.add('illegal_access')
                 if 'CUDA error' in line:
                     error_codes.add('cuda')
+                if 'ErrorCode:BlockCountExceedsLimit' in line:
+                    error_codes.add('BlobThrottle')
                 if 'Error' in line and \
-                    'TrackUserError:context_managers.TrackUserError' not in line and \
-                    'WARNING: Retrying' not in line:
+                        'TrackUserError:context_managers.TrackUserError' not in line and \
+                        'WARNING: Retrying' not in line and \
+                        'ErrorCode:BlockCountExceedsLimit' not in line and \
+                        'AZ_BATCHAI' not in line:
                     #start = max(0, i - 10)
                     start = max(0, i)
                     end = min(i + 1, len(all_line))
-                    logging.info(log_file)
-                    logging.info('\n'.join(all_line[start: end]))
+                    if printed[log_file] < 100:
+                        logging.info(log_file)
+                        logging.info('\n'.join(all_line[start: end]))
+                        printed[log_file] += 1
                 if 'Error response from daemon' in line:
                     error_codes.add('daemon')
                 if "AttributeError: module 'maskrcnn_benchmark._C'" in line:
@@ -1045,6 +1057,8 @@ def detect_aml_error_message(app_id):
                     error_codes.add('TooMany')
                 if 'OSError: [Errno 28] No space left on device:' in line and 'tmp' in line:
                     error_codes.add('NoSpace')
+                if 'RuntimeError: DataLoader worker' in line:
+                    error_codes.add('Loader')
             # check how many gpus by nvidia-smi
             import re
             num_gpu = len([line for line in all_line if re.match('.*N/A.*Default', line) is
