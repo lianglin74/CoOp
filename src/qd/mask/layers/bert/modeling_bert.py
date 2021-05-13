@@ -463,6 +463,39 @@ class BertLayer(nn.Module):
         outputs = (layer_output,) + attention_outputs[1:]  # add attentions if we output them
         return outputs
 
+class CLIPViTEncoder(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        # there is only one released vit model, and thus, we just hard-code the
+        # parameters
+        from qd.layers.CLIP.model import VisualTransformer
+        self.num_heads = 12
+        model = VisualTransformer(
+            input_resolution=224,
+            patch_size=32,
+            width=768,
+            layers=12,
+            heads=self.num_heads,
+            output_dim=512,
+        )
+        self.transformer_resblocks = model.transformer.resblocks
+
+    def forward(self, hidden_states, attention_mask, head_mask=None,
+                encoder_history_states=None):
+        assert all(m is None for m in head_mask), 'not supported'
+        assert encoder_history_states is None, 'not supported'
+        assert attention_mask.dim() == 4
+        bsz, _, a, b = attention_mask.shape
+        token_len = max(a, b)
+        attention_mask = attention_mask.expand(bsz, self.num_heads, token_len, token_len)
+        attention_mask = attention_mask.reshape(-1, token_len, token_len)
+
+        hidden_states = hidden_states.permute(1, 0, 2)  # NLD -> LND
+        for b in self.transformer_resblocks:
+            hidden_states = b(hidden_states, attention_mask)
+        hidden_states = hidden_states.permute(1, 0, 2)  # LND -> NLD
+        return (hidden_states,)
+
 class TIMMVitEncoder(nn.Module):
     # avoid to use TimmVitEncoder
     def __init__(self, config):
@@ -473,16 +506,35 @@ class TIMMVitEncoder(nn.Module):
         extra_param = getattr(config, 'timm_param', {})
         model = timm.create_model(
             config.net, pretrained=config.pretrained,
-            **extra_param,
+            **extra_param
         )
         self.blocks = model.blocks
+        norm_after = getattr(config, 'norm_after', False)
+        if norm_after:
+            self.norm = model.norm
+        else:
+            self.norm = None
+        self.len_bs_hidden = extra_param.get('attention_type') == 'torch_attn'
+        if self.len_bs_hidden:
+            self.num_heads = model.blocks[0].attn.num_heads
 
     def forward(self, hidden_states, attention_mask, head_mask=None,
                 encoder_history_states=None):
         assert all(m is None for m in head_mask), 'not supported'
         assert encoder_history_states is None, 'not supported'
+        if self.len_bs_hidden:
+            hidden_states = hidden_states.permute(1, 0, 2)  # NLD -> LND
+            assert attention_mask.dim() == 4
+            bsz, _, a, b = attention_mask.shape
+            token_len = max(a, b)
+            attention_mask = attention_mask.expand(bsz, self.num_heads, token_len, token_len)
+            attention_mask = attention_mask.reshape(-1, token_len, token_len)
         for blk in self.blocks:
             hidden_states = blk(hidden_states, attention_mask)
+        if self.norm:
+            hidden_states = self.norm(hidden_states)
+        if self.len_bs_hidden:
+            hidden_states = hidden_states.permute(1, 0, 2)  # LND -> NLD
         return (hidden_states,)
 
 class TimmVitEncoder(nn.Module):
@@ -853,14 +905,28 @@ class BertPlainModel(BertPreTrainedModel):
     def __init__(self, config, output_dim, pooler_bias=True):
         super().__init__(config)
 
-        self.embeddings = BertEmbeddings(config)
-        self.encoder = BertEncoder(config)
+        model_type = getattr(config, 'model_type', 'bert')
+        if model_type == 'TIMM_vit':
+            self.embeddings = BertEmbeddings(config)
+            self.encoder = TIMMVitEncoder(config)
+        else:
+            assert model_type == 'bert'
+            self.embeddings = BertEmbeddings(config)
+            self.encoder = BertEncoder(config)
+
         output_dim = output_dim or config.hidden_size
-        self.pooler = nn.Linear(
-            config.hidden_size,
-            output_dim,
-            bias=pooler_bias,
-        )
+
+        pooler_type = getattr(config, 'pooler_type')
+        if pooler_type is None:
+            self.pooler = nn.Linear(
+                config.hidden_size,
+                output_dim,
+                bias=pooler_bias,
+            )
+        elif pooler_type == 'i':
+            self.pooler = nn.Identity()
+        else:
+            raise NotImplementedError
 
         self.apply(self.init_weights)
 
@@ -1136,11 +1202,24 @@ class BertImgModel(BertPreTrainedModel):
             self.encoder = TIMMVitEncoder(config)
             # let's simply re-use bert-pooler
             self.pooler = BertPooler(config)
+        elif model_type == 'CLIPViT':
+            self.embeddings = BertEmbeddings(config)
+            self.encoder = CLIPViTEncoder(config)
+            # let's simply re-use bert-pooler
+            self.pooler = BertPooler(config)
         else:
             assert model_type == 'bert'
             self.embeddings = BertEmbeddings(config)
             self.encoder = BertEncoder(config)
             self.pooler = BertPooler(config)
+        self.add_img_text_type_encoding = getattr(config, 'add_img_text_type_encoding', False)
+
+        if self.add_img_text_type_encoding:
+            img_text_type = torch.zeros((2, config.hidden_size))
+            self.img_text_type = nn.Parameter(img_text_type)
+        logging.info('add_img_text_type_encoding = {}'.format(
+            self.add_img_text_type_encoding
+        ))
 
         self.img_dim = config.img_feature_dim #2054 #565
         logger.info('BertImgModel Image Dimension: {}'.format(self.img_dim))
@@ -1280,7 +1359,9 @@ class BertImgModel(BertPreTrainedModel):
                 #padding_matrix = torch.zeros((embedding_output.shape[0], embedding_output.shape[1]-img_embedding_output.shape[1], embedding_output.shape[2])).cuda()
                 #img_embedding_output = torch.cat((padding_matrix, img_embedding_output), 1)
                 #embedding_output = embedding_output + img_embedding_output
-
+            if self.add_img_text_type_encoding:
+                embedding_output = embedding_output + self.img_text_type[0].unsqueeze(0).unsqueeze(0)
+                img_embedding_output = img_embedding_output + self.img_text_type[1].unsqueeze(0).unsqueeze(0)
             # concatenate two embeddings
             embedding_output = torch.cat((embedding_output, img_embedding_output), 1)
 
@@ -1844,7 +1925,7 @@ class ImageBertForSequenceClassification(BertPreTrainedModel):
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
         if hasattr(config, 'classifier'):
-            if not hasattr(config, 'cls_hidden_scale'): 
+            if not hasattr(config, 'cls_hidden_scale'):
                 config.cls_hidden_scale = 2
 
             if config.classifier == 'linear':
@@ -1856,16 +1937,67 @@ class ImageBertForSequenceClassification(BertPreTrainedModel):
                     nn.ReLU(),
                     nn.Linear(config.hidden_size * config.cls_hidden_scale, self.config.num_labels)
                 )
+            elif config.classifier == 'mlpGelu':
+                self.classifier = nn.Sequential(
+                    nn.Linear(config.hidden_size, config.hidden_size * config.cls_hidden_scale),
+                    nn.GELU(),
+                    nn.Linear(config.hidden_size * config.cls_hidden_scale, self.config.num_labels)
+                )
+            elif config.classifier == 'mlp3Gelu':
+                self.classifier = nn.Sequential(
+                    nn.Linear(config.hidden_size, config.hidden_size * config.cls_hidden_scale),
+                    nn.GELU(),
+                    nn.Linear(config.hidden_size * config.cls_hidden_scale, config.hidden_size * config.cls_hidden_scale),
+                    nn.GELU(),
+                    nn.Linear(config.hidden_size * config.cls_hidden_scale, self.config.num_labels)
+                )
+            elif config.classifier == 'mlp4Gelu':
+                self.classifier = nn.Sequential(
+                    nn.Linear(config.hidden_size, config.hidden_size * config.cls_hidden_scale),
+                    nn.GELU(),
+                    nn.Linear(config.hidden_size * config.cls_hidden_scale, config.hidden_size * config.cls_hidden_scale),
+                    nn.GELU(),
+                    nn.Linear(config.hidden_size * config.cls_hidden_scale, config.hidden_size * config.cls_hidden_scale),
+                    nn.GELU(),
+                    nn.Linear(config.hidden_size * config.cls_hidden_scale, self.config.num_labels)
+                )
+            elif config.classifier == 'mlp5Gelu':
+                self.classifier = nn.Sequential(
+                    nn.Linear(config.hidden_size, config.hidden_size * config.cls_hidden_scale),
+                    nn.GELU(),
+                    nn.Linear(config.hidden_size * config.cls_hidden_scale, config.hidden_size * config.cls_hidden_scale),
+                    nn.GELU(),
+                    nn.Linear(config.hidden_size * config.cls_hidden_scale, config.hidden_size * config.cls_hidden_scale),
+                    nn.GELU(),
+                    nn.Linear(config.hidden_size * config.cls_hidden_scale, config.hidden_size * config.cls_hidden_scale),
+                    nn.GELU(),
+                    nn.Linear(config.hidden_size * config.cls_hidden_scale, self.config.num_labels)
+                )
+            elif config.classifier == 'mlpLNGelu':
+                self.classifier = nn.Sequential(
+                    nn.Linear(config.hidden_size, config.hidden_size *
+                              config.cls_hidden_scale),
+                    nn.LayerNorm(config.hidden_size * config.cls_hidden_scale),
+                    nn.GELU(),
+                    nn.Linear(config.hidden_size * config.cls_hidden_scale, self.config.num_labels),
+                )
+            else:
+                raise NotImplementedError(config.classifier)
         else:
             self.classifier = nn.Linear(config.hidden_size, self.config.num_labels)  # original
         if self.loss_type == 'bceByPos':
             from qd.layers.loss import BCELogitsNormByPositive
             self.loss = BCELogitsNormByPositive()
+        elif self.loss_type == 'kl':
+            self.loss = torch.nn.KLDivLoss(reduction="batchmean")
         self.apply(self.init_weights)
         if hasattr(config, 'prior_prob'):
             prior_prob = config.prior_prob
             from qd.torch_common import set_sigmoid_prob_prior_bias
-            set_sigmoid_prob_prior_bias(self.classifier.bias, prior_prob)
+            if isinstance(self.classifier, nn.Sequential):
+                set_sigmoid_prob_prior_bias(self.classifier[-1].bias, prior_prob)
+            else:
+                set_sigmoid_prob_prior_bias(self.classifier.bias, prior_prob)
 
     def init_code_embedding(self, em):
         self.bert.code_embeddings.weight.data = em.clone()
@@ -1888,11 +2020,10 @@ class ImageBertForSequenceClassification(BertPreTrainedModel):
             else:
                 if self.loss_type == 'kl':
                     # KL Loss: https://github.com/uclanlp/visualbert/blob/master/pytorch_pretrained_bert/modeling.py
-                    loss_fct = torch.nn.KLDivLoss(reduction="batchmean")
                     log_softmax = torch.nn.LogSoftmax(dim=-1)
                     reshaped_logits = logits.contiguous().view(-1, 3129)
                     reshaped_logits = log_softmax(reshaped_logits)
-                    loss = loss_fct(reshaped_logits, labels.contiguous())
+                    loss = self.loss(reshaped_logits, labels.contiguous())
                 elif self.loss_type == 'bce': # [VQA]
                     loss = instance_bce_with_logits(logits, labels)
                 elif self.loss_type == 'bceByPos':

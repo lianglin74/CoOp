@@ -37,6 +37,8 @@ _C.MODEL.CLS_AGNOSTIC_BBOX_REG = False
 _C.MODEL.WEIGHT = ""
 _C.MODEL.USE_SYNCBN = False
 
+_C.MODEL.USE_TORCHVISION_NMS = False
+
 
 # -----------------------------------------------------------------------------
 # INPUT
@@ -52,6 +54,11 @@ _C.INPUT.MAX_SIZE_TRAIN = 1333
 _C.INPUT.MIN_SIZE_TEST = 800
 # Maximum size of the side of the image during testing
 _C.INPUT.MAX_SIZE_TEST = 1333
+
+# this parameter is used in master branch of maskrcnn repo. In this repo, we do
+# not use it.
+_C.INPUT.CV2_OUTPUT = True
+
 # Values to be used for image normalization
 _C.INPUT.PIXEL_MEAN = [102.9801, 115.9465, 122.7717]
 # Values to be used for image normalization
@@ -70,6 +77,7 @@ _C.INPUT.CONTRAST = 0.0
 _C.INPUT.SATURATION = 0.0
 _C.INPUT.HUE = 0.0
 _C.INPUT.COLORJITTER_ADAPTIVE = ''
+_C.INPUT.TEST_RESIZE_METHOD = ''
 
 
 # -----------------------------------------------------------------------------
@@ -189,6 +197,13 @@ _C.MODEL.RPN.FPN_POST_NMS_TOP_N_TEST = 2000
 _C.MODEL.RPN.FPN_POST_NMS_CONF_TH_TEST = -1.
 # Custom rpn head, empty to use default conv or separable conv
 _C.MODEL.RPN.RPN_HEAD = "SingleConvRPNHead"
+_C.MODEL.RPN.FORCE_BOXES = False
+# The output dimension of the RPN conv3*3 layer. 0 means the default value,
+# which is the same with the input feature dimension. This only has effects on
+# "SingleConvRPNHead"
+_C.MODEL.RPN.HIDDEN_FEAT_DIM = 0
+_C.MODEL.RPN.X2Y2CORRECTION = -1
+
 _C.MODEL.RPN.ASSIGNER_TYPE = 'iou_max'
 _C.MODEL.RPN.ATSS_TOPK = 27
 
@@ -239,6 +254,7 @@ _C.MODEL.ROI_HEADS.NMS_ON_MAX_CONF_AGNOSTIC = False
 # established for the COCO dataset)
 _C.MODEL.ROI_HEADS.DETECTIONS_PER_IMG = 100
 
+_C.MODEL.ROI_HEADS.NM_FILTER = 0
 
 _C.MODEL.ROI_BOX_HEAD = CN()
 _C.MODEL.ROI_BOX_HEAD.FEATURE_EXTRACTOR = "ResNet50Conv5ROIFeatureExtractor"
@@ -246,6 +262,7 @@ _C.MODEL.ROI_BOX_HEAD.PREDICTOR = "FastRCNNPredictor"
 _C.MODEL.ROI_BOX_HEAD.POOLER_RESOLUTION = 14
 _C.MODEL.ROI_BOX_HEAD.POOLER_SAMPLING_RATIO = 0
 _C.MODEL.ROI_BOX_HEAD.POOLER_SCALES = (1.0 / 16,)
+_C.MODEL.ROI_BOX_HEAD.POOLER_TYPE = 'ROIAlign' # ROIPool
 _C.MODEL.ROI_BOX_HEAD.USE_TORCHVISION = False
 _C.MODEL.ROI_BOX_HEAD.NUM_CLASSES = 81
 # Hidden layer dimension when using an MLP for the RoI box head
@@ -256,11 +273,14 @@ _C.MODEL.ROI_BOX_HEAD.USE_GN = False
 _C.MODEL.ROI_BOX_HEAD.DILATION = 1
 _C.MODEL.ROI_BOX_HEAD.CONV_HEAD_DIM = 256
 _C.MODEL.ROI_BOX_HEAD.NUM_STACKED_CONVS = 4
+_C.MODEL.ROI_BOX_HEAD.FORCE_BOXES = False
 
 _C.MODEL.ROI_BOX_HEAD.CLASSIFICATION_ACTIVATE = 'softmax' # or sigmoid, for testing, tree
 _C.MODEL.ROI_BOX_HEAD.CLASSIFICATION_LOSS = 'CE' # or BCE . for training
 _C.MODEL.ROI_BOX_HEAD.TREE_0_BKG = ''
 _C.MODEL.ROI_BOX_HEAD.BOUNDINGBOX_LOSS_TYPE = 'SL1' # SL1 or WSL1
+
+_C.MODEL.ROI_BOX_HEAD.DOMAINMAP_FILE = ''
 
 _C.MODEL.ROI_ATTRIBUTE_HEAD = CN()
 # Number of aligned labels + 1
@@ -345,6 +365,10 @@ _C.MODEL.RESNETS.STEM_OUT_CHANNELS = 64
 _C.MODEL.RESNETS.STAGE_WITH_DCN = (False, False, False, False)
 _C.MODEL.RESNETS.WITH_MODULATED_DCN = False
 _C.MODEL.RESNETS.DEFORMABLE_GROUPS = 1
+
+_C.MODEL.RESNETS.USE_SE = False
+
+_C.MODEL.RESNETS.STEM_PADDING_MODE = 'pad'
 
 _C.MODEL.RESNETS.BATCHNORM_EPS = 0.
 
@@ -482,11 +506,22 @@ _C.SOLVER = CN()
 _C.SOLVER.MAX_ITER = 40000
 
 _C.SOLVER.BASE_LR = 0.001
+# using this parameter you can specify different learning rate for different
+# weights. It works similar to MODEL.FREEZE_WEIGHTS_REGEXP parameter,
+# but in this case it is a tuple of tuples, where the first element is regexp
+# and second element is learning rate factor (what base lr is multiplied with).
+_C.SOLVER.REGEXP_LR_FACTOR = ()
 _C.SOLVER.BIAS_LR_FACTOR = 2
 # the learning rate factor of deformable convolution offsets
 _C.SOLVER.DCONV_OFFSETS_LR_FACTOR = 1.0
 
 _C.SOLVER.MOMENTUM = 0.9
+
+_C.SOLVER.OPTIMIZER = 'sgd'  # could be sgd or adam or adamw
+_C.SOLVER.USE_LARC = False
+
+_C.SOLVER.LR_POLICY = "multistep"
+_C.SOLVER.MIN_LR = 0.0001
 
 _C.SOLVER.WEIGHT_DECAY = 0.0005
 _C.SOLVER.WEIGHT_DECAY_BIAS = 0
@@ -504,12 +539,14 @@ _C.SOLVER.CHECKPOINT_PERIOD = 2500
 # This is global, so if we have 8 GPUs and IMS_PER_BATCH = 16, each GPU will
 # see 2 images per batch
 _C.SOLVER.IMS_PER_BATCH = 16
+_C.SOLVER.FIXED_SAMPLING = False
 
 
 # ---------------------------------------------------------------------------- #
 # Specific test options
 # ---------------------------------------------------------------------------- #
 _C.TEST = CN()
+_C.TEST.OUTPUT_FEATURE = False
 _C.TEST.EXPECTED_RESULTS = []
 _C.TEST.EXPECTED_RESULTS_SIGMA_TOL = 4
 # Number of images per batch
@@ -518,6 +555,8 @@ _C.TEST.EXPECTED_RESULTS_SIGMA_TOL = 4
 _C.TEST.IMS_PER_BATCH = 8
 # Number of detections per image
 _C.TEST.DETECTIONS_PER_IMG = 100
+_C.MODEL.ROI_HEADS.MIN_DETECTIONS_PER_IMG = 0
+_C.TEST.BOX_MIN_SIZE = 0
 
 
 # ---------------------------------------------------------------------------- #

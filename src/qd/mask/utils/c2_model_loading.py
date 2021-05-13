@@ -5,8 +5,7 @@ from collections import OrderedDict
 
 import torch
 
-from maskrcnn_benchmark.utils.model_serialization import load_state_dict
-from maskrcnn_benchmark.utils.registry import Registry
+from qd.mask.utils.registry import Registry
 
 
 def _rename_basic_resnet_weights(layer_keys):
@@ -187,6 +186,7 @@ C2_FORMAT_LOADER = Registry()
 @C2_FORMAT_LOADER.register("R-50-C5")
 @C2_FORMAT_LOADER.register("R-101-C4")
 @C2_FORMAT_LOADER.register("R-101-C5")
+@C2_FORMAT_LOADER.register("R-152-C4")
 @C2_FORMAT_LOADER.register("R-50-FPN")
 @C2_FORMAT_LOADER.register("R-50-FPN-RETINANET")
 @C2_FORMAT_LOADER.register("R-101-FPN")

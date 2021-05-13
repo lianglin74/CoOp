@@ -154,6 +154,28 @@ class BertTokenizer(PreTrainedTokenizer):
             split_tokens = self.wordpiece_tokenizer.tokenize(text)
         return split_tokens
 
+    def _rich_tokenize(self, text):
+        split_tokens = []
+        if self.do_basic_tokenize:
+            tokens, start_idx = self.basic_tokenizer.tokenize(
+                    text, never_split=self.all_special_tokens,
+                    return_word_start_idx=True)
+            all_start_idx = []
+            for i, start in enumerate(start_idx):
+                if i == len(start_idx) - 1:
+                    end = len(tokens)
+                else:
+                    end = start_idx[i + 1]
+                all_start_idx.append(len(split_tokens))
+                for token in tokens[start:end]:
+                    for sub_token in self.wordpiece_tokenizer.tokenize(token):
+                        split_tokens.append(sub_token)
+            return split_tokens, all_start_idx
+        else:
+            raise NotImplementedError
+            split_tokens = self.wordpiece_tokenizer.tokenize(text)
+        return split_tokens
+
     def _convert_token_to_id(self, token):
         """ Converts a token (str/unicode) in an id using the vocab. """
         return self.vocab.get(token, self.vocab.get(self.unk_token))
@@ -228,7 +250,7 @@ class BasicTokenizer(object):
         self.never_split = never_split
         self.tokenize_chinese_chars = tokenize_chinese_chars
 
-    def tokenize(self, text, never_split=None):
+    def tokenize(self, text, never_split=None, return_word_start_idx=False):
         """ Basic Tokenization of a piece of text.
             Split on "white spaces" only, for sub-word tokenization, see WordPieceTokenizer.
 
@@ -250,13 +272,23 @@ class BasicTokenizer(object):
             text = self._tokenize_chinese_chars(text)
         orig_tokens = whitespace_tokenize(text)
         split_tokens = []
+        if return_word_start_idx:
+            word_idx = []
         for token in orig_tokens:
             if self.do_lower_case and token not in never_split:
                 token = token.lower()
                 token = self._run_strip_accents(token)
+            if return_word_start_idx:
+                word_idx.append(len(split_tokens))
             split_tokens.extend(self._run_split_on_punc(token))
 
         output_tokens = whitespace_tokenize(" ".join(split_tokens))
+        if return_word_start_idx:
+            # if there is space inside some token, we need other code to figure
+            # out the start idx for each token.
+            assert len(split_tokens) == len(output_tokens), 'not suported'
+        if return_word_start_idx:
+            return output_tokens, word_idx
         return output_tokens
 
     def _run_strip_accents(self, text):

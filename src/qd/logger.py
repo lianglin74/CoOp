@@ -5,7 +5,7 @@ import torch
 
 
 class SmoothedValue(object):
-    def __init__(self, window_size=10):
+    def __init__(self, window_size=20):
         self.deque = deque(maxlen=window_size)
         self.total = 0.0
         self.count = 0
@@ -52,8 +52,12 @@ class MetricLogger(object):
     def __str__(self):
         loss_str = []
         for name, meter in self.meters.items():
+            # we use avg rather than global avg. The reason is that some value
+            # might be NaN in amp. amp will ignore it, but this function will
+            # not ignore it. Thus, we use the avg rather than global avg
             loss_str.append(
-                "{}: {:.4f} ({:.4f})".format(name, meter.median, meter.global_avg)
+                "{}: {:.4f} ({:.4f})".format(name, meter.median, meter.avg)
+                #"{}: {:.4f} ({:.4f})".format(name, meter.median, meter.global_avg)
             )
         return self.delimiter.join(loss_str)
 

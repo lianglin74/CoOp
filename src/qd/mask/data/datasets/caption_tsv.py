@@ -436,7 +436,7 @@ class CaptionTSVDataset(object):
             #features = self.get_image_features(img_idx, key=img_key)
             features_dict = self.get_image_features_dict(img_idx)
             features = features_dict['feat']
-            assert img_key.startswith(features_dict['key'])
+            assert features_dict['key'] in img_key
             caption = self.get_caption(img_idx, cap_idx, key=img_key)
             od_labels = self.get_od_labels(img_idx, key=img_key)
             example = self.tensorizer.tensorize_example(caption, features, text_b=od_labels)

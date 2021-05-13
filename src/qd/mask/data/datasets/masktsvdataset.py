@@ -14,17 +14,27 @@ class MaskTSVDataset(TSVSplitImage):
 
     """Docstring for MaskTSVDataset. """
 
-    def __init__(self, data, split, version=0, transforms=None,
+    def __init__(self, data, split, version=0,
+                 transforms=None,
                  multi_hot_label=False,
+                 label_type=None, # gradually not to use multi_hot_label
                  cache_policy=None, labelmap=None,
                  remove_images_without_annotations=True,
                  bgr2rgb=False,
                  max_box=300,
+                 dict_trainer=False,
+                 filter_box=True,
                  ):
+        # filter_box: when doing testing, and we want to extract the feature
+        # based on gt box, we should not do anything to filter the box.
         # we will not use the super class's transform, but uses transforms
         # instead
         super().__init__(data, split, version=version,
                 cache_policy=cache_policy, transform=None, labelmap=labelmap)
+        assert label_type in [None, 'multi_hot', 'multi_domain']
+        if multi_hot_label:
+            assert label_type == 'multi_hot'
+        self.label_type = label_type
         self.transforms = transforms
         self.use_seg = False
         dataset = TSVDataset(data)
@@ -47,11 +57,17 @@ class MaskTSVDataset(TSVSplitImage):
         self.bgr2rgb = bgr2rgb
         self.max_box = max_box
 
+        if self.label_type == 'multi_domain':
+            from qd.data_layer.transform import ConvertToDomainClassIndex
+            self.multi_domain_idx_gen = ConvertToDomainClassIndex(data)
+
         import os.path as op
         if op.isfile(dataset.get_txt('attributemap')):
             self.attribute_map = dataset.load_txt('attributemap')
         else:
             self.attribute_map = None
+        self.dict_trainer = dict_trainer
+        self.filter_box = filter_box
 
     def ensure_load_key_hw(self):
         if self.all_key_hw is None:
@@ -87,10 +103,17 @@ class MaskTSVDataset(TSVSplitImage):
         return len(target) > 0
 
     def __getitem__(self, idx):
-        if not self.multi_hot_label:
-            return self.get_item_for_softmax(idx)
+        if self.label_type == 'multi_hot':
+            assert self.multi_hot_label
+            img, target, idx = self.get_item_multi_hot_label(idx)
+        elif self.label_type == 'multi_domain':
+            img, target, idx = self.get_item_for_multi_domain_softmax(idx)
         else:
-            return self.get_item_multi_hot_label(idx)
+            img, target, idx = self.get_item_for_softmax(idx)
+        if self.dict_trainer:
+            return {'image': img, 'target': target, 'idx': idx}
+        else:
+            return img, target, idx
 
     def add_tightness(self, target, anno):
         tightness = [rect.get('tightness', 1) for rect in anno]
@@ -122,6 +145,10 @@ class MaskTSVDataset(TSVSplitImage):
                 'rect': [0, 0, w, h]}]
 
         return img, anno
+
+    def get_composite_source_idx(self):
+        assert self.shuffle is None, 'not supported'
+        return self.tsv.get_composite_source_idx()
 
     def get_item_multi_hot_label(self, idx):
         iteration, idx, max_iter = idx['iteration'], idx['idx'], idx['max_iter']
@@ -181,7 +208,7 @@ class MaskTSVDataset(TSVSplitImage):
 
         return img, target, idx
 
-    def get_item_for_softmax(self, idx):
+    def get_item_for_multi_domain_softmax(self, idx):
         iteration, idx, max_iter = idx['iteration'], idx['idx'], idx['max_iter']
         if self.shuffle:
             idx = self.shuffle[idx]
@@ -209,9 +236,8 @@ class MaskTSVDataset(TSVSplitImage):
         boxes = torch.as_tensor(boxes).reshape(-1, 4)  # guard against no boxes
         target = BoxList(boxes, img.size, mode="xyxy")
 
+        classes = self.multi_domain_idx_gen({'label': anno})['label_idx']
         # 0 is the background
-        classes = [self.label_to_idx[obj["class"]] + 1 for obj in anno]
-        classes = torch.tensor(classes)
         target.add_field("labels", classes)
 
         self.add_tightness(target, anno)
@@ -224,6 +250,69 @@ class MaskTSVDataset(TSVSplitImage):
             target.add_field("masks", masks)
 
         target = target.clip_to_image(remove_empty=True)
+
+        if self.transforms is not None:
+            trans_input = {'image': img,
+                           'rects': target,
+                           'iteration': iteration,
+                           'max_iter': max_iter,
+                           'dataset': self,
+                           }
+            trans_out = self.transforms(trans_input)
+            img, target = trans_out['image'], trans_out['rects']
+
+        return img, target, idx
+
+    def get_item_for_softmax(self, idx):
+        iteration, idx, max_iter = idx['iteration'], idx['idx'], idx['max_iter']
+        if self.shuffle:
+            idx = self.shuffle[idx]
+        img, anno = self.get_image_ann(idx)
+        # we randomly select the max_box results. in the future, we should put it
+        # in the Transform
+        max_box = self.max_box
+        # it will occupy 10G if it is 300 for one image.
+        if len(anno) > max_box:
+            logging.info('maximum box exceeds {} and we will truncate'.format(max_box))
+            import random
+            random.shuffle(anno)
+            anno = anno[:max_box]
+        anno = [o for o in anno if 'rect' in o]
+        #for o in anno:
+            #o['rect'] = [-2, -2, -1, -1]
+        #logging.info('debugging')
+        if any('location_id' in a for a in anno):
+            # in this case, all locations should be unique for now.
+            assert len(set(a['location_id'] for a in anno)) == len(anno)
+
+        if self.filter_box:
+            # coco data has this kind of property
+            anno = [obj for obj in anno if obj.get("iscrowd", 0) == 0]
+
+            anno = [a for a in anno if a['class'] in self.label_to_idx]
+
+        boxes = [obj["rect"] for obj in anno]
+        boxes = torch.as_tensor(boxes).reshape(-1, 4)  # guard against no boxes
+        target = BoxList(boxes, img.size, mode="xyxy")
+
+        # 0 is the background
+        classes = [self.label_to_idx.get(obj["class"], -1) + 1 for obj in anno]
+        classes = torch.tensor(classes)
+        target.add_field("labels", classes)
+
+        self.add_tightness(target, anno)
+        self.add_attributes(target, anno)
+
+        if self.use_seg:
+            masks = [obj["segmentation"] for obj in anno]
+            from qd.mask.structures.segmentation_mask import SegmentationMask
+            masks = SegmentationMask(masks, img.size)
+            target.add_field("masks", masks)
+
+        if self.filter_box:
+            target = target.clip_to_image(remove_empty=True)
+        #else:
+            #target = target.clip_to_image(remove_empty=False)
 
         if self.transforms is not None:
             trans_input = {'image': img,

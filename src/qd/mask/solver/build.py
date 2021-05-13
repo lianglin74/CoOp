@@ -16,7 +16,7 @@ def make_optimizer(cfg, model, resume=False):
             continue
         lr = cfg.SOLVER.BASE_LR
         weight_decay = cfg.SOLVER.WEIGHT_DECAY
-        
+
         for reg_lr in cfg.SOLVER.REGEXP_LR_FACTOR:
             regexp, lr_factor = reg_lr
             if re.match(regexp, key):
@@ -24,10 +24,17 @@ def make_optimizer(cfg, model, resume=False):
                     print("WARNING: {} matched multiple "
                           "regular expressions!".format(key))
                 lr *= lr_factor
-        
+
         if "bias" in key:
             lr *= cfg.SOLVER.BIAS_LR_FACTOR
             weight_decay = cfg.SOLVER.WEIGHT_DECAY_BIAS
+
+        if key.endswith(".offset.weight") or key.endswith(".offset.bias"):
+            import logging
+            logging.info("set lr factor of {} as {}".format(
+                key, cfg.SOLVER.DCONV_OFFSETS_LR_FACTOR
+            ))
+            lr *= cfg.SOLVER.DCONV_OFFSETS_LR_FACTOR
 
         if resume:
             params += [{"params": [value], "initial_lr": lr, "lr": lr, "weight_decay": weight_decay}]

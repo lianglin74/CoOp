@@ -29,7 +29,7 @@ def update_by_condition_default_until_no_change(all_condition_default,
         if len(change_list) == 0:
             break
         else:
-            logging.info(pformat(change_list))
+            logging.info('change list = \n{}'.format(pformat(change_list)))
 
 def update_by_condition_default(all_condition_default, param,
         place_holder=None, force=False):
@@ -227,17 +227,27 @@ class AutoParam(object):
         pass
 
     def update_pipeline_param(self, param, env):
+        # in this funciton, remove most of the codes except this one
+        condition_default = load_from_yaml_file('./aux_data/auto_param/pipeline.yaml')
+        update_by_condition_default_until_no_change(condition_default, param)
+
+        condition_default = load_from_yaml_file('./aux_data/auto_param/force_parameter.yaml')
+        update_by_condition_default_until_no_change(condition_default, param, force=True)
+
         if 'scale' in param:
-            scale = param['scale']
-            param['effective_batch_size'] = int(param['effective_batch_size']
-                    * scale)
+            scale = param.pop('scale')
+            param['effective_batch_size'] = int(param['effective_batch_size'] * scale)
             from qd.pipelines.auto_param import max_iter_mult
             if isinstance(param['max_iter'], int):
                 # otherwise, it is epoch, and no need to update
                 param['max_iter'] = max_iter_mult(param['max_iter'], 1. / scale)
-            param['base_lr'] *= scale
+            scale_alpha = param.pop('scale_alpha', 1)
+            param['base_lr'] *= scale ** scale_alpha
+            #if scale_alpha != 1:
+                ## update momentum
+                #m = param.get('momentum', 0.9)
+                #param['momentum'] = 1 - (1. - m) / scale ** (1. - scale_alpha)
             param['env']['num_gpu'] = int(param['env']['num_gpu'] * scale)
-            del param['scale']
 
         if 'init_full_expid' in param:
             init_full_expid = param['init_full_expid']
@@ -249,13 +259,6 @@ class AutoParam(object):
                 param['basemodel'] = base_model
             del param['init_full_expid']
 
-        # in this funciton, remove most of the codes except this one
-        condition_default = load_from_yaml_file('./aux_data/auto_param/pipeline.yaml')
-        update_by_condition_default_until_no_change(condition_default, param)
-
-        condition_default = load_from_yaml_file('./aux_data/auto_param/force_parameter.yaml')
-        update_by_condition_default_until_no_change(condition_default, param,
-                force=True)
         # in the case of prediction only, we don't need to have template param
         template = param.get('param_template')
         if template == 'classification_for_maskrcnn':
@@ -286,16 +289,17 @@ class AutoParam(object):
 
         if 'test_batch_size' not in param:
             # 8 work for x152, use 4 for all
-            param['test_batch_size'] = 4 * env['num_gpu']
-        else:
-            assert param['test_batch_size'] >= env['num_gpu']
-            assert (param['test_batch_size'] % env['num_gpu']) == 0
+            param['test_batch_size'] = 1
 
         if 'param_template' in param:
             del param['param_template']
 
-        if get_mpi_size() > 1 and 'pipeline_type' in param:
-            param['dist_url_tcp_port'] = 23456
+        if get_mpi_size() > 1:
+            if 'pipeline_type' in param:
+                param['dist_url_tcp_port'] = 23456
+            if dict_has_path(param, 'env$run_type') and \
+                    dict_get_path_value(param, 'env$run_type') == 'local':
+                param['dist_url_tcp_port'] = 23456
         else:
             old_state = random.getstate()
             from time import time
@@ -682,18 +686,10 @@ class AutoParam(object):
 
         env['num_gpu'] = num_gpu
         default_param = {
-                'data': 'imagenet2012Full',
-                'effective_batch_size': eb,
-                'max_iter': '120e',
-                'step_lr': '30e',
-                'base_lr': num_gpu * ref_base_lr / 4,
-                'dataset_type': 'single',
-                'expid_prefix': 'CM', # Classification for MaskRCNN
-                'pipeline_type': 'classification_for_mask',
-                'evaluate_method': 'top1',
-                'MODEL$BACKBONE$FREEZE_CONV_BODY_AT': 0,
-                'bgr2rgb': True,
-                }
+            #'data': 'imagenet2012Full',
+            'effective_batch_size': eb,
+            'base_lr': num_gpu * ref_base_lr / 4,
+        }
 
         for k, v in default_param.items():
             set_if_not_exist(param, k, v)

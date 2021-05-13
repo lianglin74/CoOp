@@ -18,8 +18,7 @@ import torch
 
 def _rename_conv_weights_for_deformable_conv_layers(state_dict, cfg):
     import re
-    logger = logging.getLogger(__name__)
-    logger.info("Remapping conv weights for deformable conv weights")
+    logging.info("Remapping conv weights for deformable conv weights")
     layer_keys = sorted(state_dict.keys())
     for ix, stage_with_dcn in enumerate(cfg.MODEL.RESNETS.STAGE_WITH_DCN, 1):
         if not stage_with_dcn:
@@ -78,8 +77,7 @@ def align_and_update_state_dicts(model_state_dict, loaded_state_dict):
     # used for logging
     max_size = max([len(key) for key in current_keys]) if current_keys else 1
     max_size_loaded = max([len(key) for key in loaded_keys]) if loaded_keys else 1
-    log_str_template = "{: <{}} loaded from {: <{}} of shape {}"
-    logger = logging.getLogger(__name__)
+    log_str_template = "{: <{}} will be loaded from {: <{}} of shape {}"
     target_source_name_matched = 0
     all_key_old = set()
     updated_keys = []
@@ -92,7 +90,7 @@ def align_and_update_state_dicts(model_state_dict, loaded_state_dict):
         updated_keys.append(key)
         all_key_old.add(key_old)
         target_source_name_matched += 1
-        logger.info(
+        logging.info(
             log_str_template.format(
                 key,
                 max_size,
@@ -116,13 +114,8 @@ def align_and_update_state_dicts(model_state_dict, loaded_state_dict):
 
 
 def strip_prefix_if_present(state_dict, prefix):
-    keys = sorted(state_dict.keys())
-    if not all(key.startswith(prefix) for key in keys):
-        return state_dict
-    stripped_state_dict = OrderedDict()
-    for key, value in state_dict.items():
-        stripped_state_dict[key.replace(prefix, "")] = value
-    return stripped_state_dict
+    from qd.torch_common import remove_prefix
+    return remove_prefix(state_dict, prefix)
 
 
 def load_state_dict(model, loaded_state_dict):
@@ -160,8 +153,8 @@ def cache_url(url, model_dir=None, progress=True):
     if model_dir is None:
         torch_home = os.path.expanduser(os.getenv("TORCH_HOME", "~/.torch"))
         model_dir = os.getenv("TORCH_MODEL_ZOO", os.path.join(torch_home, "models"))
-    if not os.path.exists(model_dir):
-        os.makedirs(model_dir)
+    from qd.qd_common import ensure_directory
+    ensure_directory(model_dir)
     parts = urlparse(url)
     filename = os.path.basename(parts.path)
     if filename == "model_final.pkl":
@@ -193,16 +186,15 @@ class Checkpointer(object):
         scheduler=None,
         save_dir="",
         save_to_disk=None,
-        logger=None,
+        suffix='pth',
     ):
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.save_dir = save_dir
+        self.suffix = suffix
         self.save_to_disk = save_to_disk
-        if logger is None:
-            logger = logging.getLogger(__name__)
-        self.logger = logger
+        self.suffix = suffix
 
     def save(self, name, **kwargs):
         if not self.save_dir:
@@ -219,35 +211,40 @@ class Checkpointer(object):
             data["scheduler"] = self.scheduler.state_dict()
         data.update(kwargs)
 
-        save_file = os.path.join(self.save_dir, "{}.pth".format(name))
-        self.logger.info("Saving checkpoint to {}".format(save_file))
+        save_file = os.path.join(self.save_dir, "{}.{}".format(name, self.suffix))
+        logging.info("Saving checkpoint to {}".format(save_file))
         torch.save(data, save_file)
         from qd.qd_common import get_mpi_rank
         if get_mpi_rank() == 0:
             self.tag_last_checkpoint(save_file)
 
+    def recover_or_load(self, f=None, model_only=False, load_if_has=True):
+        return self.load(f, model_only, load_if_has)
+
+    # use recover_or_load
     def load(self, f=None, model_only=False, load_if_has=True):
         if self.has_checkpoint() and load_if_has:
             f = self.get_checkpoint_file()
             model_only = False
         if not f:
             # no checkpoint could be found
-            self.logger.info("No checkpoint found. Initializing model from scratch")
+            logging.info("No checkpoint found. Initializing model from scratch")
             return {}
-        self.logger.info("Loading checkpoint from {}".format(f))
+        logging.info("Loading checkpoint from {}".format(f))
         checkpoint = self._load_file(f)
         self._load_model(checkpoint)
         if "optimizer" in checkpoint and self.optimizer:
             if not model_only:
-                self.logger.info("Loading optimizer from {}".format(f))
+                logging.info("Loading optimizer from {}".format(f))
                 self.optimizer.load_state_dict(checkpoint.pop("optimizer"))
             else:
                 checkpoint.pop("optimizer")
         if "scheduler" in checkpoint and self.scheduler:
             if not model_only:
-                self.logger.info("Loading scheduler from {}".format(f))
-                from qd.qd_pytorch import load_scheduler_state
-                load_scheduler_state(self.scheduler, checkpoint.pop("scheduler"))
+                logging.info("Loading scheduler from {}".format(f))
+                #from qd.qd_pytorch import load_scheduler_state
+                #load_scheduler_state(self.scheduler, checkpoint.pop("scheduler"))
+                self.scheduler.load_state_dict(checkpoint.pop('scheduler'))
             else:
                 checkpoint.pop("scheduler")
         if model_only:
@@ -260,7 +257,9 @@ class Checkpointer(object):
                 for x in ['epoch', 'amp', 'arch']:
                     if x in checkpoint:
                         del checkpoint[x]
-                assert len(checkpoint) == 0
+                if len(checkpoint) > 0:
+                    from pprint import pformat
+                    logging.info('ignore keys = {}'.format(pformat(checkpoint.keys())))
             checkpoint = {}
 
         # return any further checkpoint data
@@ -289,15 +288,20 @@ class Checkpointer(object):
 
     def _load_file(self, f):
         if isinstance(f, str):
-            return torch.load(f, map_location=torch.device("cpu"))
+            from qd.torch_common import torch_load
+            model = torch_load(f)
+            if 'model' not in model:
+                return {'model': model}
+            return model
+            #return torch.load(f, map_location=torch.device("cpu"))
         else:
+            raise ValueError('should not be here')
             assert isinstance(f, dict)
             # this is a pre-loaded checkpoint dict
             return f
 
     def _load_model(self, checkpoint):
         load_state_dict(self.model, checkpoint.pop("model"))
-
 
 class DetectronCheckpointer(Checkpointer):
     def __init__(
@@ -308,10 +312,9 @@ class DetectronCheckpointer(Checkpointer):
         scheduler=None,
         save_dir="",
         save_to_disk=None,
-        logger=None,
     ):
         super(DetectronCheckpointer, self).__init__(
-            model, optimizer, scheduler, save_dir, save_to_disk, logger
+            model, optimizer, scheduler, save_dir, save_to_disk
         )
         self.cfg = cfg.clone()
 
@@ -319,24 +322,24 @@ class DetectronCheckpointer(Checkpointer):
         # catalog lookup
         if f.startswith("catalog://"):
             # we should never reach here
-            from maskrcnn_benchmark.config import paths_catalog
+            from qd.mask.config import paths_catalog
             #paths_catalog = import_file(
                 #"maskrcnn_benchmark.config.paths_catalog", self.cfg.PATHS_CATALOG, True
             #)
             catalog_f = paths_catalog.ModelCatalog.get(f[len("catalog://") :])
-            self.logger.info("{} points to {}".format(f, catalog_f))
+            logging.info("{} points to {}".format(f, catalog_f))
             f = catalog_f
         # download url files
         if f.startswith("http"):
             # if the file is a url path, download it and cache it
             cached_f = cache_url(f)
-            self.logger.info("url {} cached in {}".format(f, cached_f))
+            logging.info("url {} cached in {}".format(f, cached_f))
             f = cached_f
         # convert Caffe2 checkpoint from pkl
         if f.endswith(".pkl"):
             # we should not reach here, but keep the code here only for
             # back compatibility
-            from maskrcnn_benchmark.utils.c2_model_loading import load_c2_format
+            from qd.mask.utils.c2_model_loading import load_c2_format
             return load_c2_format(self.cfg, f)
         # load native detectron.pytorch checkpoint
         loaded = super(DetectronCheckpointer, self)._load_file(f)

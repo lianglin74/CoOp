@@ -56,10 +56,15 @@ def build_dataset(dataset_list, transforms, dataset_catalog, is_train=True):
     return [dataset]
 
 
-def make_data_sampler(dataset, shuffle, distributed, length_divisible):
+def make_data_sampler(dataset, shuffle, distributed, length_divisible,
+                      fixed_split=False):
     if distributed:
-        return samplers.DistributedSampler(dataset, shuffle=shuffle,
-                length_divisible=length_divisible)
+        return samplers.DistributedSampler(
+            dataset,
+            shuffle=shuffle,
+            length_divisible=length_divisible,
+            fixed_split=fixed_split,
+        )
     if shuffle:
         sampler = torch.utils.data.sampler.RandomSampler(dataset)
     else:
@@ -112,12 +117,16 @@ def make_data_loader(cfg, is_train=True, is_distributed=False, start_iter=0):
     num_gpus = get_world_size()
     if is_train:
         images_per_batch = cfg.SOLVER.IMS_PER_BATCH
+        fixed_split = cfg.SOLVER.FIXED_SAMPLING
         assert (
             images_per_batch % num_gpus == 0
         ), "SOLVER.IMS_PER_BATCH ({}) must be divisible by the number "
         "of GPUs ({}) used.".format(images_per_batch, num_gpus)
         images_per_gpu = images_per_batch // num_gpus
         shuffle = True
+        if fixed_split:
+            shuffle = False
+            logging.info('not shuffle with fixed_split')
         num_iters = cfg.SOLVER.MAX_ITER
     else:
         images_per_batch = cfg.TEST.IMS_PER_BATCH
@@ -127,6 +136,7 @@ def make_data_loader(cfg, is_train=True, is_distributed=False, start_iter=0):
         "of GPUs ({}) used.".format(images_per_batch, num_gpus)
         images_per_gpu = images_per_batch // num_gpus
         shuffle = False
+        fixed_split = False
         num_iters = None
         start_iter = 0
 
@@ -156,12 +166,13 @@ def make_data_loader(cfg, is_train=True, is_distributed=False, start_iter=0):
     dataset_list = cfg.DATASETS.TRAIN if is_train else cfg.DATASETS.TEST
 
     transforms = build_transforms(cfg, is_train)
+    logging.info(transforms)
     datasets = build_dataset(dataset_list, transforms, DatasetCatalog, is_train)
 
     data_loaders = []
     for dataset in datasets:
         sampler = make_data_sampler(dataset, shuffle, is_distributed,
-                length_divisible=images_per_gpu)
+                length_divisible=images_per_gpu, fixed_split=fixed_split)
         batch_sampler = make_batch_data_sampler(
             dataset, sampler, aspect_grouping, images_per_gpu, num_iters,
             start_iter

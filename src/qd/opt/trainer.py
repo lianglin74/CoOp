@@ -1,5 +1,9 @@
+from qd.torch_common import describe_tensor
+from pprint import pformat
+from qd.logger import SmoothedValue
 import datetime
 import logging
+from qd.torch_common import recursive_to_device
 import time
 
 import torch
@@ -119,9 +123,10 @@ def average_gradients(model):
 
 from qd.qd_common import try_once
 @try_once
-def try_save_intermediate_snapshot(checkpointer, iteration, arguments):
-    checkpointer.save("model_{:07d}".format(iteration), **arguments)
+def try_save_intermediate_snapshot(checkpointer, name, arguments):
+    checkpointer.save(name, **arguments)
 
+# use do_train_dict if possible.
 def do_train(
     model,
     data_loader,
@@ -137,16 +142,13 @@ def do_train(
     no_update=False,
     use_amp=False,
 ):
-    logger = logging.getLogger("maskrcnn_benchmark.trainer")
-    logger.info("Start training")
+    logging.info("Start training")
     meters = MetricLogger(delimiter="  ")
     max_iter = len(data_loader)
     start_iter = arguments["iteration"]
     start_training_time = time.time()
     end = time.time()
     log_start = time.time()
-    from qd.qd_common import is_hvd_initialized
-    use_hvd = is_hvd_initialized()
 
     visualize_input = False
     fix_input = False
@@ -162,6 +164,7 @@ def do_train(
         init_random_seed(99)
         from qd.layers.forward_pass_feature_cache import ForwardPassFeatureCache
         model = ForwardPassFeatureCache(model)
+    NaN_times = 0
 
     for iteration, (images, targets, _) in enumerate(data_loader, start_iter):
         if debug:
@@ -210,11 +213,16 @@ def do_train(
                 loss_dict = model(images, targets)
                 losses = sum(loss for loss in loss_dict.values())
             if losses != losses:
-                logging.info('NaN encountered!')
-                arguments['images'] = images
-                arguments['targets'] = targets
-                checkpointer.save("NaN_context_{}".format(get_mpi_rank()), **arguments)
-                raise RuntimeError('NaN encountered!')
+                if NaN_times > 100:
+                    logging.info('NaN encountered!')
+                    arguments['images'] = images
+                    arguments['targets'] = targets
+                    checkpointer.save("NaN_context_{}".format(get_mpi_rank()), **arguments)
+                    raise RuntimeError('NaN encountered!')
+                else:
+                    NaN_times += 1
+            else:
+                NaN_times = 0
             scaler.scale(losses).backward()
             if not no_update:
                 scaler.step(optimizer)
@@ -263,7 +271,7 @@ def do_train(
             else:
                 eta_string = 'Unknown'
 
-            logger.info(
+            logging.info(
                 meters.delimiter.join(
                     [
                         "eta: {eta}",
@@ -300,8 +308,9 @@ def do_train(
         if iteration % checkpoint_period == 0:
             # with blobfuse, saving could fail with unknown reason. Instead of
             # saving and crashing, we do a best-effort manner.
-            try_save_intermediate_snapshot(checkpointer, iteration, arguments)
+            try_save_intermediate_snapshot(checkpointer, "model_iter_{:07d}".format(iteration), arguments)
 
+    checkpointer.save("model_iter_{:07d}".format(arguments['iteration']), **arguments)
     checkpointer.save("model_final", **arguments)
     if get_mpi_rank() > 0:
         old_value = checkpointer.save_to_disk
@@ -311,7 +320,7 @@ def do_train(
 
     total_training_time = time.time() - start_training_time
     total_time_str = str(datetime.timedelta(seconds=total_training_time))
-    logger.info(
+    logging.info(
         "Total training time: {} ({:.4f} s / it)".format(
             total_time_str, total_training_time / (1 if max_iter == 0 else
                                                    max_iter)
@@ -320,7 +329,14 @@ def do_train(
 
 def get_num_image(d):
     if isinstance(d, dict):
-        return len(d['image'])
+        if 'image' in d:
+            return len(d['image'])
+        elif 'targets' in d:
+            # mask-rcnn -> dict
+            return len(d['targets'])
+        elif 'input_ids' in d:
+            # vl
+            return len(d['input_ids'])
     elif isinstance(d, tuple) or isinstance(d, list):
         return get_num_image(d[0])
     elif isinstance(d, torch.Tensor):
@@ -343,25 +359,54 @@ def do_train_dict(
     no_update=False,
     ema=None,
     use_amp=False,
+    gradient_clip=None,
+    model_sub_name_fn=None,
+    async_loader=False,
 ):
-    logger = logging.getLogger("maskrcnn_benchmark.trainer")
-    logger.info("Start training")
-    meters = MetricLogger(delimiter="  ")
+    if model_sub_name_fn is None:
+        model_sub_name_fn = lambda i: "model_iter_{:07d}".format(i)
+    logging.info("Start training")
+    from qd.logger import SmoothedValue
+    meters = MetricLogger(delimiter="  ", meter_creator=lambda:
+                          SmoothedValue(log_step))
     max_iter = len(data_loader)
     start_iter = arguments["iteration"]
     start_training_time = time.time()
     end = time.time()
     log_start = time.time()
+    from qd.qd_common import print_frame_info
+    print_frame_info()
 
     if use_amp:
         scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
 
+    debug = False
+    if debug:
+        from qd.torch_common import init_random_seed
+        torch.set_deterministic(False)
+        init_random_seed(99)
+        from qd.layers.forward_pass_feature_cache import ForwardPassFeatureCache
+        model = ForwardPassFeatureCache(model)
+
+    #try_save_intermediate_snapshot(
+        #checkpointer,
+        #model_sub_name_fn(start_iter),
+        #arguments)
+    if async_loader:
+        logging.info('wrapping with AsynchronousLoader')
+        from qd.data_layer.loader import AsynchronousLoader
+        data_loader = AsynchronousLoader(data_loader, device=device)
+
     for iteration, dict_data in enumerate(data_loader, start_iter):
-        data_time = time.time() - end
         iteration = iteration + 1
         arguments["iteration"] = iteration
 
-        dict_data = to(dict_data, device)
+        before_to_device = time.time()
+        data_time = before_to_device - end
+        if not async_loader:
+            dict_data = to(dict_data, device)
+        before_gpu = time.time()
+        time_to_device = before_gpu - before_to_device
 
         if not no_update:
             optimizer.zero_grad()
@@ -371,6 +416,10 @@ def do_train_dict(
                 loss_dict = model(dict_data)
                 losses = sum(loss for loss in loss_dict.values())
             scaler.scale(losses).backward()
+            if gradient_clip:
+                scaler.unscale_(optimizer)
+                total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clip)
+                meters.update(total_norm=total_norm)
             if not no_update:
                 scaler.step(optimizer)
             scaler.update()
@@ -378,8 +427,15 @@ def do_train_dict(
             loss_dict = model(dict_data)
             losses = sum(loss for loss in loss_dict.values())
             losses.backward()
+            if gradient_clip:
+                total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clip)
+                meters.update(total_norm=total_norm)
             if not no_update:
                 optimizer.step()
+
+        if debug:
+            model.sumarize_feature()
+            import ipdb;ipdb.set_trace(context=15)
 
         if not use_amp and losses != losses:
             logging.info('NaN encountered!')
@@ -390,19 +446,12 @@ def do_train_dict(
 
         if not no_update:
             scheduler.step()
+        time_gpu = time.time() - before_gpu
 
         if ema is not None:
             ema.update(model)
 
-        batch_time = time.time() - end
-        end = time.time()
-
-        if iteration > start_iter + 5:
-            # we will skip the first few iterations since the time cost
-            # evaluation for those are not good
-            meters.update(time=batch_time, data=data_time)
-
-        if iteration % log_step == 0 or iteration == max_iter:
+        if (iteration % log_step) == 0 or iteration == max_iter:
             speed = get_mpi_size() * log_step * get_num_image(dict_data) / (time.time() - log_start)
             if hasattr(meters, 'time'):
                 eta_seconds = meters.time.global_avg * (max_iter - iteration)
@@ -410,7 +459,7 @@ def do_train_dict(
             else:
                 eta_string = 'Unknown'
 
-            logger.info(
+            logging.info(
                 meters.delimiter.join(
                     [
                         "eta: {eta}",
@@ -433,7 +482,23 @@ def do_train_dict(
         if iteration % checkpoint_period == 0:
             # with blobfuse, saving could fail with unknown reason. Instead of
             # saving and crashing, we do a best-effort manner.
-            try_save_intermediate_snapshot(checkpointer, iteration, arguments)
+            before_save = time.time()
+            try_save_intermediate_snapshot(
+                checkpointer,
+                model_sub_name_fn(iteration),
+                arguments)
+            meters.update(save_time=(time.time() - before_save))
+
+        batch_time = time.time() - end
+        end = time.time()
+
+        if iteration > start_iter + 5:
+            # we will skip the first few iterations since the time cost
+            # evaluation for those are not good
+            meters.update(time=batch_time, data=data_time)
+            meters.update(to_device=time_to_device)
+            meters.update(time_gpu=time_gpu)
+
 
     checkpointer.save("model_final", **arguments)
     if get_mpi_rank() > 0:
@@ -442,12 +507,173 @@ def do_train_dict(
         checkpointer.save("model_final_{}".format(get_mpi_rank()), **arguments)
         checkpointer.save_to_disk = old_value
 
+    checkpointer.save(model_sub_name_fn(arguments['iteration']), **arguments)
+
     total_training_time = time.time() - start_training_time
     total_time_str = str(datetime.timedelta(seconds=total_training_time))
-    logger.info(
+    logging.info(
         "Total training time: {} ({:.4f} s / it)".format(
             total_time_str, total_training_time / (1 if max_iter == 0 else
                                                    max_iter)
         )
     )
+
+def do_train_by_deepspeed(
+    model,
+    data_loader,
+    optimizer,
+    scheduler,
+    checkpointer,
+    device,
+    checkpoint_period,
+    arguments,
+    log_step=20,
+    data_partition=1,
+    explicit_average_grad=False,
+    no_update=False,
+    ema=None,
+    use_amp=False,
+    gradient_clip=None,
+    model_sub_name_fn=None,
+    zero_opt_stage=None,
+    use_fp16=None,
+    async_loader=False,
+    no_flops_profiler=False,
+):
+    import deepspeed
+    config_params = {
+        'train_batch_size': data_loader.batch_sampler.batch_sampler.batch_size * get_mpi_size(),
+    }
+
+    assert not (use_amp and use_fp16)
+
+    if use_amp:
+        config_params['amp'] = {
+            'enabled': True,
+            'opt_level': 'O1',
+        }
+
+    if use_fp16:
+        config_params['fp16'] = {
+            'enabled': True,
+        }
+
+    if gradient_clip:
+        config_params['gradient_clipping'] = gradient_clip
+
+    config_params['flops_profiler'] = {
+        'enabled': not no_flops_profiler,
+        'profile_step': 1,
+        'module_depth': -1,
+        'top_modules': 3,
+        'detailed': True,
+    }
+    config_params['logging'] = {
+        'steps_per_print': log_step,
+    }
+    if zero_opt_stage is not None:
+        config_params['zero_optimization'] = {
+            'stage': zero_opt_stage,
+        }
+        if zero_opt_stage > 0:
+            config_params['fp16'] = {
+                'enabled': True
+            }
+        config_params['zero_allow_untested_optimizer'] = True
+    assert ema is None, 'not supported'
+    assert not no_update
+    logging.info(pformat(config_params))
+    model_engine, optimizer, _, lr_scheduler = deepspeed.initialize(
+        config_params=config_params,
+        model=model,
+        optimizer=optimizer,
+        lr_scheduler=scheduler,
+    )
+
+    start_step = arguments['iteration']
+
+    #client_sd = {}
+    #_, client_sd = model_engine.load_checkpoint(
+        #checkpointer.save_dir, args.ckpt_id)
+    #start_step = client_sd['step'] + 1
+    log_start = time.time()
+    meters = MetricLogger(delimiter="  ", meter_creator=lambda:
+                          SmoothedValue(log_step))
+    max_iter = len(data_loader)
+    end = time.time()
+
+    if async_loader:
+        logging.info('wrapping with AsynchronousLoader')
+        from qd.data_layer.loader import AsynchronousLoader
+        data_loader = AsynchronousLoader(data_loader, device=device)
+
+    for step, dict_data in enumerate(data_loader, start_step):
+        #forward() method
+        if step == start_step:
+            for k, v in dict_data.items():
+                if isinstance(v, torch.Tensor):
+                    logging.info('{}: {}'.format(k, describe_tensor(v)))
+        arguments['iteration'] = step + 1
+        data_time = time.time() - end
+        loss_dict = model_engine(dict_data)
+        loss = sum(loss_dict.values())
+        meters.update(**loss_dict)
+
+        #runs backpropagation
+        model_engine.backward(loss)
+
+        #weight update
+        model_engine.step()
+        #if (step % checkpoint_period) == 0:
+            #client_sd['step'] = step
+            #model_engine.save_checkpoint(
+                #checkpointer.save_dir, step, client_state=client_sd)
+        if (step % log_step) == 0:
+            speed = get_mpi_size() * log_step * get_num_image(dict_data) / (time.time() - log_start)
+            if hasattr(meters, 'time'):
+                eta_seconds = meters.time.global_avg * (max_iter - step)
+                eta_string = str(datetime.timedelta(seconds=int(eta_seconds)))
+            else:
+                eta_string = 'Unknown'
+
+            logging.info(
+                meters.delimiter.join(
+                    [
+                        "eta: {eta}",
+                        "iter: {iter}",
+                        'speed: {speed:.1f} images/sec',
+                        "{meters}",
+                        "lr: {lr:.6f}",
+                        "max mem: {memory:.0f}",
+                    ]
+                ).format(
+                    eta=eta_string,
+                    iter=step,
+                    speed=speed,
+                    meters=str(meters),
+                    lr=optimizer.param_groups[0]["lr"],
+                    memory=torch.cuda.max_memory_allocated() / 1024.0 / 1024.0,
+                )
+            )
+            log_start = time.time()
+
+        if (step + 1) % checkpoint_period == 0:
+            # with blobfuse, saving could fail with unknown reason. Instead of
+            # saving and crashing, we do a best-effort manner.
+            before_save = time.time()
+            try_save_intermediate_snapshot(
+                checkpointer,
+                model_sub_name_fn(step + 1),
+                arguments)
+            meters.update(save_time=(time.time() - before_save))
+
+        batch_time = time.time() - end
+        end = time.time()
+        if step > start_step + 5:
+            # we will skip the first few iterations since the time cost
+            # evaluation for those are not good
+            meters.update(time=batch_time, data=data_time)
+        step += 1
+
+    checkpointer.save(model_sub_name_fn(arguments['iteration']), **arguments)
 

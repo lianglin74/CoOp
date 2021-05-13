@@ -22,32 +22,39 @@ def build_resnet_backbone(cfg):
     return model
 
 class TimmViTBackbone(nn.Module):
-    def __init__(self, model, skip_first, spatial):
+    def __init__(self, model, skip_first, patch_size):
         super().__init__()
         self.module = model
         self.skip_first = skip_first
-        self.spatial = spatial
+        self.patch_size = patch_size
 
     def forward(self, x):
         y = self.module(x)
         if self.skip_first:
             y = y[:, 1:]
-        y = y.reshape(y.shape[0], self.spatial, self.spatial, y.shape[-1])
+        h, w = x.shape[2:]
+        h2, w2 = h // 32, w // 32
+        y = y.reshape(y.shape[0], h2, w2, y.shape[-1])
         y = y.permute((0, 3, 1, 2))
         return [y]
 
-@registry.BACKBONES.register("timm_vit_large_patch16_384")
+@registry.BACKBONES.register("timm_vit_base_patch32_384")
 def build_timm_backbone(cfg):
+    model_name = cfg.MODEL.BACKBONE.CONV_BODY[5:]
     import timm
     model = timm.create_model(
-        model_name='vit_large_patch16_384',
+        model_name=model_name,
         pretrained=True,
         output_grid=True,
     )
-    model = TimmViTBackbone(model, skip_first=True, spatial=24)
-    model.out_channels = 1024
+    if model_name == 'vit_base_patch32_384':
+        patch_size = 32
+        out_channels = 768
+    else:
+        raise NotImplementedError
+    model = TimmViTBackbone(model, skip_first=True, patch_size=patch_size)
+    model.out_channels = out_channels
     return model
-
 
 @registry.BACKBONES.register("R-50-FPN")
 @registry.BACKBONES.register("R-101-FPN")

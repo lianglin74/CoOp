@@ -141,9 +141,8 @@ def smart_create_aml_client(cluster, **kwargs):
     return create_aml_client(cluster=choices[0]['cluster'], **kwargs)
 
 def ensure_pipeline_data_available(param, client, from_clients=None):
-    if 'param' not in param:
-        return
-    param = param['param']
+    if 'param' in param:
+        param = param['param']
     if 'basemodel' in param:
         ensure_upload_init_model(param, client)
     # this is for predict pipeline

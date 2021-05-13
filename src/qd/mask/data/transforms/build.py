@@ -59,9 +59,11 @@ def build_transforms(cfg, is_train=True):
             resizer = DictResizeAndPlaceForMaskRCNN(cfg)
     else:
         resizer = DictTransformMaskResize(
-            min_size, max_size,
+            min_size,
+            max_size,
             cfg.INPUT.MIN_SIZE_ON_ITER,
             cfg.INPUT.SMART_RESIZE_ON_MIN_IN_TEST,
+            resize_method=cfg.INPUT.TEST_RESIZE_METHOD
         )
 
     from qd.qd_pytorch import DictTransformCompose

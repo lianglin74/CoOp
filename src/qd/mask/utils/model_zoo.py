@@ -11,8 +11,8 @@ except ImportError:
     from torch.utils.model_zoo import urlparse
     from torch.utils.model_zoo import HASH_REGEX
 
-from maskrcnn_benchmark.utils.comm import is_main_process
-from maskrcnn_benchmark.utils.comm import synchronize
+from qd.mask.utils.comm import is_main_process
+from qd.mask.utils.comm import synchronize
 
 
 # very similar to https://github.com/pytorch/pytorch/blob/master/torch/utils/model_zoo.py

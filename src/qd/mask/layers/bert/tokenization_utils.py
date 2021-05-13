@@ -339,6 +339,30 @@ class PreTrainedTokenizer(object):
 
         return added_special_tokens
 
+    def rich_tokenize(self, text, **kwargs):
+        # it will also return the index of the start word, so that we can mask
+        # out all tokens within one word
+        def split_on_tokens(tok_list, text):
+            if not text:
+                return [], []
+            if not tok_list:
+                return self._rich_tokenize(text, **kwargs)
+            tok = tok_list[0]
+            split_text = text.split(tok)
+            all_tokens = []
+            all_start_idx = []
+            for idx_split, sub_text in enumerate(split_text):
+                curr_tokens, start_idx = split_on_tokens(tok_list[1:], sub_text.strip())
+                all_start_idx.extend([i + len(all_tokens) for i in start_idx])
+                all_tokens.extend(curr_tokens)
+                if idx_split < len(split_text) - 1:
+                    all_start_idx.append(len(all_tokens))
+                    all_tokens.append(tok)
+            return all_tokens, all_start_idx
+
+        added_tokens = list(self.added_tokens_encoder.keys()) + self.all_special_tokens
+        tokenized_text = split_on_tokens(added_tokens, text)
+        return tokenized_text
 
     def tokenize(self, text, **kwargs):
         """ Converts a string in a sequence of tokens (string), using the tokenizer.

@@ -1,12 +1,13 @@
 import torch
 from torch.utils.data.sampler import Sampler
 from torch.utils.data.sampler import BatchSampler
+from qd.qd_common import get_mpi_size
+from qd.qd_common import get_mpi_rank
+from qd.qd_common import list_to_dict
 
 
 class CompositeRankAwareSampler(Sampler):
     def __init__(self, dataset):
-        from qd.qd_common import get_mpi_size
-        from qd.qd_common import get_mpi_rank
         # the returned value should be a list of integer
         source_list = dataset.get_composite_source_idx()
 

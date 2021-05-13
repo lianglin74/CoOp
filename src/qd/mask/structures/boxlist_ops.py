@@ -3,12 +3,7 @@ import torch
 
 from .bounding_box import BoxList
 
-try:
-    from maskrcnn_benchmark.layers import nms as _box_nms
-except:
-    from fcos_core.layers import nms as _box_nms
-# or
-# from fcos_core.layers import nms as _box_nms
+from qd.mask.layers import nms as _box_nms
 
 def boxlist_softnms(boxlist, sigma, threshold=0.,
         max_box=1000000000, score_field='scores'):
@@ -107,7 +102,7 @@ def boxlist_ml_nms(boxlist, nms_thresh, max_proposals=-1,
     boxes = boxlist.bbox
     scores = boxlist.get_field(score_field)
     labels = boxlist.get_field(label_field)
-    from fcos_core.layers import ml_nms as _box_ml_nms
+    from qd.mask.layers import ml_nms as _box_ml_nms
     keep = _box_ml_nms(boxes, scores, labels.float(), nms_thresh)
     if max_proposals > 0:
         keep = keep[: max_proposals]

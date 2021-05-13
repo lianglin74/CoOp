@@ -20,10 +20,14 @@ class DistributedSampler(Sampler):
         num_replicas (optional): Number of processes participating in
             distributed training.
         rank (optional): Rank of the current process within num_replicas.
+        fixed_split: whether we re-shuffle after one epoch. The case when
+        we set it as True is for large dataset training in AML, where the
+        harddisk size is limitted. In this case, we make sure each GPU sees
+        the same data so that every time
     """
 
     def __init__(self, dataset, num_replicas=None, rank=None, shuffle=True,
-            length_divisible=1):
+            length_divisible=1, fixed_split=False):
         if num_replicas is None:
             if not dist.is_available():
                 raise RuntimeError("Requires distributed package to be available")
@@ -47,30 +51,40 @@ class DistributedSampler(Sampler):
             logging.info('adjust to = {}'.format(self.num_samples))
         self.total_size = self.num_samples * self.num_replicas
         self.shuffle = shuffle
+        self.fixed_split = fixed_split
 
     def __iter__(self):
+        dataset_len = len(self.dataset)
         if self.shuffle:
             # deterministically shuffle based on epoch
             g = torch.Generator()
             g.manual_seed(self.epoch)
-            indices = torch.randperm(len(self.dataset), generator=g).tolist()
+            indices = torch.randperm(dataset_len, generator=g).tolist()
         else:
-            indices = torch.arange(len(self.dataset)).tolist()
+            indices = torch.arange(dataset_len).tolist()
+
+        offset = self.num_samples * self.rank
+        for i in range(self.num_samples):
+            index = offset + i
+            while index >= dataset_len:
+                index -= dataset_len
+            yield indices[index]
 
         # add extra samples to make it evenly divisible
-        assert (self.total_size - len(indices)) <= len(indices), 'not implemented'
-        indices += indices[: (self.total_size - len(indices))]
-        assert len(indices) == self.total_size
+        #assert (self.total_size - len(indices)) <= len(indices), 'not implemented'
+        #indices += indices[: (self.total_size - len(indices))]
+        #assert len(indices) == self.total_size
 
-        # subsample
-        offset = self.num_samples * self.rank
-        indices = indices[offset : offset + self.num_samples]
-        assert len(indices) == self.num_samples
+        ## subsample
+        #offset = self.num_samples * self.rank
+        #indices = indices[offset : offset + self.num_samples]
+        #assert len(indices) == self.num_samples
 
-        return iter(indices)
+        #return iter(indices)
 
     def __len__(self):
         return self.num_samples
 
     def set_epoch(self, epoch):
-        self.epoch = epoch
+        if not self.fixed_split:
+            self.epoch = epoch
