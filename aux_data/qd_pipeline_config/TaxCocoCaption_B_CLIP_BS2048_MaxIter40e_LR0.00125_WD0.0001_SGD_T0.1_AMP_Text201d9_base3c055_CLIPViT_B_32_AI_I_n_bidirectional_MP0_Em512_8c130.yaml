@@ -1,0 +1,41 @@
+all_test_data:
+- test_data: TaxCocoCaption
+  test_split: test
+param:
+  align_loss: I_I_n
+  async_dataloader: true
+  base_lr: 0.00125
+  basemodel: output/TaxCocoCaption_B_CLIP_BS2048_MaxIter0_LR0.00125_WD0.0001_SGD_T0.1_AMP_Text201d9_CLIPViT_B_32_AI_I_n_bidirectional_MP0_Em512/snapshot/model_iter_0000000.pt
+  data: TaxCocoCaption
+  dist_url_tcp_port: 20006
+  effective_batch_size: 2048
+  embed_dim: 512
+  env:
+    availability_check: true
+    candidate_clusters:
+    - we3v32
+    - we2v32
+    - wev32
+    cluster: we3v32
+    num_gpu: 64
+    run_type: save_config
+  expid: CLIP_BS2048_MaxIter40e_LR0.00125_WD0.0001_SGD_T0.1_AMP_Text201d9_base3c055_CLIPViT_B_32_AI_I_n_bidirectional_MP0_Em512
+  expid_prefix: CLIP
+  full_expid: TaxCocoCaption_B_CLIP_BS2048_MaxIter40e_LR0.00125_WD0.0001_SGD_T0.1_AMP_Text201d9_base3c055_CLIPViT_B_32_AI_I_n_bidirectional_MP0_Em512
+  image_encoder_type: CLIPViT_B_32
+  log_step: 100
+  mask_prob: 0
+  mask_type: bidirectional
+  max_iter: 40e
+  net: B
+  num_workers: 8
+  optimizer_type: SGD
+  pipeline_type:
+    from: qd.pipelines.clip_uni_pipeline
+    import: CLIPPipeline
+  temperature: 0.1
+  test_batch_size: 16
+  text_encoder_type: CLIP
+  use_amp: true
+  weight_decay: 0.0001
+type: pipeline_train_eval_multi
