@@ -303,11 +303,9 @@ class SplitBySplitSampler(Sampler):
     # only used in training mode.
     # by default, every 1 split is one group. Each split means one tsv file.
     def __init__(self, dataset, group_size=1, shuffle=True, random_seed=9,
-                 num_prepare_process=8,
                  # which file list should be prepared. data/split will be from
                  # dataset
                  prepare_t_versions=[],
-                 prepare_by_cat=False,
                  ):
         from qd.qd_common import print_frame_info
         print_frame_info()
@@ -327,10 +325,9 @@ class SplitBySplitSampler(Sampler):
         self.shuffle_group_process = None
 
         # the subprocess will be lazily created
-        self.prepare_processes = None
+        self.prepare_process = None
         self.prepare_queue = None
         self.prepare_files = None
-        self.num_prepare_process = num_prepare_process
         # currently, we only support to prepare one kind of files, but it could
         # be extendeed to multiple files if we need
         self.prepare_t_versions = prepare_t_versions
@@ -341,9 +338,6 @@ class SplitBySplitSampler(Sampler):
         self.curr_group_buffers = None
         self.next_group_index = 0
         self.cache_group_index_on_node = None
-        self.prepare_by_cat = prepare_by_cat
-
-        self.init_prepare()
 
     def get_composite_source_idx(self):
         return self.dataset.get_composite_source_idx()
@@ -363,16 +357,19 @@ class SplitBySplitSampler(Sampler):
                 result.append(load_list_file(x_tsv))
         return result
 
+    def load_idx_split(self):
+        logging.info('loading source list')
+        source_list = self.get_composite_source_idx()
+        logging.info('loaded source list')
+        idx_split = list(enumerate(source_list))
+        idx_split = torch.tensor(idx_split)
+        return idx_split
+
     @property
     def idx_split(self):
         if self._idx_split is None:
-            logging.info('loading source list')
-            source_list = self.get_composite_source_idx()
-            logging.info('loaded source list')
-            idx_split = list(enumerate(source_list))
-            idx_split = torch.tensor(idx_split)
-            self._idx_split = idx_split
-            #self._idx_split.share_memory_()
+            self._idx_split = self.load_idx_split()
+            self._idx_split.share_memory_()
         return self._idx_split
 
     def create_process_to_create_shuffle_group(self):
@@ -452,34 +449,39 @@ class SplitBySplitSampler(Sampler):
     def get_group_index_on_node(self):
         # there is no need to cache source_list as we only call this function
         # once in the whole training life-time
+        start = time.time()
         idx_split = self.idx_split
         if self.shuffle:
-            random_idx = self.get_shufle_idx(len(idx_split))
-            idx_split = idx_split[random_idx]
             max_split = idx_split[:, 1].max() + 1
             priority = self.get_shufle_idx(max_split)
-            sort_idx = torch.argsort(priority[idx_split[:, 1]])
-            idx_split = idx_split[sort_idx]
+
+            random_idx = self.get_shufle_idx(len(idx_split))
+            idx_split = idx_split[random_idx]
+
+            idx_split = torch.cat([idx_split[idx_split[:, 1] == p] for p in priority])
         else:
             if self.cache_group_index_on_node is not None:
                 return self.cache_group_index_on_node
+
         num_idx_on_node = (len(idx_split) + self.node_size - 1) // self.node_size
         offset = num_idx_on_node * self.node_idx
         offset_end = offset + num_idx_on_node
         offset_end = min(offset_end, len(idx_split))
         idx_split = idx_split[offset:offset_end]
 
-        unique_split_index = list(set(idx_split[:, 1].tolist()))
+        unique_split_index = ordered_unique(idx_split[:, 1].tolist())
         logging.info(unique_split_index)
         result = [
             {
                 'idx_in_group': idx_split[idx_split[:, 1] == s][:, 0].tolist(),
-                'split_in_group': [s],
+                'split_in_group': s,
             }
             for s in unique_split_index
         ]
         if not self.shuffle:
             self.cache_group_index_on_node = result
+        cost = time.time() - start
+        logging.info('time to get group index on node: {}'.format(cost))
         return result
 
     def get_next_group_index_on_node(self):
@@ -494,66 +496,56 @@ class SplitBySplitSampler(Sampler):
         return g
 
     def __iter__(self):
-        group_buffers = [
-            self.get_next_group_index_on_node() for _ in range(self.num_prepare_process)
-        ]
+        group_buffers = [self.get_next_group_index_on_node() for _ in range(5)]
         if self.local_rank == 0:
             for g in group_buffers:
-                for s in g['split_in_group']:
-                    self.prepare(s)
+                self.prepare(g['split_in_group'])
         assert len(group_buffers) > 0
         idx = self.local_rank
         while True:
             while idx >= len(group_buffers[0]['idx_in_group']):
                 idx -= len(group_buffers[0]['idx_in_group'])
-                old_g = group_buffers.pop(0)
+                group_buffers.pop(0)
                 new_g = self.get_next_group_index_on_node()
                 if self.local_rank == 0:
-                    for s in new_g['split_in_group']:
-                        self.prepare(s)
-                    for s in old_g['split_in_group']:
-                        self.unprepare(s)
+                    self.prepare(new_g['split_in_group'])
                 group_buffers.append(new_g)
-            yield group_buffers[0]['idx_in_group'][idx]
+            r = group_buffers[0]['idx_in_group'][idx]
+            yield r
             idx += self.local_size
 
-    def init_prepare(self):
+    def ensure_init_prepare(self):
+        self.use_thread = True
         if self.prepare_files is None:
             self.prepare_files = self.get_composite_source_files()
-        if self.prepare_processes is None:
-            from multiprocessing import Process
-            self.prepare_processes = []
-            for _ in range(self.num_prepare_process):
-                prepare_queue = mp.Queue()
-                unprepare_queue = mp.Queue()
-                p = Process(target=prepare_tsv_file_process,
-                        args=(prepare_queue, unprepare_queue,
-                              self.prepare_by_cat,
-                              ))
+        if self.prepare_process is None:
+            if not self.use_thread:
+                from multiprocessing import Process
+                #prepare_queue = mp.Queue()
+                prepare_queue = mp.queues.SimpleQueue()
+                p = Process(target=prepare_tsv_file_process, args=(prepare_queue,))
                 p.daemon = True
                 p.start()
-                self.prepare_processes.append(
-                    (p, prepare_queue, unprepare_queue))
-            self.prepare_f2pidx = {}
+                self.prepare_process = p
+                self.prepare_queue = prepare_queue
+            else:
+                import threading
+                import queue
+                prepare_queue = queue.Queue()
+                p = threading.Thread(
+                    target=prepare_tsv_file_process, args=(prepare_queue,),
+                    daemon=True,
+                )
+                p.start()
+                self.prepare_process = p
+                self.prepare_queue = prepare_queue
 
     def prepare(self, split):
-        idx = min(range(len(self.prepare_processes)), key=lambda x:
-            self.prepare_processes[x][1].qsize())
-        q = self.prepare_processes[idx][1]
+        self.ensure_init_prepare()
+        q = self.prepare_queue
         size = q.qsize()
         if size > 100:
             logging.info('prepare queue is too long {}'.format(size))
-        for ps in self.prepare_files:
-            q.put(ps[split])
-        self.prepare_f2pidx[split] = idx
-
-    def unprepare(self, split):
-        assert self.prepare_processes is not None
-        idx = self.prepare_f2pidx[split]
-        q = self.prepare_processes[idx][2]
-        size = q.qsize()
-        if size > 100:
-            logging.info('unprepare queue is too long {}'.format(size))
         for ps in self.prepare_files:
             q.put(ps[split])
 
@@ -565,6 +557,9 @@ class AttachIterationNumberBatchSampler(object):
         self.batch_sampler = batch_sampler
         self.curr_iter = start_iter
         self.max_iter = num_iters
+
+    def __getattr__(self, att):
+        return getattr(self.batch_sampler, att)
 
     def __iter__(self):
         for batch in self.batch_sampler:
