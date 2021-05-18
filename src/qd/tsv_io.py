@@ -41,9 +41,10 @@ def get_tsv_lineidx_8b(tsv_file):
 def rm_tsv(tsv_file):
     if op.isfile(tsv_file):
         os.remove(tsv_file)
-        line_idx = op.splitext(tsv_file)[0] + '.lineidx'
-        if op.isfile(line_idx):
-            os.remove(line_idx)
+        for line_idx in [get_tsv_lineidx(tsv_file),
+                         get_tsv_lineidx_8b(tsv_file)]:
+            if op.isfile(line_idx):
+                os.remove(line_idx)
 
 def tsv_rm(tsv_file):
     rm_tsv(tsv_file)
@@ -193,7 +194,7 @@ class TSVFile(object):
             self.close_fp_after_read = bool(os.environ['QD_TSV_CLOSE_FP_AFTER_READ'])
         self.use_mmap = False
         if os.environ.get('QD_TSV_MMAP'):
-            self.use_mmap = bool(os.environ['QD_TSV_MMAP'])
+            self.use_mmap = int(os.environ['QD_TSV_MMAP'])
         self.use_fuse = False
         if os.environ.get('QD_TSV_USE_FUSE'):
             self.use_fuse = int(os.environ['QD_TSV_USE_FUSE'])
@@ -394,6 +395,7 @@ class TSVFile(object):
             raise ValueError('unkwown cache policy {}'.format(self.cache_policy))
 
     def get_tsv_fp(self):
+        start = time.time()
         if self.use_fuse:
             fp = self.fuser.open(self.tsv_file, 'r')
             logging.info(fp)
@@ -407,6 +409,11 @@ class TSVFile(object):
             mfp = mmap.mmap(fp.fileno(), 0, access=mmap.ACCESS_READ)
         else:
             mfp = fp
+        end = time.time()
+        if (end - start) > 30:
+            logging.info('too long ({}) to open {}'.format(
+                end - start,
+                self.tsv_file))
         return mfp, fp
 
     def _ensure_tsv_opened(self):
