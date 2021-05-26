@@ -7765,7 +7765,6 @@ def remove_duplicate_loader(exclude, train_data, train_split):
                 yield int(nz_test), int(nz_train)
     tsv_writer(gen_rows(), out_file)
 
-
     remove_duplicate_double_check_im(
         exclude['data'], exclude['split'], train_data, out_file, out_file2,
         1-threshold,
@@ -7837,6 +7836,154 @@ def create_tsv_dataset_loader(
         ts.append(extra_transform)
     transform = transforms.Compose(ts)
     return create_data_loader(tsv, transform, batch_size, num_workers=num_workers)
+
+def limit_image_size(in_rows, min_size, max_size, resave=True, quality=None):
+    #debug = True
+    debug = False
+    in_img_row, in_hw_row = in_rows
+    hw = in_hw_row[1]
+    try:
+        hw_info = json.loads(hw)
+        h, w = hw_info['height'], hw_info['width']
+    except:
+        h, w = map(int, hw.split(' '))
+    image_min = min(h, w)
+    image_max = max(h, w)
+    if image_min < min_size and image_max < max_size:
+        if resave:
+            im = img_from_base64(in_img_row[-1])
+            in_img_row[-1] = encoded_from_img(im, quality=quality)
+        return in_img_row,
+    scale = min(min_size * 1. / image_min, max_size * 1. / image_max)
+    w2 = int(round(scale * w))
+    h2 = int(round(scale * h))
+    w2 = max(1, w2)
+    h2 = max(1, h2)
+    img = img_from_base64(in_img_row[-1])
+    #img = pilimg_from_base64(in_img_row[-1])
+    #img = ImageOps.exif_transpose(img)
+    if debug:
+        img.show()
+    assert w == img.shape[1], in_img_row[0]
+    assert h == img.shape[0], in_img_row[0]
+    #assert w == img.size[0], in_img_row[0]
+    #assert h == img.size[1], in_img_row[0]
+    #save_image(img, '/tmp/a.jpg')
+    img = cv2.resize(img, (w2, h2),
+                     interpolation=cv2.INTER_AREA,
+                     )
+    #save_image(img, '/tmp/b.jpg')
+    #img = img.resize((w2, h2))
+    in_img_row[-1] = encoded_from_img(img, quality=quality)
+    if debug:
+        img.show()
+    return in_img_row,
+    # we need to do resizing
+
+def parallel_limit_image_size(im_tsv, hw_tsv, min_size, max_size, out_tsv):
+    process_func = lambda x: limit_image_size(x, min_size, max_size)
+    parallel_tsv_process_NtoN(process_func, (im_tsv, hw_tsv), (out_tsv, ), 64)
+
+def filter_dataset_by_size(data, out_data):
+    dataset = TSVDataset(data)
+    out_dataset = TSVDataset(out_data)
+    iter_hw = dataset.iter_data('train', 'hw')
+
+    iter_shuffle = tsv_reader(dataset.get_shuffle_file('train'))
+    info = defaultdict(int)
+    def gen_rows():
+        for (key, str_hw), s in tqdm(zip(iter_hw, iter_shuffle)):
+            try:
+                h, w = map(int, str_hw.split(' '))
+            except:
+                x = json.loads(str_hw)
+                if isinstance(x, list):
+                    x = x[0]
+                h, w = x['height'], x['width']
+            r = 1. * h / w
+            if r > 4 or r < 1. / 4:
+                info['ratio_too_large'] += 1
+                continue
+            if min(h, w) < 64:
+                info['size_too_small'] += 1
+                continue
+            yield s
+    tsv_writer(gen_rows(), out_dataset.get_shuffle_file('train'))
+    for t in [None, 'hw', 'caption']:
+        ensure_copy_file(
+            dataset.get_data('trainX', t),
+            out_dataset.get_data('trainX', t),
+        )
+
+def limit_dataset_image_size(data, min_size, max_size, quality, out_data):
+    dataset = TSVDataset(data)
+    out_dataset = TSVDataset(out_data)
+
+    split = 'train'
+    if op.isfile(dataset.get_data(split)):
+        in_img_tsv = [dataset.get_data(split)]
+        caption_tsvs = [dataset.get_data(split, 'caption')]
+        in_hw_tsv = [dataset.get_data(split, 'hw')]
+        out_tsv = [out_dataset.get_data(split)]
+        single_tsv = True
+    else:
+        in_img_tsv = load_list_file(dataset.get_data(split + 'X'))
+        in_hw_tsv = load_list_file(dataset.get_data(split + 'X', 'hw'))
+        num_split = len(in_img_tsv)
+        out_tsv = [out_dataset.get_data(split + '_{}_{}'.format(i, num_split))
+                   for i in range(num_split)]
+        caption_tsvs = load_list_file(
+            dataset.get_data(split + 'X', 'caption')
+        )
+        label_tsvs = load_list_file(
+            dataset.get_data(split + 'X', 'label')
+        )
+        single_tsv = False
+
+    process_func = lambda x: limit_image_size(
+        x, min_size, max_size, quality=quality)
+
+    for i, h, o in zip(in_img_tsv, in_hw_tsv, out_tsv):
+        from qd.process_tsv import parallel_tsv_process_NtoN
+        if not op.isfile(o):
+            parallel_tsv_process_NtoN(process_func, (i, h), (o, ), 64)
+
+    if not single_tsv:
+        write_to_file(
+            '\n'.join(out_tsv),
+            out_dataset.get_data(split + 'X'),
+        )
+        write_to_file(
+            '\n'.join(caption_tsvs),
+            out_dataset.get_data(split + 'X', 'caption')
+        )
+        write_to_file(
+            '\n'.join(label_tsvs),
+            out_dataset.get_data(split + 'X', 'label')
+        )
+        tsv_copy(
+            dataset.get_shuffle_file(split),
+            out_dataset.get_shuffle_file(split),
+        )
+        splits = ['train_{}_{}'.format(i, num_split) for i in range(num_split)]
+        populate_dataset_hw(out_data, splits=splits)
+        write_to_file(
+            '\n'.join((out_dataset.get_data(
+                split + '_{}_{}'.format(i, num_split), 'hw',
+            ) for i in range(num_split))),
+            out_dataset.get_data(split + 'X', 'hw'),
+        )
+    else:
+        for t in ['label', 'caption']:
+            tsv_copy(
+                dataset.get_data(split, t),
+                out_dataset.get_data(split, t)
+            )
+        populate_dataset_hw(out_data)
+    ensure_copy_file(
+        dataset.get_labelmap_file(),
+        out_dataset.get_labelmap_file()
+    )
 
 
 if __name__ == '__main__':
