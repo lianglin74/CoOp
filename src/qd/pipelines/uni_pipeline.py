@@ -1,10 +1,10 @@
+from qd.qd_common import execute_func
 import qd.data_layer.samplers as samplers
 from qd.torch_common import evaluate_topk
 from qd.tsv_io import reorder_tsv_keys
 from qd.process_tsv import delete_tsv_files
 from qd.process_tsv import concat_tsv_files
 from qd.qd_common import create_vis_net_file
-import qd.data_layer.samplers as samplers
 from qd.torch_common import recursive_to_device
 from qd.qd_common import save_parameters
 from qd.opt.trainer import do_train_dict
@@ -135,7 +135,7 @@ class Config(object):
     def get_dict(self):
         import copy
         default = copy.deepcopy(self.default)
-        for p in get_all_path(self.overwrite):
+        for p in get_all_path(self.overwrite, with_list=False):
             v = dict_get_path_value(self.overwrite, p)
             dict_update_path_value(default, p, v)
         return default
@@ -207,6 +207,14 @@ class UniPipeline(object):
 
             'splitbysplitsample_buffer_size': 1,
             'splitbysplitsample_group_size': 1,
+
+            'prefetch_factor': 2,
+
+            'ema_start_since': 0.75,
+            'ema_step_every': 100,
+
+            'cosine_num_cycle': 1,
+            'cosine_gamma_cycle': 1.,
         }
         self.cfg = Config(self._default, kwargs)
 
@@ -224,16 +232,30 @@ class UniPipeline(object):
 
         self.device_id = (self.mpi_local_rank if not self.cfg.debug_train else 0)
 
-        # data related
-        self.train_collate_fn = None
-        self.test_collate_fn = None
-
         # adapt the batch size based on the mpi_size
         self.is_master = self.mpi_rank == 0
 
-        self.max_iter = self.parse_iter(self.cfg.max_iter)
+        self._max_iter = None
 
         self.initialized = False
+
+        if self.cfg.trainer == 'ds':
+            # in the initialization of deepspeed, it will try to detect mpi env
+            # if these variables are not set. In AML, we may launch the process
+            # by another process, e.g. aml_server, in which the mpi auto detect
+            # will fail. Thus, we set these env explicitly to bypass mpi env
+            # detection.
+            os.environ['RANK'] = str(self.mpi_rank)
+            os.environ['LOCAL_RANK'] = str(self.mpi_local_rank)
+            os.environ['WORLD_SIZE'] = str(self.mpi_size)
+            os.environ['MASTER_ADDR'] = get_master_node_ip()
+            os.environ['MASTER_PORT'] = str(self.cfg.dist_url_tcp_port)
+
+    @property
+    def max_iter(self):
+        if self._max_iter is None:
+            self._max_iter = self.parse_iter(self.cfg.max_iter)
+        return self._max_iter
 
     def get_len_dataset(self, is_train):
         raise NotImplementedError('defined in sub class')
@@ -246,6 +268,9 @@ class UniPipeline(object):
 
     def predict_output_to_tsv_row(self, data, output):
         raise NotImplementedError('sub class to implement')
+
+    def get_collate_fn(self, is_train):
+        return None
 
     def append_predict_param(self, cc):
         if self.cfg.test_normalize_module:
@@ -260,7 +285,9 @@ class UniPipeline(object):
         if self.cfg.test_resize_size and self.cfg.test_resize_size != 224:
             cc.append('r{}'.format(self.cfg.test_resize_size))
         if self.cfg.predict_ema_decay:
-            cc.append('ema{}'.format(self.predict_ema_decay))
+            cc.append('ema{}'.format(self.cfg.predict_ema_decay))
+        if self.cfg.pt_swa:
+            cc.append('swa')
         if self.cfg.test_max_iter is not None:
             # this is used for speed test
             if self.test_mergebn:
@@ -289,6 +316,9 @@ class UniPipeline(object):
 
         if self.cfg.test_respect_ratio_max is not None:
             cc.append('testMax{}'.format(self.cfg.test_respect_ratio_max))
+
+        if self.cfg.crop_pct:
+            cc.append('crpPct{}'.format(self.cfg.crop_pct))
 
     def get_model(self, is_train):
         model = self.get_raw_model(is_train)
@@ -431,15 +461,12 @@ class UniPipeline(object):
                 if self.cfg.trainer == 'pl':
                     model = model.cuda()
                 elif self.cfg.trainer == 'ds':
-                    if self.cfg.use_amp:
-                        # in deepspeed, it will use apex amp rather than
-                        # built-in amp. In apex amp, we should not wrap it with
-                        # DistributedDataParallel
-                        model = model.cuda()
-                    else:
-                        model = self.data_parallel_wrap(model)
+                    # in deepspeed, it will use apex amp rather than
+                    # built-in amp. In apex amp, we should not wrap it with
+                    # DistributedDataParallel
+                    model = model.cuda()
                 else:
-                    assert self.cfg.trainer is None
+                    assert self.cfg.trainer in [None, 'pre']
                     model = self.data_parallel_wrap(model)
         else:
             model.eval()
@@ -451,6 +478,8 @@ class UniPipeline(object):
                 num_train_images = len(self.get_len_dataset(is_train=True))
                 iter_each_epoch = 1. * num_train_images / self.cfg.effective_batch_size
                 return int(float(e[:-1]) * iter_each_epoch)
+            elif isinstance(e, float) and e < 1:
+                return int(self.max_iter * e)
             else:
                 return int(e)
         return to_iter(i)
@@ -474,9 +503,8 @@ class UniPipeline(object):
                 shuffle=self.cfg.train_shuffle,
                 random_seed=self.cfg.random_seed,
                 group_size=self.cfg.splitbysplitsample_group_size,
-                prepare_t=self.get_splitbysplit_sampler_prepare_t(),
-                prepare_version=self.get_splitbysplit_sampler_prepare_version(),
-                prepare_buffer=self.cfg.splitbysplitsample_buffer_size,
+                prepare_t_versions=self.get_splitbysplit_sampler_prepare_t_versions(),
+                disable_prepare=self.cfg.disable_splitbysplit_prepare,
             )
         elif is_train and self.cfg.sampler_type == 'ranksplit':
             from qd.data_layer.samplers import RankSplitSampler
@@ -493,11 +521,8 @@ class UniPipeline(object):
                 length_divisible=length_divisible)
         return sampler
 
-    def get_splitbysplit_sampler_prepare_t(self):
-        return None
-
-    def get_splitbysplit_sampler_prepare_version(self):
-        return None
+    def get_splitbysplit_sampler_prepare_t_versions(self):
+        return [(None, None)]
 
     def get_batch_sampler(self, is_train, sampler, start_iter):
         bs = (self.cfg.effective_batch_size // self.mpi_size if is_train else
@@ -507,6 +532,11 @@ class UniPipeline(object):
             bs,
             drop_last=False,
         )
+        if self.cfg.attach_iter_in_sampler:
+            batch_sampler = AttachIterationNumberBatchSampler(
+                batch_sampler, 0, self.max_iter)
+        else:
+            logging.info('recommended to set attach_iter_in_sampler as True')
         if is_train:
             batch_sampler = samplers.IterationBasedBatchSampler(
                 batch_sampler, self.max_iter, start_iter
@@ -519,20 +549,19 @@ class UniPipeline(object):
         logging.info('sampler = {}'.format(sampler))
         batch_sampler = self.get_batch_sampler(is_train, sampler, start_iter)
         collate_fn = None
-        if is_train:
-            collate_fn = self.train_collate_fn
-        else:
-            collate_fn = self.test_collate_fn
+        collate_fn = self.get_collate_fn(is_train)
         loader = torch.utils.data.DataLoader(
             dataset,
             num_workers=self.cfg.num_workers,
             pin_memory=True,
             batch_sampler=batch_sampler,
             collate_fn=collate_fn,
+            prefetch_factor=self.cfg.prefetch_factor if self.cfg.num_workers > 0 else 2,
         )
         return loader
 
     def ensure_train(self):
+        self._setup_logging()
         self._ensure_initialized(
             init_ddp=(self.cfg.trainer not in ['pl', 'ds']),
             init_ds=(self.cfg.trainer == 'ds')
@@ -554,7 +583,6 @@ class UniPipeline(object):
 
         synchronize()
 
-        self._setup_logging()
         train_result = self.train()
 
         if self.mpi_rank == 0 and not self.cfg.debug_train:
@@ -580,7 +608,10 @@ class UniPipeline(object):
                 self.mpi_rank))
         ensure_directory(op.dirname(log_file))
         file_handle = logging.FileHandler(log_file)
-        logger_fmt = logging.Formatter('%(asctime)s.%(msecs)03d %(process)d:%(filename)s:%(lineno)s %(funcName)10s(): %(message)s')
+        format_str = '%(asctime)s.%(msecs)03d {}:%(process)d:%(filename)s:%(lineno)s %(funcName)10s(): %(message)s'.format(
+            self.mpi_rank,
+        )
+        logger_fmt = logging.Formatter(format_str)
         file_handle.setFormatter(fmt=logger_fmt)
 
         root = logging.getLogger()
@@ -588,14 +619,13 @@ class UniPipeline(object):
         root.setLevel(logging.INFO)
         root.addHandler(file_handle)
 
-        if self.mpi_rank == 0:
-            ch = logging.StreamHandler(stream=sys.stdout)
-            ch.setLevel(logging.INFO)
-            ch.setFormatter(logger_fmt)
-            root.addHandler(ch)
+        ch = logging.StreamHandler(stream=sys.stdout)
+        ch.setLevel(logging.INFO)
+        ch.setFormatter(logger_fmt)
+        root.addHandler(ch)
 
     def get_optimizer(self, model):
-        parameters = get_parameter_groups(self, model)
+        parameters = get_parameter_groups_general(self, model)
 
         if self.cfg.optimizer_type in [None, 'SGD', 'LARS']:
             from qd.opt.sgd import SGDVerbose
@@ -639,7 +669,11 @@ class UniPipeline(object):
             optimizer = LARS(optimizer=optimizer)
         if self.cfg.ema_optimizer:
             from qd.opt.ema_optimizer import EMAOptimizer
-            optimizer = EMAOptimizer(optimizer=optimizer)
+            optimizer = EMAOptimizer(
+                optimizer=optimizer,
+                start_since=self.parse_iter(self.cfg.ema_start_since),
+                step_every=self.parse_iter(self.cfg.ema_step_every)
+            )
         return optimizer
 
     def get_lr_scheduler(self, optimizer):
@@ -666,6 +700,23 @@ class UniPipeline(object):
                 warmup_iters=self.parse_iter(self.cfg.cosine_warmup_iters),
                 cosine_restart_after_warmup=self.cfg.cosine_restart_after_warmup
             )
+        elif scheduler_type == 'Cos':
+            from qd.opt.cosine_annearing_with_warmup import CosineAnnealingWarmupRestarts
+            num_cycle = self.cfg.cosine_num_cycle
+            first_cycle_steps = (self.max_iter + num_cycle - 1) // num_cycle
+            if isinstance(self.cfg.warmup_steps, float) and  self.cfg.warmup_steps < 1:
+                warmup_steps = int(self.cfg.warmup_steps*first_cycle_steps)
+            else:
+                warmup_steps = self.parse_iter(self.cfg.cosine_warmup_iters)
+            scheduler = CosineAnnealingWarmupRestarts(
+                optimizer,
+                first_cycle_steps=first_cycle_steps,
+                cycle_mult=1.,
+                max_lr=self.cfg.base_lr,
+                min_lr=self.cfg.min_rel_lr_in_cosine * self.cfg.base_lr,
+                warmup_steps=warmup_steps,
+                gamma=self.cfg.cosine_gamma_cycle,
+            )
         elif scheduler_type == 'cos':
             scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
                 optimizer,
@@ -673,7 +724,7 @@ class UniPipeline(object):
             )
         elif scheduler_type == 'ReduceLROnPlateau':
             assert isinstance(self.max_iter, int)
-            patience = 3 * self.max_iter // self.effective_batch_size
+            patience = 3 * self.max_iter // self.cfg.effective_batch_size
             scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
                 optimizer, patience=patience, verbose=True)
         elif scheduler_type == "linear":
@@ -682,6 +733,15 @@ class UniPipeline(object):
                 optimizer,
                 warmup_steps=self.parse_iter(self.cfg.warmup_steps),
                 t_total=self.max_iter,
+            )
+        elif scheduler_type == 'linear_swa':
+            from qd.opt.scheduler import WarmupLinearSWASchedule
+            scheduler = WarmupLinearSWASchedule(
+                optimizer,
+                warmup_steps=self.parse_iter(self.cfg.warmup_steps),
+                swa_start_steps=self.parse_iter(0.75),
+                t_total=self.max_iter,
+                swa_const_ratio=0.05,
             )
         else:
             raise NotImplementedError(scheduler_type)
@@ -709,15 +769,38 @@ class UniPipeline(object):
         )
         return checkpointer
 
-    def lightning_train(self):
-        pass
+    #def fuse_cache(self):
+        #if int(os.environ.get('QD_TSV_USE_FUSE', '0')):
+            ## it is ok to run the following at the same time as we will handle concurrency in ensure_cache
+            #files = self.get_fuse_cache_files()
+            #from qd.cloud_storage import create_cloud_fuse
+            #fuser = create_cloud_fuse()
+            #fuser.ensure_cache(files)
+            #synchronize()
+
+    #def get_fuse_cache_files(self):
+        #return []
 
     def train(self):
+        #self.fuse_cache()
+
         model = self.get_model(is_train=True)
         optimizer = self.get_optimizer(model)
         logging.info(optimizer)
 
         scheduler = self.get_lr_scheduler(optimizer)
+
+        if self.cfg.trainer == 'ds':
+            config = self.get_deep_speed_config()
+            import deepspeed
+            model_engine, optimizer, _, scheduler = deepspeed.initialize(
+                config_params=config,
+                model=model,
+                optimizer=optimizer,
+                lr_scheduler=scheduler,
+            )
+        else:
+            model_engine = None
 
         checkpointer = self.create_checkpointer(
             model,
@@ -739,38 +822,88 @@ class UniPipeline(object):
         )
 
         self.do_train(train_loader, model, optimizer, scheduler, checkpointer,
-                      start_iter)
+                      start_iter, model_engine=model_engine)
 
         return checkpointer.get_checkpoint_file()
 
+    def get_deep_speed_config(self):
+        config_params = {
+            'train_batch_size': self.cfg.effective_batch_size,
+        }
+
+        use_amp = self.cfg.use_amp
+        use_fp16 = self.cfg.use_fp16
+        assert not (use_amp and use_fp16)
+
+        if use_amp:
+            config_params['amp'] = {
+                'enabled': True,
+                'opt_level': 'O1',
+            }
+
+        if use_fp16:
+            config_params['fp16'] = {
+                'enabled': True,
+            }
+
+        gradient_clip = self.cfg.gradient_clip
+        if gradient_clip:
+            config_params['gradient_clipping'] = gradient_clip
+
+        config_params['flops_profiler'] = {
+            'enabled': True,
+            'profile_step': 1,
+            'module_depth': -1,
+            'top_modules': 3,
+            'detailed': True,
+        }
+
+        config_params['logging'] = {
+            'steps_per_print': self.cfg.log_step,
+        }
+        if self.cfg.zero_opt_stage is not None:
+            config_params['zero_optimization'] = {
+                'stage': self.cfg.zero_opt_stage,
+            }
+            if self.cfg.zero_opt_stage > 0:
+                config_params['fp16'] = {
+                    'enabled': True
+                }
+            config_params['zero_allow_untested_optimizer'] = True
+        logging.info(pformat(config_params))
+        return config_params
+
     def do_train(self, loader, model, optimizer, scheduler, checkpointer,
-                 start_iter):
+                 start_iter, model_engine=None):
         device = torch.device(self.cfg.device)
         logging.info(model)
-        for n, m in model.named_modules():
-            logging.info('{}: training={}'.format(n, m.training))
+        training_modules = [n for n, m in model.named_modules() if m.training]
+        eval_modules = [n for n, m in model.named_modules() if not m.training]
+        logging.info('training module: {}'.format(pformat(training_modules)))
+        logging.info('eval module: {}'.format(pformat(eval_modules)))
         logging.info('dataset = \n{}'.format(loader.dataset))
 
         if self.cfg.trainer == 'pl':
-            raise NotImplementedError('not work')
             from qd.layers.lightning_wrapper import LightningModule
             model = LightningModule(model, optimizer, scheduler)
             args = {}
             args['max_epochs'] = 1
+            args['max_steps'] = self.max_iter
             if self.cfg.use_amp:
                 args['precision'] = 16
             if self.cfg.gradient_clip is not None:
                 args['gradient_clip_val'] = self.cfg.gradient_clip
             args['replace_sampler_ddp'] = False
-            #args['accelerator'] = 'ddp'
+            # do not use ddp
             args['accelerator'] = 'horovod'
-            #if self.mpi_size == 1:
-                #args['gpus'] = self.mpi_local_size
-                #args['num_nodes'] = self.mpi_size // self.mpi_local_size
-            ## use all gpu
-            #args['gpus'] = -1
+            # 1 does not mean 1 gpu, but mean yes, to use gpu
+            args['gpus'] = 1
+            args['prepare_data_per_node'] = False
+            args['log_every_n_steps'] = self.cfg.log_step
+            args['val_check_interval'] = 1
 
             import pytorch_lightning as pl
+            logging.info('pl args = {}'.format(pformat(args)))
             trainer = pl.Trainer(**args)
             trainer.fit(model, loader)
             # save the result
@@ -789,9 +922,17 @@ class UniPipeline(object):
                 log_step=self.cfg.log_step,
                 use_amp=self.cfg.use_amp,
                 gradient_clip=self.cfg.gradient_clip,
-                model_sub_name_fn=get_model_sub_name
+                model_sub_name_fn=get_model_sub_name,
+                zero_opt_stage=self.cfg.zero_opt_stage,
+                use_fp16=self.cfg.use_fp16,
+                async_loader=self.cfg.async_dataloader,
+                no_flops_profiler=self.cfg.no_flops_profiler,
+                model_engine=model_engine,
             )
         else:
+            extra_param = {}
+            if self.cfg.pt_swa:
+                extra_param['pt_swa_lr'] = self.cfg.base_lr*self.cfg.pt_swa_lr_mult
             do_train_dict(
                 model=model,
                 data_loader=loader,
@@ -804,7 +945,10 @@ class UniPipeline(object):
                 log_step=self.cfg.log_step,
                 use_amp=self.cfg.use_amp,
                 gradient_clip=self.cfg.gradient_clip,
-                model_sub_name_fn=get_model_sub_name
+                model_sub_name_fn=get_model_sub_name,
+                async_loader=self.cfg.async_dataloader,
+                pt_swa=self.cfg.pt_swa,
+                **extra_param,
             )
 
     #def demo(self, image_path):
@@ -861,7 +1005,7 @@ class UniPipeline(object):
 
     def init_ds(self):
         import deepspeed
-        deepspeed.init_distributed()
+        deepspeed.init_distributed(distributed_port=self.cfg.dist_url_tcp_port)
 
     def _ensure_initialized(self, init_ddp=True, init_ds=False):
         if self.initialized:
@@ -874,7 +1018,7 @@ class UniPipeline(object):
         if self.cfg.cudnn_benchmark:
             torch.backends.cudnn.benchmark = True
 
-        torch.cuda.set_device(self.mpi_local_rank)
+        torch.cuda.set_device(self.device_id)
 
         if init_ddp:
             self.init_ddp()
@@ -931,6 +1075,24 @@ class UniPipeline(object):
         return predict_result_file
 
     def load_test_model(self, model, model_file):
+        if self.cfg.predict_ema_decay:
+            out_model_file = op.splitext(model_file)[0] + '.ema{}.pt'.format(
+                self.cfg.predict_ema_decay)
+            if self.mpi_rank == 0 and not op.isfile(out_model_file):
+                param = torch_load(model_file)
+                from qd.opt.ema_optimizer import replace_ema_param
+                replace_ema_param(param, decay=self.cfg.predict_ema_decay)
+                torch_save(param, out_model_file)
+            synchronize()
+            model_file = out_model_file
+        if self.cfg.pt_swa:
+            out_model_file = op.splitext(model_file)[0] + '.swa.pt'
+            if self.mpi_rank == 0 and not op.isfile(out_model_file):
+                param = torch_load(model_file)
+                param['model'] = param['swa_model']
+                torch_save(param, out_model_file)
+            synchronize()
+            model_file = out_model_file
         checkpointer = Checkpointer(
             model=model,
             save_dir=self.output_folder,
@@ -989,8 +1151,11 @@ class UniPipeline(object):
             model = MergeBatchNorm(model)
             logging.info('after merging bn = {}'.format(model))
         from qd.layers import ForwardPassTimeChecker
-        model = ForwardPassTimeChecker(model)
+        # we need to first convert it to, e.g. cuda, especially for
+        # pytorch-ligntning module. otherwise model.device will not be updated
+        # if we convert it on top of ForwardPassTimeChecker
         model = model.to(self.cfg.device)
+        model = ForwardPassTimeChecker(model)
         model.eval()
         #if self.predict_extract:
             #model = self.wrap_feature_extract(model)
@@ -1446,23 +1611,81 @@ def get_transform_image(self, is_train):
     train_transform = self.cfg.train_transform
     if train_transform == 'vit':
         # timm style
-        from qd.pipelines.uni_pipeline import get_transform_vit_default
         transform = get_transform_vit_default(self, is_train=is_train)
+    elif train_transform == 'deit':
+        transform = get_transform_deit_default(self, is_train=is_train)
     elif train_transform == 'inception':
-        from qd.pipelines.uni_pipeline import get_transform_incepion
         transform = get_transform_incepion(self, is_train)
-        assert self.cfg.test_respect_ratio_max is None
     elif train_transform == 'rand_cut':
-        from qd.pipelines.uni_pipeline import get_transform_rand_cut
         transform = get_transform_rand_cut(self, is_train)
         assert self.cfg.test_respect_ratio_max is None
     else:
         raise NotImplementedError(train_transform)
     return transform
 
+def get_transform_image_norm(self):
+    if self.cfg.data_normalize is None:
+        from qd.data_layer.transform import get_default_mean, get_default_std
+        normalize = transforms.Normalize(
+            mean=get_default_mean(), std=get_default_std())
+    elif self.cfg.data_normalize == 0.5:
+        normalize = transforms.Normalize(
+            mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+    else:
+        raise NotImplementedError(self.cfg.data_normalize)
+    return normalize
+
+def get_transform_deit_default(self, is_train):
+    # this hyperparameter is based on https://github.com/facebookresearch/deit
+    normalize = get_transform_image_norm(self)
+    if not is_train:
+        trans = [
+            # data loader will be pil, no need to convert
+            #BGR2RGB(),
+            #transforms.ToPILImage(),
+        ]
+        if self.cfg.test_respect_ratio_max:
+            from qd.data_layer.transform import MinMaxResizeForTest
+            trans.extend([
+                MinMaxResizeForTest(self.cfg.test_crop_size, self.cfg.test_respect_ratio_max)
+            ])
+        else:
+            trans.extend([
+                transforms.Resize(int(math.floor(self.cfg.test_crop_size / self.cfg.crop_pct)), PIL.Image.BICUBIC),
+                transforms.CenterCrop(self.cfg.test_crop_size),
+            ])
+        trans.extend([
+            transforms.ToTensor(),
+            normalize,
+        ])
+        transform = transforms.Compose(trans)
+    else:
+        from timm.data import create_transform
+        scale = None
+        if self.cfg.input_small_scale is not None:
+            scale = (self.cfg.input_small_scale, 1.)
+        hflip = 0.5
+        if self.cfg.no_flip:
+            hflip = 0.
+        assert not self.cfg.no_color_jitter
+        transform = create_transform(
+            input_size=self.cfg.train_crop_size,
+            is_training=True,
+            color_jitter=0.4,
+            auto_augment='rand-m9-mstd0.5-inc1',
+            interpolation='bicubic',
+            mean=normalize.mean,
+            std=normalize.std,
+            re_prob=0.25,
+            re_mode='pixel',
+            re_count=1,
+            scale=scale,
+            hflip=hflip,
+        )
+    return transform
+
 def get_transform_vit_default(self, is_train):
-    normalize = transforms.Normalize(
-        mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+    normalize = get_transform_image_norm(self)
     if not is_train:
         trans = [
             BGR2RGB(),
@@ -1477,7 +1700,7 @@ def get_transform_vit_default(self, is_train):
             trans.extend([
                 transforms.Resize(int(math.floor(self.cfg.test_crop_size / self.cfg.crop_pct)), PIL.Image.BICUBIC),
                 transforms.CenterCrop(self.cfg.test_crop_size),
-            ]),
+            ])
         trans.extend([
             transforms.ToTensor(),
             normalize,
@@ -1490,6 +1713,11 @@ def get_transform_vit_default(self, is_train):
             crop_size=self.cfg.train_crop_size,
             normalize=normalize,
             small_scale=self.cfg.input_small_scale,
+            no_color_jitter=self.cfg.no_color_jitter,
+            no_flip=self.cfg.no_flip,
+            no_aspect_dist=self.cfg.no_aspect_dist,
+            resize_crop=self.cfg.resize_crop,
+            max_size=self.cfg.train_max_size,
         )
     return transform
 
@@ -1509,6 +1737,8 @@ def get_transform_incepion(self, is_train):
             crop_size=self.cfg.test_crop_size,
             crop_position=self.cfg.test_crop_position,
             with_crop=not self.cfg.no_crop,
+            interpolation=self.cfg.interpolation,
+            test_respect_ratio_max=self.cfg.test_respect_ratio_max,
         )
 
     return transform
@@ -1683,18 +1913,75 @@ def get_cls_criterion(self):
 def get_raw_timm_model(self, is_train):
     net = self.cfg.net[5:]
     import timm
+    kwargs = {}
+    if self.cfg.timm_attn_group_size:
+        kwargs['group_size'] = self.cfg.timm_attn_group_size
+    cfg_to_kwargs = [
+        ('ip_attn_non_linear', 'non_linear'),
+        ('ip_attn_init_to_sim', 'init_to_sim'),
+        ('ip_attn_no_extra_linear', 'no_extra_linear'),
+        ('qk_norm', 'qk_norm'),
+        ('attention_type', 'attention_type'),
+        ('drop_path', 'drop_path'),
+        ('timm_attn_group_size', 'group_size'),
+        ('elu_plus_n', 'elu_plus_n'),
+    ]
+    for k, v in cfg_to_kwargs:
+        if self.cfg.get(k):
+            kwargs[v] = self.cfg.get(k)
+    logging.info(pformat(kwargs))
     model = timm.create_model(
         net,
         pretrained=self.cfg.pretrained,
+        **kwargs,
     )
-    criterion = get_cls_criterion(self)
     if is_train:
+        criterion = get_cls_criterion(self)
         model = ModelLoss(model, criterion)
     else:
         model = InputAsDict(model)
     return model
 
+def get_parameter_groups_general(self, model):
+    params = []
+    for key, value in model.named_parameters():
+        if not value.requires_grad:
+            continue
+        weight_decay = self.cfg.weight_decay
+        lr = self.cfg.base_lr
+        if self.cfg.bias_no_weight_decay and "bias" in key:
+            weight_decay = 0.
+        if self.cfg.ln_no_weight_decay and 'LayerNorm.weight' in key:
+            weight_decay = 0
+        if self.cfg.conv_no_weight_decay and key.endswith('conv.weight'):
+            weight_decay = 0.
+        if self.cfg.pos_no_weight_decay and key.endswith('.pos_embed'):
+            weight_decay = 0.
+        if self.cfg.cls_token_no_weight_decay and key.endswith('.cls_token'):
+            weight_decay = 0.
+        if self.cfg.lr_mult_classifier and '.classifier.' in key:
+            # in vqa fine-tuning
+            lr *= self.cfg.lr_mult_classifier
+        params.append({
+            'weight_decay': weight_decay,
+            'lr': lr,
+            'param': value,
+            'param_name': key,
+        })
+    wlp = [((p['weight_decay'], p['lr']), p) for p in params]
+    from qd.qd_common import list_to_dict
+    wl_to_ps = list_to_dict(wlp, 0)
+    ret = []
+    for (curr_weight_decay, curr_lr), ps in wl_to_ps.items():
+        p = {'weight_decay': curr_weight_decay, 'lr': curr_lr}
+        p['params'] = [p['param'] for p in ps]
+        p['param_names'] = [p['param_name'] for p in ps]
+        ret.append(p)
+    return ret
+
 def get_parameter_groups(self, model):
+    # use get_parameter_groups_general. this one is deprecated
+    raise ValueError('use get_parameter_groups_general')
     lr = self.cfg.base_lr
     from collections import defaultdict
     decay_to_info = defaultdict(lambda: defaultdict(list))
@@ -1707,6 +1994,10 @@ def get_parameter_groups(self, model):
         if self.cfg.ln_no_weight_decay and 'LayerNorm.weight' in key:
             weight_decay = 0
         if self.cfg.conv_no_weight_decay and key.endswith('conv.weight'):
+            weight_decay = 0.
+        if self.cfg.pos_no_weight_decay and key.endswith('.pos_embed'):
+            weight_decay = 0.
+        if self.cfg.cls_token_no_weight_decay and key.endswith('.cls_token'):
             weight_decay = 0.
         logging.info('{}: lr = {}; weight_decay = {}'.format(
             key, lr, weight_decay
@@ -1721,6 +2012,7 @@ def get_parameter_groups(self, model):
     return ps
 
 def get_image_encoder(self, is_train, hidden_size):
+    # used by clip_uni_pipeline
     encoder_type = self.cfg.image_encoder_type
     out_dim = hidden_size
     pretrained = self.cfg.image_encoder_pretrained
@@ -1731,16 +2023,16 @@ def get_image_encoder(self, is_train, hidden_size):
             'out_adaptive_pools': self.cfg.out_adaptive_pools,
             'out_pools': self.cfg.out_pools,
         }
-        return {
+        return execute_func({
             'from': 'qd.layers.resnet_vl',
             'import': encoder_type,
             'param': param,
-        }
+        })
     elif encoder_type.startswith('CLIP'):
         if encoder_type == 'CLIPresnet50':
             input_resolution = (self.cfg.train_crop_size if is_train else
                                 self.cfg.test_crop_size)
-            return {
+            return execute_func({
                 'from': 'qd.layers.CLIP.model',
                 'import': 'ModifiedResNet',
                 'param': {
@@ -1750,11 +2042,11 @@ def get_image_encoder(self, is_train, hidden_size):
                     'input_resolution': input_resolution,
                     'width': 64,
                 },
-            }
+            })
         elif encoder_type == 'CLIPViT_B_32':
             input_resolution = (self.cfg.train_crop_size if is_train else
                                 self.cfg.test_crop_size)
-            return {
+            return execute_func({
                 'from': 'qd.layers.CLIP.model',
                 'import': 'VisualTransformer',
                 'param': {
@@ -1765,23 +2057,48 @@ def get_image_encoder(self, is_train, hidden_size):
                     'heads': 12,
                     'output_dim': self.cfg.embed_dim or 512,
                 },
-            }
+            })
         else:
             raise NotImplementedError
     elif encoder_type.startswith('timm_'):
         net = encoder_type[5:]
-        return {
+        return execute_func({
             'from': 'qd.pipelines.clip_uni_pipeline',
             'import': 'create_timm_image_encoder',
             'param': {
                 'output_dim': self.cfg.embed_dim,
+                'pooler_type': self.cfg.image_pooler_type,
                 'model_name': net,
                 'pretrained': pretrained,
                 'output_grid': True,
             }
-        }
+        })
     else:
         raise NotImplementedError
+
+def update_joint_encoder_config(config, cfg):
+    # used in vqa/caption unipipeline
+    if 'vit' in cfg.text_encoder_type:
+        # this is just to make sure we are using the right variables for
+        # vit model
+        config.timm_param = {}
+        if cfg.drop_path_rate:
+            config.timm_param['drop_path_rate'] = cfg.drop_path_rate
+        if cfg.drop_rate:
+            config.timm_param['drop_rate'] = cfg.drop_rate
+        if cfg.attn_drop_rate:
+            config.timm_param['attn_drop_rate'] = cfg.attn_drop_rate
+
+        if cfg.fusion_timm_param_drop_out_all:
+            if not hasattr(config, 'timm_param'):
+                config.timm_param = {}
+            config.timm_param['drop_rate'] = cfg.fusion_timm_param_drop_out_all
+            config.timm_param['attn_drop_rate'] = cfg.fusion_timm_param_drop_out_all
+            config.timm_param['drop_path_rate'] = cfg.fusion_timm_param_drop_out_all
+        if cfg.norm_after:
+            config.norm_after = cfg.norm_after
+        if cfg.attention_type:
+            config.timm_param['attention_type'] = cfg.attention_type
 
 def get_image_encoder_model(self, is_train):
     if self.cfg.image_encoder_type.startswith('timm_'):
@@ -1804,6 +2121,10 @@ def get_image_encoder_model(self, is_train):
             net,
             output_grid=True,
             pretrained=self.cfg.image_encoder_pretrained,
+            img_size=self.cfg.train_crop_size,
+            # during test, we will not do the sampling
+            sample_token=(self.cfg.sample_token if is_train else None),
+            sample_style=self.cfg.sample_style if is_train else None,
         )
         # clear out the following two modules
         model.norm = nn.Identity()
@@ -1812,6 +2133,23 @@ def get_image_encoder_model(self, is_train):
             model.eval()
         from qd.torch_common import InputAsDict
         model = InputAsDict(model)
+    elif self.cfg.image_encoder_type.startswith('EmbCLIPViT_B_32'):
+        input_resolution = (self.cfg.train_crop_size if is_train else
+                            self.cfg.test_crop_size)
+        from qd.layers.CLIP.model import VisualTransformer
+        model = VisualTransformer(
+            input_resolution=input_resolution,
+            patch_size=32,
+            width=768,
+            layers=12,
+            heads=12,
+            output_dim=512,
+            output_grid=True,
+        )
+        model.transformer = nn.Identity()
+        if not is_train:
+            model.eval()
+        return model
     elif self.cfg.image_encoder_type.startswith('vit'):
         # prefer to use VitEmb_; as this is too flexible and it is easy to
         # make mistakes.
@@ -1849,3 +2187,102 @@ def get_image_encoder_model(self, is_train):
     else:
         raise NotImplementedError(self.cfg.image_encoder_type)
     return model
+
+def convert_shared_clip_model_to_vilt(model_file, out_model):
+    model = torch_load(model_file)
+    model = model['model']
+    p1 = 'image_encoder.model.blocks'
+    p2 = 'text_encoder.encoder.blocks'
+    num = 0
+    to_remove = []
+    for k in model:
+        if k.startswith(p1):
+            k2 = p2 + k[len(p1):]
+            v = model[k]
+            v2 = model[k2]
+            to_remove.append(k2)
+            num += 1
+            assert (v - v2).abs().sum() == 0
+    for t in to_remove:
+        del model[t]
+    assert num > 0
+    old2new = {
+        'image_encoder.model.cls_token': 'image_encoder.module.cls_token',
+        'image_encoder.model.pos_embed': 'image_encoder.module.pos_embed',
+        'image_encoder.model.patch_embed.proj.weight': 'image_encoder.module.patch_embed.proj.weight',
+        'image_encoder.model.patch_embed.proj.bias': 'image_encoder.module.patch_embed.proj.bias',
+    }
+    prefix_replace = {
+        'image_encoder.model.blocks.': 'module.bert.encoder.blocks.',
+        'text_encoder.embeddings.': 'module.bert.embeddings.',
+        'image_encoder.model.head.': 'image_encoder.module.head.',
+    }
+    useless = [
+        # this is LayerNorm after all blocks. we also do not use it
+        'image_encoder.model.norm.',
+        # this is for classification purpose
+        'image_encoder.model.head.',
+    ]
+    out = {}
+    to_remove = []
+    for old_k in model:
+        if old_k in old2new:
+            new_k = old2new[old_k]
+            out[new_k] = model[old_k]
+            to_remove.append(old_k)
+            continue
+        matched = [(k1, k2) for k1, k2 in prefix_replace.items() if old_k.startswith(k1)]
+        if len(matched) == 1:
+            k1, k2 = matched[0]
+            new_k = k2 + old_k[len(k1):]
+            out[new_k] = model[old_k]
+            to_remove.append(old_k)
+            continue
+        else:
+            assert len(matched) == 0
+    for t in to_remove:
+        del model[t]
+    assert all(any(k.startswith(u) for u in useless) for k in model)
+
+    torch_save(out, out_model)
+
+def evaluate_vqa(self, predict_file, evaluate_file):
+    # in TaxVQAv2, it is test; in TaxVQA, it is test_std
+    if self.cfg.test_split in ['test_dev', 'test_std', 'test']:
+        # we only convert the pred to json and then we should manually
+        # upload the json file
+        out_file = predict_file + '.server.json'
+        from qd.tsv_io import tsv_reader
+        result = [json.loads(s) for _, s in tsv_reader(predict_file)]
+        from qd.qd_common import write_to_file, json_dump
+        write_to_file(json_dump(result), out_file)
+    else:
+        return evaluate_acc_vqa(self, predict_file, evaluate_file)
+
+def evaluate_acc_vqa(self, predict_file, evaluate_file):
+    from qd.tsv_io import TSVDataset
+    dataset = TSVDataset(self.cfg.test_data)
+    all_qa = [json.loads(s_cap) for key, s_cap in dataset.iter_data(
+        self.cfg.test_split,
+        'caption')]
+    num_caps = [len(qa) for qa in all_qa]
+    caption_linelist = [(idx_img, idx_cap) for idx_img, n in enumerate(num_caps) for idx_cap in range(n)]
+    correctness = []
+    from qd.tsv_io import tsv_reader
+    for index, s_pred in tqdm(tsv_reader(predict_file)):
+        pred = json.loads(s_pred)['answer']
+        index = int(index)
+        idx_img, idx_cap = caption_linelist[index]
+        gt = all_qa[idx_img][idx_cap]['answers']
+        if len(gt) == 0:
+            # this case, we ignore it to follow the released code in oscar
+            continue
+        if pred in gt:
+            idx = gt.index(pred)
+            correctness.append(all_qa[idx_img][idx_cap]['confs'][idx])
+        else:
+            correctness.append(0.)
+    acc = torch.tensor(correctness).mean()
+    from qd.qd_common import write_to_yaml_file
+    logging.info(acc)
+    write_to_yaml_file({'acc': float(acc)}, evaluate_file)
