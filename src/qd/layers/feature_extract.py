@@ -2,6 +2,7 @@ import torch
 import logging
 from collections import OrderedDict
 
+
 class FeatureExtract(torch.nn.Module):
     # everytime when we call model(inputs), we call model.feature to get the
     # features

@@ -1,4 +1,5 @@
 import mmap
+from qd.qd_common import get_file_size
 from qd.qd_common import exclusive_open_to_read
 import time
 import multiprocessing as mp
@@ -38,6 +39,12 @@ def get_tsv_lineidx(tsv_file):
 def get_tsv_lineidx_8b(tsv_file):
     return tsv_file[:-3] + 'lineidx.8b'
 
+def get_tsv_associates(tsv_file):
+    return [
+        get_tsv_lineidx(tsv_file),
+        get_tsv_lineidx_8b(tsv_file)
+    ]
+
 def rm_tsv(tsv_file):
     if op.isfile(tsv_file):
         os.remove(tsv_file)
@@ -51,17 +58,15 @@ def tsv_rm(tsv_file):
 
 def tsv_copy(src_tsv, dst_tsv):
     copy_file(src_tsv, dst_tsv)
-    src_idx = op.splitext(src_tsv)[0] + '.lineidx'
-    if op.isfile(src_idx):
-        dst_idx = op.splitext(dst_tsv)[0] + '.lineidx'
-        copy_file(src_idx, dst_idx)
+    for s, t in zip(get_tsv_associates(src_tsv), get_tsv_associates(dst_tsv)):
+        if op.isfile(s):
+            copy_file(s, t)
 
 def tsv_mv(src_file, dst_file):
     shutil.move(src_file, dst_file)
-    src_idx = op.splitext(src_file)[0] + '.lineidx'
-    if op.isfile(src_idx):
-        dst_idx = op.splitext(dst_file)[0] + '.lineidx'
-        shutil.move(src_idx, dst_idx)
+    for s, t in zip(get_tsv_associates(src_file), get_tsv_associates(dst_file)):
+        if op.isfile(s):
+            shutil.move(s, t)
 
 def reorder_tsv_keys(in_tsv_file, ordered_keys, out_tsv_file):
     tsv = TSVFile(in_tsv_file)
@@ -115,6 +120,12 @@ class CompositeTSVFile(object):
             self.seq_file,
             self.list_file
         )
+
+    def get_row_len(self, i):
+        self.ensure_initialized()
+        idx_source, idx_row = map(int, self.seq[i])
+        result = self.tsvs[idx_source].get_row_len(idx_row)
+        return result
 
     def __getitem__(self, index):
         self.ensure_initialized()
@@ -200,10 +211,7 @@ class TSVFile(object):
             self.use_fuse = int(os.environ['QD_TSV_USE_FUSE'])
             from qd.cloud_storage import create_cloud_fuse
             self.fuser = create_cloud_fuse()
-        if self.use_fuse:
-            self.has_lineidx_8b = self.fuser.isfile(self.lineidx_8b)
-        else:
-            self.has_lineidx_8b = op.isfile(self.lineidx_8b)
+        self.has_lineidx_8b = int(os.environ.get('QD_USE_LINEIDX_8B', '0'))
         # the process always keeps the process which opens the
         # file. If the pid is not equal to the currrent pid, we will re-open
         # teh file.
@@ -213,6 +221,14 @@ class TSVFile(object):
 
         self._cache()
         self._len = None
+
+    def get_row_len(self, i):
+        start = self.get_offset(i)
+        if i < len(self) - 1:
+            end = self.get_offset(i + 1)
+        else:
+            end = get_file_size(self.tsv_file)
+        return end - start
 
     def close_fp(self):
         if self._fp:
@@ -258,8 +274,7 @@ class TSVFile(object):
     def num_rows(self):
         if self._len is None:
             if self.has_lineidx_8b:
-                from qd.qd_common import get_file_size
-                self._len = get_file_size(self.lineidx_8b) // 8
+                self._len = QDFile.get_file_size(self.lineidx_8b) // 8
             else:
                 self._ensure_lineidx_loaded()
                 self._len = len(self._lineidx)
@@ -302,20 +317,23 @@ class TSVFile(object):
         else:
             return exclusive_open_to_read(fname, mode)
 
+    def ensure_lineidx_8b_opened(self):
+        if self.fp8b is None:
+            self.fp8b = self.open(self.lineidx_8b, 'rb')
+            self.lineidx_8b_pid = os.getpid()
+        if self.lineidx_8b_pid != os.getpid():
+            self.fp8b.close()
+            logging.info('re-open {} because the process id changed'.format(
+                self.lineidx_8b))
+            self.fp8b= self.open(self.lineidx_8b, 'rb')
+            self.lineidx_8b_pid = os.getpid()
+
     def get_offset(self, idx):
         # do not use op.isfile() to check whether lineidx_8b exists as it may
         # incur API call for blobfuse, which will be super slow if we enumerate
         # a bunch of data
         if self.has_lineidx_8b:
-            if self.fp8b is None:
-                self.fp8b = self.open(self.lineidx_8b, 'rb')
-                self.lineidx_8b_pid = os.getpid()
-            if self.lineidx_8b_pid != os.getpid():
-                self.fp8b.close()
-                logging.info('re-open {} because the process id changed'.format(
-                    self.lineidx_8b))
-                self.fp8b= self.open(self.lineidx_8b, 'rb')
-                self.lineidx_8b_pid = os.getpid()
+            self.ensure_lineidx_8b_opened()
             self.fp8b.seek(idx * 8)
             return int.from_bytes(self.fp8b.read(8), 'little')
         else:
@@ -398,7 +416,6 @@ class TSVFile(object):
         start = time.time()
         if self.use_fuse:
             fp = self.fuser.open(self.tsv_file, 'r')
-            logging.info(fp)
         else:
             if not self.open_once:
                 fp = exclusive_open_to_read(self.tsv_file)
@@ -410,7 +427,7 @@ class TSVFile(object):
         else:
             mfp = fp
         end = time.time()
-        if (end - start) > 30:
+        if (end - start) > 10:
             logging.info('too long ({}) to open {}'.format(
                 end - start,
                 self.tsv_file))
@@ -450,7 +467,6 @@ def get_associate_files(info):
     else:
         result.extend(load_list_file(dataset.get_data(split + 'X', t, version)))
         result.append(dataset.get_shuffle_file(split))
-    import ipdb;ipdb.set_trace(context=15)
     extra = [get_tsv_lineidx_8b(r) for r in result]
     result.extend(extra)
     return result
@@ -932,7 +948,8 @@ class TSVSplitProperty(object):
         self.version = version
         dataset = TSVDataset(data)
         single_tsv = dataset.get_data(split, t, version)
-        is_single_tsv = op.isfile(single_tsv)
+        #is_single_tsv = op.isfile(single_tsv)
+        is_single_tsv = QDFile.isfile(single_tsv)
         if is_single_tsv:
             self.tsv = TSVFile(dataset.get_data(split, t, version),
                     cache_policy)
@@ -940,11 +957,14 @@ class TSVSplitProperty(object):
             splitX = split + 'X'
             list_file = dataset.get_data(splitX, t, version=version)
             seq_file = dataset.get_shuffle_file(split)
-            assert op.isfile(list_file) and op.isfile(seq_file), (
+            assert QDFile.isfile(list_file) and QDFile.isfile(seq_file), (
                 '{}, {}/{} not available'.format(single_tsv, list_file, seq_file)
             )
             self.tsv = CompositeTSVFile(list_file, seq_file, cache_policy,
                                         hold_buffer=hold_buffer)
+
+    def get_row_len(self, i):
+        return self.tsv.get_row_len(i)
 
     def __repr__(self):
         return 'TSVSplitProperty(tsv={})'.format(
@@ -1324,12 +1344,20 @@ def azcopy_read(fname):
 
 def load_list_file(fname):
     # prefer this than qd.qd_common.load_list_file
-    with exclusive_open_to_read(fname) as fp:
+    with QDFile.open(fname) as fp:
         lines = fp.readlines()
     result = [line.strip() for line in lines]
     if len(result) > 0 and result[-1] == '':
         result = result[:-1]
     return result
+
+def generate_lineidx8b_from_lineidx(lineidx, lineidx_8b):
+    tsv_8b_file_tmp = lineidx_8b + '.tmp'
+    logging.info(lineidx)
+    with open(tsv_8b_file_tmp, 'wb') as fp8b:
+        for i, in tqdm(tsv_reader(lineidx)):
+            fp8b.write(int(i).to_bytes(8, 'little'))
+    os.rename(tsv_8b_file_tmp, lineidx_8b)
 
 def convert_data_to_yaml(
     data, split, yaml,
@@ -1403,4 +1431,45 @@ def convert_data_to_yaml(
                 info['caption_linelist'] = caption_linelist
     from qd.qd_common import write_to_yaml_file
     write_to_yaml_file(info, yaml)
+
+class QDFile(object):
+    initialized = False
+    use_fuser = False
+    fuser = None
+
+    @classmethod
+    def ensure_initialized(cls):
+        if not cls.initialized:
+            cls.initialized = True
+            cls.use_fuser = int(os.environ.get('QD_TSV_USE_FUSE', '0'))
+            if cls.use_fuser:
+                from qd.cloud_storage import create_cloud_fuse
+                cls.fuser = create_cloud_fuse()
+                fns = os.environ.get('QD_USE_FUSE_CACHE_AT_INIT')
+                if fns is not None:
+                    fns = fns.split(',')
+                    cls.fuser.ensure_cache(fns)
+
+    @classmethod
+    def isfile(cls, fname):
+        cls.ensure_initialized()
+        if cls.use_fuser:
+            return cls.fuser.isfile(fname)
+        else:
+            return op.isfile(fname)
+
+    @classmethod
+    def open(cls, fname, mode='r'):
+        cls.ensure_initialized()
+        if cls.use_fuser:
+            return cls.fuser.open(fname, mode)
+        else:
+            return exclusive_open_to_read(fname, mode)
+
+    @classmethod
+    def get_file_size(cls, fname):
+        if cls.use_fuser:
+            return cls.fuser.get_file_size(fname)
+        else:
+            return get_file_size(fname)
 

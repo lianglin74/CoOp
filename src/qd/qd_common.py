@@ -48,6 +48,11 @@ import copy
 from deprecated import deprecated
 import io
 
+from PIL import ImageFile
+#https://stackoverflow.com/questions/12984426/python-pil-ioerror-image-file-truncated-with-big-images
+ImageFile.LOAD_TRUNCATED_IMAGES = True
+
+
 def get_sys_memory_usage_info():
     out = cmd_run(['free'], return_output=True)
     import ipdb;ipdb.set_trace(context=15)
@@ -209,7 +214,7 @@ def find_float_tolorance_unequal(d1, d2):
         return ['0']
     else:
         import torch
-        if type(d1) is torch.Tensor:
+        if isinstance(d1, torch.Tensor):
             diff = (d1 - d2).float().abs().sum()
             s = d1.float().abs().sum()
             if float(s) < 1e-5:
@@ -319,7 +324,7 @@ def remote_run(str_cmd, ssh_info, return_output=False):
             cs.append('export PATH=$HOME/anaconda3/bin:\$PATH')
             cs.append('export LD_LIBRARY_PATH=$HOME/anaconda3/lib:\$LD_LIBRARY_PATH')
         cs.append('export PATH=/usr/local/nvidia/bin:\$PATH')
-        cs.append('export PYTHONPATH=/tmp/code/quickdetection/src/CCSCaffe/python:\$PYTHONPATH')
+        cs.append('export OMP_NUM_THREADS=1')
         prefix = ' && '.join(cs) + ' && '
 
     suffix = ' && hostname'
@@ -551,7 +556,10 @@ def remove_dir(d):
 
 def ensure_remove_file(d):
     if op.isfile(d) or op.islink(d):
-        os.remove(d)
+        try:
+            os.remove(d)
+        except:
+            pass
 
 def ensure_remove_dir(d):
     is_dir = op.isdir(d)
@@ -613,6 +621,8 @@ def cmd_run(list_cmd,
             ):
     if not silent:
         logging.info('start to cmd run: {}'.format(' '.join(map(str, list_cmd))))
+        if working_dir:
+            logging.info(working_dir)
     # if we dont' set stdin as sp.PIPE, it will complain the stdin is not a tty
     # device. Maybe, the reson is it is inside another process.
     # if stdout=sp.PIPE, it will not print the result in the screen
@@ -1069,6 +1079,8 @@ def print_as_html(table, html_output):
     write_to_file(r, html_output)
 
 def jinja_render(template, **kwargs):
+    if len(kwargs) == 0:
+        return read_to_buffer(template).decode()
     from jinja2 import Environment, FileSystemLoader
     j2_env = Environment(loader=FileSystemLoader('./'), trim_blocks=True)
     return j2_env.get_template(template).render(
@@ -1681,8 +1693,8 @@ def process_run(func, *args, **kwargs):
     queue = mp.Queue()
     p = Process(target=internal_func, args=(queue,))
     p.start()
-    p.join()
     result = queue.get()
+    p.join()
     if isinstance(result, ExceptionWrapper):
         raise Exception(result.message)
     return result
@@ -2279,6 +2291,7 @@ def pilimg_from_base64(imagestring):
         import io
         jpgbytestring = base64.b64decode(imagestring)
         image = Image.open(io.BytesIO(jpgbytestring))
+        image = image.convert('RGB')
         return image
     except:
         return None;
@@ -2525,8 +2538,6 @@ def dict_get_path_value(d, p, with_type=False):
             return cur_dict
 
 def get_file_size(f):
-    if not op.isfile(f):
-        return 0
     return os.stat(f).st_size
 
 def convert_to_yaml_friendly(result):
@@ -2740,7 +2751,7 @@ def parse_eta_in_hours(left):
 def attach_philly_maskrcnn_log_if_is(all_log, job_info):
     for log in reversed(all_log):
         # Philly, maskrcnn-benchmark log
-        pattern = '(.*): .*: eta: (.*) iter: [0-9]*[ ]*speed: ([0-9\.]*).*'
+        pattern = '([0-9\. :-]): .*: eta: (.*) iter: [0-9]*[ ]*speed: ([0-9\.]*).*'
 
         result = re.match(pattern, log)
         if result and result.groups():
@@ -2924,10 +2935,9 @@ def attach_log_parsing_result(job_info):
         return
 
 def attach_any_log(all_log, job_info):
-    # 2021-01-28 00:18:54 [1,0]<stdout>:2021-01-28 00:18:53,508.508 e2e_caption.py:215      train(): eta: 5:06:24  iter: 22500  speed: 1830.0 images/sec  masked_loss: 1.0380 (1.6665)  align_loss: 2.7429 (2.8080)  loss: 3.7827 (4.4745)  acc: 0.7164 (0.6381)  total_norm: 0.7945 (nan)  batch_time: 0.2787 (0.2807)  data_time: 0.0001 (0.0002)  lr: 0.149141  max mem: 6778
-    # 2021-01-28 18:50:37,295.295 e2e_caption.py:215      train(): eta: 5:27:53  iter: 11200  speed: 1890.2 images/sec  masked_loss: 1.8492 (1.9500)  loss: 1.8492 (1.9500)  acc: 0.5547 (0.5341)  total_norm: 0.7941 (nan)  batch_time: 0.2742 (0.2708)  data_time: 0.0002 (0.0002)  lr: 0.174684  max mem: 6726
+    # to check the correctness, run: py.test --ipdb src/qd/unittest/test_qd_common.py -k test_attach_any_log
     for log in reversed(all_log):
-        pattern = r'([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}).*\.py.*(?:do_train|_logistics|do_train_dict|train|old_train)\(\): eta:[ ]*(.*) iter: [0-9]*[ ]*speed: ([0-9\.]*).*'
+        pattern = r'([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}).*\.py.*\(\): eta:[ ]*(.*) iter: [0-9]*[ ]*speed: ([0-9\.]*).*'
         result = re.match(pattern, log)
         if result and result.groups():
             log_time, left, speed = result.groups()
@@ -3568,10 +3578,14 @@ def auto_parse_log_line(line):
                 except:
                     continue
         if len(result) > 0:
-            matched = re.match('([0-9-\s:]*)', list(line.split(','))[0])
-            x = matched.groups()[0]
-            result['time'] = datetime.strptime(
-                x.strip(), '%Y-%m-%d %H:%M:%S')
+            matched = re.match('([0-9-\s:]+)', list(line.split(','))[0])
+            if matched is not None:
+                x = matched.groups()[0]
+                try:
+                    result['time'] = datetime.strptime(
+                        x.strip(), '%Y-%m-%d %H:%M:%S')
+                except:
+                    return {}
         return result
     else:
         parts = line.split('  ')
@@ -3594,8 +3608,11 @@ def auto_parse_log_line(line):
         if len(result):
             matched = re.match('([0-9-\s:]*)', line)
             x = matched.groups()[0]
-            result['time'] = datetime.strptime(
-                x.strip(), '%Y-%m-%d %H:%M:%S')
+            try:
+                result['time'] = datetime.strptime(
+                    x.strip(), '%Y-%m-%d %H:%M:%S')
+            except:
+                pass
 
         return result
 
@@ -3607,8 +3624,9 @@ def auto_inject_log_to_board(fname, folder):
     started = False
     from collections import defaultdict
     counter = defaultdict(int)
+    first_wall_time = None
     for line in read_lines(fname, errors='ignore'):
-        if not started and '_ensure_lineidx_loaded' in line:
+        if not started and 'dataset =' in line:
             started = True
         if not started:
             continue
@@ -3624,10 +3642,17 @@ def auto_inject_log_to_board(fname, folder):
             else:
                 args['global_step'] = counter[k]
                 counter[k] += 1
-            args['walltime'] = (info['time'] - datetime(1970,1,1)).total_seconds()
+            if 'time' in info:
+                if not first_wall_time:
+                    first_wall_time = info['time']
+                #args['walltime'] = (info['time'] - datetime(1970,1,1)).total_seconds()
+                args['walltime'] = (info['time'] - first_wall_time).total_seconds()
             num += 1
             wt.add_scalar(**args)
-    logging.info('injected {}'.format(num))
+    if not started:
+        logging.info('not detected the starting hint')
+    else:
+        logging.info('injected {}'.format(num))
 
 def auto_inject_multi_log_to_board(infos, out_folder):
     for info in infos:
@@ -3647,7 +3672,53 @@ def auto_inject_multi_log_to_board(infos, out_folder):
         else:
             assert len(files) == 1, len(files)
             f = files[0]
+        logging.info(f)
         auto_inject_log_to_board(f, op.join(out_folder, name))
+
+def identity(x):
+    # only used in pipeline
+    return x
+
+def recursive_type_convert(info, t, convert_func):
+    if isinstance(info, (tuple, list)):
+        return [recursive_type_convert(i, t, convert_func) for i in info]
+    elif isinstance(info, dict):
+        return dict((k, recursive_type_convert(v, t, convert_func)) for k, v in info.items())
+    elif isinstance(info, t):
+        return convert_func(info)
+    else:
+        return info
+
+def blobfuse_umount(mount_folder):
+    cmd = ['sudo', 'umount', mount_folder]
+    cmd_run(cmd)
+
+def blobfuse_mount(account_name, container_name, account_key,
+                   mount_folder, cache_folder):
+    ensure_directory(mount_folder)
+    ensure_directory(cache_folder)
+    cmd = [
+        'blobfuse',
+        mount_folder,
+        '--tmp-path={}'.format(cache_folder),
+        '--container-name={}'.format(container_name),
+    ]
+    env = {
+        'AZURE_STORAGE_ACCOUNT': account_name,
+        'AZURE_STORAGE_ACCESS_KEY': account_key,
+    }
+    cmd_run(cmd, env=env)
+
+def blobfuse_mount_from_config(config, mount_folder):
+    info = load_from_yaml_file(config)
+    cache_folder = '/mnt/blobfuse/cache/{}'.format(hash_sha1(mount_folder))
+    blobfuse_mount(
+        account_name=info['account_name'],
+        container_name=info['container_name'],
+        account_key=info['account_key'],
+        mount_folder=mount_folder,
+        cache_folder=cache_folder,
+    )
 
 if __name__ == '__main__':
     init_logging()

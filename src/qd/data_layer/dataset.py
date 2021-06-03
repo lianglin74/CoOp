@@ -157,6 +157,7 @@ class CaptionIdxTSVDataset(object):
         from qd.tsv_io import tsv_reader
         all_idx_source = [int(idx_source) for idx_source, _ in
                 tsv_reader(dataset.get_shuffle_file(self.split))]
+        logging.info('loading composite source idx')
         return [all_idx_source[int(idx_img)] for _, idx_img, _ in
                 tqdm(self.k_img_cap)]
 
@@ -182,13 +183,6 @@ class CaptionIdxTSVDataset(object):
             for k in extra_data:
                 assert k not in data
             data.update(extra_data)
-            if 'future_idx' in data:
-                # this is for pre-fetching the data by LoadImage
-                key, idx_img, idx_cap = self.k_img_cap[data['future_idx']]
-                extra_data = {
-                    'future_idx_img': int(idx_img),
-                    'future_idx_cap': int(idx_cap),
-                }
         return data
 
     def get_keys(self):

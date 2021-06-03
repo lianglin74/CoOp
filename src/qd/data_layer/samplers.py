@@ -1,3 +1,4 @@
+from pprint import pformat
 import random
 import numpy as np
 import time
@@ -120,192 +121,225 @@ class RankSplitSampler(Sampler):
     def __len__(self):
         raise ValueError('should not be called')
 
-def prepare_tsv_file_process(queue, unprepare_queue, prepare_by_cat=False):
-    fps = []
-    while True:
-        while queue.qsize() > 0:
-            fname = queue.get()
-            if any(f == fname for f, _ in fps):
-                continue
-            logging.info('preparing {}'.format(fname))
-            fp = exclusive_open_to_read(fname)
-            if prepare_by_cat:
-                os.system('cat {} > /dev/null'.format(fname))
-            logging.info('prepared {}'.format(fname))
-            curr_fps = [fp]
-            lineidx = get_tsv_lineidx(fname)
-            if op.isfile(lineidx):
-                curr_fps.append(exclusive_open_to_read(lineidx))
-                if prepare_by_cat:
-                    os.system('cat {} > /dev/null'.format(lineidx))
-            lineidx8b = get_tsv_lineidx_8b(fname)
-            if op.isfile(lineidx8b):
-                curr_fps.append(exclusive_open_to_read(lineidx8b))
-                if prepare_by_cat:
-                    os.system('cat {} > /dev/null'.format(lineidx8b))
-            fps.append((fname, curr_fps))
-        while unprepare_queue.qsize() > 0:
-            fname = unprepare_queue.get()
-            found = [(i, f) for i, f in enumerate(fps) if f[0] == fname]
-            logging.info('unpreparing {}'.format(fname))
-            for i, fs in found:
-                for f in fs[1]:
-                    f.close()
-                fps.pop(i)
-
-def create_shuffle_group_process(shuffle,
-                                 random_seed, idx_split,
-                                 rank, world_size,
-                                 local_rank, local_size,
-                                 group_size,
-                                 out_queue,
-                                 out_queue_size,
-                                 ):
-    # setting the thread here is not to reduce the speed, but make it runnable.
-    # otherwise, it will hang at some torch api
-    # https://github.com/pytorch/pytorch/issues/3619#issuecomment-515528132
-    logging.info(shuffle)
-    use_np = True
-    use_np = False
-    use_random = True
-    if use_np:
-        idx_split = idx_split.numpy()
-    elif use_random:
-        idx_split = idx_split.tolist()
-    while True:
-        group = create_shuffle_group_on_node(
-            shuffle, random_seed, idx_split, rank, world_size, local_rank,
-            local_size, group_size, use_np, use_random)
-        random_seed += 99
-        for g in group:
-            if use_np:
-                g = dict((k, torch.tensor(v).share_memory_()) for k, v in g.items())
-            else:
-                for k, v in g.items():
-                    v.share_memory_()
-            start = time.time()
-            while out_queue.qsize() >= out_queue_size:
-                logging.info('queue len is too long')
-                time.sleep(1)
-            out_queue.put(g)
-            e = time.time() - start
-            if e > 100:
-                logging.info('taking {} to insert a group'.format(e))
-
-def create_shuffle_group_on_node(
-    shuffle,
-    random_seed,
-    idx_split,
-    rank,
-    world_size,
-    local_rank,
-    local_size,
-    group_size,
-    use_np,
-    use_random,
-):
-    # deterministically shuffle based on epoch
-    if shuffle:
-        if use_np:
-            np.random.seed(random_seed)
-            r = np.random.RandomState(random_seed)
-        elif use_random:
-            random.seed(random_seed)
+def prepare_tsv_file_process(queue):
+    if os.environ.get('QD_TSV_USE_FUSE'):
+        if int(os.environ['QD_TSV_USE_FUSE']):
+            ftype = 'fuser'
         else:
-            g = torch.Generator()
-            g.manual_seed(random_seed)
-
-    if shuffle:
-        # we need to select 1/n data for current rank and thus let's first
-        # shuffle it
-        if use_np:
-            random_idx = r.permutation(len(idx_split))
-        elif use_random:
-            random_idx = list(range(len(idx_split)))
-            random.shuffle(random_idx)
-        else:
-            random_idx = torch.randperm(len(idx_split), generator=g)
-        idx_split = idx_split[random_idx]
-        num_split = idx_split[:, 1].max() + 1
-        if use_np:
-            random_splits = r.permutation(num_split)
-        elif use_random:
-            random_splits = list(range(num_split))
-            random.shuffle(random_splits)
-        else:
-            random_splits = torch.randperm(num_split, generator=g)
-        all_sub = []
-        for s in random_splits:
-            all_sub.append(idx_split[idx_split[:, 1] == s])
-        if use_np:
-            idx_split = np.concatenate(all_sub)
-        else:
-            idx_split = torch.cat(all_sub, dim=0)
-
-    # split by node. Each node should see different portion of the data
-    num_node = world_size // local_size
-    rank_size = (len(idx_split) + num_node - 1) // num_node
-    offset = rank_size * rank
-    offset_end = offset + rank_size
-    offset_end = min(offset_end, len(idx_split))
-    idx_split = idx_split[offset:offset_end]
-
-    if use_np:
-        all_split = np.unique(idx_split[:, 1])
-    elif use_random:
-        all_split = set((s for _, s in idx_split))
-        # set() may not be deterministic, and we need to sort it
-        all_split = sorted(all_split)
+            ftype = 'blobfuse'
     else:
-        all_split = torch.unique(idx_split[:, 1])
-    num_split = len(all_split)
-    # shuffle the split idx
-    if shuffle:
-        if use_np:
-            all_split = all_split[r.permutation(num_split)]
-        elif use_random:
-            random.shuffle(all_split)
-        else:
-            all_split = all_split[torch.randperm(num_split, generator=g)]
+        ftype = 'blobfuse'
 
-    split_start = 0
+    if ftype == 'fuser':
+        from qd.cloud_storage import create_cloud_fuse
+        fuser = create_cloud_fuse()
+
+    prepared = []
+    max_len = 32
+
     while True:
-        if split_start >= num_split:
-            break
-        split_end = split_start + group_size
-        split_end = min(num_split, split_end)
-        # merge the index from all splits within this group
-        split_in_group = []
-        split_in_group = all_split[split_start:split_end]
-        if use_random:
-            idx_in_group = [i for i, s in idx_split if s in split_in_group]
-            split_in_group = torch.tensor(split_in_group)
-            idx_in_group = torch.tensor(idx_in_group)
-        else:
-            idx_in_group = [idx_split[idx_split[:, 1] == s, 0] for s in split_in_group]
-            if use_np:
-                idx_in_group = np.concatenate(idx_in_group)
+        start = time.time()
+        fnames = queue.get()
+        end = time.time()
+        if (end - start) > 5:
+            logging.info('waiting {} to get a new tsv to prepare'.format(
+                end - start))
+        curr_fs = []
+        for fname in fnames:
+            curr_fs.append(fname)
+            if fname.endswith('.tsv'):
+                lineidx = get_tsv_lineidx(fname)
+                if op.isfile(lineidx):
+                    curr_fs.append(lineidx)
+                lineidx8b = get_tsv_lineidx_8b(fname)
+                if op.isfile(lineidx8b):
+                    curr_fs.append(lineidx8b)
+
+        def unprepare(info):
+            logging.info('unprepare {}'.format(info['fnames']))
+            if ftype == 'blobfuse':
+                for f in info['fps']:
+                    f.close()
             else:
-                idx_in_group = torch.cat(idx_in_group)
-        if shuffle and group_size > 1:
-            # shuffle the index within this group
-            assert not use_np
-            idx_in_group = idx_in_group[torch.randperm(
-                len(idx_in_group), generator=g)]
-        # register it
-        yield {
-            'idx_in_group': idx_in_group,
-            'split_in_group': split_in_group,
-        }
-        split_start = split_end
+                for f in info['fnames']:
+                    fuser.ensure_del_cache(f)
+            logging.info('unprepared {}'.format(info['fnames']))
+
+        while len(prepared) >= max_len:
+            unprepare(prepared.pop(0))
+
+        logging.info('prepare {}'.format(curr_fs))
+        start = time.time()
+        if ftype == 'blobfuse':
+            info = {
+                'fnames': curr_fs,
+                'fps': [exclusive_open_to_read(x) for x in curr_fs]
+            }
+        else:
+            info = {
+                'fnames': curr_fs
+            }
+            fuser.ensure_cache(curr_fs)
+        prepared.append(info)
+        logging.info('use {}s, prepared {}'.format(
+            time.time() - start,
+            curr_fs))
+
+#def create_shuffle_group_process(shuffle,
+                                 #random_seed, idx_split,
+                                 #rank, world_size,
+                                 #local_rank, local_size,
+                                 #group_size,
+                                 #out_queue,
+                                 #out_queue_size,
+                                 #):
+    ## setting the thread here is not to reduce the speed, but make it runnable.
+    ## otherwise, it will hang at some torch api
+    ## https://github.com/pytorch/pytorch/issues/3619#issuecomment-515528132
+    #logging.info(shuffle)
+    #use_np = True
+    #use_np = False
+    #use_random = True
+    #if use_np:
+        #idx_split = idx_split.numpy()
+    #elif use_random:
+        #idx_split = idx_split.tolist()
+    #while True:
+        #group = create_shuffle_group_on_node(
+            #shuffle, random_seed, idx_split, rank, world_size, local_rank,
+            #local_size, group_size, use_np, use_random)
+        #random_seed += 99
+        #for g in group:
+            #if use_np:
+                #g = dict((k, torch.tensor(v).share_memory_()) for k, v in g.items())
+            #else:
+                #for k, v in g.items():
+                    #v.share_memory_()
+            #start = time.time()
+            #while out_queue.qsize() >= out_queue_size:
+                #logging.info('queue len is too long')
+                #time.sleep(1)
+            #out_queue.put(g)
+            #e = time.time() - start
+            #if e > 100:
+                #logging.info('taking {} to insert a group'.format(e))
+
+#def create_shuffle_group_on_node(
+    #shuffle,
+    #random_seed,
+    #idx_split,
+    #rank,
+    #world_size,
+    #local_rank,
+    #local_size,
+    #group_size,
+    #use_np,
+    #use_random,
+#):
+    ## deterministically shuffle based on epoch
+    #if shuffle:
+        #if use_np:
+            #np.random.seed(random_seed)
+            #r = np.random.RandomState(random_seed)
+        #elif use_random:
+            #random.seed(random_seed)
+        #else:
+            #g = torch.Generator()
+            #g.manual_seed(random_seed)
+
+    #if shuffle:
+        ## we need to select 1/n data for current rank and thus let's first
+        ## shuffle it
+        #if use_np:
+            #random_idx = r.permutation(len(idx_split))
+        #elif use_random:
+            #random_idx = list(range(len(idx_split)))
+            #random.shuffle(random_idx)
+        #else:
+            #random_idx = torch.randperm(len(idx_split), generator=g)
+        #idx_split = idx_split[random_idx]
+        #num_split = idx_split[:, 1].max() + 1
+        #if use_np:
+            #random_splits = r.permutation(num_split)
+        #elif use_random:
+            #random_splits = list(range(num_split))
+            #random.shuffle(random_splits)
+        #else:
+            #random_splits = torch.randperm(num_split, generator=g)
+        #all_sub = []
+        #for s in random_splits:
+            #all_sub.append(idx_split[idx_split[:, 1] == s])
+        #if use_np:
+            #idx_split = np.concatenate(all_sub)
+        #else:
+            #idx_split = torch.cat(all_sub, dim=0)
+
+    ## split by node. Each node should see different portion of the data
+    #num_node = world_size // local_size
+    #rank_size = (len(idx_split) + num_node - 1) // num_node
+    #offset = rank_size * rank
+    #offset_end = offset + rank_size
+    #offset_end = min(offset_end, len(idx_split))
+    #idx_split = idx_split[offset:offset_end]
+
+    #if use_np:
+        #all_split = np.unique(idx_split[:, 1])
+    #elif use_random:
+        #all_split = set((s for _, s in idx_split))
+        ## set() may not be deterministic, and we need to sort it
+        #all_split = sorted(all_split)
+    #else:
+        #all_split = torch.unique(idx_split[:, 1])
+    #num_split = len(all_split)
+    ## shuffle the split idx
+    #if shuffle:
+        #if use_np:
+            #all_split = all_split[r.permutation(num_split)]
+        #elif use_random:
+            #random.shuffle(all_split)
+        #else:
+            #all_split = all_split[torch.randperm(num_split, generator=g)]
+
+    #split_start = 0
+    #while True:
+        #if split_start >= num_split:
+            #break
+        #split_end = split_start + group_size
+        #split_end = min(num_split, split_end)
+        ## merge the index from all splits within this group
+        #split_in_group = []
+        #split_in_group = all_split[split_start:split_end]
+        #if use_random:
+            #idx_in_group = [i for i, s in idx_split if s in split_in_group]
+            #split_in_group = torch.tensor(split_in_group)
+            #idx_in_group = torch.tensor(idx_in_group)
+        #else:
+            #idx_in_group = [idx_split[idx_split[:, 1] == s, 0] for s in split_in_group]
+            #if use_np:
+                #idx_in_group = np.concatenate(idx_in_group)
+            #else:
+                #idx_in_group = torch.cat(idx_in_group)
+        #if shuffle and group_size > 1:
+            ## shuffle the index within this group
+            #assert not use_np
+            #idx_in_group = idx_in_group[torch.randperm(
+                #len(idx_in_group), generator=g)]
+        ## register it
+        #yield {
+            #'idx_in_group': idx_in_group,
+            #'split_in_group': split_in_group,
+        #}
+        #split_start = split_end
+
+def ordered_unique(sequence):
+    seen = set()
+    return [x for x in sequence if not (x in seen or seen.add(x))]
 
 class SplitBySplitSampler(Sampler):
     # only used in training mode.
-    # by default, every 1 split is one group. Each split means one tsv file.
     def __init__(self, dataset, group_size=1, shuffle=True, random_seed=9,
-                 # which file list should be prepared. data/split will be from
-                 # dataset
                  prepare_t_versions=[],
+                 disable_prepare=None,
                  ):
         from qd.qd_common import print_frame_info
         print_frame_info()
@@ -324,7 +358,6 @@ class SplitBySplitSampler(Sampler):
 
         self.shuffle_group_process = None
 
-        # the subprocess will be lazily created
         self.prepare_process = None
         self.prepare_queue = None
         self.prepare_files = None
@@ -338,6 +371,8 @@ class SplitBySplitSampler(Sampler):
         self.curr_group_buffers = None
         self.next_group_index = 0
         self.cache_group_index_on_node = None
+
+        self.disable_prepare = disable_prepare
 
     def get_composite_source_idx(self):
         return self.dataset.get_composite_source_idx()
@@ -372,56 +407,56 @@ class SplitBySplitSampler(Sampler):
             self._idx_split.share_memory_()
         return self._idx_split
 
-    def create_process_to_create_shuffle_group(self):
-        # don't use this function as it is not working
-        #out_queue = mp.Queue(100)
-        out_queue = mp.SimpleQueue()
-        #out_queue = mp.Queue()
-        #import torch.multiprocessing as pmp
-        p = mp.Process(target=create_shuffle_group_process,
-                       args=(self.shuffle, self.random_seed, self.idx_split,
-                             self.rank, self.world_size,
-                             self.local_rank, self.local_size,
-                             self.group_size,
-                             out_queue,
-                             100,
-                             ))
-        #p.daemon = True
-        p.start()
-        logging.info('shuffle group = {}'.format(p.pid))
-        self.shuffle_group_out_queue = out_queue
-        return p
+    #def create_process_to_create_shuffle_group(self):
+        ## don't use this function as it is not working
+        ##out_queue = mp.Queue(100)
+        #out_queue = mp.SimpleQueue()
+        ##out_queue = mp.Queue()
+        ##import torch.multiprocessing as pmp
+        #p = mp.Process(target=create_shuffle_group_process,
+                       #args=(self.shuffle, self.random_seed, self.idx_split,
+                             #self.rank, self.world_size,
+                             #self.local_rank, self.local_size,
+                             #self.group_size,
+                             #out_queue,
+                             #100,
+                             #))
+        ##p.daemon = True
+        #p.start()
+        #logging.info('shuffle group = {}'.format(p.pid))
+        #self.shuffle_group_out_queue = out_queue
+        #return p
 
-    def get_shuffle_group(self):
-        # don't use this function as it is not working
-        if self.sub_process_create_shuffle:
-            if self.shuffle_group_process is None:
-                self.shuffle_group_process = self.create_process_to_create_shuffle_group()
-            start = time.time()
-            while self.shuffle_group_out_queue.qsize() == 0:
-                logging.info('queue len is 0')
-                time.sleep(1)
-            group = self.shuffle_group_out_queue.get()
-            end = time.time()
-            if end - start > 60:
-                logging.info('cost {} to get shuffle group'.format(
-                    end - start,
-                ))
-            for k in group:
-                group[k] = group[k].tolist()
-            return group
-        else:
-            while True:
-                for group in create_shuffle_group_on_node(
-                        self.shuffle, self.random_seed, self.idx_split, self.rank,
-                        self.world_size, self.local_rank,
-                        self.local_size, self.group_size, use_np=False,
-                        use_random=False,
-                ):
-                    for k in group:
-                        group[k] = group[k].tolist()
-                    yield group
-                self.random_seed += 99
+    #def get_shuffle_group(self):
+        ## don't use this function as it is not working
+        #if self.sub_process_create_shuffle:
+            #if self.shuffle_group_process is None:
+                #self.shuffle_group_process = self.create_process_to_create_shuffle_group()
+            #start = time.time()
+            #while self.shuffle_group_out_queue.qsize() == 0:
+                #logging.info('queue len is 0')
+                #time.sleep(1)
+            #group = self.shuffle_group_out_queue.get()
+            #end = time.time()
+            #if end - start > 60:
+                #logging.info('cost {} to get shuffle group'.format(
+                    #end - start,
+                #))
+            #for k in group:
+                #group[k] = group[k].tolist()
+            #return group
+        #else:
+            #while True:
+                #for group in create_shuffle_group_on_node(
+                        #self.shuffle, self.random_seed, self.idx_split, self.rank,
+                        #self.world_size, self.local_rank,
+                        #self.local_size, self.group_size, use_np=False,
+                        #use_random=False,
+                #):
+                    #for k in group:
+                        #group[k] = group[k].tolist()
+                    #yield group
+                #self.random_seed += 99
 
     #def __del__(self):
         ## i know this is a bad practice to implement __del__, but so far it is
@@ -495,59 +530,94 @@ class SplitBySplitSampler(Sampler):
         self.next_group_index += 1
         return g
 
-    def __iter__(self):
-        group_buffers = [self.get_next_group_index_on_node() for _ in range(5)]
-        if self.local_rank == 0:
-            for g in group_buffers:
-                self.prepare(g['split_in_group'])
-        assert len(group_buffers) > 0
-        idx = self.local_rank
+    def get_group_thread(self, q):
         while True:
-            while idx >= len(group_buffers[0]['idx_in_group']):
-                idx -= len(group_buffers[0]['idx_in_group'])
-                group_buffers.pop(0)
-                new_g = self.get_next_group_index_on_node()
-                if self.local_rank == 0:
-                    self.prepare(new_g['split_in_group'])
-                group_buffers.append(new_g)
-            r = group_buffers[0]['idx_in_group'][idx]
-            yield r
-            idx += self.local_size
+            if q.qsize() < 16:
+                g = self.get_next_group_index_on_node()
+                q.put(g)
+            else:
+                time.sleep(1)
+
+    def __iter__(self):
+        use_thread_to_get_group = False
+        if not use_thread_to_get_group:
+            group_buffers = [self.get_next_group_index_on_node()
+                             for _ in range(2 * self.local_size)]
+            if self.local_rank == 0:
+                for g in group_buffers:
+                    self.prepare(g['split_in_group'])
+            assert len(group_buffers) > 0
+            idx = self.local_rank
+            while True:
+                while idx >= len(group_buffers[0]['idx_in_group']):
+                    idx -= len(group_buffers[0]['idx_in_group'])
+                    group_buffers.pop(0)
+                    new_g = self.get_next_group_index_on_node()
+                    if self.local_rank == 0:
+                        self.prepare(new_g['split_in_group'])
+                    group_buffers.append(new_g)
+                r = group_buffers[0]['idx_in_group'][idx]
+                yield r
+                idx += self.local_size
+        else:
+            # need an unprepare queue to unprepre the data as prepare process
+            # does not know when that split has already been consumed
+            self.ensure_init_get_group_thread()
+            self.ensure_init_prepare()
+            idx = self.local_rank
+            g = {'idx_in_group': []}
+            while True:
+                while idx >= len(g['idx_in_group']):
+                    idx -= len(g['idx_in_group'])
+                    start = time.time()
+                    g = self.get_group_queue.get()
+                    e = time.time() - start
+                    if e > 10:
+                        logging.info('takes {} to get group'.format(e))
+                    if idx < len(g['idx_in_group']):
+                        break
+                while idx < len(g['idx_in_group']):
+                    yield g['idx_in_group'][idx]
+                    idx += self.local_size
+
+    def ensure_init_get_group_thread(self):
+        if self.get_group_process is None:
+            import threading
+            import queue
+            q = queue.Queue()
+            t = threading.Thread(
+                target=self.get_group_thread, args=(q,),
+                daemon=True,
+            )
+            t.start()
+            self.get_group_process = t
+            self.get_group_queue = q
 
     def ensure_init_prepare(self):
         self.use_thread = True
         if self.prepare_files is None:
             self.prepare_files = self.get_composite_source_files()
         if self.prepare_process is None:
-            if not self.use_thread:
-                from multiprocessing import Process
-                #prepare_queue = mp.Queue()
-                prepare_queue = mp.queues.SimpleQueue()
-                p = Process(target=prepare_tsv_file_process, args=(prepare_queue,))
-                p.daemon = True
-                p.start()
-                self.prepare_process = p
-                self.prepare_queue = prepare_queue
-            else:
-                import threading
-                import queue
-                prepare_queue = queue.Queue()
-                p = threading.Thread(
-                    target=prepare_tsv_file_process, args=(prepare_queue,),
-                    daemon=True,
-                )
-                p.start()
-                self.prepare_process = p
-                self.prepare_queue = prepare_queue
+            import threading
+            import queue
+            prepare_queue = queue.Queue()
+            p = threading.Thread(
+                target=prepare_tsv_file_process, args=(prepare_queue,),
+                daemon=True,
+            )
+            p.start()
+            self.prepare_process = p
+            self.prepare_queue = prepare_queue
 
     def prepare(self, split):
+        if self.disable_prepare:
+            return
         self.ensure_init_prepare()
         q = self.prepare_queue
         size = q.qsize()
         if size > 100:
             logging.info('prepare queue is too long {}'.format(size))
-        for ps in self.prepare_files:
-            q.put(ps[split])
+        q.put([ps[split] for ps in self.prepare_files])
 
     def __len__(self):
         raise ValueError('should not be called')

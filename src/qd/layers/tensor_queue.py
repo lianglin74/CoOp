@@ -2,7 +2,7 @@ import torch
 
 
 class TensorQueue(torch.nn.Module):
-    def __init__(self, N, dim):
+    def __init__(self, N, dim, normalize=True):
         super().__init__()
 
         self.register_buffer("queue_ptr", torch.zeros(1, dtype=torch.long))
@@ -10,7 +10,8 @@ class TensorQueue(torch.nn.Module):
         self.N = N
         self.dim = dim
 
-        self.queue = torch.nn.functional.normalize(self.queue, dim=1)
+        if normalize:
+            self.queue = torch.nn.functional.normalize(self.queue, dim=1)
 
     @torch.no_grad()
     def en_de_queue(self, data):

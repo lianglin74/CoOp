@@ -6,6 +6,20 @@ from torch.autograd.function import Function
 import torch.distributed as dist
 
 
+class NodeSyncBatchNorm(torch.nn.SyncBatchNorm):
+    def __init__(self, *args, **kwargs):
+        from qd.qd_common import get_mpi_local_size, get_mpi_rank
+        local_size = get_mpi_local_size()
+        rank = get_mpi_rank()
+        node_rank = rank // local_size
+        start = node_rank * local_size
+        end = start + local_size
+        process_ids = list(range(start, end))
+        process_group = torch.distributed.new_group(process_ids)
+        assert 'process_group' not in kwargs
+        kwargs['process_group'] = process_group
+        super().__init__(*args, **kwargs)
+
 class LayerBatchNorm(torch.nn.Module):
     def __init__(self, num_features, eps=1e-5, momentum=0.1, affine=True,
                  track_running_stats=True):
@@ -185,7 +199,7 @@ class FrozenBatchNorm2d(torch.nn.Module):
         self.num_features = num_features
 
     def forward(self, x):
-        scale = self.weight * self.running_var.rsqrt()
+        scale = self.weight * (self.running_var + self.eps).rsqrt()
         bias = self.bias - self.running_mean * scale
         scale = scale.reshape(1, -1, 1, 1)
         bias = bias.reshape(1, -1, 1, 1)
@@ -193,3 +207,4 @@ class FrozenBatchNorm2d(torch.nn.Module):
 
     def extra_repr(self):
         return '{}, eps={}'.format(len(self.weight), self.eps)
+

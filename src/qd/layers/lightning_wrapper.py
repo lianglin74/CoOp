@@ -15,6 +15,8 @@ class LightningModule(pl.LightningModule):
         self.scheduler = scheduler
 
     def forward(self, x):
+        from qd.torch_common import recursive_to_device
+        x = recursive_to_device(x, self.device, non_blocking=False)
         return self.module(x)
 
     def training_step(self, batch, batch_idx):
@@ -22,4 +24,8 @@ class LightningModule(pl.LightningModule):
         return sum(loss_dict.values())
 
     def configure_optimizers(self):
-        return [self.optimizer], [self.scheduler]
+        return [self.optimizer], [
+            {
+                'scheduler': self.scheduler,
+                'interval': 'step',
+            }]

@@ -15,6 +15,13 @@ from qd.qd_common import ensure_directory
 import math
 
 
+def module_ual(m1, m2):
+    name_to_m1 = dict(m1.named_modules())
+    name_to_m2 = dict(m2.named_modules())
+    if len(name_to_m1) != len(name_to_m2):
+        return False
+
+
 def hash_tensor_prime_simple(x):
     assert x.dim() == 2
     assert x.dtype == torch.long
@@ -336,14 +343,18 @@ def sinkhorn(sim, eps, niters):
         Q *= (c / (Q.sum(dim=0) + 1e-5)).unsqueeze(0)
     return (Q / (Q.sum(dim=0, keepdim=True) + 1e-5)).T
 
+@torch.no_grad()
 def describe_tensor(t, num_dec=2):
     t = t.float()
     if t.numel() == 1:
         return 'value={:.2f}'.format(float(t))
     format_str = \
-        'min/max/mean={{:.{0}e}}/{{:.{0}e}}/{{:.{0}e}}+-{{:.{0}e}}'.format(
-            num_dec)
-    return format_str.format(t.min(),
+        '{{}}, min/max/mean={{:.{0}e}}/{{:.{0}e}}/{{:.{0}e}}+-{{:.{0}e}}'.format(
+            num_dec,
+        )
+    return format_str.format(
+        t.shape,
+        t.min(),
                              t.max(),
                              t.mean(),
                              t.std(),
@@ -383,11 +394,10 @@ def get_master_node_ip():
     elif 'MASTER_IP' in os.environ:
         return os.environ['MASTER_IP']
     else:
-        try:
-            return get_philly_mpi_hosts()[0]
-        except:
-            # in local machine, sometimes, we do not have that file, and here
-            # we resort to localhost
+        mpi_hosts = op.expanduser('~/mpi-hosts')
+        if op.isfile(mpi_hosts):
+            return load_list_file(mpi_hosts)[0]
+        else:
             return 'localhost'
 
 def ensure_init_process_group(device_id=None, port=12345):
@@ -1074,19 +1084,24 @@ def remove_prefix(model, prefix):
         out[k] = v
     return out
 
-def adapt_position_encoding(model_file, before, patch_size, after, out_file):
+def adapt_position_encoding(model_file, before, patch_size, after, out_file,
+                            suffix='image_encoder.module.pos_embed'):
     model = torch_load(model_file)
     if 'model' in model:
         model = model['model']
-    keys = [k for k in model if k.endswith('image_encoder.module.pos_embed')]
+    keys = [k for k in model if k.endswith(suffix)]
     assert len(keys) == 1
     key = keys[0]
     origin_pos_embed = model[key]
+    origin_dim2 = False
+    if len(origin_pos_embed.shape) == 2:
+        origin_dim2 = True
+        origin_pos_embed = origin_pos_embed.unsqueeze(0)
     grid_before = before // patch_size
     assert (before % patch_size) == 0
     grid_after = after // patch_size
     assert (after % patch_size) == 0
-    embed_dim = origin_pos_embed.shape[2]
+    embed_dim = origin_pos_embed.shape[-1]
     assert origin_pos_embed.shape[1] == grid_before * grid_before + 1
 
     pos_embed = origin_pos_embed[0, 1:, :].reshape((grid_before, grid_before, embed_dim))
@@ -1095,6 +1110,9 @@ def adapt_position_encoding(model_file, before, patch_size, after, out_file):
     pos_embed = pos_embed.squeeze(0).permute((1, 2, 0)).reshape((-1, embed_dim))
     pos_embed = torch.cat((origin_pos_embed[0, 0:1, :], pos_embed), dim=0).unsqueeze(0)
     assert pos_embed.shape == (1, grid_after * grid_after + 1, embed_dim)
+    if origin_dim2:
+        assert pos_embed.shape[0] == 1
+        pos_embed = pos_embed.squeeze(0)
     model[key] = pos_embed
     torch_save(model, out_file)
 

@@ -1,3 +1,6 @@
+from qd.torch_common import load_model_state_ignore_mismatch
+from qd.torch_common import evaluate_topk
+from qd.qd_common import save_parameters
 import sys
 from tqdm import tqdm
 from datetime import datetime
@@ -39,7 +42,6 @@ import torch.distributed as dist
 import torch.optim
 import torch.utils.data
 import torch.utils.data.distributed
-import torchvision.transforms as transforms
 import torchvision.models as models
 from torchvision import transforms
 import numpy as np
@@ -79,19 +81,9 @@ from qd.data_layer.transform import ImageCutout
 from qd.data_layer.transform import TwoCropsTransform, IoURandomResizedCrop
 from qd.data_layer.transform import TwoCropsTransformX
 from qd.torch_common import replace_module
+from qd.torch_common import InputAsDict
 
 
-
-class InputAsDict(nn.Module):
-    def __init__(self, model):
-        super().__init__()
-        self.module = model
-    def forward(self, data_dict):
-        if isinstance(data_dict, torch.Tensor):
-            im = data_dict
-        else:
-            im = data_dict['image']
-        return self.module(im)
 
 class GaussianBlur(object):
     """Gaussian blur augmentation in SimCLR https://arxiv.org/abs/2002.05709"""
@@ -615,7 +607,8 @@ class DictTransformMaskResize(object):
                  max_size,
                  depends_on_iter=False,
                  treat_min_as_max=False,
-                 smart_resize_on_min=False
+                 smart_resize_on_min=False,
+                 resize_method='',
                  ):
         if not isinstance(min_size, (list, tuple)):
             min_size = (min_size,)
@@ -624,7 +617,17 @@ class DictTransformMaskResize(object):
         self.depends_on_iter = depends_on_iter
         self.treat_min_as_max = treat_min_as_max
         self.smart_resize_on_min = smart_resize_on_min
+        self.resize_method = resize_method
         assert depends_on_iter, 'no need to set it as False'
+
+    def __repr__(self):
+        format_string = self.__class__.__name__ + '(min_size={0}'.format(self.min_size)
+        format_string += ', max_size={0}'.format(self.max_size)
+        format_string += ', depends_on_iter={0}'.format(self.depends_on_iter)
+        format_string += ', treat_min_as_max={0}'.format(self.treat_min_as_max)
+        format_string += ', smart_resize_on_min={0}'.format(self.smart_resize_on_min)
+        format_string += ', resize_method={0})'.format(self.resize_method)
+        return format_string
 
     def get_size_min_as_max(self, image_size, iteration):
         w, h = image_size
@@ -647,6 +650,9 @@ class DictTransformMaskResize(object):
         max_original_size = float(max((w, h)))
         if max_original_size / min_original_size * size > max_size:
             size = int(round(max_size * min_original_size / max_original_size))
+        # this is not a back-compatible change, as in some cases, it will crash
+        #if size < 16:
+            #size = 16
 
         if (w <= h and w == size) or (h <= w and h == size):
             return (h, w)
@@ -675,7 +681,14 @@ class DictTransformMaskResize(object):
             size = self.get_smart_resize_on_min(image.size)
         else:
             size = self.get_size(image.size, dict_data['iteration'])
-        image = F.resize(image, size)
+        if self.resize_method == 'cv2':
+            from PIL import Image
+            image = np.array(image)
+            image = cv2.resize(image, (size[1], size[0]), interpolation=cv2.INTER_LINEAR)
+            image = Image.fromarray(image)
+        else:
+            assert self.resize_method == ''
+            image = F.resize(image, size)
         target = target.resize(image.size)
         dict_data['image'] = image
         dict_data['rects'] = target
@@ -1198,97 +1211,38 @@ class AverageMeter(object):
         self.count += n
         self.avg = self.sum / self.count
 
-class BGR2RGB(object):
-    def __call__(self, im):
-        return im[:, :, [2, 1, 0]]
+from qd.data_layer.transform import BGR2RGB
 
-class FixedPositionCrop(object):
-    def __init__(self, pos, size):
-        self.pos = pos
-        assert isinstance(size, int)
-        self.size = size
-
-        if self.pos == 'top_left':
-            self.get_pos = self.get_pos_for_top_left_crop
-        elif self.pos == 'top_right':
-            self.get_pos = self.get_pos_for_top_right_crop
-        elif self.pos == 'bottom_left':
-            self.get_pos = self.get_pos_for_bottom_left_crop
-        else:
-            assert self.pos == 'bottom_right'
-            self.get_pos = self.get_pos_for_bottom_right_crop
-
-    def get_pos_for_top_left_crop(self, img):
-        return (0, 0)
-    def get_pos_for_top_right_crop(self, img):
-        w, h = img.size
-        return (0, w - self.size)
-    def get_pos_for_bottom_left_crop(self, img):
-        w, h = img.size
-        return (h - self.size, 0)
-    def get_pos_for_bottom_right_crop(self, img):
-        w, h = img.size
-        return (h - self.size, w - self.size)
-
-    def __call__(self, img):
-        crop_top, crop_left = self.get_pos(img)
-        from torchvision.transforms.functional import crop
-        img = crop(img, crop_top, crop_left, self.size, self.size)
-        return img
-
-def create_crop_transform(crop_position, crop_size):
-    if crop_position is None:
-        crop_transform = transforms.CenterCrop(crop_size)
-    else:
-        crop_transform = FixedPositionCrop(crop_position, crop_size)
-    return crop_transform
 
 def get_test_transform(
     bgr2rgb=False,
     resize_size=256,
     crop_size=224,
-    crop_position=None):
-    normalize = get_data_normalize()
-    all_trans = []
-    if bgr2rgb:
-        all_trans.append(BGR2RGB())
-    crop_transform = create_crop_transform(crop_position, crop_size)
-    all_trans.extend([
-            transforms.ToPILImage(),
-            transforms.Resize(resize_size),
-            crop_transform,
-            transforms.ToTensor(),
-            normalize,
-            ])
-    return transforms.Compose(all_trans)
+    crop_position=None,
+    with_crop=True,
+):
+    from qd.data_layer.transform import get_inception_test_transform
+    return get_inception_test_transform(bgr2rgb, resize_size, crop_size,
+                                        crop_position, with_crop)
 
 def get_train_transform(bgr2rgb=False, crop_size=224):
-    normalize = get_data_normalize()
-    totensor = transforms.ToTensor()
-    color_jitter = transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4)
-    all_trans = []
-    if bgr2rgb:
-        all_trans.append(BGR2RGB())
-    all_trans.extend([
-        transforms.ToPILImage(),
-        transforms.RandomResizedCrop(crop_size),
-        color_jitter,
-        transforms.RandomHorizontalFlip(),
-        totensor,
-        normalize,])
-    data_augmentation = transforms.Compose(all_trans)
-    return data_augmentation
+    from qd.data_layer.transform import get_inception_train_transform
+    return get_inception_train_transform(bgr2rgb, crop_size)
 
-def get_default_mean():
-    return [0.485, 0.456, 0.406]
+#def get_default_mean():
+    #return [0.485, 0.456, 0.406]
 
-def get_default_std():
-    return [0.229, 0.224, 0.225]
+#def get_default_std():
+    #return [0.229, 0.224, 0.225]
 
-def get_data_normalize():
-    normalize = transforms.Normalize(mean=get_default_mean(),
-                                     std=get_default_std())
-    return normalize
+# for compatability reason, we still leave the two import here so that import
+# qd.qd_pytorch.get_default_mean is still valid
+from qd.data_layer.transform import get_default_mean, get_default_std
+from qd.data_layer.transform import get_data_normalize
+#def get_data_normalize():
+    #normalize = transforms.Normalize(mean=get_default_mean(),
+                                     #std=get_default_std())
+    #return normalize
 
 class MCEBLoss(nn.Module):
     # multi-hot cross entropy loss with background
@@ -1298,8 +1252,7 @@ class MCEBLoss(nn.Module):
     def forward(self, feature_with_bkg, target):
         is_bkg = target.sum(dim=1) == 0
         target_with_bkg = torch.cat([is_bkg[:, None].float(), target.float()], dim=1)
-        return multi_hot_cross_entropy(feature_with_bkg,
-                target_with_bkg)
+        return multi_hot_cross_entropy(feature_with_bkg, target_with_bkg)
 
 class IBCEWithLogitsNegLoss(nn.Module):
     def __init__(self, neg, pos,
@@ -1478,16 +1431,6 @@ def parse_epoch(s):
     results = re.match('^model_iter_(.*)e\.pth.tar$', s)
     return int(results.groups()[0])
 
-def save_parameters(param, folder):
-    time_str = datetime.now().strftime('%Y_%m_%d_%H_%M_%S')
-
-    write_to_yaml_file(param, op.join(folder,
-        'parameters_{}.yaml'.format(time_str)))
-    # save the env parameters
-    # convert it to dict for py3
-    write_to_yaml_file(dict(os.environ), op.join(folder,
-        'env_{}.yaml'.format(time_str)))
-
 def ensure_create_evaluate_meta_file(evaluate_file):
     result = None
     simple_file = evaluate_file + '.map.json'
@@ -1556,8 +1499,16 @@ def get_acc_for_plot(eval_file):
         return load_from_yaml_file(eval_file)
     elif 'top1' in eval_file:
         return load_from_yaml_file(eval_file)
+    elif 'vqa_acc' in eval_file:
+        return load_from_yaml_file(eval_file)
+    elif 'caption' in eval_file:
+        return load_from_yaml_file(eval_file)
     else:
-        raise NotImplementedError()
+        if op.isfile(eval_file + '.map.json'):
+            x = json.loads(read_to_buffer(eval_file + '.map.json'))
+            from qd.qd_common import dict_get_all_path, dict_get_path_value
+            return {p: dict_get_path_value(x, p) for p in dict_get_all_path(x)}
+        return load_from_yaml_file(eval_file)
 
 def calc_neg_aware_gmap(data, split, predict_file,
         apply_nms_det=False,
@@ -1647,34 +1598,35 @@ def all_gather(x):
             torch.distributed.all_gather(all_x, x)
         return torch.cat(all_x, dim=0)
 
-class L2NormModule(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.iter = 0
+from qd.torch_common import replace_fc_with_mlp_
+#class L2NormModule(nn.Module):
+    #def __init__(self):
+        #super().__init__()
+        #self.iter = 0
 
-    def forward(self, x):
-        verbose = (self.iter % 100) == 0
-        self.iter += 1
-        if verbose:
-            from qd.torch_common import describe_tensor
-            logging.info(describe_tensor(x))
-        return torch.nn.functional.normalize(x)
+    #def forward(self, x):
+        #verbose = (self.iter % 100) == 0
+        #self.iter += 1
+        #if verbose:
+            #from qd.torch_common import describe_tensor
+            #logging.info(describe_tensor(x))
+        #return torch.nn.functional.normalize(x)
 
-def replace_fc_with_mlp_(model, num=1, mlp_bn=False,
-                         with_l2=True):
-    while not hasattr(model, 'fc'):
-        model = model.module
-    module_list = []
-    dim_mlp = model.fc.weight.shape[1]
-    for i in range(num):
-        module_list.append(nn.Linear(dim_mlp, dim_mlp))
-        if mlp_bn:
-            module_list.append(nn.BatchNorm1d(dim_mlp))
-        module_list.append(nn.ReLU())
-    module_list.append(model.fc)
-    if with_l2:
-        module_list.append(L2NormModule())
-    model.fc = nn.Sequential(*module_list)
+#def replace_fc_with_mlp_(model, num=1, mlp_bn=False,
+                         #with_l2=True):
+    #while not hasattr(model, 'fc'):
+        #model = model.module
+    #module_list = []
+    #dim_mlp = model.fc.weight.shape[1]
+    #for i in range(num):
+        #module_list.append(nn.Linear(dim_mlp, dim_mlp))
+        #if mlp_bn:
+            #module_list.append(nn.BatchNorm1d(dim_mlp))
+        #module_list.append(nn.ReLU())
+    #module_list.append(model.fc)
+    #if with_l2:
+        #module_list.append(L2NormModule())
+    #model.fc = nn.Sequential(*module_list)
 
 class TorchTrain(object):
     def __init__(self, **kwargs):
@@ -1752,8 +1704,8 @@ class TorchTrain(object):
         if self.max_epoch is None and \
                 type(self.max_iter) is str and \
                 self.max_iter.endswith('e'):
-            # we will not use max_epoch gradually
-            self.max_epoch = int(self.max_iter[: -1])
+            # support floating-style epochs
+            self.max_epoch = float(self.max_iter[: -1])
 
         self.mpi_rank = get_mpi_rank()
         self.mpi_size= get_mpi_size()
@@ -1830,13 +1782,14 @@ class TorchTrain(object):
 
     def model_surgery(self, model):
         from qd.layers.group_batch_norm import GroupBatchNorm, get_normalize_groups
+        from qd.layers.batch_norm import FrozenBatchNorm2d
         if self.convert_bn == 'L1':
             raise NotImplementedError
         elif self.convert_bn == 'L2':
             raise NotImplementedError
         elif self.convert_bn == 'GN':
             model = replace_module(model,
-                    lambda m: isinstance(m, torch.nn.BatchNorm2d),
+                    lambda m: isinstance(m, (torch.nn.BatchNorm2d, FrozenBatchNorm2d)),
                     lambda m: torch.nn.GroupNorm(32, m.num_features),
                     )
         elif self.convert_bn == 'LNG': # layer norm by group norm
@@ -1853,21 +1806,18 @@ class TorchTrain(object):
                     lambda m: GroupBatchNorm(get_normalize_groups(m.num_features, self.normalization_group,
                         self.normalization_group_size), m.num_features))
         elif self.convert_bn == 'SBN':
-            if self.distributed or True:
-                model = replace_module(model,
-                        lambda m: isinstance(m, torch.nn.BatchNorm2d) or
-                            isinstance(m, torch.nn.BatchNorm1d),
-                        lambda m: torch.nn.SyncBatchNorm(m.num_features,
-                            eps=m.eps,
-                            momentum=m.momentum,
-                            affine=m.affine,
-                            track_running_stats=m.track_running_stats))
-                from qd.layers.batch_norm import FrozenBatchNorm2d
-                model = replace_module(model,
-                        lambda m: isinstance(m, FrozenBatchNorm2d),
-                        lambda m: torch.nn.SyncBatchNorm(m.num_features,
-                            eps=m.eps))
-
+            model = replace_module(model,
+                    lambda m: isinstance(m, torch.nn.BatchNorm2d) or
+                        isinstance(m, torch.nn.BatchNorm1d),
+                    lambda m: torch.nn.SyncBatchNorm(m.num_features,
+                        eps=m.eps,
+                        momentum=m.momentum,
+                        affine=m.affine,
+                        track_running_stats=m.track_running_stats))
+            model = replace_module(model,
+                    lambda m: isinstance(m, FrozenBatchNorm2d),
+                    lambda m: torch.nn.SyncBatchNorm(m.num_features,
+                        eps=m.eps))
         elif self.convert_bn == 'FBN': # frozen batch norm
             def set_eval_return(m):
                 m.eval()
@@ -1950,8 +1900,12 @@ class TorchTrain(object):
             modules = query_modules_by_name(model, '.fc')
             assert len(modules) == 1
             fc = modules[0]
+            if isinstance(self.c_bias_sigmoid_small, str):
+                assert self.c_bias_sigmoid_small == 'C'
+                self.c_bias_sigmoid_small = 1. / len(self.get_labelmap())
+                logging.info('overwrite self.c_bias_sigmoid_small'
+                             'to {}'.format(self.c_bias_sigmoid_small))
             nn.init.constant_(fc.bias, -math.log(1. / self.c_bias_sigmoid_small - 1))
-
         # assign a name to each module so that we can use it in each module to
         # print debug information
         attach_module_name_(model)
@@ -2200,19 +2154,27 @@ class TorchTrain(object):
         return transform
 
     def get_test_transform(self):
-        resize_size = self.test_resize_size
-        if resize_size is None:
-            resize_size = 256 * self.test_crop_size // 224
-        transform = get_test_transform(
-            self.bgr2rgb,
-            resize_size=resize_size,
-            crop_size=self.test_crop_size,
-            crop_position=self.test_crop_position)
+        if self.test_transform_type is None:
+            resize_size = self.test_resize_size
+            if resize_size is None:
+                resize_size = 256 * self.test_crop_size // 224
+            transform = get_test_transform(
+                self.bgr2rgb,
+                resize_size=resize_size,
+                crop_size=self.test_crop_size,
+                crop_position=self.test_crop_position,
+                with_crop=not self.no_crop,
+            )
+        else:
+            assert self.test_transform_type == 'vit'
+            from qd.pipelines.uni_pipeline import get_transform_vit_default
+            transform = get_transform_vit_default(self, is_train=False)
+
         if self.dict_trainer:
             transform = ImageTransform2Dict(transform)
         return transform
 
-    def _get_dataset(self, data, split, stage, labelmap, dataset_type):
+    def get_dataset(self, data, split, stage, labelmap, dataset_type):
         if not self.bgr2rgb:
             logging.warn('normally bgr2rgb should be true.')
 
@@ -2221,9 +2183,14 @@ class TorchTrain(object):
         return self.create_dataset_with_transform(data, split, stage, labelmap, dataset_type,
                                    transform)
 
+    @deprecated('use get_dataset')
+    def _get_dataset(self, data, split, stage, labelmap, dataset_type):
+        return self.get_dataset(data, split, stage, labelmap, dataset_type)
+
     def create_dataset_with_transform(self, data, split, stage, labelmap, dataset_type,
                        transform):
         if dataset_type == 'single':
+            logging.info('prefer to use single_dict')
             return TSVSplitImage(data, split,
                     version=0,
                     transform=transform,
@@ -2236,8 +2203,6 @@ class TorchTrain(object):
                     labelmap=labelmap,
                     cache_policy=self.cache_policy)
         elif dataset_type == 'io':
-            # this is the recommended setting. all others can be implemented in
-            # transform
             from qd.data_layer.dataset import IODataset, DatasetPlusTransform
             io_set = IODataset(data, split, version=0)
             return DatasetPlusTransform(io_set, transform)
@@ -2428,6 +2393,10 @@ class TorchTrain(object):
                     self.net, # efficientnet-b0
                     override_params={'num_classes': num_class})
                 assert not pretrained
+        elif self.net.startswith('timm_'):
+            net = self.net[5:]
+            import timm
+            model = timm.create_model(net, pretrained=pretrained)
         elif self.net.startswith('yolov5'):
             from qd.layers.yolov5 import ClassificationModel, get_model_cfg
             model = ClassificationModel(cfg=get_model_cfg(self.net))
@@ -2579,6 +2548,10 @@ class TorchTrain(object):
         logging.info('torch info = {}'.format(
             pformat(get_torch_version_info())))
 
+
+        self._setup_logging()
+        train_result = self.train()
+
         if self.mpi_rank == 0 and not self.debug_train:
             from qd.qd_common import zip_qd, try_delete
             # we'd better to delete it since it seems like zip will read/write
@@ -2587,11 +2560,6 @@ class TorchTrain(object):
             if op.isfile(source_code):
                 try_delete(source_code)
             zip_qd(op.join(self.output_folder, 'source_code'))
-        synchronize()
-
-        self._setup_logging()
-        train_result = self.train()
-
         synchronize()
 
         return train_result
@@ -2798,9 +2766,13 @@ class TorchTrain(object):
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr
 
+    @deprecated('use get_predict_file')
     def _get_predict_file(self, model_file=None):
+        return self.get_predict_file(model_file)
+
+    def get_predict_file(self, model_file=None):
         if model_file is None:
-            model_file = self.get_checkpoint_file(iteration=self.max_iter)
+            model_file = self.get_checkpoint_file()
         cc = [model_file, self.test_data, self.test_split]
         self.append_predict_param(cc)
         if self.test_max_iter is not None:
@@ -2849,7 +2821,7 @@ class TorchTrain(object):
             self.standarize_intermediate_models()
             need_wait_models = self.pred_eval_intermediate_models()
             all_step = self.get_all_steps()
-            all_eval_file = [self._get_evaluate_file(self._get_predict_file(self.get_checkpoint_file(iteration=i)))
+            all_eval_file = [self._get_evaluate_file(self.get_predict_file(self.get_checkpoint_file(iteration=i)))
                 for i in all_step]
             iter_to_eval = dict((i, get_acc_for_plot(eval_file))
                     for i, eval_file in zip(all_step, all_eval_file) if
@@ -2865,7 +2837,7 @@ class TorchTrain(object):
 
     def save_to_tensorboard(self):
         all_step = self.get_all_steps()
-        all_eval_file = [self._get_evaluate_file(self._get_predict_file(self.get_checkpoint_file(iteration=s)))
+        all_eval_file = [self._get_evaluate_file(self.get_predict_file(self.get_checkpoint_file(iteration=s)))
             for s in all_step]
         all_step_eval_result = [(s, get_acc_for_plot(e)) for s, e in zip(all_step,
             all_eval_file) if op.isfile(e)]
@@ -2898,21 +2870,19 @@ class TorchTrain(object):
             xys = list(iter_to_eval.items())
             xys = sorted(xys, key=lambda x: x[0])
             xs = [x for x, _ in xys]
-            if all('all-all' in y for _, y in xys):
-                # coco accuracy
-                ys = [y['all-all'] for _, y in xys]
-            elif all('top1' in y for _, y in xys):
-                ys = [y['top1'] for _, y in xys]
-
-            if len(xs) > 0:
-                out_file = os.path.join(
-                    self.output_folder,
-                    'map_{}_{}.png'.format(self.test_data,
-                        self.test_split))
-                logging.info('create {}'.format(out_file))
-                if op.isfile(out_file):
-                    os.remove(out_file)
-                plot_to_file(xs, ys, out_file)
+            if len(xys) > 0:
+                keys = xys[0][1].keys()
+                for k in keys:
+                    # coco accuracy
+                    ys = [y[k] for _, y in xys]
+                    out_file = os.path.join(
+                        self.output_folder,
+                        'map_{}_{}_{}.png'.format(self.test_data,
+                            self.test_split, k.replace('$', '_')))
+                    logging.info('create {}'.format(out_file))
+                    if op.isfile(out_file):
+                        os.remove(out_file)
+                    plot_to_file(xs, ys, out_file)
             else:
                 logging.info('nothing plotted')
         synchronize()
@@ -2934,10 +2904,10 @@ class TorchTrain(object):
         all_step = self.get_all_steps()
         for step in all_step[:-1]:
             model_file = self.get_checkpoint_file(iteration=step)
-            if not op.isfile(model_file):
+            if not op.isfile(model_file) and not op.isdir(model_file):
                 ready_predict.append(0)
                 continue
-            predict_result_file = self._get_predict_file(model_file)
+            predict_result_file = self.get_predict_file(model_file)
             eval_file = self._get_evaluate_file(predict_result_file)
             if not worth_create(model_file, predict_result_file) and \
                     not worth_create(predict_result_file, eval_file):
@@ -2950,17 +2920,20 @@ class TorchTrain(object):
             ready_predict = torch.tensor(ready_predict).cuda()
             dist.broadcast(ready_predict, src=0)
             ready_predict = ready_predict.tolist()
-        return ready_predict
+        return ready_predict, all_step[:-1]
 
     def pred_eval_intermediate_models(self):
-        ready_predict = self.get_intermediate_model_status()
-        all_step = self.get_all_steps()[:-1]
+        ready_predict, all_step = self.get_intermediate_model_status()
         all_ready_predict_step = [step for step, status in zip(all_step, ready_predict) if status == 1]
         for step in all_ready_predict_step:
             model_file = self.get_checkpoint_file(iteration=step)
             pred = self.ensure_predict(model_file=model_file)
             self.ensure_evaluate(pred)
-        return len([x for x in ready_predict if x == 0])
+            synchronize()
+        not_exist_steps = [step for step, status in zip(all_step, ready_predict) if status == 0]
+        logging.info('not exist steps = {}'.format(not_exist_steps))
+        need_wait_models = [x for x in ready_predict if x == 0]
+        return len(need_wait_models)
 
     def standarize_intermediate_models(self):
         # hack the original file format
@@ -3002,7 +2975,7 @@ class TorchTrain(object):
             if model_file is None:
                 model_file = self.get_checkpoint_file()
             assert model_file is not None
-        predict_result_file = self._get_predict_file(model_file)
+        predict_result_file = self.get_predict_file(model_file)
         if not op.isfile(model_file) and not op.isdir(model_file):
             logging.info('ignore to run predict since {} does not exist'.format(
                 model_file))
@@ -3067,7 +3040,7 @@ class TorchTrain(object):
 
     def _get_evaluate_file(self, predict_file=None):
         if predict_file is None:
-            predict_file = self._get_predict_file()
+            predict_file = self.get_predict_file()
         assert predict_file.endswith('.tsv')
         cc = [op.splitext(predict_file)[0]]
         if self.evaluate_method != 'map':
@@ -3112,7 +3085,7 @@ class TorchTrain(object):
         #self._ensure_initialized()
         if not predict_file:
             model_file = self.get_checkpoint_file()
-            predict_file = self._get_predict_file(model_file)
+            predict_file = self.get_predict_file(model_file)
         evaluate_file = self._get_evaluate_file(predict_file)
         if evaluate_file is None:
             return
@@ -3238,12 +3211,16 @@ class TorchTrain(object):
         else:
             logging.info('unknown evaluate method = {}'.format(self.evaluate_method))
 
+    def get_num_instance_one_epoch(self):
+        if self.num_instance_one_epoch is None:
+            self.num_instance_one_epoch = TSVDataset(self.data).num_rows('train')
+        return self.num_instance_one_epoch
+
     def parse_iter(self, i):
         def to_iter(e):
             if type(e) is str and e.endswith('e'):
-                if self.num_train_images is None:
-                    self.num_train_images = TSVDataset(self.data).num_rows('train')
-                iter_each_epoch = 1. * self.num_train_images / self.effective_batch_size
+                num_train_images = self.get_num_instance_one_epoch()
+                iter_each_epoch = 1. * num_train_images / self.effective_batch_size
                 return int(float(e[:-1]) * iter_each_epoch)
             else:
                 return int(e)
@@ -3251,58 +3228,6 @@ class TorchTrain(object):
 
 class ModelPipeline(TorchTrain):
     pass
-
-def evaluate_topk(iter_pred_tsv, iter_label_tsv):
-    correct = 0
-    total = 0
-    for (key, str_rects), (key_pred, str_pred) in zip(iter_label_tsv, iter_pred_tsv):
-        total = total + 1
-        assert key == key_pred
-        curr_predict = json.loads(str_pred)
-        if len(curr_predict) == 0:
-            continue
-        curr_gt_rects = json.loads(str_rects)
-        if type(curr_gt_rects) is int:
-            # imagenet data
-            curr_gt_rects = [{'class': str(curr_gt_rects)}]
-        curr_pred_best = curr_predict[max(range(len(curr_predict)), key=lambda i: curr_predict[i]['conf'])]['class']
-        if any(g['class'] == str(curr_pred_best) for g in curr_gt_rects):
-            correct = correct + 1
-    return 1. * correct / total
-
-def load_model_state_ignore_mismatch(model, init_dict):
-    real_init_dict = {}
-    name_to_param = dict(model.named_parameters())
-    name_to_param.update(dict(model.named_buffers()))
-
-    def same_shape(a, b):
-        return len(a.shape) == len(b.shape) and \
-                all(x == y for x, y in zip(a.shape, b.shape))
-
-    num_ignored = 0
-    unique_key_in_init_dict = []
-    for k in init_dict:
-        if k in name_to_param:
-            if same_shape(init_dict[k], name_to_param[k]):
-                real_init_dict[k] = init_dict[k]
-            else:
-                logging.info('{} shape is not consistent, expected: {}; got '
-                             '{}'.format(k, name_to_param[k].shape, init_dict[k].shape))
-        else:
-            unique_key_in_init_dict.append(k)
-            num_ignored = num_ignored + 1
-
-    logging.info('unique keys in loaded model = {}; total = {}'.format(
-        pformat(unique_key_in_init_dict), len(unique_key_in_init_dict),
-    ))
-
-    result = model.load_state_dict(real_init_dict, strict=False)
-    logging.info('unique key (not initialized) in current model = {}'.format(
-        pformat(result.missing_keys),
-    ))
-
-    logging.info('loaded key = {}'.format(
-        pformat(list(real_init_dict.keys()))))
 
 if __name__ == '__main__':
     init_logging()

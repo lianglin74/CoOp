@@ -116,9 +116,7 @@ class Bottleneck(nn.Module):
 
         return out
 
-
 class ResNet(nn.Module):
-
     def __init__(self, block, layers, num_classes=1000, zero_init_residual=False,
                  groups=1, width_per_group=64, replace_stride_with_dilation=None,
                  norm_layer=None, stem_stride2='maxpool'):
@@ -210,6 +208,18 @@ class ResNet(nn.Module):
 
         return nn.Sequential(*layers)
 
+    def forward_cnn(self, x):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.maxpool(x)
+
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
+        return x
+
     def _forward_impl(self, x):
         # See note [TorchScript super()]
         x = self.conv1(x)
@@ -231,7 +241,6 @@ class ResNet(nn.Module):
     def forward(self, x):
         return self._forward_impl(x)
 
-
 def _resnet(arch, block, layers, pretrained, progress, **kwargs):
     model = ResNet(block, layers, **kwargs)
     if pretrained:
@@ -239,7 +248,6 @@ def _resnet(arch, block, layers, pretrained, progress, **kwargs):
                                               progress=progress)
         model.load_state_dict(state_dict)
     return model
-
 
 def resnet18(pretrained=False, progress=True, **kwargs):
     r"""ResNet-18 model from

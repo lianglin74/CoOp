@@ -47,9 +47,9 @@ class AsynchronousLoader(object):
         # Use PyTorch's DataLoader for collating samples and stuff since it's nicely written and parallelrised
         self.dataloader = dataloader
 
-        assert dataloader.pin_memory == True
+        assert dataloader.pin_memory
 
-        self.load_stream = torch.cuda.Stream(device = device)
+        self.load_stream = torch.cuda.Stream(device=device)
         self.queue = Queue(maxsize = self.queue_size)
 
         self.idx = 0
@@ -68,11 +68,10 @@ class AsynchronousLoader(object):
     def __iter__(self):
         assert self.idx == 0, 'idx must be 0 at the beginning of __iter__. Are you trying to run the same instance more than once in parallel?'
         self.idx = 0
-        self.worker = Thread(target = self.load_loop)
+        self.worker = Thread(target=self.load_loop)
         #self.worker.setDaemon(True)
         self.worker.start()
         return self
-
 
     def __next__(self):
         # If we've reached the number of batches to return or the queue is empty and the worker is dead then exit

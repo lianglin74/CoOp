@@ -65,8 +65,13 @@ def gen_colors(num_real_classes):
 def draw_rects(rects, im=None, add_label=True, style=None):
     if im is None:
         im = np.zeros((1000, 1000, 3), dtype=np.uint8)
-    draw_bb(im, [r['rect'] for r in rects],
+    probs = None
+    if all('conf' in r for r in rects):
+        probs = [r['conf'] for r in rects]
+    draw_bb(im,
+            [r['rect'] for r in rects],
             [r['class'] for r in rects],
+            probs=probs,
             draw_label=add_label,
             style=style)
     return im
@@ -287,8 +292,12 @@ def save_image(im, file_name, quality=None):
 def load_image(file_name):
     return cv2.imread(file_name)
 
-def load_image_by_pil(file_name):
-    return Image.open(file_name).convert('RGB')
+def load_image_by_pil(file_name, respect_exif=False):
+    image = Image.open(file_name).convert('RGB')
+    if respect_exif:
+        from PIL import ImageOps
+        image = ImageOps.exif_transpose(image)
+    return image
 
 def pil_to_cvim(pil_image):
     open_cv_image = np.array(pil_image)
@@ -299,7 +308,7 @@ def show_image(im):
     show_images([im], 1, 1)
 
 def show_images(all_image, num_rows=None, num_cols=None,
-        titles=None):
+        titles=None, out_fname=None):
     plt.figure(1)
     if num_rows is None and num_cols is None:
         num_rows = 1
@@ -324,7 +333,12 @@ def show_images(all_image, num_rows=None, num_cols=None,
             if titles is not None:
                 plt.title(titles[k])
             k = k + 1
-    plt.show()
+    plt.subplots_adjust(wspace=0, hspace=0)
+    plt.tight_layout()
+    if out_fname is None:
+        plt.show()
+    else:
+        plt.savefig(out_fname)
     plt.close()
 
 def bytes_to_img_array(img_bytes, check_channel=True):

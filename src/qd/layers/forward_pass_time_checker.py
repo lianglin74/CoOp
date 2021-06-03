@@ -39,7 +39,7 @@ class ForwardPassTimeChecker(torch.nn.Module):
         self.skip = skip
 
     def forward(self, *args, **kwargs):
-
+        self.started_module2count.clear()
         self.module_start_times.clear()
         self.module_costs.clear()
 

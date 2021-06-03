@@ -817,6 +817,9 @@ class LoadImage(object):
         self.bk = backend
         assert backend in ['cv', 'pil']
 
+    def __len__(self):
+        return len(self.tsv)
+
     def __call__(self, data):
         r = self.tsv[data['idx_img']]
         # for the image, we do not check the key as the key could be different,
@@ -826,24 +829,34 @@ class LoadImage(object):
         if self.bk == 'cv':
             img = img_from_base64(str_im)
         else:
-            img = pilimg_from_base64(str_im)
+            try:
+                img = pilimg_from_base64(str_im)
+            except:
+                img = img_from_base64(str_im)
+                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                img = Image.fromarray(img)
         assert 'image' not in data
         data['image'] = img
         if self.add_key:
             data['key'] = r[0]
-        if 'future_idx_img' in data:
-            self.tsv.prepare(data['future_idx_img'])
+        assert 'future_idx_img' not in data, 'not a good design'
+        #if 'future_idx_img' in data:
+            #self.tsv.prepare(data['future_idx_img'])
         return data
 
 class LoadHW(object):
     # idx_img -> height/width
     def __init__(self, data, split, cache_policy=None):
-        self.tsv = TSVSplitProperty( data, split, 'hw',
+        self.tsv = TSVSplitProperty(data, split, 'hw',
                                     cache_policy=cache_policy)
 
     def __call__(self, data):
         idx_img = data['idx_img']
-        key, str_hw = self.tsv[idx_img]
+        row = self.tsv[idx_img]
+        if len(row) == 1:
+            # sometimes we have this situation, and here print it to debug only
+            logging.info('{}/{}'.format(self.tsv, idx_img))
+        key, str_hw = row
         if 'key' not in data:
             data['key'] = key
         assert key == data['key']
@@ -1005,7 +1018,7 @@ class LoadCaption(object):
     def __call__(self, data):
         idx_img = data['idx_img']
         key, str_cap = self.tsv[idx_img]
-        assert key == data['key']
+        assert key == data['key'], (key, data)
         caps = json.loads(str_cap)
         idx_cap = data['idx_cap']
         cap = caps[idx_cap]
@@ -1664,24 +1677,35 @@ def get_inception_test_transform(
     normalize=None,
     interpolation=Image.BILINEAR,
     backend='cv',
+    test_respect_ratio_max=None,
 ):
+    if interpolation is None:
+        interpolation = Image.BILINEAR
+    elif interpolation == 'bicubic':
+        interpolation = Image.BICUBIC
     normalize = normalize or get_data_normalize()
     all_trans = []
     if backend == 'cv':
         if bgr2rgb:
             all_trans.append(BGR2RGB())
         all_trans.append(transforms.ToPILImage())
-    all_trans.extend([
-        transforms.Resize(resize_size, interpolation),
-    ])
-    if backend == 'pil':
-        if bgr2rgb:
-            all_trans.append(
-                lambda image: image.convert("RGB"),
-            )
-    if with_crop:
-        crop_transform = create_crop_transform(crop_position, crop_size)
-        all_trans.append(crop_transform)
+    if test_respect_ratio_max:
+        from qd.data_layer.transform import MinMaxResizeForTest
+        all_trans.extend([
+            MinMaxResizeForTest(crop_size, test_respect_ratio_max)
+        ])
+    else:
+        all_trans.extend([
+            transforms.Resize(resize_size, interpolation),
+        ])
+        if backend == 'pil':
+            if bgr2rgb:
+                all_trans.append(
+                    lambda image: image.convert("RGB"),
+                )
+        if with_crop:
+            crop_transform = create_crop_transform(crop_position, crop_size)
+            all_trans.append(crop_transform)
     all_trans.extend([
             transforms.ToTensor(),
             normalize,
@@ -1692,7 +1716,8 @@ class ODMinMaxTransform(object):
     def __init__(self, min_size,
                  max_size,
                  treat_min_as_max=False,
-                 smart_resize_on_min=False
+                 smart_resize_on_min=False,
+                 interpolation=None
                  ):
         if not isinstance(min_size, (list, tuple)):
             min_size = (min_size,)
@@ -1700,6 +1725,11 @@ class ODMinMaxTransform(object):
         self.max_size = max_size
         self.treat_min_as_max = treat_min_as_max
         self.smart_resize_on_min = smart_resize_on_min
+        if interpolation is None:
+            interpolation = Image.BILINEAR
+        elif interpolation == 'bicubic':
+            interpolation = Image.BICUBIC
+        self.interpolation = interpolation
 
     def get_size_min_as_max(self, image_size, iteration):
         w, h = image_size
@@ -1751,7 +1781,8 @@ class ODMinMaxTransform(object):
             size = self.get_smart_resize_on_min(image.size)
         else:
             size = self.get_size(image.size)
-        image = F.resize(image, size)
+        image = F.resize(image, size,
+                         interpolation=self.interpolation)
         return image
 
 def get_inception_train_transform(
@@ -1765,7 +1796,12 @@ def get_inception_train_transform(
     no_aspect_dist=False,
     resize_crop=None,
     max_size=None,
+    interpolation=Image.BILINEAR,
 ):
+    if interpolation is None:
+        interpolation = Image.BILINEAR
+    elif interpolation == 'bicubic':
+        interpolation = Image.BICUBIC
     normalize = normalize or get_data_normalize()
     totensor = transforms.ToTensor()
     all_trans = []
@@ -1782,13 +1818,16 @@ def get_inception_train_transform(
         ratio = (3. / 4., 4. / 3.)
     if resize_crop is None:
         all_trans.append(transforms.RandomResizedCrop(
-            crop_size, scale=scale,
+            crop_size,
+            scale=scale,
             ratio=ratio,
+            interpolation=interpolation,
         ))
     elif resize_crop == 'od_min_max':
         all_trans.append(ODMinMaxTransform(
             min_size=crop_size,
             max_size=max_size,
+            interpolation=interpolation,
         ))
     else:
         raise NotImplementedError(resize_crop)

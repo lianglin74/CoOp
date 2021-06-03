@@ -6,30 +6,18 @@ import copy
 import shutil
 from pprint import pformat
 import torch
-import maskrcnn_benchmark
-from maskrcnn_benchmark.config import cfg
-from maskrcnn_benchmark.data import make_data_loader
-from maskrcnn_benchmark.solver import make_lr_scheduler
-from maskrcnn_benchmark.solver import make_optimizer
-from maskrcnn_benchmark.modeling.detector import build_detection_model
-from maskrcnn_benchmark.utils.checkpoint import DetectronCheckpointer
-from maskrcnn_benchmark.utils.comm import synchronize, get_rank
-from maskrcnn_benchmark.utils.comm import is_main_process
-from maskrcnn_benchmark.utils.comm import get_world_size
-from maskrcnn_benchmark.solver import make_lr_scheduler
-from maskrcnn_benchmark.structures.bounding_box import BoxList
-from maskrcnn_benchmark.layers.batch_norm import FrozenBatchNorm2d
+from qd.mask.config import cfg
+from qd.mask.data import make_data_loader
+from qd.mask.utils.checkpoint import DetectronCheckpointer
+from qd.mask.utils.comm import synchronize, get_rank
+from qd.mask.utils.comm import is_main_process
+from qd.mask.structures.bounding_box import BoxList
+from qd.mask.layers.batch_norm import FrozenBatchNorm2d
 from qd.qd_pytorch import ModelPipeline
-from qd.qd_pytorch import torch_load, torch_save
 from qd.qd_common import ensure_directory
-from qd.qd_common import json_dump
-from qd.qd_common import init_logging
-from qd.qd_common import list_to_dict
-from qd.qd_common import calculate_image_ap
 from qd.qd_common import try_delete
 from qd.qd_common import set_if_not_exist
 from qd.qd_common import load_from_yaml_file
-from qd.qd_common import calculate_iou
 from qd.qd_common import get_mpi_rank, get_mpi_size
 from qd.qd_common import pass_key_value_if_has
 from qd.qd_common import dump_to_yaml_str
@@ -38,7 +26,6 @@ from qd.qd_common import dict_get_path_value, dict_update_path_value
 from qd.qd_common import write_to_yaml_file
 from qd.tsv_io import TSVDataset
 from qd.tsv_io import tsv_reader, tsv_writer
-from qd.process_tsv import TSVFile, convert_one_label
 from qd.layers import ForwardPassTimeChecker
 from qd.qd_pytorch import replace_module
 import os.path as op
@@ -54,6 +41,7 @@ def convert_to_sync_bn(module, norm=torch.nn.SyncBatchNorm, exclude_gn=False,
         is_pre_linear=False):
     module_output = module
     info = {'num_convert_bn': 0, 'num_convert_gn': 0}
+    import maskrcnn_benchmark
     if isinstance(module,
             maskrcnn_benchmark.layers.batch_norm.FrozenBatchNorm2d) or \
         isinstance(module, torch.nn.BatchNorm2d):
@@ -157,6 +145,7 @@ def train(cfg, model, local_rank, distributed, log_step=20, sync_bn=False,
     device = torch.device(cfg.MODEL.DEVICE)
     model.to(device)
 
+    from maskrcnn_benchmark.solver import make_optimizer
     optimizer = make_optimizer(cfg, model)
     from qd.qd_common import is_hvd_initialized
     use_hvd = is_hvd_initialized()
@@ -164,6 +153,7 @@ def train(cfg, model, local_rank, distributed, log_step=20, sync_bn=False,
         import horovod.torch as hvd
         optimizer = hvd.DistributedOptimizer(optimizer,
                 model.named_parameters())
+    from maskrcnn_benchmark.solver import make_lr_scheduler
     scheduler = make_lr_scheduler(cfg, optimizer)
 
     if cfg.MODEL.DEVICE == 'cuda':
@@ -337,7 +327,6 @@ class GeneralizedRCNNExtractModel(torch.nn.Module):
             inds = inds_all[:, j].nonzero().squeeze(1)
             scores_j = scores[inds, j]
             boxes_j = boxes[inds, j * 4 : (j + 1) * 4]
-            from maskrcnn_benchmark.structures.bounding_box import BoxList
             boxlist_for_class = BoxList(boxes_j, boxlist.size, mode="xyxy")
             boxlist_for_class.add_field("scores", scores_j)
             boxlist_for_class.add_field('roi_output', roi_output[inds, :])
@@ -352,6 +341,7 @@ class GeneralizedRCNNExtractModel(torch.nn.Module):
         return result
 
 def make_extract_model(model, feature_name):
+    import maskrcnn_benchmark
     if type(model) == maskrcnn_benchmark.modeling.detector.generalized_rcnn.GeneralizedRCNN:
         model = GeneralizedRCNNExtractModel(model, feature_name)
     else:
@@ -607,7 +597,7 @@ class MaskRCNNPipeline(ModelPipeline):
     def __init__(self, **kwargs):
         super(MaskRCNNPipeline, self).__init__(**kwargs)
 
-        from maskrcnn_benchmark.config import _default_cfg
+        from qd.mask.config import _default_cfg
         # the cfg could be modified by other places and we have to do this
         # trick to restore to its default. Gradually, we can remove the
         # dependence on this global variable of cfg.
@@ -632,19 +622,20 @@ class MaskRCNNPipeline(ModelPipeline):
             'dap_max_grid': 3,
             })
 
-        maskrcnn_root = op.join('src', 'maskrcnn-benchmark')
+        #maskrcnn_root = op.join('src', 'maskrcnn-benchmark')
+        maskrcnn_root = op.join('aux_data')
         if self.net is not None and self.net != 'Unknown':
             if self.net.startswith('retinanet'):
-                cfg_file = op.join(maskrcnn_root, 'configs', 'retinanet',
+                cfg_file = op.join(maskrcnn_root, 'FCOS_configs', 'retinanet',
                         self.net + '.yaml')
             elif 'dconv_' in self.net:
-                cfg_file = op.join(maskrcnn_root, 'configs', 'dcn',
+                cfg_file = op.join(maskrcnn_root, 'FCOS_configs', 'dcn',
                         self.net + '.yaml')
             elif self.net.endswith('_gn'):
-                cfg_file = op.join(maskrcnn_root, 'configs', 'gn_baselines',
+                cfg_file = op.join(maskrcnn_root, 'FCOS_configs', 'gn_baselines',
                         self.net + '.yaml')
             else:
-                cfg_file = op.join(maskrcnn_root, 'configs', self.net + '.yaml')
+                cfg_file = op.join(maskrcnn_root, 'FCOS_configs', self.net + '.yaml')
             param = load_from_yaml_file(cfg_file)
         else:
             param = {}
@@ -841,7 +832,7 @@ class MaskRCNNPipeline(ModelPipeline):
                 )
 
     def append_predict_param(self, cc):
-        super(MaskRCNNPipeline, self).append_predict_param(cc)
+        super().append_predict_param(cc)
         default_post_nms_top_n_test = (dict_get_path_value(self.default_net_param,
             'MODEL$RPN$POST_NMS_TOP_N_TEST') if dict_has_path(self.default_net_param,
                 'MODEL$RPN$POST_NMS_TOP_N_TEST') else 1000)
@@ -985,6 +976,7 @@ class MaskRCNNPipeline(ModelPipeline):
             raise NotImplementedError()
 
     def build_detection_model(self, training=True):
+        from maskrcnn_benchmark.modeling.detector import build_detection_model
         model = build_detection_model(cfg)
         if training:
             # we might use eval model for BN layers after this
@@ -1073,6 +1065,7 @@ class MaskRCNNPipeline(ModelPipeline):
 
     def _get_load_model(self):
         if self.model is None:
+            from maskrcnn_benchmark.modeling.detector import build_detection_model
             model = build_detection_model(cfg)
             if self.sync_bn:
                 # need to convert to BN

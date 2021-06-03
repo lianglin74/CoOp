@@ -5,7 +5,6 @@ from qd.qd_common import calculate_iou_xywh
 import numpy as np
 import torch.nn as nn
 import logging
-from maskrcnn_benchmark.layers import hnms
 
 
 class MultiIDHashNMSAny(object):
@@ -221,6 +220,7 @@ class SingleHashNMSKPtC(nn.Module):
         self.rerank_iou = rerank_iou
 
     def __call__(self, rects, conf):
+        from maskrcnn_benchmark.layers import hnms
         result = hnms(rects, conf,
                 self.w0, self.h0,
                 self.alpha, self.gamma,

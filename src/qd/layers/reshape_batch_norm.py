@@ -1,23 +1,25 @@
 import torch
-import apex
 try:
-    from apex.parallel.optimized_sync_batchnorm import SyncBatchNorm as ApexSyncBN
+    import apex
+    try:
+        from apex.parallel.optimized_sync_batchnorm import SyncBatchNorm as ApexSyncBN
+    except:
+        from apex.parallel.sync_batchnorm import SyncBatchNorm as ApexSyncBN
+
+    class ReshapeApexSyncBatchNorm(ApexSyncBN):
+        def __init__(self, *args, **kwargs):
+            super(ReshapeApexSyncBatchNorm, self).__init__(*args, **kwargs)
+        def forward(self, x):
+            num_unsqueeze = 0
+            while x.dim() < 3:
+                x = x.unsqueeze(-1)
+                num_unsqueeze += 1
+            x = super(ReshapeApexSyncBatchNorm, self).forward(x)
+            for i in range(num_unsqueeze):
+                x = x.squeeze(-1)
+            return x
 except:
-    from apex.parallel.sync_batchnorm import SyncBatchNorm as ApexSyncBN
-
-class ReshapeApexSyncBatchNorm(ApexSyncBN):
-    def __init__(self, *args, **kwargs):
-        super(ReshapeApexSyncBatchNorm, self).__init__(*args, **kwargs)
-
-    def forward(self, x):
-        num_unsqueeze = 0
-        while x.dim() < 3:
-            x = x.unsqueeze(-1)
-            num_unsqueeze += 1
-        x = super(ReshapeApexSyncBatchNorm, self).forward(x)
-        for i in range(num_unsqueeze):
-            x = x.squeeze(-1)
-        return x
+    pass
 
 class ReshapeSyncBatchNorm(torch.nn.SyncBatchNorm):
     def __init__(self, *args, **kwargs):

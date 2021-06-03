@@ -1,3 +1,4 @@
+from qd.torch_common import describe_tensor
 import torch
 from torch import nn
 import logging
@@ -378,9 +379,11 @@ class BCELogitsNormByEachPositive(nn.Module):
         return loss.mean()
 
 class BCELogitsNormByPositive(nn.Module):
-    def __init__(self):
+    def __init__(self, reduction=None):
         super().__init__()
         self.iter = 0
+        self.reduction = reduction
+        assert self.reduction in [None, 'each']
     def forward(self, feature, target):
         verbose = (self.iter % 100) == 0
         self.iter += 1
@@ -389,8 +392,14 @@ class BCELogitsNormByPositive(nn.Module):
                 pos_value = feature[target.bool()].mean()
                 neg_value = feature[(1 - target).bool()].mean()
                 logging.info('pos = {}; neg = {}'.format(pos_value, neg_value))
-        return nn.functional.binary_cross_entropy_with_logits(
-            feature, target, reduction='sum') / (target.sum().float() + 1e-5)
+        if self.reduction is None:
+            return nn.functional.binary_cross_entropy_with_logits(
+                feature, target.float(), reduction='sum') / target.sum().float().clamp(min=1)
+        else:
+            each_loss = nn.functional.binary_cross_entropy_with_logits(
+                feature, target.float(), reduction='none')
+            loss = each_loss.sum(dim=1) / target.sum(dim=1).float().clamp(min=1)
+            return loss.mean()
 
 class MultiHotCrossEntropyWithNegLoss(nn.Module):
     def __init__(self):
@@ -417,8 +426,17 @@ class MultiHotCrossEntropyWithNegLoss(nn.Module):
 class MultiHotCrossEntropyLoss(nn.Module):
     def __init__(self):
         super().__init__()
+        self.iter = 0
 
     def forward(self, feature, target):
+        verbose = (self.iter % 100) == 0
+        self.iter += 1
+        if verbose:
+            x = nn.functional.softmax(feature, dim=1)[target == 1]
+            _, idx = feature.max(dim=1)
+            acc = target[torch.arange(len(target)), idx].mean()
+            logging.info('prob at gt = {}; acc = {}'.format(
+                describe_tensor(x), acc))
         return multi_hot_cross_entropy(feature, target)
 
 def multi_hot_cross_entropy(pred, soft_targets):
@@ -426,7 +444,8 @@ def multi_hot_cross_entropy(pred, soft_targets):
     logsoftmax = nn.LogSoftmax(dim=1)
     target_sum = torch.sum(soft_targets)
     if target_sum == 0:
-        return 0
+        return torch.tensor(0, dtype=torch.float, device=pred.device,
+                            requires_grad=True)
     else:
         return torch.sum(-soft_targets * logsoftmax(pred)) / target_sum
 
@@ -581,4 +600,63 @@ class EfficientDetCrossEntropy(nn.Module):
             reg_loss = nn.functional.cross_entropy(regression, target)
             loss['reg_loss'] = reg_loss
         return loss
+
+class MultiDomainCrossEntropyWithLogits(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, xs, target):
+        loss = {}
+        for i, x in enumerate(xs):
+            loss['loss_{}'.format(i)] = torch.nn.functional.cross_entropy(
+                x, target[:, i], ignore_index=-1)
+        return loss
+
+class SinkhornClusterLoss(torch.nn.Module):
+    def __init__(self, cluster_size, dim, eps=0.05, T=0.1):
+        super().__init__()
+        cluster_center = torch.randn(cluster_size, dim)
+        self.cluster_center = torch.nn.Parameter(cluster_center)
+        from qd.layers.kl_div_logit_loss import KLDivLogitLoss
+        self.criterion = KLDivLogitLoss()
+        self.eps = eps
+        self.sinkhorn_iter = 3
+        self.T = T
+        self.iter = 0
+
+    def forward(self, q, k):
+        verbose = (self.iter % 100) == 0
+        self.iter += 1
+
+        k = nn.functional.normalize(k, dim=1)
+        q = nn.functional.normalize(q, dim=1)
+        norm_cluster_center = torch.nn.functional.normalize(self.cluster_center, dim=1)
+
+        loss1 = self.forward_once(norm_cluster_center, q, k, verbose)
+        loss2 = self.forward_once(norm_cluster_center, k, q, verbose)
+        return (loss1 + loss2) / 2.
+
+    def forward_once(self, norm_cluster_center, norm_q, norm_k, verbose):
+        sim_mat = torch.matmul(norm_k, norm_cluster_center.T)
+        from qd.torch_common import distributed_sinkhorn
+        # Q: B * K
+        with torch.no_grad():
+            curr_code = distributed_sinkhorn(
+                sim_mat,
+                eps=self.eps,
+                niters=self.sinkhorn_iter)
+
+        if verbose:
+            with torch.no_grad():
+                x = curr_code.sum(dim=0)
+                from qd.torch_common import sum_single_reduce_
+                sum_single_reduce_(x, 0)
+                logging.info('uniform in clusters: {}'.format(
+                    describe_tensor(x)))
+                logging.info('code = {}'.format(
+                    describe_tensor(curr_code)))
+
+        pred = torch.matmul(norm_q, norm_cluster_center.T) / self.T
+        return self.criterion(pred, curr_code)
+
 

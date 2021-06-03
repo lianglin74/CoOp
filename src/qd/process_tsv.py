@@ -119,6 +119,9 @@ def concat_tsv_files(tsvs, out_tsv):
             else:
                 all_idx.append(str(int(idx) + sizes[i - 1]))
     write_to_file('\n'.join(all_idx), op.splitext(out_tsv)[0] + '.lineidx')
+    with open(get_tsv_lineidx_8b(out_tsv), 'wb') as fp:
+        for i in all_idx:
+            fp.write(int(i).to_bytes(8, 'little'))
 
 def merge_data_feature_tsv(from_data, to_data, feature_version):
     assert from_data.startswith(to_data)
@@ -1678,12 +1681,15 @@ def ensure_extract_from_data_source(data, split, t):
             yield label_row[0], str_t
     dataset.write_data(gen_rows(), split, t)
 
-def populate_dataset_hw(data, splits=('train', 'trainval', 'test', 'val')):
+def populate_dataset_hw(data,
+                        splits=('train', 'trainval', 'test', 'val'),
+                        img_t=None,
+                        ):
     dataset = TSVDataset(data)
     for split in splits:
-        if dataset.has(split) and not dataset.has(split, 'hw'):
+        if dataset.has(split, img_t) and not dataset.has(split, 'hw'):
             success = False
-            if op.isfile(dataset.get_data(split + 'X')):
+            if op.isfile(dataset.get_data(split + 'X', img_t)):
                 try:
                     derive_composite_meta_data(data, split, 'hw')
                     success = True
@@ -1693,12 +1699,12 @@ def populate_dataset_hw(data, splits=('train', 'trainval', 'test', 'val')):
                 multi_thread = True
                 if not multi_thread:
                     logging.info('generating hw')
-                    rows = dataset.iter_data(split, progress=True)
+                    rows = dataset.iter_data(split, img_t, progress=True)
                     dataset.write_data(((row[0], ' '.join(map(str,
                         img_from_base64(row[-1]).shape[:2]))) for
                         row in rows), split, 'hw')
                 else:
-                    num_images = dataset.num_rows(split)
+                    num_images = dataset.num_rows(split, img_t)
                     num_tasks = min(num_images, 128 * 3)
                     num_worker = (num_tasks + 2) // 3
                     num_image_per_worker = (num_images + num_tasks - 1) // num_tasks
@@ -1716,7 +1722,7 @@ def populate_dataset_hw(data, splits=('train', 'trainval', 'test', 'val')):
                     m = Pool(num_worker)
                     def get_hw(filter_idx):
                         dataset = TSVDataset(data)
-                        rows = dataset.iter_data(split, progress=True,
+                        rows = dataset.iter_data(split, img_t, progress=True,
                                 filter_idx=filter_idx)
                         return [(row[0], ' '.join(map(str,
                             img_from_base64(row[-1]).shape[:2])))
@@ -7272,7 +7278,6 @@ def merge_dataset(source_infos, target_info, ps):
             tsv_offset = len(tsv_list)
             if op.isfile(tsv_file):
                 num = dataset.num_rows(source['split'])
-
                 shuffle.extend([(tsv_offset, i) for i in range(num)])
                 tsv_list.append(tsv_file)
             else:
@@ -7291,7 +7296,7 @@ def merge_dataset(source_infos, target_info, ps):
             es = load_list_file(out_tsvx)
             assert len(tsv_list) == len(es)
             for e, c in zip(es, tsv_list):
-                assert e == c
+                assert e == c, (e, c)
         if p.get('type') is None:
             shuffle_f = target_dataset.get_shuffle_file(target_info['split'])
             if not op.isfile(shuffle_f):
@@ -7679,12 +7684,18 @@ def remove_duplicate_loader(exclude, train_data, train_split):
     batch_size = 64
     use_hist = False
     threshold = 0.995
-    out_file = 'data/fiter_tmp/v4_{}_{}_{}_{}_{}.tsv'.format(
-        exclude['data'], exclude['split'], train_data, train_split, threshold)
-    out_file2 = 'data/fiter_tmp/v4_{}_{}_{}_{}_{}_filter.tsv'.format(
-        exclude['data'], exclude['split'], train_data, train_split,
-        threshold,
-    )
+    out_file = 'data/remove_duplicate/target_{}_{}_exclude_{}_{}_{}_filter_by_hist.tsv'.format(
+        train_data,
+        train_split,
+        exclude['data'],
+        exclude['split'],
+        threshold)
+    out_file2 = 'data/remove_duplicate/target_{}_{}_exclude_{}_{}_{}_filter_by_pixel.tsv'.format(
+        train_data,
+        train_split,
+        exclude['data'],
+        exclude['split'],
+        threshold)
     if op.isfile(out_file2):
         return
     def get_hist(data):
@@ -7837,16 +7848,23 @@ def create_tsv_dataset_loader(
     transform = transforms.Compose(ts)
     return create_data_loader(tsv, transform, batch_size, num_workers=num_workers)
 
+def parse_hw_column(s_hw):
+    try:
+        h, w = map(int, s_hw.split(' '))
+        return h, w
+    except:
+        info = json.loads(s_hw)
+        if isinstance(info, list):
+            assert len(info) == 1
+            info = info[0]
+        return info['height'], info['width']
+
 def limit_image_size(in_rows, min_size, max_size, resave=True, quality=None):
     #debug = True
     debug = False
     in_img_row, in_hw_row = in_rows
     hw = in_hw_row[1]
-    try:
-        hw_info = json.loads(hw)
-        h, w = hw_info['height'], hw_info['width']
-    except:
-        h, w = map(int, hw.split(' '))
+    h, w = parse_hw_column(hw)
     image_min = min(h, w)
     image_max = max(h, w)
     if image_min < min_size and image_max < max_size:
@@ -7889,31 +7907,57 @@ def filter_dataset_by_size(data, out_data):
     out_dataset = TSVDataset(out_data)
     iter_hw = dataset.iter_data('train', 'hw')
 
-    iter_shuffle = tsv_reader(dataset.get_shuffle_file('train'))
-    info = defaultdict(int)
-    def gen_rows():
-        for (key, str_hw), s in tqdm(zip(iter_hw, iter_shuffle)):
-            try:
-                h, w = map(int, str_hw.split(' '))
-            except:
-                x = json.loads(str_hw)
-                if isinstance(x, list):
-                    x = x[0]
-                h, w = x['height'], x['width']
-            r = 1. * h / w
-            if r > 4 or r < 1. / 4:
-                info['ratio_too_large'] += 1
-                continue
-            if min(h, w) < 64:
-                info['size_too_small'] += 1
-                continue
-            yield s
-    tsv_writer(gen_rows(), out_dataset.get_shuffle_file('train'))
-    for t in [None, 'hw', 'caption']:
-        ensure_copy_file(
-            dataset.get_data('trainX', t),
-            out_dataset.get_data('trainX', t),
-        )
+    if op.isfile(dataset.get_shuffle_file('train')):
+        iter_shuffle = tsv_reader(dataset.get_shuffle_file('train'))
+        info = defaultdict(int)
+        def gen_rows():
+            for (key, str_hw), s in tqdm(zip(iter_hw, iter_shuffle)):
+                try:
+                    h, w = map(int, str_hw.split(' '))
+                except:
+                    x = json.loads(str_hw)
+                    if isinstance(x, list):
+                        x = x[0]
+                    h, w = x['height'], x['width']
+                r = 1. * h / w
+                if r > 4 or r < 1. / 4:
+                    info['ratio_too_large'] += 1
+                    continue
+                if min(h, w) < 64:
+                    info['size_too_small'] += 1
+                    continue
+                yield s
+        tsv_writer(gen_rows(), out_dataset.get_shuffle_file('train'))
+        for t in [None, 'hw', 'caption']:
+            ensure_copy_file(
+                dataset.get_data('trainX', t),
+                out_dataset.get_data('trainX', t),
+            )
+    else:
+        info = defaultdict(int)
+        def gen_rows():
+            for i, (key, str_hw) in tqdm(enumerate(iter_hw)):
+                try:
+                    h, w = map(int, str_hw.split(' '))
+                except:
+                    x = json.loads(str_hw)
+                    if isinstance(x, list):
+                        x = x[0]
+                    h, w = x['height'], x['width']
+                r = 1. * h / w
+                if r > 4 or r < 1. / 4:
+                    info['ratio_too_large'] += 1
+                    continue
+                if min(h, w) < 64:
+                    info['size_too_small'] += 1
+                    continue
+                yield (0, i)
+        tsv_writer(gen_rows(), out_dataset.get_shuffle_file('train'))
+        for t in [None, 'hw', 'caption']:
+            write_to_file(
+                dataset.get_data('train', t),
+                out_dataset.get_data('trainX', t),
+            )
 
 def limit_dataset_image_size(data, min_size, max_size, quality, out_data):
     dataset = TSVDataset(data)
