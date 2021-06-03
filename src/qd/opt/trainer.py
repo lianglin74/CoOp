@@ -362,7 +362,12 @@ def do_train_dict(
     gradient_clip=None,
     model_sub_name_fn=None,
     async_loader=False,
+    pt_swa=None,
+    pt_swa_lr=None,
+    pt_swa_update_step=None,
 ):
+    from qd.qd_common import print_frame_info
+    print_frame_info()
     if model_sub_name_fn is None:
         model_sub_name_fn = lambda i: "model_iter_{:07d}".format(i)
     logging.info("Start training")
@@ -374,19 +379,30 @@ def do_train_dict(
     start_training_time = time.time()
     end = time.time()
     log_start = time.time()
-    from qd.qd_common import print_frame_info
-    print_frame_info()
 
     if use_amp:
         scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+
+    if pt_swa:
+        from torch.optim.swa_utils import AveragedModel, SWALR
+        swa_model = AveragedModel(model)
+        max_iter = len(data_loader)
+        anneal_epochs = int(0.05 * max_iter)
+        swa_scheduler = SWALR(optimizer, swa_lr=pt_swa_lr, anneal_epochs=anneal_epochs)
+        pt_swa_start = int(len(data_loader) * 0.75)
+        assert pt_swa_lr is not None
+        arguments['swa_model'] = swa_model.state_dict()
+        if pt_swa_update_step is None:
+            pt_swa_update_step = int(max(1, max_iter * 0.001))
+        logging.info(f'pt_swa_update_step = {pt_swa_update_step}, anneal_epochs={anneal_epochs}')
 
     debug = False
     if debug:
         from qd.torch_common import init_random_seed
         torch.set_deterministic(False)
         init_random_seed(99)
-        from qd.layers.forward_pass_feature_cache import ForwardPassFeatureCache
-        model = ForwardPassFeatureCache(model)
+        from qd.layers.forward_pass_time_checker import ForwardPassTimeChecker
+        model = ForwardPassTimeChecker(model)
 
     #try_save_intermediate_snapshot(
         #checkpointer,
@@ -398,6 +414,16 @@ def do_train_dict(
         data_loader = AsynchronousLoader(data_loader, device=device)
 
     for iteration, dict_data in enumerate(data_loader, start_iter):
+        if iteration == start_iter:
+            print('{}\n'.format(logging.getLogger().handlers))
+            for k, v in dict_data.items():
+                if isinstance(v, torch.Tensor):
+                    # this is only used for debugging as no log is printed out
+                    # print dtype to understand what parameter is fp16 or fp32
+                    logging.info('{}: {}, {}'.format(
+                        k, describe_tensor(v), v.dtype))
+            for n, p in model.named_parameters():
+                logging.info('{}: {}'.format(n, p.dtype))
         iteration = iteration + 1
         arguments["iteration"] = iteration
 
@@ -433,8 +459,13 @@ def do_train_dict(
             if not no_update:
                 optimizer.step()
 
-        if debug:
-            model.sumarize_feature()
+        if debug and iteration > 10:
+            info = model.get_time_info()
+            from qd.qd_common import write_to_yaml_file, create_vis_net_file
+            write_to_yaml_file(info, '/tmp/a.yaml')
+            create_vis_net_file('/tmp/a.yaml',
+                            '/tmp/a.vis.txt')
+            #model.sumarize_feature()
             import ipdb;ipdb.set_trace(context=15)
 
         if not use_amp and losses != losses:
@@ -445,7 +476,13 @@ def do_train_dict(
         meters.update(loss=losses, **loss_dict)
 
         if not no_update:
-            scheduler.step()
+            if pt_swa and iteration > pt_swa_start:
+                if (iteration - pt_swa_start) % pt_swa_update_step == 0:
+                    # update every 100 iteratins
+                    swa_model.update_parameters(model)
+                swa_scheduler.step()
+            else:
+                scheduler.step()
         time_gpu = time.time() - before_gpu
 
         if ema is not None:
@@ -518,6 +555,11 @@ def do_train_dict(
         )
     )
 
+def recover_stdout_error():
+    import sys
+    sys.stdout = sys.__stdout__
+    sys.stderr = sys.__stderr__
+
 def do_train_by_deepspeed(
     model,
     data_loader,
@@ -539,56 +581,9 @@ def do_train_by_deepspeed(
     use_fp16=None,
     async_loader=False,
     no_flops_profiler=False,
+    model_engine=None,
 ):
-    import deepspeed
-    config_params = {
-        'train_batch_size': data_loader.batch_sampler.batch_sampler.batch_size * get_mpi_size(),
-    }
-
-    assert not (use_amp and use_fp16)
-
-    if use_amp:
-        config_params['amp'] = {
-            'enabled': True,
-            'opt_level': 'O1',
-        }
-
-    if use_fp16:
-        config_params['fp16'] = {
-            'enabled': True,
-        }
-
-    if gradient_clip:
-        config_params['gradient_clipping'] = gradient_clip
-
-    config_params['flops_profiler'] = {
-        'enabled': not no_flops_profiler,
-        'profile_step': 1,
-        'module_depth': -1,
-        'top_modules': 3,
-        'detailed': True,
-    }
-    config_params['logging'] = {
-        'steps_per_print': log_step,
-    }
-    if zero_opt_stage is not None:
-        config_params['zero_optimization'] = {
-            'stage': zero_opt_stage,
-        }
-        if zero_opt_stage > 0:
-            config_params['fp16'] = {
-                'enabled': True
-            }
-        config_params['zero_allow_untested_optimizer'] = True
-    assert ema is None, 'not supported'
-    assert not no_update
-    logging.info(pformat(config_params))
-    model_engine, optimizer, _, lr_scheduler = deepspeed.initialize(
-        config_params=config_params,
-        model=model,
-        optimizer=optimizer,
-        lr_scheduler=scheduler,
-    )
+    recover_stdout_error()
 
     start_step = arguments['iteration']
 
@@ -602,18 +597,43 @@ def do_train_by_deepspeed(
     max_iter = len(data_loader)
     end = time.time()
 
+    debug = False
+    #debug = True
+    if debug:
+        from qd.torch_common import init_random_seed
+        torch.set_deterministic(False)
+        init_random_seed(99)
+        #from qd.layers.forward_pass_feature_cache import ForwardPassFeatureCache
+        from qd.layers.forward_pass_time_checker import ForwardPassTimeChecker
+        model = ForwardPassTimeChecker(model)
+
+    effective_batch_size = get_mpi_size() * data_loader.batch_sampler.batch_size
+    need_to_device = False
     if async_loader:
         logging.info('wrapping with AsynchronousLoader')
         from qd.data_layer.loader import AsynchronousLoader
         data_loader = AsynchronousLoader(data_loader, device=device)
-
+    else:
+        need_to_device = True
+    recover_stdout_error()
+    for h in logging.getLogger().handlers:
+        h.setLevel(logging.INFO)
+    print('logger handler: {}\n'.format(logging.getLogger().handlers))
+    print('logger level = {}\n'.format(logging.getLogger().getEffectiveLevel()))
     for step, dict_data in enumerate(data_loader, start_step):
         #forward() method
         if step == start_step:
+            recover_stdout_error()
+            print('logger handler: {}\n'.format(logging.getLogger().handlers))
             for k, v in dict_data.items():
                 if isinstance(v, torch.Tensor):
+                    # this is only used for debugging as no log is printed out
                     logging.info('{}: {}'.format(k, describe_tensor(v)))
+            for n, p in model.named_parameters():
+                logging.info('{}: {}'.format(n, p.dtype))
         arguments['iteration'] = step + 1
+        if need_to_device:
+            dict_data = recursive_to_device(dict_data, device, non_blocking=True)
         data_time = time.time() - end
         loss_dict = model_engine(dict_data)
         loss = sum(loss_dict.values())
@@ -624,12 +644,20 @@ def do_train_by_deepspeed(
 
         #weight update
         model_engine.step()
+
+        if debug and step > 10:
+            info = model.get_time_info()
+            from qd.qd_common import write_to_yaml_file, create_vis_net_file
+            write_to_yaml_file(info, '/tmp/a.yaml')
+            create_vis_net_file('/tmp/a.yaml',
+                            '/tmp/a.vis.txt')
+            import ipdb;ipdb.set_trace(context=15)
         #if (step % checkpoint_period) == 0:
             #client_sd['step'] = step
             #model_engine.save_checkpoint(
                 #checkpointer.save_dir, step, client_state=client_sd)
         if (step % log_step) == 0:
-            speed = get_mpi_size() * log_step * get_num_image(dict_data) / (time.time() - log_start)
+            speed =  log_step * effective_batch_size / (time.time() - log_start)
             if hasattr(meters, 'time'):
                 eta_seconds = meters.time.global_avg * (max_iter - step)
                 eta_string = str(datetime.timedelta(seconds=int(eta_seconds)))
