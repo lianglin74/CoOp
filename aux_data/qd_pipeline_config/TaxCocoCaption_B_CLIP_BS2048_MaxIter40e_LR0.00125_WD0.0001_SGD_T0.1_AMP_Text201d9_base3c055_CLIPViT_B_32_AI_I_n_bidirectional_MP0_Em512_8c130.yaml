@@ -8,7 +8,7 @@ param:
   basemodel: output/TaxCocoCaption_B_CLIP_BS2048_MaxIter0_LR0.00125_WD0.0001_SGD_T0.1_AMP_Text201d9_CLIPViT_B_32_AI_I_n_bidirectional_MP0_Em512/snapshot/model_iter_0000000.pt
   data: TaxCocoCaption
   dist_url_tcp_port: 20006
-  effective_batch_size: 2048
+  effective_batch_size: 2
   embed_dim: 512
   env:
     availability_check: true
