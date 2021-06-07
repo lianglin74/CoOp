@@ -1,0 +1,37 @@
+all_test_data:
+- test_data: TaxVQAv2
+  test_split: val
+- test_data: TaxVQAv2
+  test_split: test
+param:
+  async_dataloader: true
+  base_lr: 0.0001
+  basemodel: ./output/official_vilt_data/vilt_200k_mlm_itm_converted.pt
+  data: TaxVQAv2
+  dist_url_tcp_port: 24442
+  effective_batch_size: 512
+  env:
+    candidate_clusters:
+    - eu
+    - we3v32
+    - we2v32
+    - wev32
+    cluster: we3v32
+    num_gpu: 8
+    run_type: save_config
+  expid: ViltVQA_BS512_MaxIter10e_LR0.0001_Crop384_AMP_basedbf55_vit_base_patch32_384
+  expid_prefix: ViltVQA
+  full_expid: TaxVQAv2_B_ViltVQA_BS512_MaxIter10e_LR0.0001_Crop384_AMP_basedbf55_vit_base_patch32_384
+  log_step: 100
+  max_iter: 10e
+  monitor_after: true
+  net: B
+  pipeline_type:
+    from: qd.pipelines.vilt_uni_pipeline
+    import: VQAViltUniPipeline
+  test_batch_size: 1
+  test_crop_size: 384
+  train_crop_size: 384
+  use_amp: true
+  vit: vit_base_patch32_384
+type: pipeline_train_eval_multi
