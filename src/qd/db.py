@@ -1,3 +1,4 @@
+from qd.qd_common import list_to_dict
 from qd.qd_common import load_from_yaml_file
 from qd.qd_common import gen_uuid
 from pymongo import MongoClient
@@ -120,7 +121,6 @@ class AnnotationDB(object):
         return self._qd['qd'][doc_name].update_many(query, update)
 
     def update_phillyjob(self, query, update):
-        self.add_meta_data(update)
         return self._phillyjob.update_many(query, {'$set': update})
 
     def iter_judge(self, **kwargs):
@@ -136,8 +136,6 @@ class AnnotationDB(object):
         return self._acc.find(query)
 
     def update_one_acc(self, query, update):
-        if '$set' in update and len(update) == 1:
-            self.add_meta_data(update['$set'])
         self._acc.update_one(query, update)
 
     def iter_unique_test_info_in_acc(self):
@@ -170,6 +168,9 @@ class AnnotationDB(object):
         self._label.create_index([('uuid', 1)], unique=True)
         self._label.create_index([('unique_name', 1)], unique=True,
                 collation={'locale': 'en', 'strength':2})
+
+    def create_index(self, collection, *args, **kwargs):
+        self._qd['qd'][collection].create_index(*args, **kwargs)
 
     def drop_ground_truth_index(self):
         self._gt.drop_indexes()
@@ -475,18 +476,20 @@ def get_job_ids_by_scheduler_id(_ids):
         _id={'$in': _ids},
     )]
     _id_to_scheduler = {s['_id']: s for s in scheduler_info}
-    return [{'scheduler_id': _id, 'appID': _id_to_scheduler[_id]['appID']} for _id in _ids]
+    return [{'scheduler_id': _id, 'appID': _id_to_scheduler[_id].get('appID')} for _id in _ids]
 
 def query_job_acc(job_ids, key='appID', inject=False,
                   must_have_any_in_predict=None,
                   not_have_any_in_predict=None,
                   metric_names=None):
     if all(isinstance(i, ObjectId) for i in job_ids):
-        job_ids = get_job_ids_by_scheduler_id(job_ids)
+        job_infos = get_job_ids_by_scheduler_id(job_ids)
+    else:
+        job_infos = job_ids
     c = create_annotation_db()
-    query_param = {key: {'$in': [j['appID'] for j in job_ids]}}
+    query_param = {key: {'$in': [j['appID'] for j in job_infos]}}
     jobs = list(c.iter_phillyjob(**query_param))
-    appID_to_info = {j['appID']: j for j in job_ids}
+    appID_to_info = {j['appID']: j for j in job_infos}
     for j in jobs:
         j.update(appID_to_info[j['appID']])
     for j in jobs:
@@ -495,10 +498,11 @@ def query_job_acc(job_ids, key='appID', inject=False,
     all_full_expid = []
 
     for j in jobs:
-        if 'data' not in j:
+        if 'data' not in j or 'net' not in j or 'expid' not in j:
             full_expid = 'U'
         else:
-            full_expid = '_'.join(map(str, [j['data'], j['net'], j['expid']]))
+            full_expid = '_'.join(map(str, [j.get('data', ''), j.get('net',''),
+                                            j.get('expid', '')]))
         all_full_expid.append(full_expid)
     all_key = ['scheduler_id', 'appID', 'status', 'result', 'speed', 'left', 'eta',
         'full_expid', 'num_gpu', 'mem_used', 'gpu_util']
@@ -506,6 +510,8 @@ def query_job_acc(job_ids, key='appID', inject=False,
 
     #print_table([j for j in jobs if j['status'] == 'Failed'],  all_key=all_key)
     print_table(jobs,  all_key=all_key)
+    if len(all_full_expid) == 0:
+        print_table(job_ids)
 
     if inject:
         for full_expid in all_full_expid:
@@ -518,11 +524,16 @@ def query_job_acc(job_ids, key='appID', inject=False,
                             metric_names=metric_names)
 
 def query_acc_by_full_expid(all_full_expid,
-        must_have_any_in_predict=None,
-        not_have_any_in_predict=None,
-        metric_names=None):
+                            must_have_any_in_predict=None,
+                            not_have_any_in_predict=None,
+                            metric_names=None,
+                            sort_row=True,
+                            ):
     c = create_annotation_db()
     acc = list(c.iter_acc(full_expid={'$in': all_full_expid}))
+    full_expid_to_rank = {f: i for i, f in enumerate(all_full_expid)}
+    if not sort_row:
+        acc = sorted(acc, key=lambda x: full_expid_to_rank[x['full_expid']])
     if metric_names is None:
         metric_names = [
             'all-all',
@@ -546,13 +557,16 @@ def query_acc_by_full_expid(all_full_expid,
             'i2t$R@10',
             'i2t$R@5',
             'acc',
+            'stvqa_acc',
+            'stvqa_anls',
+            'vqa_acc',
         ]
     acc = [a for a in acc if a['metric_name'] in metric_names]
     if must_have_any_in_predict is not None:
-        acc = [a for a in acc if any(t in a['predict_file'] for t in
+        acc = [a for a in acc if any(t in a['report_file'] for t in
             must_have_any_in_predict)]
     if not_have_any_in_predict is not None:
-        acc = [a for a in acc if all(t not in a['predict_file'] for t in
+        acc = [a for a in acc if all(t not in a['report_file'] for t in
                 not_have_any_in_predict)]
     for a in acc:
         del a['username']
@@ -561,20 +575,16 @@ def query_acc_by_full_expid(all_full_expid,
         a['metric_value'] = round(a['metric_value'], 3)
         del a['test_split']
         del a['test_version']
-        del a['report_file']
+        if 'predict_file' in a:
+            del a['predict_file']
+        #del a['report_file']
         del a['test_data']
     from qd.qd_common import natural_key
-    def get_key(a):
-        x = natural_key(a['full_expid'])
-        x.append(a['predict_file'].split('.')[2])
-        x.append(a['metric_value'])
-        return tuple(x)
-
-    acc = sorted(acc, key=lambda a: (
-        natural_key(a['full_expid']),
-        a['predict_file'].split('.')[2], # test data
-        a['metric_value'],
-        ))
+    if sort_row:
+        acc = sorted(acc, key=lambda a: (
+            natural_key(a['full_expid']),
+            a['metric_value'],
+            ))
     #from qd.qd_common import remove_empty_keys_
     #remove_empty_keys_(acc)
     # group by metric names
@@ -582,14 +592,14 @@ def query_acc_by_full_expid(all_full_expid,
     all_metric = sorted(all_metric)
     fp_to_acc = {}
     for a in acc:
-        fp = (a['full_expid'], a['predict_file'])
+        fp = (a['full_expid'], a['report_file'])
         if fp in fp_to_acc:
             fp_to_acc[fp].append(a)
         else:
             fp_to_acc[fp] = [a]
     all_x = []
     for fp, accs in fp_to_acc.items():
-        x = {'full_expid': fp[0], 'predict_file': fp[1]}
+        x = {'full_expid': fp[0], 'report_file': fp[1]}
         for m in all_metric:
             x[m] = None
         for a in accs:
@@ -598,6 +608,68 @@ def query_acc_by_full_expid(all_full_expid,
 
     all_key = ['full_expid']
     all_key.extend(all_metric)
-    all_key.append('predict_file')
+    all_key.append('report_file')
+    # special case for caption prod
+    full_expid_to_infos = list_to_dict(
+        [(x['full_expid'], x) for x in all_x], 0)
+    all_extra = []
+    all_remove = []
+    merge_data = ['TaxGettyImagesClean.test', 'TaxUserInsertedClean.test', 'TaxCaptionBot.trainval']
+    for full_expid, infos in full_expid_to_infos.items():
+        for curr_info in infos:
+            if merge_data[0] not in curr_info['report_file']:
+                continue
+            is_merge = True
+            merge_infos = []
+            for i in range(1, len(merge_data)):
+                target = curr_info['report_file'].replace(merge_data[0], merge_data[i])
+                founds = [_i for _i in infos if _i['report_file'] == target]
+                if len(founds) == 0:
+                    is_merge = False
+                    break
+                merge_infos.append(founds[0])
+            if is_merge:
+                merge_infos.append(curr_info)
+                extra = {'full_expid': full_expid,
+                         'report_file': curr_info['report_file'].replace(merge_data[0], 'avg'),
+                         }
+                for k in all_key[1:6]:
+                    v = sum([i[k] for i in merge_infos]) / len(merge_infos)
+                    extra[k] = round(v, 3)
+                all_extra.append(extra)
+                all_remove.extend(merge_infos)
+    for r in all_remove:
+        all_x.remove(r)
+    all_x.extend(all_extra)
+    remove_not_best_not_last_(all_x, all_metric)
     print_table(all_x, all_key=all_key)
+
+def remove_not_best_not_last_(all_x, metric_keys):
+    full_expid_to_infos = list_to_dict(
+        [(x['full_expid'], x) for x in all_x], 0)
+    to_remove = []
+    for full_expid, infos in full_expid_to_infos.items():
+        for i in infos:
+            assert i['report_file'][10] == '_'
+            i['_iter'] = int(i['report_file'][11:18])
+            left = i['report_file'][18:]
+            assert i['report_file'][18] == '.'
+            i['_left'] = left
+        left_to_infos = list_to_dict([(i['_left'], i) for i in infos], 0)
+        for left, curr_infos in left_to_infos.items():
+            max_iter = max([i['_iter'] for i in curr_infos])
+            max_metric = [max([i[mk] for i in curr_infos]) for mk in
+                          metric_keys]
+            for i in curr_infos:
+                if i['_iter'] != max_iter and \
+                        all(i[k] != max_k for k, max_k in zip(metric_keys, max_metric)):
+                    to_remove.append(i)
+    for t in to_remove:
+        all_x.remove(t)
+    for x in all_x:
+        del x['_iter']
+        del x['_left']
+
+
+
 
