@@ -1,3 +1,5 @@
+from PIL import Image
+from io import BytesIO
 import yaml
 from collections import OrderedDict
 import progressbar
@@ -618,6 +620,7 @@ def cmd_run(list_cmd,
             dry_run=False,
             silent=False,
             process_input=None,
+            stdout=None,
             ):
     if not silent:
         logging.info('start to cmd run: {}'.format(' '.join(map(str, list_cmd))))
@@ -641,20 +644,16 @@ def cmd_run(list_cmd,
         #if env is None:
             #p = sp.Popen(list_cmd, stdin=sp.PIPE, cwd=working_dir)
         #else:
-        if shell:
-            p = sp.Popen(' '.join(list_cmd),
-                    stdin=stdin,
-                    env=e,
-                    cwd=working_dir,
-                    shell=True)
-        else:
-            p = sp.Popen(list_cmd,
-                    stdin=stdin,
-                    env=e,
-                    cwd=working_dir)
+        p = sp.Popen(' '.join(list_cmd) if shell else list_cmd,
+                     stdin=stdin,
+                     env=e,
+                     shell=shell,
+                     stdout=stdout,
+                     cwd=working_dir)
         message = p.communicate(input=process_input)
         if p.returncode != 0:
             raise ValueError(message)
+        return message
     else:
         if shell:
             message = sp.check_output(' '.join(list_cmd),
@@ -696,7 +695,9 @@ def parallel_map(func, all_task, num_worker=16):
     if num_worker > 0:
         from pathos.multiprocessing import ProcessingPool as Pool
         m = Pool(num_worker)
-        return m.map(func, all_task)
+        result = m.map(func, all_task)
+        m.close()
+        return result
     else:
         result = []
         for t in all_task:
@@ -2287,7 +2288,6 @@ def is_valid_image(im):
 
 def pilimg_from_base64(imagestring):
     try:
-        from PIL import Image
         import io
         jpgbytestring = base64.b64decode(imagestring)
         image = Image.open(io.BytesIO(jpgbytestring))
@@ -2317,6 +2317,12 @@ def img_from_base64_ignore_rotation(str_im):
     jpgbytestring = base64.b64decode(str_im)
     nparr = np.frombuffer(jpgbytestring, np.uint8)
     im = cv2.imdecode(nparr, cv2.IMREAD_IGNORE_ORIENTATION);
+    return im
+
+def encode_decode_im(im, quality):
+    with BytesIO() as output:
+        im.save(output, 'JPEG', quality=quality)
+        im = Image.open(output).convert('RGB')
     return im
 
 def int_rect(rect, enlarge_factor=1.0, im_h=None, im_w=None):
@@ -3719,6 +3725,57 @@ def blobfuse_mount_from_config(config, mount_folder):
         mount_folder=mount_folder,
         cache_folder=cache_folder,
     )
+
+def query_all_opened_file_in_system():
+    fs = []
+    for proc in psutil.process_iter():
+        for proc in psutil.process_iter():
+            try:
+                for item in proc.open_files():
+                    fs.append(item.path)
+            except Exception:
+                pass
+    return list(set(fs))
+
+def has_handle(fpath, opened_files=None):
+    fpath = op.abspath(op.realpath(fpath))
+    if opened_files is None:
+        for proc in psutil.process_iter():
+            try:
+                for item in proc.open_files():
+                    if fpath == item.path:
+                        return True
+            except Exception:
+                pass
+        return False
+    else:
+        return fpath in opened_files
+
+def submit_to_evalai_for_vqa(fname, message):
+    cmd = [
+        'evalai',
+        'challenge',
+        '830', 'phase', '1793', 'submit', '--file',
+        fname
+    ]
+    input = 'y\n{}\n\n\n\n\n'.format(message)
+    import subprocess as sp
+    try:
+        submission_command_stdout = cmd_run(cmd,
+                         process_input=input.encode(),
+                         stdout=sp.PIPE,
+                         )[0].decode("utf-8")
+    except Exception as ex:
+        if 'The maximum number of submission for today' in str(ex):
+            logging.info(str(ex))
+            return
+        else:
+            raise
+    submission_id_regex = re.search("evalai submission ([0-9]+)", submission_command_stdout)
+    submission_id = submission_id_regex.group(0).split()[-1]
+    cmd = ["evalai", "submission", submission_id, "result"]
+    return ' '.join(cmd)
+
 
 if __name__ == '__main__':
     init_logging()
