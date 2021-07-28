@@ -1,3 +1,4 @@
+from qd.qd_common import encode_decode_im
 import time
 import os
 from qd.qd_common import get_mem_usage_in_bytes
@@ -8,7 +9,6 @@ import torch
 import math
 import numpy as np
 import cv2
-import random
 from qd.qd_common import img_from_base64, pilimg_from_base64
 import json
 import logging
@@ -39,9 +39,14 @@ class FeatureDecoder(object):
         return result
 
 class RenameKey(object):
-    def __init__(self, ft=None):
-        # from to
+    def __init__(self, ft=None, not_delete_origin=False):
         self.ft = ft
+        self.not_delete_origin = not_delete_origin
+    def __repr__(self):
+        return 'RenameKey(ft={}, not_delete_origin={})'.format(
+            ','.join(['{}:{}'.format(k, v) for k, v in self.ft.items()]),
+            self.not_delete_origin,
+        )
     def __call__(self, data):
         if self.ft is None:
             return data
@@ -55,7 +60,8 @@ class RenameKey(object):
             if dict_has_path(data, k):
                 v = dict_get_path_value(data, k)
                 dict_update_path_value(data, k1, v)
-                dict_remove_path(data, k)
+                if not self.not_delete_origin:
+                    dict_remove_path(data, k)
         return data
 
 class RemoveUselessKeys(object):
@@ -79,7 +85,11 @@ class TwoCropsTransform(object):
         assert first_transform is not None
         if self.second_transform is None:
             self.second_transform = first_transform
-
+    def __repr__(self):
+        return ('TwoCropsTransform(first_transform={}, '
+                'second_transform={})').format(
+                   self.first_transform, self.second_transform
+               )
     def __call__(self, x):
         q = self.first_transform(x)
         k = self.second_transform(x)
@@ -435,12 +445,13 @@ class SimCLRGaussianBlur(object):
         return sample
 
 class ImageTransform2Dict(object):
-    def __init__(self, image_transform):
+    def __init__(self, image_transform, key='image'):
         self.image_transform = image_transform
+        self.key = key
 
     def __call__(self, dict_data):
         out = dict(dict_data.items())
-        out['image'] = self.image_transform(dict_data['image'])
+        out[self.key] = self.image_transform(dict_data[self.key])
         return out
 
     def __repr__(self):
@@ -809,19 +820,24 @@ class LoadPredict(object):
 
 class LoadImage(object):
     def __init__(self, data, split,
-                 add_key=False, backend='cv', hold_buffer=0) :
+                 add_key=False,
+                 backend='cv',
+                 idx_img_key='idx_img',
+                 hold_buffer=0,
+                 ) :
         self.tsv = TSVSplitProperty(data, split, hold_buffer=hold_buffer)
         from qd.qd_common import print_frame_info
         print_frame_info()
         self.add_key = add_key
         self.bk = backend
         assert backend in ['cv', 'pil']
+        self.idx_img_key = idx_img_key
 
     def __len__(self):
         return len(self.tsv)
 
     def __call__(self, data):
-        r = self.tsv[data['idx_img']]
+        r = self.tsv[data[self.idx_img_key]]
         # for the image, we do not check the key as the key could be different,
         # which is by design, for some kind of composiste dataset.
         #key = r[0]
@@ -829,9 +845,8 @@ class LoadImage(object):
         if self.bk == 'cv':
             img = img_from_base64(str_im)
         else:
-            try:
-                img = pilimg_from_base64(str_im)
-            except:
+            img = pilimg_from_base64(str_im)
+            if img is None:
                 img = img_from_base64(str_im)
                 img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
                 img = Image.fromarray(img)
@@ -1007,10 +1022,12 @@ class LoadFeature(object):
         return data
 
 class LoadCaption(object):
-    def __init__(self, data, split, version, cache_policy=None):
+    def __init__(self, data, split, version, cache_policy=None, hold_buffer=0):
         super().__init__()
         self.tsv = TSVSplitProperty(data, split, 'caption', version=version,
-                                    cache_policy=cache_policy)
+                                    cache_policy=cache_policy,
+                                    hold_buffer=hold_buffer,
+                                    )
 
     def __repr__(self):
         return 'LoadCaption(tsv={})'.format(self.tsv)
@@ -1067,12 +1084,33 @@ class LazyTransform(object):
     def pick(self, x, idx):
         return x[idx]
 
+class VQAAsCaptionIdentifyTextAB(object):
+    def __init__(self, is_train):
+        self.is_train = is_train
+
+    def __call__(self, data):
+        caption_dict = data['caption']
+        question = caption_dict['question']
+        if self.is_train:
+            if len(caption_dict['answers']) == 0:
+                answer = ''
+            else:
+                s = sum(caption_dict['confs'])
+                n_confs = [1. * c / s for c in caption_dict['confs']]
+                answer = np.random.choice(caption_dict['answers'], p=n_confs)
+        else:
+            answer = ''
+        data['text_a'] = answer
+        data['text_b'] = question
+        return data
+
 class IdentifyTextAB(object):
     # if it is captioning dataset, captioning description is text a; optionally
     # label str is text b; if it is qa, we have several options. by default,
     # question is text a and answer is text b
     def __init__(self, add_od_labels, od_label_conf, label_sort_by_conf,
-                 unique_labels_on, qa2caption=None, sep_token=None):
+                 unique_labels_on, qa2caption=None, sep_token=None,
+                 random_select_answer=False):
         super().__init__()
         self.add_od_labels = add_od_labels
         self.od_label_conf = od_label_conf
@@ -1080,6 +1118,7 @@ class IdentifyTextAB(object):
         self.unique_labels_on = unique_labels_on
         self.qa2caption = qa2caption
         self.sep_token = sep_token
+        self.random_select_answer = random_select_answer
 
     def __call__(self, data):
         # currently, this function is used to load information for current
@@ -1124,7 +1163,10 @@ class IdentifyTextAB(object):
             elif 'answer' in caption_dict:
                 answer = caption_dict['answer']
             else:
-                answer = ' '.join(caption_dict['answers'])
+                if self.random_select_answer:
+                    answer = np.random.choice(caption_dict['answers'], p=caption_dict['confs'])
+                else:
+                    answer = ' '.join(caption_dict['answers'])
             if self.qa2caption is None:
                 caption = question
                 od_labels = answer
@@ -1849,4 +1891,307 @@ def get_inception_train_transform(
         normalize,])
     data_augmentation = transforms.Compose(all_trans)
     return data_augmentation
+
+class InputInstance(object):
+    """A single training/test example for simple sequence classification."""
+
+    def __init__(self, guid, text_a, text_b=None, label=None, score=None, img_key=None, q_id=None):
+        """Constructs a InputExample.
+
+        Args:
+            guid: Unique id for the example.
+            text_a: string. The untokenized text of the first sequence. For single
+            sequence tasks, only this sequence must be specified.
+            text_b: (Optional) string. The untokenized text of the second sequence.
+            Only must be specified for sequence pair tasks.
+            label: (Optional) string. The label of the example. This should be
+            specified for train and dev examples, but not for test examples.
+        """
+
+        self.guid = guid
+        self.text_a = text_a
+        self.text_b = text_b
+        self.label = label
+        self.score = score
+        self.img_key = img_key
+        self.q_id = q_id
+
+def _truncate_seq_pair(tokens_a, tokens_b, max_length):
+    """Truncates a sequence pair in place to the maximum length."""
+
+    # This is a simple heuristic which will always truncate the longer sequence
+    # one token at a time. This makes more sense than truncating an equal percent
+    # of tokens from each, since if one sequence is very short then each token
+    # that's truncated likely contains more information than a longer sequence.
+    while True:
+        total_length = len(tokens_a) + len(tokens_b)
+        if total_length <= max_length:
+            break
+        if len(tokens_a) > len(tokens_b):
+            tokens_a.pop()
+        else:
+            tokens_b.pop()
+
+def target_tensor(len, labels, scores):
+    """ create the target by labels and scores """
+    target = [0]*len
+    for id, l in enumerate(labels):
+        target[l] = scores[id]
+
+    return target
+
+def compute_score_with_logits(logits, labels):
+    logits = torch.max(logits, 1)[1].data # argmax
+    one_hots = torch.zeros(*labels.size(), device=logits.device)
+    one_hots.scatter_(1, logits.view(-1, 1), 1)
+    scores = (one_hots * labels)
+    return scores
+
+class AggregateInputVQA(object):
+    def __init__(self, answers, tokenizer, max_seq_length,
+                 max_img_seq_length,
+                 img_feature_dim,
+                 od_label_conf=0.,
+                 pad_to_max=True,
+                 ):
+        self.answer2idx = {a: i for i, a in enumerate(answers)}
+        self.tokenizer = tokenizer
+        self.max_seq_length = max_seq_length
+        self.max_img_seq_length = max_img_seq_length
+        self.img_feature_dim = img_feature_dim
+        self.od_label_conf = od_label_conf
+        self.pad_to_max = pad_to_max
+
+    def __call__(self, data):
+        idx_img, idx_cap = data['idx_img'], data['idx_cap']
+        cap = data['caption']
+        if self.od_label_conf < 1:
+            tags = data['label']
+            tags = ' '.join([r['class'] for r in tags
+                             if r['conf'] >= self.od_label_conf])
+            tags = tags.replace(';', ' ').strip()
+        else:
+            tags = ''
+        guid = "%s-%s" % (idx_img, idx_cap)
+        text_a = cap['question']
+        text_b = tags
+        # during test, we don't have these two fields.
+        label = cap.get('answers')
+        if label is not None:
+            label = [self.answer2idx.get(l, -1)  for l in label]
+        score = cap.get('confs')
+        # during test, we need this for result submission
+        q_id = cap.get('question_id', 0)
+        key = data['key']
+        example = InputInstance(guid=guid, text_a=text_a, text_b=text_b,
+                                label=label, score=score, img_key=key, q_id=q_id)
+        entry = {
+            'key': key,
+            'example': example,
+        }
+
+        pad_token=0
+        sequence_a_segment_id=0
+        sequence_b_segment_id=1
+
+        cls_token_at_end=False
+        cls_token=self.tokenizer.cls_token
+        sep_token=self.tokenizer.sep_token
+        cls_token_segment_id= 0
+        pad_token_segment_id = 0
+        example = entry['example']
+
+        tokens_a = self.tokenizer.tokenize(example.text_a)
+
+        tokens_b = None
+        if example.text_b:
+            tokens_b = self.tokenizer.tokenize(example.text_b)
+            # Modifies `tokens_a` and `tokens_b` in place so that the total length is less than the specified length.
+            # Account for [CLS], [SEP], [SEP] with "- 3"
+            _truncate_seq_pair(tokens_a, tokens_b, self.max_seq_length - 3)
+        else:
+            # Account for [CLS] and [SEP] with "- 2"
+            if len(tokens_a) > self.max_seq_length - 2:
+                tokens_a = tokens_a[:(self.max_seq_length - 2)]
+
+        tokens = tokens_a + [sep_token]
+        segment_ids = [sequence_a_segment_id] * len(tokens)
+
+        if tokens_b:
+            tokens += tokens_b + [sep_token]
+            segment_ids += [sequence_b_segment_id] * (len(tokens_b) + 1)
+
+        if cls_token_at_end:
+            tokens = tokens + [cls_token]
+            segment_ids = segment_ids + [cls_token_segment_id]
+        else:
+            tokens = [cls_token] + tokens
+            segment_ids = [cls_token_segment_id] + segment_ids
+
+        input_ids = self.tokenizer.convert_tokens_to_ids(tokens)
+
+        # The mask has 1 for real tokens and 0 for padding tokens. Only real tokens are attended to.
+        input_mask = [1] * len(input_ids)
+
+        if self.pad_to_max:
+            # Zero-pad up to the sequence length.
+            padding_length = self.max_seq_length - len(input_ids)
+            input_ids = input_ids + ([pad_token] * padding_length)
+            input_mask = input_mask + ([0] * padding_length)
+            segment_ids = segment_ids + ([pad_token_segment_id] * padding_length)
+
+            assert len(input_ids) == self.max_seq_length
+            assert len(input_mask) == self.max_seq_length
+            assert len(segment_ids) == self.max_seq_length
+
+        if 'img_feats' in data:
+            # we always do the padding for the image features, no matter what
+            # the value of self.pad_to_max is
+            img_feat = data['img_feats']
+            if img_feat.shape[0] > self.max_img_seq_length:
+                img_feat = img_feat[0:self.max_img_seq_length, ]
+                if self.max_img_seq_length > 0:
+                    input_mask = input_mask + [1] * img_feat.shape[0]
+                    # segment_ids += [sequence_b_segment_id] * img_feat.shape[0]
+            else:
+                if self.max_img_seq_length > 0:
+                    input_mask = input_mask + [1] * img_feat.shape[0]
+                    # segment_ids = segment_ids + [sequence_b_segment_id] * img_feat.shape[0]
+                padding_matrix = torch.zeros((self.max_img_seq_length - img_feat.shape[0], img_feat.shape[1]))
+                img_feat = torch.cat((img_feat, padding_matrix), 0)
+                if self.max_img_seq_length > 0:
+                    input_mask = input_mask + ([0] * padding_matrix.shape[0])
+                    # segment_ids = segment_ids + [pad_token_segment_id] * padding_matrix.shape[0]
+            data['img_feats'] = img_feat
+
+        if (example.label is None):
+            label_id = [0]
+            score = [0]
+        elif len(example.label) == 0:
+            label_id = [0]
+            score = [0]
+        else:
+            #label_id = [self.label_map[l] for l in example.label]
+            label_id = example.label
+            score = example.score
+
+        new_scores = target_tensor(len(self.answer2idx), label_id, score)
+
+        update = {
+            'input_ids': torch.tensor(input_ids, dtype=torch.long),
+            'attention_mask': torch.tensor(input_mask, dtype=torch.long),
+            'token_type_ids': torch.tensor(segment_ids, dtype=torch.long),
+            #'label_id': torch.tensor([label_id[0]], dtype=torch.long),
+            'labels': torch.tensor(new_scores, dtype=torch.float),
+            'question_id': torch.tensor([example.q_id], dtype=torch.long)
+        }
+        for k in update:
+            assert k not in data
+        data.update(update)
+        return data
+
+class JPGEncodeDecode():
+    def __init__(self, quality_min=60, quality_max=95):
+        self.quality_min = quality_min
+        self.quality_max = quality_max
+
+    def __call__(self, im):
+        quality = random.random() * (self.quality_max - self.quality_min) + \
+            self.quality_min
+        quality = int(quality + 0.5)
+        im = encode_decode_im(im, quality)
+        return im
+
+class CropRegionIfExists():
+    def __init__(self, extend=1):
+        self.extend = extend
+
+    def __call__(self, data):
+        debug = False
+        #debug = True
+        if 'rect' in data['caption']:
+            rect = data['caption']['rect']
+            center_x, center_y = (rect[0] + rect[2]) / 2., (rect[1] + rect[3]) / 2.
+            rect_w, rect_h = rect[2] - rect[0], rect[3] - rect[1]
+            extended_x0 = center_x - rect_w / 2 * self.extend
+            extended_x1 = center_x + rect_w / 2 * self.extend
+            extended_y0 = center_y - rect_h / 2 * self.extend
+            extended_y1 = center_y + rect_h / 2 * self.extend
+            w, h = data['image'].size
+            extended_x0 = min(max(0, extended_x0), w - 1)
+            extended_x1 = min(max(0, extended_x1), w - 1)
+            extended_y0 = min(max(0, extended_y0), h - 1)
+            extended_y1 = min(max(0, extended_y1), h - 1)
+            extended_rect = [extended_x0, extended_y0, extended_x1, extended_y1]
+            if debug:
+                from PIL import ImageDraw
+                draw = ImageDraw.Draw(data['image'])
+                draw.rectangle(rect)
+                draw.rectangle(extended_rect)
+                data['image'].show()
+            if extended_rect[2] > extended_rect[0] + 1 and \
+                    extended_rect[3] > extended_rect[1] + 1:
+                # some annotation has some issues
+                data['image'] = data['image'].crop(extended_rect)
+            if debug:
+                data['image'].show()
+                logging.info(data['caption']['caption'])
+                import ipdb;ipdb.set_trace(context=15)
+        return data
+
+class SimCLRTransform(object):
+    def __init__(self, normalize=None, s=1, train_crop_size=224,
+                 out_keys=('image1', 'image2')):
+        if normalize is None:
+            normalize = transforms.Normalize(
+                mean=[0.485, 0.456, 0.406],
+                std=[0.229, 0.224, 0.225],
+            )
+        color_jitter = transforms.ColorJitter(
+            0.8, 0.8, 0.8, 0.2)
+        gaussian_kernel_size = int(0.1 * train_crop_size) // 2 * 2 + 1
+        data_transforms = transforms.Compose([
+            transforms.RandomResizedCrop(size=train_crop_size),
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomApply([color_jitter], p=0.8),
+            transforms.RandomGrayscale(p=0.2),
+            SimCLRGaussianBlur(kernel_size=gaussian_kernel_size),
+            transforms.ToTensor(),
+            normalize,
+            ])
+        self.two_crop_trans = TwoCropsTransform(data_transforms)
+        self.out_keys = out_keys
+
+    def __repr__(self):
+        return 'SimCLRTransform(two_crop_trans={})'.format(
+            self.two_crop_trans
+        )
+
+    def __call__(self, data):
+        im1, im2 = self.two_crop_trans(data['image'])
+        data[self.out_keys[0]] = im1
+        data[self.out_keys[1]] = im2
+        return data
+
+class SelectTransform(object):
+    def __init__(self, ts, selector):
+        self.ts = ts
+        self.selector = selector
+    def __repr__(self):
+        return 'SelectTransform(ts={}, selector={})'.format(
+            self.ts, self.selector
+        )
+    def __call__(self, data):
+        idx = self.selector(data)
+        return self.ts[idx](data)
+
+class ConvertToFP16(object):
+    def __init__(self, fields):
+        self.fields = fields
+    def __call__(self, data):
+        for f in self.fields:
+            if f in data:
+                from qd.torch_common import recursive_to_device
+                data[f] = recursive_to_device(data[f], torch.float16)
+        return data
 
