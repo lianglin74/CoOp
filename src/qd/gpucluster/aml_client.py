@@ -1,3 +1,7 @@
+#!/usr/bin/env python
+import matplotlib
+matplotlib.use('Agg')
+from qd.qd_common import hash_sha1
 import os.path as op
 from pprint import pformat
 import logging
@@ -680,12 +684,62 @@ class AMLClient(object):
     def upload_qd_model(self, model_file):
         self.upload_file(model_file)
 
+    def local_run(self, cmd):
+        c = create_cloud_storage(config_file=self.config_param['code_path']['azure_blob_config_file'])
+        code_path = '/tmp/code.zip'
+        c.az_download(
+            self.config_param['code_path']['path'],
+            code_path,
+        )
+
+        local2docker = {}
+        script_params = {}
+        for k in self.config_param:
+            if k.endswith('_folder'):
+                local_folder = k[:-len('_folder')]
+                local_folder = op.realpath(local_folder)
+                if op.isdir(local_folder):
+                    docker_folder = '/mnt/{}'.format(
+                        hash_sha1(local_folder))
+                    local2docker[local_folder] = docker_folder
+                    script_params['--' + k] = docker_folder
+        script_params['--code_path'] = code_path
+
+        script_params['--command'] = cmd
+        if self.sleep_if_fail:
+            script_params['--sleep_if_fail'] = '1'
+        if self.compile_args:
+            script_params['--compile_args'] = self.compile_args
+
+        interpreter_path = '/opt/conda/bin/python'
+        docker_source_directory = '/mnt/source_directory'
+
+        cmd_list = [
+            'docker', 'run',
+            '--rm', '--gpus', 'all',
+            '-v', '{}:{}'.format(code_path, code_path),
+            '-v', '{}:{}'.format(self.source_directory, docker_source_directory),
+        ]
+        for l, d in local2docker.items():
+            cmd_list.extend(('-v', '{}:{}'.format(l, d)))
+        for k, v in self.env.items():
+            cmd_list.append('--env')
+            cmd_list.append('{}={}'.format(k, v))
+        cmd_list.append(self.docker['image'])
+        cmd_list.extend([interpreter_path, op.join(docker_source_directory, self.entry_script)])
+        cmd_list.extend([k for kv in script_params.items() for k in kv])
+        cmd_run(cmd_list)
+
     def submit(self, cmd, num_gpu=None):
         self.attach_data_store()
         self.attach_mount_point()
 
-        script_params = {'--' + p: v['mount_point'] for p, v in self.config_param.items()}
-        script_params['--command'] = cmd
+        use_scrip_run_config = True
+        if use_scrip_run_config:
+            script_params = {'--' + p: str(v['mount_point']) for p, v in self.config_param.items()}
+        else:
+            script_params = {'--' + p: v['mount_point'] for p, v in self.config_param.items()}
+        script_params['--command'] = cmd if isinstance(cmd, str) else ' '.join(cmd)
         if self.sleep_if_fail:
             script_params['--sleep_if_fail'] = '1'
         if self.compile_args:
@@ -694,8 +748,10 @@ class AMLClient(object):
         from azureml.train.estimator import Estimator
         from azureml.train.dnn import PyTorch
         if self.aks_compute_global_dispatch:
-            from azureml.core import Environment
-            env = Environment('myenv')
+            #from azureml.core import Environment
+            #env = Environment('myenv')
+            import azureml
+            env = azureml.core.runconfig.EnvironmentDefinition()
         else:
             import azureml
             env = azureml.core.runconfig.EnvironmentDefinition()
@@ -720,24 +776,46 @@ class AMLClient(object):
 
         if num_gpu <= self.gpu_per_node:
             mpi_config.process_count_per_node = num_gpu
-            node_count = 1
+            node_count = 0 if num_gpu == 0 else 1
         else:
             assert (num_gpu % self.gpu_per_node) == 0
             mpi_config.process_count_per_node = self.gpu_per_node
             node_count = num_gpu // self.gpu_per_node
         if not self.multi_process:
-            mpi_config.process_count_per_node = 1
+            if node_count == 1:
+                # in some clusters, it is not allowed to specify mpi_config,
+                # but ok to set it as None
+                mpi_config = None
+            else:
+                mpi_config.process_count_per_node = 1
+
+        if use_scrip_run_config:
+            if mpi_config:
+                mpi_config.node_count = node_count
 
         if self.use_custom_docker:
-            estimator10 = Estimator(
-                source_directory=self.source_directory,
-                compute_target=self.compute_target,
-                script_params=script_params,
-                entry_script=self.entry_script,
-                environment_definition=env,
-                node_count=node_count,
-                distributed_training=mpi_config,
-            )
+            if use_scrip_run_config:
+                from azureml.core import ScriptRunConfig
+                estimator10 = ScriptRunConfig(
+                    source_directory=self.source_directory,
+                    script=self.entry_script,
+                    arguments=[x for kv in script_params.items() for x in kv],
+                    compute_target=self.compute_target,
+                    environment=env,
+                    distributed_job_config=mpi_config,
+                )
+                estimator10.run_config.data_references = dict((v['mount_point'].data_reference_name, v['mount_point'].to_config()) for v in
+                     self.config_param.values())
+            else:
+                estimator10 = Estimator(
+                    source_directory=self.source_directory,
+                    compute_target=self.compute_target,
+                    script_params=script_params,
+                    entry_script=self.entry_script,
+                    environment_definition=env,
+                    node_count=node_count,
+                    distributed_training=mpi_config,
+                )
         else:
             estimator10 = PyTorch(
                 source_directory=self.source_directory,
@@ -819,6 +897,15 @@ class AMLClient(object):
         rel_code_path = self.config_param['code_path']['path']
         # upload it
         self.config_param['code_path']['cloud_blob'].upload(random_abs_qd, rel_code_path)
+
+    def get_url(self, file_or_folder):
+        file_or_folder = clean_prefix(file_or_folder)
+        p = get_root_folder_in_curr_dir(file_or_folder)
+        key = '{}_folder'.format(p)
+        assert key in self.config_param, self.config_param.keys()
+        path_in_blob = op.join(self.config_param[key]['path'], file_or_folder[len(p) + 1:])
+        url = self.config_param[key]['cloud_blob'].get_url(path_in_blob)
+        return url
 
     def list(self, file_or_folder):
         file_or_folder = clean_prefix(file_or_folder)
@@ -973,6 +1060,8 @@ def detect_aml_error_message(app_id):
             from qd.qd_common import decode_to_str
             all_line = decode_to_str(read_to_buffer(log_file)).split('\n')
             for i, line in enumerate(all_line):
+                if 'unzip:  cannot find or open' in line:
+                    error_codes.add('CodeNotAvail')
                 if 'Got async event : local catastrophic error' in line:
                     error_codes.add('IBError')
                 if 'Output size is too small' in line:
@@ -1209,6 +1298,11 @@ def execute(task_type, **kwargs):
         params = kwargs['remainders']
         cmd = ' '.join(params)
         c.submit(cmd)
+    elif task_type == 'local':
+        c = create_aml_client(**kwargs)
+        params = kwargs['remainders']
+        cmd = ' '.join(params)
+        c.local_run(cmd)
     elif task_type in ['a', 'abort']:
         c = MultiAMLClient(**kwargs)
         for v in kwargs['remainders']:
@@ -1242,6 +1336,11 @@ def execute(task_type, **kwargs):
         for data in kwargs['remainders']:
             infos = c.list(data)
             print_table(infos)
+    elif task_type in ['url']:
+        c = create_aml_client(**kwargs)
+        for data in kwargs['remainders']:
+            url = c.get_url(data)
+            logging.info(url)
     elif task_type in ['rm']:
         c = create_aml_client(**kwargs)
         for data in kwargs['remainders']:
@@ -1293,22 +1392,24 @@ def parse_args():
     import argparse
     parser = argparse.ArgumentParser(description='Philly Interface')
     parser.add_argument('task_type',
-            choices=['ssh', 'q', 'query', 'f', 'failed', 'a', 'abort', 'submit',
-                'qf', # query failed jobs
-                'qq', # query queued jobs
-                'qr', # query running jobs
-                'd', 'download',
-                'u', 'upload',
-                     'do',
-                'monitor',
-                'parse',
-                'init',
-                'initc', # init with compile
-                'initi', # incremental init
-                'initic', # incremental & compile
-                'blame', 'resubmit',
-                     'ls', 'rm',
-                's', 'summary', 'i', 'inject'])
+                        choices=['ssh', 'q', 'query', 'f', 'failed', 'a', 'abort', 'submit',
+                                 'local',
+                                 'qf', # query failed jobs
+                                 'qq', # query queued jobs
+                                 'qr', # query running jobs
+                                 'd', 'download',
+                                 'u', 'upload',
+                                 'do',
+                                 'monitor',
+                                 'parse',
+                                 'init',
+                                 'initc', # init with compile
+                                 'initi', # incremental init
+                                 'initic', # incremental & compile
+                                 'blame', 'resubmit',
+                                 'ls', 'rm',
+                                 'url',
+                                 's', 'summary', 'i', 'inject'])
     parser.add_argument('-no-wl', dest='with_log', action='store_false')
     parser.add_argument('-no-dt', dest='with_details', action='store_false')
     parser.add_argument('-no-lf', dest='log_full', action='store_false')
