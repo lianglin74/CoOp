@@ -1,0 +1,64 @@
+all_test_data:
+- test_data: TaxCocoCaption
+  test_split: test
+param:
+  adamw_second_beta: 0.98
+  add_img_text_type_encoding: true
+  add_od_labels: false
+  async_dataloader: true
+  base_lr: 5.0e-05
+  basemodel: output/TaxCCSBUCocoVGCap384Q90SF_B_Vilt_BS4096_MaxIter40e_LR0.0002_IMIN224.384_Crop384_SS0.8_ds_FP16_DPath0.1_vit_base_patch16_384_ClipT0.01_FastData_EffVG_ClipSeqSmooth_FastRectLessAug/snapshot/model_iter_0097169.pt.convert.to.caption.pt
+  bias_no_weight_decay: true
+  crop_pct: 1.0
+  data: TaxCocoCaption
+  dist_url_tcp_port: 28860
+  drop_out: 0.1
+  drop_path_rate: 0.1
+  effective_batch_size: 512
+  env:
+    candidate_clusters:
+    - eu
+    - we3v32
+    - we2v32
+    - wev32
+    cluster: wev32
+    compile_args: -no-mask -no-od -no-fcos -no-mmdet
+    num_gpu: 8
+    run_type: save_config
+  evaluate_method: caption
+  expid: CAPU_BS512_MaxIter50e_LR5e-05_Crop384_Tvilt_WD0.01_Warm0.1_BiasNWD_AMP_noL_Seq40_baseccd02_S0_NPad_A40_DropO0.1_MEnc_od_min_max_ST401_DPath0.1_NormAft_MaxPos40_pixelbert_randaug_NoDecayLN_SecBeta0.98_ImM_ViTB32_384
+  expid_prefix: CAPU
+  full_expid: TaxCocoCaption_B_CAPU_BS512_MaxIter50e_LR5e-05_Crop384_Tvilt_WD0.01_Warm0.1_BiasNWD_AMP_noL_Seq40_baseccd02_S0_NPad_A40_DropO0.1_MEnc_od_min_max_ST401_DPath0.1_NormAft_MaxPos40_pixelbert_randaug_NoDecayLN_SecBeta0.98_ImM_ViTB32_384
+  ignore_project_image: true
+  image_encoder_return_mask: true
+  image_encoder_type: VitEmb_vit_base_patch32_384
+  ln_no_weight_decay: true
+  log_step: 100
+  max_img_seq_length: 0
+  max_iter: 50e
+  max_position_embeddings: 40
+  max_seq_a_length: 40
+  max_seq_length: 40
+  monitor_after: true
+  net: B
+  norm_after: true
+  num_workers: 8
+  pad_to_max: false
+  pipeline_type:
+    from: qd.pipelines.caption_uni_pipeline
+    import: CaptionUniPipeline
+  resize_crop: od_min_max
+  sample_token: 401
+  test_batch_size: 1
+  test_crop_size: 384
+  text_encoder_type: ./models/timm_vit_bert_token/base_patch32_384
+  tie_weights: false
+  train_crop_size: 384
+  train_transform: vilt
+  use_amp: true
+  use_img_layernorm: false
+  vilt_test_transform: pixelbert
+  vilt_train_transform: pixelbert_randaug
+  warmup_steps: 0.1
+  weight_decay: 0.01
+type: pipeline_train_eval_multi
