@@ -1,6 +1,7 @@
 import json
 from pprint import pformat
 import torch
+import copy
 from torch import nn
 from qd.qd_common import get_mpi_rank, get_mpi_size
 from qd.qd_common import is_hvd_initialized
@@ -11,7 +12,7 @@ import os.path as op
 from torch import nn
 import logging
 from qd.qd_common import get_mpi_local_rank, get_mpi_local_size
-from qd.qd_common import ensure_directory
+from qd.qd_common import ensure_directory, try_once
 import math
 
 
@@ -62,11 +63,7 @@ def init_random_seed(random_seed):
     torch.manual_seed(random_seed)
     torch.cuda.manual_seed_all(random_seed)
 
-def boxlist_to_list_dict(box_list,
-                         label_id_to_label,
-                         extra=0,
-                         encode_np_fields=[],
-                         ):
+def boxlist_to_list_dict(box_list, label_id_to_label, extra=0, encode_np_fields=[],):
     # box_list here is the maskrcnn-benchmark style of BoxList
     # use to_rects, which handles the case where 'labels' not in the field
     box_list = box_list.convert("xyxy")
@@ -81,11 +78,7 @@ def boxlist_to_list_dict(box_list,
     for i, (box, score, label_id) in enumerate(zip(boxes, scores, labels)):
         top_left, bottom_right = box[:2].tolist(), box[2:].tolist()
 
-        r = [top_left[0],
-             top_left[1],
-             bottom_right[0] + extra,
-             bottom_right[1] + extra,
-             ]
+        r = [top_left[0], top_left[1], bottom_right[0] + extra, bottom_right[1] + extra, ]
         rect = {'class': label_id_to_label[label_id], 'conf': score, 'rect': r}
 
         for k, v in extra_key_values:
@@ -116,12 +109,9 @@ def freeze_parameters(modules):
         for n, p in m.named_parameters():
             p.requires_grad = False
             if hasattr(m, 'name_from_root'):
-                logging.info('freeze param: {}.{}'.format(
-                    m.name_from_root,
-                    n))
+                logging.info('freeze param: {}.{}'.format(m.name_from_root, n))
             else:
-                logging.info('freeze param: {}'.format(
-                    n))
+                logging.info('freeze param: {}'.format(n))
         m.eval()
 
 def get_torch_version_info():
@@ -193,6 +183,17 @@ def torch_load(filename):
     result = torch.load(filename, map_location=lambda storage, loc: storage)
     releaseLock(lock_fd)
     return result
+
+def recursive_tensor_to(d, t, condition=None, **kwargs):
+    if isinstance(d, tuple) or isinstance(d, list):
+        return [recursive_tensor_to(x, t, condition, **kwargs) for x in d]
+    elif isinstance(d, dict):
+        return dict((k, recursive_tensor_to(v, t, condition)) for k, v in d.items())
+    elif isinstance(d, torch.Tensor) and (condition is None or condition(d)):
+        #return d.to(device, non_blocking=True)
+        return d.to(t, **kwargs)
+    else:
+        return d
 
 def recursive_to_device(d, device, **kwargs):
     if isinstance(d, tuple) or isinstance(d, list):
@@ -343,9 +344,20 @@ def sinkhorn(sim, eps, niters):
         Q *= (c / (Q.sum(dim=0) + 1e-5)).unsqueeze(0)
     return (Q / (Q.sum(dim=0, keepdim=True) + 1e-5)).T
 
+def describe_tensor_data(d, num_dec=2):
+    if isinstance(d, torch.Tensor):
+        return describe_tensor(d)
+    elif isinstance(d, (tuple, list)):
+        return [describe_tensor_data(x) for x in d]
+    elif isinstance(d, dict):
+        return dict((k, describe_tensor_data(v)) for k, v in d.items())
+    else:
+        return d
 @torch.no_grad()
 def describe_tensor(t, num_dec=2):
     t = t.float()
+    if t.numel() == 0:
+        return 'empty'
     if t.numel() == 1:
         return 'value={:.2f}'.format(float(t))
     format_str = \
@@ -355,10 +367,21 @@ def describe_tensor(t, num_dec=2):
     return format_str.format(
         t.shape,
         t.min(),
-                             t.max(),
-                             t.mean(),
-                             t.std(),
-                             )
+        t.max(),
+        t.mean(),
+        t.std(),
+    )
+
+@try_once
+def print_data_info(data):
+    from qd.qd_common import dict_get_all_path, dict_get_path_value
+    all_path = dict_get_all_path(data)
+    pvs = [(p, dict_get_path_value(data, p)) for p in all_path]
+    for p, v in pvs:
+        if isinstance(v, torch.Tensor):
+            logging.info('{} = {}'.format(p, describe_tensor(v)))
+        else:
+            logging.info('{} = {}'.format(p, v))
 
 @torch.no_grad()
 def concat_all_gather(tensor):
@@ -400,13 +423,14 @@ def get_master_node_ip():
         else:
             return 'localhost'
 
-def ensure_init_process_group(device_id=None, port=12345):
+def ensure_init_process_group(
+        device_id=None, port=12345, backend='nccl'):
     if not dist.is_initialized():
         dist_url = 'tcp://{}:{}'.format(get_master_node_ip(),
                 port)
         from datetime import timedelta
         init_param = {
-            'backend': 'nccl',
+            'backend': backend,
             'init_method': dist_url,
             'rank': get_mpi_rank(),
             'world_size': get_mpi_size(),
@@ -417,6 +441,11 @@ def ensure_init_process_group(device_id=None, port=12345):
         torch.cuda.set_device(device_id)
         logging.info(init_param)
         dist.init_process_group(**init_param)
+        logging.info('initialized')
+
+def destroy_process_group():
+    if dist.is_initialized():
+        dist.destroy_process_group()
 
 def calc_num_node_in_grad_fn(grad_fn):
     result = 0
@@ -1084,6 +1113,85 @@ def remove_prefix(model, prefix):
         out[k] = v
     return out
 
+def convert_VILTUniPipeline_to_VQAUniPipeline(basemodel, out_file):
+    model = torch_load(basemodel)
+    model = model['model']
+    from qd.torch_common import remove_prefix
+    model = remove_prefix(model, 'module.')
+    old2new = {}
+    for k in model:
+        if k.startswith('transformer.blocks.'):
+            k2 = 'module.module.bert.encoder.blocks.' + k[len('transformer.blocks.'):]
+            old2new[k] = k2
+        elif k.startswith('transformer.norm.'):
+            k2 = 'module.module.bert.encoder.norm.' + k[len('transformer.norm.'):]
+            old2new[k] = k2
+        elif k.startswith('transformer.'):
+            k2 = 'module.image_encoder.module.' + k[len('transformer.'):]
+            old2new[k] = k2
+        elif k == 'token_type_embeddings.weight':
+            k2 = 'module.module.bert.img_text_type'
+            old2new[k] = k2
+        elif k.startswith('text_embeddings.'):
+            k2 = 'module.bert.embeddings.' + k[len('text_embeddings.'):]
+            old2new[k] = k2
+        elif 'vqa_classifier.' in k:
+            k2 = k.replace('vqa_classifier.', 'classifier.')
+            old2new[k] = k2
+    for k, k2 in old2new.items():
+        v = model[k]
+        del model[k]
+        model[k2] = v
+    torch_save(model, out_file)
+
+def convert_VLPVILTUniPipeline_to_ClipUniPipeline(basemodel, out_file):
+    model = torch_load(basemodel)
+    model = model['model']
+    torch_save(model, out_file)
+
+def convert_VLPVILTUniPipeline_to_CaptionUniPipeline(basemodel, out_file):
+    model = torch_load(basemodel)
+    if 'model' in model:
+        model = model['model']
+    from qd.torch_common import remove_prefix
+    model = remove_prefix(model, 'module.')
+    old2new = {}
+    for k in model:
+        if k.startswith('transformer.blocks.'):
+            k2 = 'module.module.bert.encoder.blocks.' + k[len('transformer.blocks.'):]
+            old2new[k] = k2
+        elif k.startswith('transformer.norm.'):
+            k2 = 'module.module.bert.encoder.norm.' + k[len('transformer.norm.'):]
+            old2new[k] = k2
+        elif k.startswith('transformer.'):
+            k2 = 'module.image_encoder.module.' + k[len('transformer.'):]
+            old2new[k] = k2
+        elif k == 'token_type_embeddings.weight':
+            k2 = 'module.module.bert.img_text_type'
+            old2new[k] = k2
+        elif k.startswith('text_embeddings.'):
+            k2 = 'module.bert.embeddings.' + k[len('text_embeddings.'):]
+            old2new[k] = k2
+        elif 'vqa_classifier.' in k:
+            k2 = k.replace('vqa_classifier.', 'classifier.')
+            old2new[k] = k2
+        elif k.startswith('seq2seq_score.'):
+            k2 = 'module.module.cls.predictions.' + k[len('seq2seq_score.'):]
+            old2new[k] = k2
+        elif k.startswith('mlm_score.'):
+            k2 = 'module.module.cls.predictions.' + k[len('mlm_score.'):]
+            old2new[k] = k2
+        elif any(k.startswith(p) for p in [
+            'pooler.', 'itm_score.', 'ma_teacher.']):
+            pass
+        else:
+            raise NotImplementedError(k)
+    for k, k2 in old2new.items():
+        v = model[k]
+        del model[k]
+        model[k2] = v
+    torch_save(model, out_file)
+
 def adapt_position_encoding(model_file, before, patch_size, after, out_file,
                             suffix='image_encoder.module.pos_embed'):
     model = torch_load(model_file)
@@ -1116,3 +1224,109 @@ def adapt_position_encoding(model_file, before, patch_size, after, out_file,
     model[key] = pos_embed
     torch_save(model, out_file)
 
+def sample_token(x, num, ignore_cls=False):
+    # use in vilt or ViT token sampling
+    B, N = x.shape[:2]
+    if N <= num or num <= 0:
+        return x
+    if not ignore_cls:
+        # by default, we always include the first one, which is [CLS] token
+        zero = torch.zeros((1,), dtype=torch.int64)
+        ys = [x[b][torch.cat((zero, torch.randperm(N - 1)[:(num-1)] + 1))] for b in range(B)]
+    else:
+        ys = [x[b][torch.randperm(N)[:num]] for b in range(B)]
+    x = torch.stack(ys)
+    return x
+
+class DictModule(nn.Module):
+    def forward_update(self, data):
+        raise NotImplementedError
+    def forward(self, data):
+        update_data = self.forward_update(data)
+        for k in update_data:
+            assert k not in data
+        data.update(update_data)
+        return data
+
+def construct_seq2seq_mask(text_masks, image_masks):
+    batch_size = text_masks.shape[0]
+    text_tokens = text_masks.shape[1]
+    image_tokens = image_masks.shape[1]
+    top_left = torch.ones(
+        (batch_size, text_tokens, text_tokens),
+        device=text_masks.device,
+        dtype=text_masks.dtype,
+    )
+    top_left = torch.tril(top_left)
+    top_right = torch.ones(
+        (batch_size, text_tokens, image_tokens),
+        device=text_masks.device,
+        dtype=text_masks.dtype,
+    )
+    bottom_left = torch.zeros(
+        (batch_size, image_tokens, text_tokens),
+        device=text_masks.device,
+        dtype=text_masks.dtype,
+    )
+    bottom_right = torch.ones(
+        (batch_size, image_tokens, image_tokens),
+        device=text_masks.device,
+        dtype=text_masks.dtype,
+    )
+    top = torch.cat((top_left, top_right), dim=2)
+    bottom = torch.cat((bottom_left, bottom_right), dim=2)
+    co_masks = torch.cat((top, bottom), dim=1)
+    co_masks = co_masks * torch.cat([text_masks, image_masks], dim=1)[:, None, :]
+    return co_masks
+
+def clone_module(module):
+    #clone = copy.deepcopy(module)
+    clone = module.__new__(type(module))
+    clone.__dict__ = module.__dict__.copy()
+
+    if hasattr(clone, '_parameters'):
+        for param_key in module._parameters:
+            if module._parameters[param_key] is not None:
+                clone._parameters[param_key] = module._parameters[param_key].clone()
+
+    if hasattr(clone, '_buffers'):
+        for buffer_key in module._buffers:
+            if clone._buffers[buffer_key] is not None and \
+                    clone._buffers[buffer_key].requires_grad:
+                clone._buffers[buffer_key] = module._buffers[buffer_key].clone()
+
+    if hasattr(clone, '_modules'):
+        for module_key in clone._modules:
+            clone._modules[module_key] = clone_module(
+                module._modules[module_key],
+            )
+
+    return clone
+
+def patch_apex_convert_network_param_ignore_norm(network, dtype):
+    from apex.fp16_utils import convert_module
+    for module in network.modules():
+        if isinstance(module, torch.nn.modules.batchnorm._BatchNorm) and module.affine is True:
+            continue
+        if isinstance(module, torch.nn.LayerNorm) and module.elementwise_affine is True:
+            continue
+        convert_module(module, dtype)
+        if isinstance(module, torch.nn.RNNBase) or isinstance(module, torch.nn.modules.rnn.RNNBase):
+            module.flatten_parameters()
+    return network
+
+def patch_apex_convert_network_ignore_norm():
+    import apex.fp16_utils
+    apex.fp16_utils.fp16util.convert_network = patch_apex_convert_network_param_ignore_norm
+    apex.fp16_utils.convert_network = patch_apex_convert_network_param_ignore_norm
+    from apex.amp import _initialize
+    _initialize.convert_network = patch_apex_convert_network_param_ignore_norm
+
+if __name__ == '__main__':
+    from qd.qd_common import init_logging, parse_general_args
+    init_logging()
+    kwargs = parse_general_args()
+    logging.info('param:\n{}'.format(pformat(kwargs)))
+    function_name = kwargs['type']
+    del kwargs['type']
+    locals()[function_name](**kwargs)

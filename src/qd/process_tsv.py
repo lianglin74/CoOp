@@ -6020,6 +6020,7 @@ def tsv_subset_process_NtoN(info):
                 continue
             yield r
     tsv_writers(gen_rows(), tmp_out, sep=sep)
+    logging.info('done to generate {}'.format(tmp_out))
 
 def tsv_subset_process_1toN(info):
     row_processor = info['row_processor']
@@ -6107,6 +6108,8 @@ def parallel_tsv_process_NtoN(row_processor, in_tsv_files,
     in_tsvs = [TSVFile(in_tsv_file) for in_tsv_file in in_tsv_files]
     total = len(in_tsvs[0])
     assert all(len(t) == total for t in in_tsvs[1:])
+    for t in in_tsvs:
+        t.close()
     if num_jobs is None:
         num_jobs = max(1, num_process)
     rows_each_rank = (total + num_jobs - 1) // num_jobs
@@ -7285,7 +7288,9 @@ def merge_dataset(source_infos, target_info, ps):
                                          version=version)
                 curr_list = load_list_file(tsv_x)
                 curr_shuffle = dataset.get_shuffle_file(source['split'])
-                shuffle.extend([(int(i) + tsv_offset, j) for i, j in tsv_reader(curr_shuffle)])
+                logging.info('loading {}'.format(curr_shuffle))
+                shuffle.extend([(int(i) + tsv_offset, j) for i, j in
+                                tqdm(tsv_reader(curr_shuffle))])
                 tsv_list.extend(curr_list)
         out_tsvx = target_dataset.get_data(
             target_info['split'] + 'X', p['type'],
@@ -7384,10 +7389,16 @@ def generate_key_idximage_idxcaption(data, split, version=None):
     if not dataset.has(split, 'caption', version):
         logging.info('ignore to generate as caption file does not exist')
         return
-    iter_caption = dataset.iter_data(split, 'caption', version=version)
-
+    #from qd.data_layer.loader import iter_data_loader
+    #iter_caption = iter_data_loader(
+        #data, split, 'caption', version=version,
+        #transform=lambda x: (x[0], json.loads(x[1])),
+        #num_workers=8,
+    #)
     def gen_rows():
-        for idx_img, (key, s) in tqdm(enumerate(iter_caption)):
+        iter_caption = dataset.iter_data(split, 'caption', version=version)
+        total = dataset.num_rows(split, 'caption')
+        for idx_img, (key, s) in tqdm(enumerate(iter_caption), total=total):
             cs = json.loads(s)
             for i in range(len(cs)):
                 yield key, idx_img, i
@@ -7863,8 +7874,13 @@ def limit_image_size(in_rows, min_size, max_size, resave=True, quality=None):
     #debug = True
     debug = False
     in_img_row, in_hw_row = in_rows
-    hw = in_hw_row[1]
-    h, w = parse_hw_column(hw)
+    img = img_from_base64(in_img_row[-1])
+    h, w = parse_hw_column(in_hw_row[1])
+    if w != img.shape[1] or h != img.shape[0]:
+        logging.info('{}: w = {}; h = {}; img.shape = {}'.format(
+            in_img_row[0], w, h, img.shape))
+        w = img.shape[1]
+        h = img.shape[0]
     image_min = min(h, w)
     image_max = max(h, w)
     if image_min < min_size and image_max < max_size:
@@ -7877,16 +7893,10 @@ def limit_image_size(in_rows, min_size, max_size, resave=True, quality=None):
     h2 = int(round(scale * h))
     w2 = max(1, w2)
     h2 = max(1, h2)
-    img = img_from_base64(in_img_row[-1])
     #img = pilimg_from_base64(in_img_row[-1])
     #img = ImageOps.exif_transpose(img)
     if debug:
         img.show()
-    assert w == img.shape[1], in_img_row[0]
-    assert h == img.shape[0], in_img_row[0]
-    #assert w == img.size[0], in_img_row[0]
-    #assert h == img.size[1], in_img_row[0]
-    #save_image(img, '/tmp/a.jpg')
     img = cv2.resize(img, (w2, h2),
                      interpolation=cv2.INTER_AREA,
                      )
@@ -7959,19 +7969,20 @@ def filter_dataset_by_size(data, out_data):
                 out_dataset.get_data('trainX', t),
             )
 
-def limit_dataset_image_size(data, min_size, max_size, quality, out_data):
+def limit_dataset_image_size(
+        data, split, image_t, min_size, max_size,
+        quality, out_data):
     dataset = TSVDataset(data)
     out_dataset = TSVDataset(out_data)
 
-    split = 'train'
-    if op.isfile(dataset.get_data(split)):
-        in_img_tsv = [dataset.get_data(split)]
+    if op.isfile(dataset.get_data(split, image_t)):
+        in_img_tsv = [dataset.get_data(split, image_t)]
         caption_tsvs = [dataset.get_data(split, 'caption')]
         in_hw_tsv = [dataset.get_data(split, 'hw')]
-        out_tsv = [out_dataset.get_data(split)]
+        out_tsv = [out_dataset.get_data(split, image_t)]
         single_tsv = True
     else:
-        in_img_tsv = load_list_file(dataset.get_data(split + 'X'))
+        in_img_tsv = load_list_file(dataset.get_data(split + 'X', image_t))
         in_hw_tsv = load_list_file(dataset.get_data(split + 'X', 'hw'))
         num_split = len(in_img_tsv)
         out_tsv = [out_dataset.get_data(split + '_{}_{}'.format(i, num_split))
@@ -7995,7 +8006,7 @@ def limit_dataset_image_size(data, min_size, max_size, quality, out_data):
     if not single_tsv:
         write_to_file(
             '\n'.join(out_tsv),
-            out_dataset.get_data(split + 'X'),
+            out_dataset.get_data(split + 'X', image_t),
         )
         write_to_file(
             '\n'.join(caption_tsvs),
@@ -8019,16 +8030,19 @@ def limit_dataset_image_size(data, min_size, max_size, quality, out_data):
         )
     else:
         for t in ['label', 'caption']:
-            tsv_copy(
-                dataset.get_data(split, t),
-                out_dataset.get_data(split, t)
-            )
-        populate_dataset_hw(out_data)
-    ensure_copy_file(
-        dataset.get_labelmap_file(),
-        out_dataset.get_labelmap_file()
-    )
-
+            from_f = dataset.get_data(split, t)
+            from qd.tsv_io import QDFile
+            if QDFile.isfile(from_f):
+                tsv_copy(
+                    dataset.get_data(split, t),
+                    out_dataset.get_data(split, t)
+                )
+        populate_dataset_hw(out_data, splits=[split], img_t=image_t)
+    if QDFile.isfile(dataset.get_labelmap_file()):
+        ensure_copy_file(
+            dataset.get_labelmap_file(),
+            out_dataset.get_labelmap_file()
+        )
 
 if __name__ == '__main__':
     from qd.qd_common import parse_general_args

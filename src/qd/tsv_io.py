@@ -134,18 +134,17 @@ class CompositeTSVFile(object):
         result = self.tsvs[idx_source].seek(idx_row)
         end = time.time()
         if end - start > 10:
-            logging.info('too long to load fname = {}, source={}, row={}, time={}'.format(
+            logging.warning('too long to load fname = {}, source={}, row={}, time={}'.format(
                 self.tsvs[idx_source],
                 idx_source,
                 idx_row,
                 end - start
             ))
-        if self.hold_buffer > 0:
-            if idx_source not in self.hold_sources:
-                if len(self.hold_sources) >= self.hold_buffer:
-                    close_idx_source = self.hold_sources.pop(0)
-                    self.tsvs[close_idx_source].close_fp()
-                self.hold_sources.append(idx_source)
+        if self.hold_buffer > 0 and idx_source not in self.hold_sources:
+            if len(self.hold_sources) >= self.hold_buffer:
+                close_idx_source = self.hold_sources.pop(0)
+                self.tsvs[close_idx_source].close_fp()
+            self.hold_sources.append(idx_source)
         return result
 
     def __len__(self):
@@ -227,7 +226,7 @@ class TSVFile(object):
         if i < len(self) - 1:
             end = self.get_offset(i + 1)
         else:
-            end = get_file_size(self.tsv_file)
+            end = QDFile.get_file_size(self.tsv_file)
         return end - start
 
     def close_fp(self):
@@ -547,10 +546,10 @@ class TSVDataset(object):
             result[key] = i
         return result
 
-    def load_keys(self, split):
-        assert self.has(split, 'label')
+    def load_keys(self, split, t='label'):
+        assert self.has(split, t)
         result = []
-        for row in tqdm(self.iter_data(split, 'label'), mininterval=2):
+        for row in tqdm(self.iter_data(split, t), mininterval=2):
             result.append(row[0])
         return result
 
@@ -1468,8 +1467,19 @@ class QDFile(object):
 
     @classmethod
     def get_file_size(cls, fname):
+        cls.ensure_initialized()
         if cls.use_fuser:
             return cls.fuser.get_file_size(fname)
         else:
             return get_file_size(fname)
+
+    @classmethod
+    def prepare(cls, file_or_fnames):
+        if isinstance(file_or_fnames, str):
+            file_or_fnames = [file_or_fnames]
+        fnames = file_or_fnames
+        cls.ensure_initialized()
+        if cls.use_fuser:
+            cls.fuser.ensure_cache(fnames)
+
 

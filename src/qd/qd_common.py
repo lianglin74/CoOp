@@ -3572,7 +3572,8 @@ def auto_parse_log_line(line):
         # in this case, we will try to parse if there is like acc = {}
         if '=' not in line:
             return result
-        parts = line.split(':')
+        parts = re.split(':|,|;', line)
+        #parts = line.split(':')
         for p in parts:
             if '=' in p:
                 sub_parts = p.split('=')
@@ -3622,64 +3623,6 @@ def auto_parse_log_line(line):
 
         return result
 
-def auto_inject_log_to_board(fname, folder):
-    from torch.utils.tensorboard import SummaryWriter
-    wt = SummaryWriter(log_dir=folder)
-    from qd.qd_common import read_lines
-    num = 0
-    started = False
-    from collections import defaultdict
-    counter = defaultdict(int)
-    first_wall_time = None
-    for line in read_lines(fname, errors='ignore'):
-        if not started and 'dataset =' in line:
-            started = True
-        if not started:
-            continue
-        info = auto_parse_log_line(line)
-        if len(info) == 0:
-            continue
-        for k, v in info.items():
-            if k in ['time', 'iter']:
-                continue
-            args = {'tag': k, 'scalar_value': v}
-            if 'iter' in info:
-                args['global_step'] = int(info['iter'])
-            else:
-                args['global_step'] = counter[k]
-                counter[k] += 1
-            if 'time' in info:
-                if not first_wall_time:
-                    first_wall_time = info['time']
-                #args['walltime'] = (info['time'] - datetime(1970,1,1)).total_seconds()
-                args['walltime'] = (info['time'] - first_wall_time).total_seconds()
-            num += 1
-            wt.add_scalar(**args)
-    if not started:
-        logging.info('not detected the starting hint')
-    else:
-        logging.info('injected {}'.format(num))
-
-def auto_inject_multi_log_to_board(infos, out_folder):
-    for info in infos:
-        if 'full_expid' in info:
-            full_expid = info['full_expid']
-            files = glob.glob(op.join('output', full_expid, '*_rank0.txt'))
-        elif 'job_id' in info:
-            pattern = op.join('assets', info['job_id'], 'azureml-logs', '70_driver_log_0.txt')
-            files = glob.glob(pattern)
-            pattern = op.join('assets', info['job_id'], 'azureml-logs',
-                              '*0_stdout.txt')
-            files.extend(glob.glob(pattern))
-        name = info['name']
-        if len(files) > 1:
-            file_sizes = [(f, get_file_size(f)) for f in files]
-            f, _ = max(file_sizes, key=lambda x: x[1])
-        else:
-            assert len(files) == 1, len(files)
-            f = files[0]
-        logging.info(f)
-        auto_inject_log_to_board(f, op.join(out_folder, name))
 
 def identity(x):
     # only used in pipeline
@@ -3776,6 +3719,42 @@ def submit_to_evalai_for_vqa(fname, message):
     cmd = ["evalai", "submission", submission_id, "result"]
     return ' '.join(cmd)
 
+def recover_stdout_error():
+    import sys
+    sys.stdout = sys.__stdout__
+    sys.stderr = sys.__stderr__
+
+def switch_case(switch, case, default):
+    return case.get(switch, default)
+
+class wb(object):
+    initialized = False
+    enabled = True
+
+    @classmethod
+    def ensure_initialized(cls):
+        if not cls.initialized:
+            cls.initialized = True
+            try:
+                import wandb
+                wandb.init()
+            except:
+                logging.info('init fails, disable wandb')
+                cls.enabled = False
+
+    @classmethod
+    def watch(cls, *args, **kwargs):
+        cls.ensure_initialized()
+        if cls.enabled:
+            import wandb
+            wandb.watch(*args, **kwargs)
+
+    @classmethod
+    def log(cls, *args, **kwargs):
+        cls.ensure_initialized()
+        if cls.enabled:
+            import wandb
+            wandb.log(*args, **kwargs)
 
 if __name__ == '__main__':
     init_logging()
