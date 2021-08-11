@@ -15,7 +15,6 @@ from qd.qd_common import list_to_dict
 import torch
 import torch.distributed as dist
 from torch.utils.data.sampler import Sampler
-from torch._six import int_classes as _int_classes
 from qd.qd_common import get_mpi_rank, get_mpi_size, get_mpi_local_size, get_mpi_local_rank
 
 
@@ -121,7 +120,18 @@ class RankSplitSampler(Sampler):
     def __len__(self):
         raise ValueError('should not be called')
 
-def prepare_tsv_file_process(queue):
+def create_prepare_tsv_file_process(max_len=8):
+    import threading
+    import queue
+    prepare_queue = queue.Queue()
+    p = threading.Thread(
+        target=prepare_tsv_file_process, args=(prepare_queue, max_len),
+        daemon=True,
+    )
+    p.start()
+    return p, prepare_queue
+
+def prepare_tsv_file_process(queue, max_len=8):
     if os.environ.get('QD_TSV_USE_FUSE'):
         if int(os.environ['QD_TSV_USE_FUSE']):
             ftype = 'fuser'
@@ -133,9 +143,9 @@ def prepare_tsv_file_process(queue):
     if ftype == 'fuser':
         from qd.cloud_storage import create_cloud_fuse
         fuser = create_cloud_fuse()
+    logging.info('ftype = {}'.format(ftype))
 
     prepared = []
-    max_len = 32
 
     while True:
         start = time.time()
@@ -149,10 +159,11 @@ def prepare_tsv_file_process(queue):
             curr_fs.append(fname)
             if fname.endswith('.tsv'):
                 lineidx = get_tsv_lineidx(fname)
-                if op.isfile(lineidx):
+                from qd.tsv_io import QDFile
+                if QDFile.isfile(lineidx):
                     curr_fs.append(lineidx)
                 lineidx8b = get_tsv_lineidx_8b(fname)
-                if op.isfile(lineidx8b):
+                if QDFile.isfile(lineidx8b):
                     curr_fs.append(lineidx8b)
 
         def unprepare(info):
@@ -165,7 +176,19 @@ def prepare_tsv_file_process(queue):
                     fuser.ensure_del_cache(f)
             logging.info('unprepared {}'.format(info['fnames']))
 
-        while len(prepared) >= max_len:
+        sames = [i for i, p in enumerate(prepared)
+                   if all(f in  p['fnames'] for f in curr_fs)]
+        if len(sames) > 0:
+            i = sames[0]
+            p = prepared[i]
+            del prepared[i]
+            prepared.append(p)
+            logging.info('no need to prepare {} as it prepared'.format(
+                curr_fs
+            ))
+            continue
+
+        while max_len > 0 and len(prepared) >= max_len:
             unprepare(prepared.pop(0))
 
         logging.info('prepare {}'.format(curr_fs))
@@ -181,9 +204,11 @@ def prepare_tsv_file_process(queue):
             }
             fuser.ensure_cache(curr_fs)
         prepared.append(info)
-        logging.info('use {}s, prepared {}'.format(
+        logging.info('use {}s, prepared {}, all hold={}'.format(
             time.time() - start,
-            curr_fs))
+            curr_fs,
+            ', '.join([f for p in prepared for f in p['fnames']]),
+        ))
 
 #def create_shuffle_group_process(shuffle,
                                  #random_seed, idx_split,
@@ -337,7 +362,9 @@ def ordered_unique(sequence):
 
 class SplitBySplitSampler(Sampler):
     # only used in training mode.
-    def __init__(self, dataset, group_size=1, shuffle=True, random_seed=9,
+    def __init__(self, dataset, group_size=1, shuffle=True,
+                 fixed_samples_in_node=False,
+                 random_seed=9,
                  prepare_t_versions=[],
                  disable_prepare=None,
                  ):
@@ -373,6 +400,8 @@ class SplitBySplitSampler(Sampler):
         self.cache_group_index_on_node = None
 
         self.disable_prepare = disable_prepare
+        self.get_group_process = None
+        self.fixed_samples_in_node = fixed_samples_in_node
 
     def get_composite_source_idx(self):
         return self.dataset.get_composite_source_idx()
@@ -407,73 +436,6 @@ class SplitBySplitSampler(Sampler):
             self._idx_split.share_memory_()
         return self._idx_split
 
-    #def create_process_to_create_shuffle_group(self):
-        ## don't use this function as it is not working
-        ##out_queue = mp.Queue(100)
-        #out_queue = mp.SimpleQueue()
-        ##out_queue = mp.Queue()
-        ##import torch.multiprocessing as pmp
-        #p = mp.Process(target=create_shuffle_group_process,
-                       #args=(self.shuffle, self.random_seed, self.idx_split,
-                             #self.rank, self.world_size,
-                             #self.local_rank, self.local_size,
-                             #self.group_size,
-                             #out_queue,
-                             #100,
-                             #))
-        ##p.daemon = True
-        #p.start()
-        #logging.info('shuffle group = {}'.format(p.pid))
-        #self.shuffle_group_out_queue = out_queue
-        #return p
-
-    #def get_shuffle_group(self):
-        ## don't use this function as it is not working
-        #if self.sub_process_create_shuffle:
-            #if self.shuffle_group_process is None:
-                #self.shuffle_group_process = self.create_process_to_create_shuffle_group()
-            #start = time.time()
-            #while self.shuffle_group_out_queue.qsize() == 0:
-                #logging.info('queue len is 0')
-                #time.sleep(1)
-            #group = self.shuffle_group_out_queue.get()
-            #end = time.time()
-            #if end - start > 60:
-                #logging.info('cost {} to get shuffle group'.format(
-                    #end - start,
-                #))
-            #for k in group:
-                #group[k] = group[k].tolist()
-            #return group
-        #else:
-            #while True:
-                #for group in create_shuffle_group_on_node(
-                        #self.shuffle, self.random_seed, self.idx_split, self.rank,
-                        #self.world_size, self.local_rank,
-                        #self.local_size, self.group_size, use_np=False,
-                        #use_random=False,
-                #):
-                    #for k in group:
-                        #group[k] = group[k].tolist()
-                    #yield group
-                #self.random_seed += 99
-
-    #def __del__(self):
-        ## i know this is a bad practice to implement __del__, but so far it is
-        ## not easy to have the process closed.
-        #self.release()
-
-    #def release(self):
-        ## we must call this function
-        #if self.prepare_processes:
-            #for p in self.prepare_processes:
-                #p.terminate()
-            #self.prepare_processes = None
-
-        #if self.shuffle_group_process:
-            #self.shuffle_group_process.terminate()
-            #self.shuffle_group_process = None
-
     def get_shufle_idx(self, n):
         g = torch.Generator()
         g.manual_seed(self.random_seed)
@@ -481,22 +443,16 @@ class SplitBySplitSampler(Sampler):
         self.random_seed += 99
         return random_idx
 
-    def get_group_index_on_node(self):
-        # there is no need to cache source_list as we only call this function
-        # once in the whole training life-time
-        start = time.time()
+    def get_group_index_on_node_random(self):
         idx_split = self.idx_split
-        if self.shuffle:
-            max_split = idx_split[:, 1].max() + 1
-            priority = self.get_shufle_idx(max_split)
 
-            random_idx = self.get_shufle_idx(len(idx_split))
-            idx_split = idx_split[random_idx]
+        max_split = idx_split[:, 1].max() + 1
+        priority = self.get_shufle_idx(max_split)
 
-            idx_split = torch.cat([idx_split[idx_split[:, 1] == p] for p in priority])
-        else:
-            if self.cache_group_index_on_node is not None:
-                return self.cache_group_index_on_node
+        random_idx = self.get_shufle_idx(len(idx_split))
+        idx_split = idx_split[random_idx]
+
+        idx_split = torch.cat([idx_split[idx_split[:, 1] == p] for p in priority])
 
         num_idx_on_node = (len(idx_split) + self.node_size - 1) // self.node_size
         offset = num_idx_on_node * self.node_idx
@@ -513,11 +469,24 @@ class SplitBySplitSampler(Sampler):
             }
             for s in unique_split_index
         ]
-        if not self.shuffle:
-            self.cache_group_index_on_node = result
-        cost = time.time() - start
-        logging.info('time to get group index on node: {}'.format(cost))
         return result
+
+    def get_group_index_on_node(self):
+        if self.shuffle and not self.fixed_samples_in_node:
+            return self.get_group_index_on_node_random()
+        elif self.shuffle and self.fixed_samples_in_node:
+            if self.cache_group_index_on_node is None:
+                self.cache_group_index_on_node = self.get_group_index_on_node_random()
+            idx = self.get_shufle_idx(len(self.cache_group_index_on_node))
+            group_in_node = [self.cache_group_index_on_node[i] for i in idx]
+            for g in group_in_node:
+                idx = self.get_shufle_idx(len(g['idx_in_group']))
+                g['idx_in_group'] = [g['idx_in_group'][i] for i in idx]
+            return group_in_node
+        else:
+            if self.cache_group_index_on_node is None:
+                self.cache_group_index_on_node = self.get_group_index_on_node_random()
+            return self.cache_group_index_on_node
 
     def get_next_group_index_on_node(self):
         if self.curr_group_buffers is None:
@@ -532,17 +501,17 @@ class SplitBySplitSampler(Sampler):
 
     def get_group_thread(self, q):
         while True:
-            if q.qsize() < 16:
+            if q.qsize() < 8:
                 g = self.get_next_group_index_on_node()
                 q.put(g)
             else:
                 time.sleep(1)
 
     def __iter__(self):
-        use_thread_to_get_group = False
+        use_thread_to_get_group = True
         if not use_thread_to_get_group:
             group_buffers = [self.get_next_group_index_on_node()
-                             for _ in range(2 * self.local_size)]
+                             for _ in range(4)]
             if self.local_rank == 0:
                 for g in group_buffers:
                     self.prepare(g['split_in_group'])
@@ -560,25 +529,28 @@ class SplitBySplitSampler(Sampler):
                 yield r
                 idx += self.local_size
         else:
-            # need an unprepare queue to unprepre the data as prepare process
-            # does not know when that split has already been consumed
             self.ensure_init_get_group_thread()
-            self.ensure_init_prepare()
+            group_buffers = [self.get_group_queue.get()
+                             for _ in range(4)]
+            if self.local_rank == 0:
+                for g in group_buffers:
+                    self.prepare(g['split_in_group'])
+            assert len(group_buffers) > 0
             idx = self.local_rank
-            g = {'idx_in_group': []}
             while True:
-                while idx >= len(g['idx_in_group']):
-                    idx -= len(g['idx_in_group'])
+                while idx >= len(group_buffers[0]['idx_in_group']):
+                    idx -= len(group_buffers[0]['idx_in_group'])
+                    group_buffers.pop(0)
                     start = time.time()
-                    g = self.get_group_queue.get()
-                    e = time.time() - start
-                    if e > 10:
-                        logging.info('takes {} to get group'.format(e))
-                    if idx < len(g['idx_in_group']):
-                        break
-                while idx < len(g['idx_in_group']):
-                    yield g['idx_in_group'][idx]
-                    idx += self.local_size
+                    new_g = self.get_group_queue.get()
+                    cost = time.time() - start
+                    logging.info('time to get group index on node: {}'.format(cost))
+                    if self.local_rank == 0:
+                        self.prepare(new_g['split_in_group'])
+                    group_buffers.append(new_g)
+                r = group_buffers[0]['idx_in_group'][idx]
+                yield r
+                idx += self.local_size
 
     def ensure_init_get_group_thread(self):
         if self.get_group_process is None:
@@ -594,20 +566,22 @@ class SplitBySplitSampler(Sampler):
             self.get_group_queue = q
 
     def ensure_init_prepare(self):
-        self.use_thread = True
         if self.prepare_files is None:
             self.prepare_files = self.get_composite_source_files()
         if self.prepare_process is None:
-            import threading
-            import queue
-            prepare_queue = queue.Queue()
-            p = threading.Thread(
-                target=prepare_tsv_file_process, args=(prepare_queue,),
-                daemon=True,
-            )
-            p.start()
+            max_len = 8 if not self.fixed_samples_in_node else 0
+            p, prepare_queue = create_prepare_tsv_file_process(
+                max_len=max_len)
             self.prepare_process = p
             self.prepare_queue = prepare_queue
+
+            if os.environ.get('QD_TSV_USE_FUSE') and \
+                    int(os.environ['QD_TSV_USE_FUSE']) and \
+                    not self.fixed_samples_in_node:
+                from qd.cloud_storage import create_cloud_fuse
+                fuser = create_cloud_fuse()
+                fuser.ensure_invoke_garbage_collect()
+                self.fuser = fuser
 
     def prepare(self, split):
         if self.disable_prepare:
@@ -623,21 +597,24 @@ class SplitBySplitSampler(Sampler):
         raise ValueError('should not be called')
 
 class AttachIterationNumberBatchSampler(object):
-    def __init__(self, batch_sampler, start_iter, num_iters):
+    def __init__(self, batch_sampler, start_iter, num_iters,
+                 gradient_accumulate=1):
         self.batch_sampler = batch_sampler
         self.curr_iter = start_iter
         self.max_iter = num_iters
+        self.gradient_accumulate = gradient_accumulate
 
     def __getattr__(self, att):
         return getattr(self.batch_sampler, att)
 
     def __iter__(self):
-        for batch in self.batch_sampler:
+        for idx_batch, batch in enumerate(self.batch_sampler):
             batch = [{'iteration': self.curr_iter,
                       'idx': i,
                       'max_iter': self.max_iter} for i in batch]
             yield batch
-            self.curr_iter += 1
+            if (idx_batch + 1) % self.gradient_accumulate == 0:
+                self.curr_iter += 1
 
     def __len__(self):
         return len(self.batch_sampler)
@@ -683,10 +660,6 @@ class BatchSampler(Sampler):
             raise ValueError("sampler should be an instance of "
                              "torch.utils.data.Sampler, but got sampler={}"
                              .format(sampler))
-        if not isinstance(batch_size, _int_classes) or isinstance(batch_size, bool) or \
-                batch_size <= 0:
-            raise ValueError("batch_size should be a positive integer value, "
-                             "but got batch_size={}".format(batch_size))
         if not isinstance(drop_last, bool):
             raise ValueError("drop_last should be a boolean value, but got "
                              "drop_last={}".format(drop_last))
@@ -744,6 +717,26 @@ class IterationBasedBatchSampler(BatchSampler):
 
     def __len__(self):
         return self.num_iterations
+
+class DynamicBatchSampler(BatchSampler):
+    def __init__(self, sampler, get_batch_size, start_iter=0):
+        self.sampler = sampler
+        self.get_batch_size = get_batch_size
+        self.start_iter = start_iter
+
+    def __iter__(self):
+        batch = []
+        batch_size = None
+        curr_iter = self.start_iter
+        for idx in self.sampler:
+            batch.append(idx)
+            if batch_size is None:
+                batch_size = self.get_batch_size(curr_iter)
+            if len(batch) == batch_size:
+                yield batch
+                batch_size = None
+                curr_iter += 1
+                batch = []
 
 class DistributedSampler(Sampler):
     """Sampler that restricts data loading to a subset of the dataset.

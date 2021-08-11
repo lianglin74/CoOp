@@ -1,11 +1,12 @@
 from qd.qd_common import execute_func
+from timm.data import create_transform
 import qd.data_layer.samplers as samplers
 from qd.torch_common import evaluate_topk
 from qd.tsv_io import reorder_tsv_keys
 from qd.process_tsv import delete_tsv_files
 from qd.process_tsv import concat_tsv_files
 from qd.qd_common import create_vis_net_file
-from qd.torch_common import recursive_to_device
+from qd.torch_common import recursive_to_device, recursive_tensor_to
 from qd.qd_common import save_parameters
 from qd.opt.trainer import do_train_dict
 import sys
@@ -75,7 +76,6 @@ from qd.torch_common import get_master_node_ip
 from qd.torch_common import get_aml_mpi_host_names
 from qd.torch_common import get_philly_mpi_hosts
 from qd.torch_common import torch_save, torch_load
-from qd.torch_common import freeze_parameters
 from qd.torch_common import init_random_seed
 from qd.torch_common import attach_module_name_
 from qd.layers.batch_norm import LayerBatchNorm
@@ -87,7 +87,6 @@ from qd.data_layer.samplers import AttachIterationNumberBatchSampler
 from qd.data_layer.transform import ImageCutout
 from qd.data_layer.transform import TwoCropsTransform, IoURandomResizedCrop
 from qd.data_layer.transform import TwoCropsTransformX
-from qd.torch_common import replace_module
 from qd.torch_common import InputAsDict
 import sys
 from datetime import datetime
@@ -124,10 +123,18 @@ class Config(object):
 
     def get(self, k):
         from qd.qd_common import dict_has_path, dict_get_path_value
-        if dict_has_path(self.overwrite, k):
-            return dict_get_path_value(self.overwrite, k)
         if dict_has_path(self.default, k):
-            return dict_get_path_value(self.default, k)
+            base = dict_get_path_value(self.default, k)
+        else:
+            base = None
+        if dict_has_path(self.overwrite, k):
+            over = dict_get_path_value(self.overwrite, k)
+            if isinstance(base, dict):
+                assert isinstance(over, dict)
+                base.update(over)
+            else:
+                base = over
+        return base
 
     def __getattr__(self, k):
         return self.get(k)
@@ -255,6 +262,7 @@ class UniPipeline(object):
     def max_iter(self):
         if self._max_iter is None:
             self._max_iter = self.parse_iter(self.cfg.max_iter)
+            logging.info('max iter = {}'.format(self._max_iter))
         return self._max_iter
 
     def get_len_dataset(self, is_train):
@@ -319,6 +327,9 @@ class UniPipeline(object):
 
         if self.cfg.crop_pct:
             cc.append('crpPct{}'.format(self.cfg.crop_pct))
+
+        if self.cfg.test_fp16:
+            cc.append('fp16')
 
     def get_model(self, is_train):
         model = self.get_raw_model(is_train)
@@ -453,6 +464,27 @@ class UniPipeline(object):
                 logging.info('overwrite self.c_bias_sigmoid_small'
                              'to {}'.format(self.c_bias_sigmoid_small))
             nn.init.constant_(fc.bias, -math.log(1. / self.c_bias_sigmoid_small - 1))
+        if self.cfg.use_delta_linear:
+            from qd.layers.delta_linear import DeltaLinear
+            model = replace_module(model,
+                                   lambda m: isinstance(m, nn.Linear),
+                                   lambda m: DeltaLinear(m.in_features,
+                                                         m.out_features, m.bias is not None),
+                                   )
+            # if we don't want this, add a paremter.
+            freezes = []
+            for n, m in model.named_parameters():
+                if not (n.endswith('.delta_w') or
+                        n.endswith('.delta_bias')):
+                    freezes.append(n)
+                    m.requires_grad = False
+            logging.info('freeze {}'.format('; '.join(freezes)))
+        if self.cfg.sam_strength and is_train:
+            from qd.layers.loss import SharpnessAwareMinimizeLoss
+            model = SharpnessAwareMinimizeLoss(
+                model,
+                self.cfg.sam_strength
+            )
         # assign a name to each module so that we can use it in each module to
         # print debug information
         attach_module_name_(model)
@@ -505,6 +537,7 @@ class UniPipeline(object):
                 group_size=self.cfg.splitbysplitsample_group_size,
                 prepare_t_versions=self.get_splitbysplit_sampler_prepare_t_versions(),
                 disable_prepare=self.cfg.disable_splitbysplit_prepare,
+                fixed_samples_in_node=self.cfg.fixed_samples_in_node,
             )
         elif is_train and self.cfg.sampler_type == 'ranksplit':
             from qd.data_layer.samplers import RankSplitSampler
@@ -518,7 +551,8 @@ class UniPipeline(object):
             sampler = samplers.DistributedSampler(
                 dataset,
                 shuffle=self.cfg.train_shuffle if is_train else False,
-                length_divisible=length_divisible)
+                length_divisible=length_divisible,
+            )
         return sampler
 
     def get_splitbysplit_sampler_prepare_t_versions(self):
@@ -619,10 +653,16 @@ class UniPipeline(object):
         root.setLevel(logging.INFO)
         root.addHandler(file_handle)
 
-        ch = logging.StreamHandler(stream=sys.stdout)
-        ch.setLevel(logging.INFO)
-        ch.setFormatter(logger_fmt)
-        root.addHandler(ch)
+        if self.mpi_rank == 0:
+            ch = logging.StreamHandler(stream=sys.stdout)
+            #if not self.cfg.disable_non_master_stdout_log or self.mpi_local_rank == 0:
+            level = logging.INFO
+            #else:
+                #level = logging.WARNING
+            logging.info(level)
+            ch.setLevel(level)
+            ch.setFormatter(logger_fmt)
+            root.addHandler(ch)
 
     def get_optimizer(self, model):
         parameters = get_parameter_groups_general(self, model)
@@ -1606,12 +1646,47 @@ def ensure_create_evaluate_meta_file(evaluate_file):
 
 from qd.data_layer.transform import BGR2RGB
 
+def get_transform_vilt(self, is_train):
+    from vilt.transforms import keys_to_transforms
+    trans_key = self.cfg.vilt_train_transform if is_train else self.cfg.vilt_test_transform
+    crop_size = (self.cfg.train_crop_size if is_train else self.cfg.test_crop_size)
+    if trans_key in ['pixelbert', 'pixelbert_randaug']:
+        transform = keys_to_transforms(
+            [trans_key],
+            size=crop_size,
+        )[0]
+    elif trans_key == 'jpg_randaug':
+        from vilt.transforms.utils import (
+            inception_normalize,
+            MinMaxResize,
+        )
+        from vilt.transforms.randaug import RandAugment
+        longer = int((1333 / 800) * crop_size)
+        from qd.data_layer.transform import JPGEncodeDecode
+        transform = transforms.Compose(
+            [
+                JPGEncodeDecode(quality_min=self.cfg.aug_jpg_quality_min),
+                RandAugment(2, 9),
+                MinMaxResize(shorter=crop_size, longer=longer),
+                transforms.ToTensor(),
+                inception_normalize,
+            ]
+        )
+    else:
+        raise NotImplementedError
+    return transform
+
 def get_transform_image(self, is_train):
     # used by cls_uni_pipeline and caption_uni_pipeline (image encoder)
     train_transform = self.cfg.train_transform
     if train_transform == 'vit':
         # timm style
-        transform = get_transform_vit_default(self, is_train=is_train)
+        transform = get_transform_vit_default(
+            self, is_train=is_train, backend='cv')
+    elif train_transform == 'vitp':
+        # timm style, tend to use pil as backend as a standard way
+        transform = get_transform_vit_default(
+            self, is_train=is_train, backend='pil')
     elif train_transform == 'deit':
         transform = get_transform_deit_default(self, is_train=is_train)
     elif train_transform == 'inception':
@@ -1619,9 +1694,55 @@ def get_transform_image(self, is_train):
     elif train_transform == 'rand_cut':
         transform = get_transform_rand_cut(self, is_train)
         assert self.cfg.test_respect_ratio_max is None
+    elif train_transform == 'swin':
+        transform = get_transform_swin(self, is_train)
+    elif train_transform == 'vilt':
+        transform = get_transform_vilt(self, is_train)
     else:
         raise NotImplementedError(train_transform)
     return transform
+
+def get_transform_swin(self, is_train):
+    image_size = self.cfg.train_crop_size if is_train else self.cfg.test_crop_size
+    resize_im = image_size > 32
+    if is_train:
+        # this should always dispatch to transforms_imagenet_train
+        transform = create_transform(
+            input_size=image_size,
+            is_training=True,
+            color_jitter=0.4, # default parameters in swin
+            auto_augment='rand-m9-mstd0.5-inc1',
+            re_prob=0.25,
+            re_mode='pixel',
+            re_count=1,
+            interpolation='bicubic',
+        )
+        if not resize_im:
+            # replace RandomResizedCropAndInterpolation with
+            # RandomCrop
+            transform.transforms[0] = transforms.RandomCrop(image_size, padding=4)
+        return transform
+
+    t = []
+    if resize_im:
+        if True:
+            size = int((256 / 224) * image_size)
+            from timm.data.transforms import _pil_interp
+            t.append(
+                transforms.Resize(size, interpolation=_pil_interp('bicubic')),
+                # to maintain same ratio w.r.t. 224 images
+            )
+            t.append(transforms.CenterCrop(image_size))
+        else:
+            t.append(
+                transforms.Resize((image_size, image_size),
+                                  interpolation=_pil_interp('bicubic'))
+            )
+
+    t.append(transforms.ToTensor())
+    from timm.data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
+    t.append(transforms.Normalize(IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD))
+    return transforms.Compose(t)
 
 def get_transform_image_norm(self):
     if self.cfg.data_normalize is None:
@@ -1647,6 +1768,7 @@ def get_transform_deit_default(self, is_train):
         if self.cfg.test_respect_ratio_max:
             from qd.data_layer.transform import MinMaxResizeForTest
             trans.extend([
+                # by default, it is bicubic interpolation
                 MinMaxResizeForTest(self.cfg.test_crop_size, self.cfg.test_respect_ratio_max)
             ])
         else:
@@ -1660,7 +1782,6 @@ def get_transform_deit_default(self, is_train):
         ])
         transform = transforms.Compose(trans)
     else:
-        from timm.data import create_transform
         scale = None
         if self.cfg.input_small_scale is not None:
             scale = (self.cfg.input_small_scale, 1.)
@@ -1684,13 +1805,14 @@ def get_transform_deit_default(self, is_train):
         )
     return transform
 
-def get_transform_vit_default(self, is_train):
-    normalize = get_transform_image_norm(self)
+def get_transform_vit_default(self, is_train, backend='cv'):
+    normalize = transforms.Normalize(
+        mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
     if not is_train:
-        trans = [
-            BGR2RGB(),
-            transforms.ToPILImage(),
-        ]
+        if backend == 'cv':
+            trans = [BGR2RGB(), transforms.ToPILImage()]
+        else:
+            trans = []
         if self.cfg.test_respect_ratio_max:
             from qd.data_layer.transform import MinMaxResizeForTest
             trans.extend([
@@ -1718,6 +1840,7 @@ def get_transform_vit_default(self, is_train):
             no_aspect_dist=self.cfg.no_aspect_dist,
             resize_crop=self.cfg.resize_crop,
             max_size=self.cfg.train_max_size,
+            backend=backend,
         )
     return transform
 
@@ -1888,6 +2011,9 @@ def get_cls_criterion(self):
                 no_reg=self.cfg.no_reg,
                 sep=self.cfg.sep,
             )
+        elif self.cfg.loss_type == 'balanced_kl_ce':
+            from qd.layers.loss import BalancedKLCrossEntropyLoss
+            criterion = BalancedKLCrossEntropyLoss()
         else:
             criterion = nn.CrossEntropyLoss().cuda()
     elif self.cfg.dataset_type in ['soft_assign']:
@@ -1910,6 +2036,33 @@ def get_cls_criterion(self):
         raise NotImplementedError
     return criterion
 
+def get_raw_swin_model(self, is_train):
+    image_size = self.cfg.train_crop_size if is_train else self.cfg.test_crop_size
+    from qd.layers.swin_transformer import SwinTransformer
+    # the following parameters is swin_base_patch4_window7_224
+    model = SwinTransformer(img_size=image_size,
+                            patch_size=4,
+                            in_chans=3,
+                            num_classes=len(self.get_labelmap()),
+                            embed_dim=128,
+                            depths=[2, 2, 18, 2],
+                            num_heads=[4, 8, 16, 32],
+                            window_size=7,
+                            mlp_ratio=4.,
+                            qkv_bias=True,
+                            qk_scale=None,
+                            drop_rate=0.,
+                            drop_path_rate=0.5,
+                            ape=False,
+                            patch_norm=True,
+                            use_checkpoint=False)
+    if is_train:
+        criterion = get_cls_criterion(self)
+        model = ModelLoss(model, criterion)
+    else:
+        model = InputAsDict(model)
+    return model
+
 def get_raw_timm_model(self, is_train):
     net = self.cfg.net[5:]
     import timm
@@ -1929,6 +2082,7 @@ def get_raw_timm_model(self, is_train):
     for k, v in cfg_to_kwargs:
         if self.cfg.get(k):
             kwargs[v] = self.cfg.get(k)
+    kwargs['num_classes'] = len(self.get_labelmap())
     logging.info(pformat(kwargs))
     model = timm.create_model(
         net,
@@ -1944,6 +2098,17 @@ def get_raw_timm_model(self, is_train):
 
 def get_parameter_groups_general(self, model):
     params = []
+    name_to_module = dict(model.named_modules())
+
+    def guess_module_type(param_name, name_to_module, t):
+        candidates = [(n, len(n)) for n in name_to_module if param_name.startswith(n + '.')]
+        if len(candidates) > 0:
+            i = max(list(range(len(candidates))), key=lambda i: candidates[i][1])
+            module = name_to_module[candidates[i][0]]
+            return isinstance(module, t)
+        else:
+            return False
+
     for key, value in model.named_parameters():
         if not value.requires_grad:
             continue
@@ -1951,7 +2116,8 @@ def get_parameter_groups_general(self, model):
         lr = self.cfg.base_lr
         if self.cfg.bias_no_weight_decay and "bias" in key:
             weight_decay = 0.
-        if self.cfg.ln_no_weight_decay and 'LayerNorm.weight' in key:
+        if self.cfg.ln_no_weight_decay and (
+            'LayerNorm.weight' in key or guess_module_type(key, name_to_module, torch.nn.LayerNorm)):
             weight_decay = 0
         if self.cfg.conv_no_weight_decay and key.endswith('conv.weight'):
             weight_decay = 0.
@@ -1962,6 +2128,8 @@ def get_parameter_groups_general(self, model):
         if self.cfg.lr_mult_classifier and '.classifier.' in key:
             # in vqa fine-tuning
             lr *= self.cfg.lr_mult_classifier
+        if self.cfg.lr_mult_head and '.head.' in key:
+            lr *= self.cfg.lr_mult_head
         params.append({
             'weight_decay': weight_decay,
             'lr': lr,
@@ -2060,6 +2228,9 @@ def get_image_encoder(self, is_train, hidden_size):
             })
         else:
             raise NotImplementedError
+    elif encoder_type == 'vilt':
+        from qd.layers.clip_encoder_from_vilt_transformer import ClipImageEncoderViLTransformerSS
+        return ClipImageEncoderViLTransformerSS(self.get_vilt_config())
     elif encoder_type.startswith('timm_'):
         net = encoder_type[5:]
         return execute_func({
@@ -2099,6 +2270,38 @@ def update_joint_encoder_config(config, cfg):
             config.norm_after = cfg.norm_after
         if cfg.attention_type:
             config.timm_param['attention_type'] = cfg.attention_type
+    if cfg.max_position_embeddings is not None:
+        config.max_position_embeddings = cfg.max_position_embeddings
+    config.add_img_text_type_encoding = cfg.add_img_text_type_encoding
+
+class VitModelImagePatchEncoder(nn.Module):
+    def __init__(self, vit_model):
+        super().__init__()
+        self.module = vit_model
+
+    def forward(self, data_dict):
+        if isinstance(data_dict, torch.Tensor):
+            im = data_dict
+            data_dict = {}
+        else:
+            im = data_dict['image']
+        #if self.module.sample_style is None:
+            #x = self.module.rect_patch_embed(im)
+            #data_dict['img_feats'] = x
+        #else:
+        #assert self.module.sample_style == 'vilt'
+        if self.training:
+            max_image_len = self.module.sample_token
+        else:
+            max_image_len = -1
+        x, x_mask, patch_index, label = self.module.visual_embed(
+            im, max_image_len=max_image_len, mask_it=False,
+        )
+        data_dict.update({
+            'img_feats': x,
+            'img_mask': x_mask,
+        })
+        return data_dict
 
 def get_image_encoder_model(self, is_train):
     if self.cfg.image_encoder_type.startswith('timm_'):
@@ -2132,7 +2335,10 @@ def get_image_encoder_model(self, is_train):
         if not is_train:
             model.eval()
         from qd.torch_common import InputAsDict
-        model = InputAsDict(model)
+        if not self.cfg.image_encoder_return_mask:
+            model = InputAsDict(model)
+        else:
+            model = VitModelImagePatchEncoder(model)
     elif self.cfg.image_encoder_type.startswith('EmbCLIPViT_B_32'):
         input_resolution = (self.cfg.train_crop_size if is_train else
                             self.cfg.test_crop_size)
@@ -2264,7 +2470,9 @@ def evaluate_acc_vqa(self, predict_file, evaluate_file):
     dataset = TSVDataset(self.cfg.test_data)
     all_qa = [json.loads(s_cap) for key, s_cap in dataset.iter_data(
         self.cfg.test_split,
-        'caption')]
+        'caption',
+        version=self.cfg.test_version,
+    )]
     num_caps = [len(qa) for qa in all_qa]
     caption_linelist = [(idx_img, idx_cap) for idx_img, n in enumerate(num_caps) for idx_cap in range(n)]
     correctness = []
@@ -2286,3 +2494,4 @@ def evaluate_acc_vqa(self, predict_file, evaluate_file):
     from qd.qd_common import write_to_yaml_file
     logging.info(acc)
     write_to_yaml_file({'acc': float(acc)}, evaluate_file)
+

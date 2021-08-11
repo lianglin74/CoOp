@@ -27,6 +27,25 @@ from qd.pipelines.uni_pipeline import UniPipeline
 from torch import nn
 
 
+def convert_vit_det_model_to_caption(det_model, cap_model):
+    # if the vit is the backbone of the detector, and we'd like to use it for
+    # captioning model, ViLT like. We can use this function to convert it
+    # before doing the initialization
+    cls_model = torch_load(det_model)
+    model = cls_model['model']
+
+    prefix = 'module.backbone.module.'
+    out = {}
+    for k, v in model.items():
+        while k.startswith(prefix):
+            k = k[len(prefix):]
+            if k.startswith('blocks.'):
+                k = 'module.bert.encoder.' + k
+            else:
+                k = 'image_encoder.module.' + k
+            out[k] = v
+    torch_save(out, cap_model)
+
 def convert_vit_cls_model_to_caption(cls_model, cap_model):
     # this function is used to convert cls_uni_pipeline model to captioning
     # model where there is no seperate image encoder, so that we can load this
@@ -39,7 +58,7 @@ def convert_vit_cls_model_to_caption(cls_model, cap_model):
     for k, v in model.items():
         while k.startswith(prefix):
             k = k[len(prefix):]
-        if k.startswith('blocks.'):
+        if k.startswith('blocks.') or k.startswith('norm.'):
             k = 'module.bert.encoder.' + k
         else:
             k = 'image_encoder.module.' + k
@@ -85,6 +104,7 @@ class ImageCaptioning(nn.Module):
         self.iter = 0
         self.test_extra_input = test_extra_input
         self.image_encoder = image_encoder
+        self.freeze_image_encoder = cfg.freeze_image_encoder
         self.cfg = cfg
         if cfg.pert_img_prob is not None and cfg.pert_img_prob > 0:
             # we need an image text matching loss on the pooled output
@@ -104,6 +124,8 @@ class ImageCaptioning(nn.Module):
         num_token = input_ids.shape[-1]
         device = input_ids.device
         top_right = torch.ones((batch_size, num_token, num_img_feats), device=device)
+        if self.cfg.image_encoder_return_mask:
+            top_right = top_right * data['img_mask'][:, None, :]
         if self.cfg.mask_type == 'seqbid':
             mask_type = data.pop('mask_type')
             bottom_left = torch.ones((batch_size, num_img_feats, num_token), device=device)
@@ -118,6 +140,9 @@ class ImageCaptioning(nn.Module):
                 attention_mask = attention_mask.unsqueeze(dim=1)
                 attention_mask = attention_mask.expand(batch_size, num_token, num_token)
         bottom_right = torch.ones((batch_size, num_img_feats, num_img_feats), device=device)
+        if self.cfg.image_encoder_return_mask:
+            bottom_right = bottom_right * data['img_mask'][:, None, :]
+            del data['img_mask']
         bottom = torch.cat((bottom_left, bottom_right), dim=2)
 
         top = torch.cat((attention_mask, top_right), dim=2)
@@ -127,10 +152,21 @@ class ImageCaptioning(nn.Module):
     def forward(self, data):
         data = dict(data.items())
         # this is required in test, but not in train
-        data.pop('key')
+        for k in ['key', 'question_id', 'idx']:
+            if k in data:
+                data.pop(k)
         if self.image_encoder:
             assert 'img_feats' not in data
-            data['img_feats'] = self.image_encoder(data.pop('image'))
+            if self.freeze_image_encoder:
+                assert not self.cfg.image_encoder_return_mask
+                self.image_encoder.eval()
+                with torch.no_grad():
+                    data['img_feats'] = self.image_encoder(data.pop('image'))
+            else:
+                if self.cfg.image_encoder_return_mask:
+                    data.update(self.image_encoder(data.pop('image')))
+                else:
+                    data['img_feats'] = self.image_encoder(data.pop('image'))
             self.construct_attn_mask(data)
             #from qd.tsv_io import TSVDataset
             #dataset = TSVDataset('TaxCocoCaption')
@@ -180,7 +216,6 @@ class ImageCaptioning(nn.Module):
         logits = self.seq_relationship(result['pooled_output'])
         return torch.nn.functional.binary_cross_entropy_with_logits(
             logits, matched.float().reshape(logits.shape))
-
 
 def pert_collate_fn(batch, prob):
     batch = collate_fn(batch)
@@ -246,23 +281,26 @@ class CaptionUniPipeline(UniPipeline):
         self._test_caption_tensorizer = None
         self._train_caption_tensorizer = None
 
-        if self.cfg.pad_to_max:
-            from torch.utils.data.dataloader import default_collate
-            self.train_collate_fn = default_collate
-            self.test_collate_fn = default_collate
-        else:
-            if self.cfg.pert_img_prob is not None:
-                self.train_collate_fn = \
-                    lambda x: pert_collate_fn(x, self.cfg.pert_img_prob)
-            else:
-                self.train_collate_fn = collate_fn
-            self.test_collate_fn = collate_fn
-
         max_seq_length = self.cfg.max_seq_length
         if not self.cfg.add_od_labels:
             assert self.cfg.max_seq_a_length == max_seq_length
         else:
             assert self.cfg.max_seq_a_length == 40
+
+    def get_collate_fn(self, is_train):
+        if self.cfg.pad_to_max:
+            #from torch.utils.data.dataloader import default_collate
+            # image may not be padded to the same dimension.
+            #return default_collate
+            return collate_fn
+        else:
+            if self.cfg.pert_img_prob is not None:
+                if is_train:
+                    return lambda x: pert_collate_fn(x, self.cfg.pert_img_prob)
+                else:
+                    return collate_fn
+            else:
+                return collate_fn
 
     def get_len_dataset(self, is_train):
         if is_train:
@@ -310,7 +348,15 @@ class CaptionUniPipeline(UniPipeline):
         else:
             # load image and we will extract the features online. This is mainly
             # used for end-to-end training or inference.
-            image_loader = LoadImage(data, split)
+            hold_buffer = 0
+            if is_train and self.cfg.sampler_type == 'splitBysplit':
+                # 1 is good enough
+                hold_buffer = 3
+            backend = 'cv'
+            if self.cfg.train_transform == 'vilt':
+                backend = 'pil'
+            image_loader = LoadImage(data, split, hold_buffer=hold_buffer,
+                                     backend=backend)
             from qd.pipelines.uni_pipeline import get_transform_image
             image_transform = get_transform_image(self, is_train)
             from qd.data_layer.transform import ImageTransform2Dict
@@ -340,7 +386,7 @@ class CaptionUniPipeline(UniPipeline):
             self.cfg.od_label_conf,
             label_sort_by_conf=not self.cfg.no_sort_by_conf,
             unique_labels_on=self.cfg.unique_labels_on,
-            qa2caption=None,
+            qa2caption=self.cfg.qa2caption,
             sep_token=self.tokenizer.sep_token,
         )
         all_trans.append(text_ab)
@@ -419,10 +465,8 @@ class CaptionUniPipeline(UniPipeline):
             num_labels=2,
             finetuning_task='image_captioning',
         )
-        if 'vit' in self.cfg.text_encoder_type:
-            # this is just to make sure we are using the right variables for
-            # vit model
-            assert self.cfg.drop_out == 0
+        from qd.pipelines.uni_pipeline import update_joint_encoder_config
+        update_joint_encoder_config(config, self.cfg)
         config.img_feature_type = 'frcnn'
         config.hidden_dropout_prob = self.cfg.drop_out
         config.loss_type = 'classification'
@@ -444,6 +488,9 @@ class CaptionUniPipeline(UniPipeline):
         image_encoder = None
         if self.cfg.max_img_seq_length == 0:
             image_encoder = self.get_image_encoder(is_train)
+            if is_train and self.cfg.freeze_image_encoder:
+                from qd.torch_common import freeze_parameters
+                freeze_parameters(image_encoder)
 
         if is_train:
             model = ImageCaptioning(model, image_encoder=image_encoder,
@@ -488,7 +535,8 @@ class CaptionUniPipeline(UniPipeline):
         return model
 
     def get_image_encoder(self, is_train):
-        return get_caption_image_encoder(self, is_train)
+        from qd.pipelines.uni_pipeline import get_image_encoder_model
+        return get_image_encoder_model(self, is_train)
 
     def predict_output_to_tsv_row(self, data, output):
         all_caps = output[0]  # batch_size * num_keep_best * max_len
@@ -528,44 +576,52 @@ class CaptionUniPipeline(UniPipeline):
             self._tokenizer = tokenizer
         return self._tokenizer
 
+    def get_tensorizer(self, is_train):
+        if is_train:
+            if self._train_caption_tensorizer is None:
+                from qd.mask.data.datasets.caption_tensorizer import CaptionTensorizer
+                caption_tensorizer = CaptionTensorizer(
+                    self.tokenizer,
+                    max_img_seq_length=self.cfg.max_img_seq_length,
+                    max_seq_length=self.cfg.max_seq_length,
+                    max_seq_a_length=self.cfg.max_seq_a_length,
+                    mask_prob=self.cfg.mask_prob,
+                    max_masked_tokens=self.cfg.max_masked_tokens,
+                    mask_type=self.cfg.mask_type,
+                    is_train=True,
+                    mask_b=False,
+                    replace_by_mask_prob=self.cfg.replace_by_mask_prob,
+                    replace_by_rand_prob=self.cfg.replace_by_rand_prob,
+                    output_isvalid=self.cfg.output_isvalid,
+                    mask_token_by_word_in_train=self.cfg.mask_token_by_word_in_train
+                )
+                self._train_caption_tensorizer = caption_tensorizer
+            return self._train_caption_tensorizer
+        else:
+            if self._test_caption_tensorizer is None:
+                max_seq_length = self.cfg.max_seq_length if self.cfg.add_od_labels else self.cfg.max_gen_length
+                max_od_labels_len = self.cfg.max_seq_length - self.cfg.max_seq_a_length
+                max_seq_length = self.cfg.max_gen_length + max_od_labels_len
+                from qd.mask.data.datasets.caption_tensorizer import CaptionTensorizer
+                caption_tensorizer = CaptionTensorizer(
+                    self.tokenizer,
+                    max_img_seq_length=self.cfg.max_img_seq_length,
+                    max_seq_length=max_seq_length,
+                    max_seq_a_length=self.cfg.max_gen_length,
+                    is_train=False,
+                )
+                self._test_caption_tensorizer = caption_tensorizer
+            return self._test_caption_tensorizer
+
+
     @property
     def train_caption_tensorizer(self):
-        if self._train_caption_tensorizer is None:
-            from qd.mask.data.datasets.caption_tensorizer import CaptionTensorizer
-            caption_tensorizer = CaptionTensorizer(
-                self.tokenizer,
-                max_img_seq_length=self.cfg.max_img_seq_length,
-                max_seq_length=self.cfg.max_seq_length,
-                max_seq_a_length=self.cfg.max_seq_a_length,
-                mask_prob=self.cfg.mask_prob,
-                max_masked_tokens=self.cfg.max_masked_tokens,
-                mask_type=self.cfg.mask_type,
-                is_train=True,
-                mask_b=False,
-                replace_by_mask_prob=self.cfg.replace_by_mask_prob,
-                replace_by_rand_prob=self.cfg.replace_by_rand_prob,
-                output_isvalid=self.cfg.output_isvalid,
-                mask_token_by_word_in_train=self.cfg.mask_token_by_word_in_train
-            )
-            self._train_caption_tensorizer = caption_tensorizer
-        return self._train_caption_tensorizer
+        return self.get_tensorizer(is_train=True)
 
     @property
     def test_caption_tensorizer(self):
-        if self._test_caption_tensorizer is None:
-            max_seq_length = self.cfg.max_seq_length if self.cfg.add_od_labels else self.cfg.max_gen_length
-            max_od_labels_len = self.cfg.max_seq_length - self.cfg.max_seq_a_length
-            max_seq_length = self.cfg.max_gen_length + max_od_labels_len
-            from qd.mask.data.datasets.caption_tensorizer import CaptionTensorizer
-            caption_tensorizer = CaptionTensorizer(
-                self.tokenizer,
-                max_img_seq_length=self.cfg.max_img_seq_length,
-                max_seq_length=max_seq_length,
-                max_seq_a_length=self.cfg.max_gen_length,
-                is_train=False,
-            )
-            self._test_caption_tensorizer = caption_tensorizer
-        return self._test_caption_tensorizer
+        return self.get_tensorizer(is_train=False)
+
 
     def append_predict_param(self, cc):
         super().append_predict_param(cc)
@@ -575,6 +631,17 @@ class CaptionUniPipeline(UniPipeline):
             # is no need to specify it here
             cc.append('image_region{}'.format(self.cfg.max_img_seq_length))
 
-def get_caption_image_encoder(self, is_train):
-    from qd.pipelines.uni_pipeline import get_image_encoder_model
-    return get_image_encoder_model(self, is_train)
+    #def get_fuse_cache_files(self):
+        #data = self.cfg.data
+        #split = 'train'
+        #max_img_seq_len = self.cfg.max_img_seq_length
+        #load_feature = max_img_seq_len > 0
+        #need_data = []
+        #need_data.append((data, split, 'hw', None))
+        #need_data.append((data, split, 'caption', None))
+        #if not load_feature:
+            #need_data.append((data, split, None, None))
+        #from qd.tsv_io import get_all_associate_files
+        #files = get_all_associate_files(need_data)
+        #return list(set(files))
+

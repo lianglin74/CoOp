@@ -9,6 +9,7 @@ from qd.tsv_io import TSVSplitProperty
 from qd.logger import MetricLogger
 from qd.logger import SmoothedValue
 from torchvision.transforms import transforms
+import copy
 
 
 class DatasetPlusTransform(Dataset):
@@ -200,3 +201,60 @@ class CaptionIdxTSVDataset(object):
     def __len__(self):
         return len(self.k_img_cap)
 
+class EnumerateCaptionIdxTSVDataset(object):
+    def __init__(self, data, split, caption_version):
+        self.data = data
+        self.split = split
+        self.caption_version = caption_version
+        self.num_image = len(TSVSplitProperty(data, split))
+        self.k_img_cap = TSVSplitProperty(
+            data, split, 'key_idximage_idxcaption',
+            version=caption_version,
+        )
+
+    def __getitem__(self, idx_img_idx_cap):
+        if isinstance(idx_img_idx_cap, int):
+            idx = idx_img_idx_cap % len(self.k_img_cap)
+            idx_query_img = idx_img_idx_cap // len(self.k_img_cap)
+            key, idx_img, idx_cap = self.k_img_cap[idx]
+            data = {
+                'idx': idx_img_idx_cap,
+                'idx_query_cap': idx,
+                'idx_img': int(idx_img),
+                'idx_cap': int(idx_cap),
+                'idx_query_img': idx_query_img,
+                'key': key,
+                'dataset': self,
+            }
+        else:
+            idx = idx_img_idx_cap['idx'] % len(self.k_img_cap)
+            idx_query_img =  idx_img_idx_cap['idx'] // len(self.k_img_cap)
+            key, idx_img, idx_cap = self.k_img_cap[idx]
+            extra_data = {
+                'idx_img': int(idx_img),
+                'idx_cap': int(idx_cap),
+                'key': key,
+                'dataset': self,
+                'idx_query_cap': idx,
+                'idx_query_img': idx_query_img,
+            }
+            data = copy.deepcopy(idx_img_idx_cap)
+            for k in extra_data:
+                assert k not in data
+            data.update(extra_data)
+        return data
+
+    def get_keys(self):
+        # this function is used in prediction for re-ordering the prediction
+        # files in each rank. In test phase, if we use this dataset, the
+        # prediction should return the index as the key
+        l = len(self)
+        return list(map(str, range(l)))
+
+    def __repr__(self):
+        return 'EnumerateCaptionIdxTSVDataset(data={}, split={}, caption_version={})'.format(
+            self.data, self.split, self.caption_version
+        )
+
+    def __len__(self):
+        return len(self.k_img_cap) * self.num_image

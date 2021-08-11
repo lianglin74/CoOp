@@ -28,7 +28,9 @@ def create_feature_loader(fname, batch_size=16):
 def create_data_loader(dataset,
                        transform,
                        batch_size=16,
-                       num_workers=8):
+                       num_workers=8,
+                       collate_fn=None,
+                       ):
     dataset = DatasetPlusTransform(dataset, transform)
     sampler = OrderedSplitSampler(len(dataset))
     loader = torch.utils.data.DataLoader(
@@ -36,10 +38,26 @@ def create_data_loader(dataset,
         batch_size=batch_size,
         num_workers=num_workers,
         sampler=sampler,
+        collate_fn=collate_fn,
     )
     return loader
 
+def iter_data_loader(data, split, t=None, version=None,
+                     transform=None,
+                     num_workers=8,
+        ):
+    from qd.tsv_io import TSVSplitProperty
+    ds = TSVSplitProperty(data, split, t, version)
+    data_loader = create_data_loader(ds, transform,
+                                     collate_fn=lambda x: x,
+                                     num_workers=num_workers,
+                                     )
+    for ds in data_loader:
+        for d in ds:
+            yield d
+
 class AsynchronousLoader(object):
+    # based on https://github.com/HenryJia/Lighter/blob/master/lighter/train/loaders.py
     def __init__(self, dataloader, device='cuda', queue_size=2):
         self.device = device
         self.queue_size = queue_size
@@ -69,7 +87,7 @@ class AsynchronousLoader(object):
         assert self.idx == 0, 'idx must be 0 at the beginning of __iter__. Are you trying to run the same instance more than once in parallel?'
         self.idx = 0
         self.worker = Thread(target=self.load_loop)
-        #self.worker.setDaemon(True)
+        self.worker.setDaemon(True)
         self.worker.start()
         return self
 
