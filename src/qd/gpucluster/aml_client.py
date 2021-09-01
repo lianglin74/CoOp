@@ -335,6 +335,7 @@ class AMLClient(object):
         self.gpu_set_by_client = ('num_gpu' in kwargs)
         self.num_gpu = kwargs.get('num_gpu', self.gpu_per_node)
         self.docker = docker
+        self.elastic_num_gpu = kwargs.get('elastic_num_gpu')
 
         self.config_param = {p: {'azure_blob_config_file': azure_blob_config_file,
                                  'path': v,
@@ -362,6 +363,7 @@ class AMLClient(object):
                             v['file_share'])
                 else:
                     raise NotImplementedError()
+                v['datastore_name'] = v['datastore_name'].replace('-', '_')
 
         import copy
         self.env = {} if env is None else copy.deepcopy(env)
@@ -695,7 +697,7 @@ class AMLClient(object):
         local2docker = {}
         script_params = {}
         for k in self.config_param:
-            if k.endswith('_folder'):
+            if k.endswith('_folder') and False:
                 local_folder = k[:-len('_folder')]
                 local_folder = op.realpath(local_folder)
                 if op.isdir(local_folder):
@@ -726,6 +728,9 @@ class AMLClient(object):
             cmd_list.append('--env')
             cmd_list.append('{}={}'.format(k, v))
         cmd_list.append(self.docker['image'])
+        cmd_list.extend(['mpirun', '-n', '1',
+                         '--allow-run-as-root',
+                         ])
         cmd_list.extend([interpreter_path, op.join(docker_source_directory, self.entry_script)])
         cmd_list.extend([k for kv in script_params.items() for k in kv])
         cmd_run(cmd_list)
@@ -836,6 +841,11 @@ class AMLClient(object):
                 k8s['ssh_public_key'] = read_to_buffer(
                     id_rsa).decode()
             k8s['preemption_allowed'] = self.preemption_allowed
+            if self.elastic_num_gpu is not None:
+                assert self.elastic_num_gpu[0] == num_gpu
+                k8s['node_count_set'] = [n // self.gpu_per_node for n in self.elastic_num_gpu]
+                k8s['scale_up_interval'] = 3600 * 8
+
             k8sconfig.configuration = k8s
             estimator10.run_config.cmk8scompute = k8sconfig
 
@@ -1038,6 +1048,9 @@ def retriable_error_codes():
         'init',
         'blobIO',
         'NoSpace',
+        'NCCLTimeout',
+        'NCCLSocket',
+        'IBVModifyQP',
     ]
 
 @try_once
@@ -1052,6 +1065,7 @@ def detect_aml_error_message(app_id):
     folder = folders[0]
     has_nvidia_smi = False
     num_waiting = 0
+    num_full_gpu = 0
     from collections import defaultdict
     printed = defaultdict(int)
     for r, _, files in os.walk(folder):
@@ -1148,6 +1162,21 @@ def detect_aml_error_message(app_id):
                     error_codes.add('NoSpace')
                 if 'RuntimeError: DataLoader worker' in line:
                     error_codes.add('Loader')
+                if 'Watchdog caught collective operation timeout' in line:
+                    error_codes.add('NCCLTimeout')
+                if "'gpu_util': " in line:
+                    full_gpu = line.count("'gpu_util': 100")
+                    gpu = line.count('gpu_util')
+                    if gpu == full_gpu:
+                        num_full_gpu += 1
+                    else:
+                        num_full_gpu = 0
+                    if num_full_gpu > 128:
+                        error_codes.add('Hang')
+                if 'ncclSystemError: System call (socket, malloc, munmap, etc) failed' in line:
+                    error_codes.add('NCCLSocket')
+                if 'NCCL WARN Call to ibv_modify_qp failed with error Invalid argument' in line:
+                    error_codes.add('IBVModifyQP')
             # check how many gpus by nvidia-smi
             import re
             num_gpu = len([line for line in all_line if re.match('.*N/A.*Default', line) is
@@ -1384,7 +1413,8 @@ def execute(task_type, **kwargs):
             for run_id in run_ids:
                 m.inject(run_id)
     elif task_type in ['parse']:
-        detect_aml_error_message(kwargs.get('remainders')[0])
+        codes = detect_aml_error_message(kwargs.get('remainders')[0])
+        logging.info('error code = {}'.format(', '.join(codes)))
     else:
         assert 'Unknown {}'.format(task_type)
 
