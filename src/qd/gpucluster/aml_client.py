@@ -752,16 +752,15 @@ class AMLClient(object):
 
         from azureml.train.estimator import Estimator
         from azureml.train.dnn import PyTorch
-        if self.aks_compute_global_dispatch:
-            #from azureml.core import Environment
-            #env = Environment('myenv')
-            import azureml
-            env = azureml.core.runconfig.EnvironmentDefinition()
-        else:
-            import azureml
-            env = azureml.core.runconfig.EnvironmentDefinition()
+        import azureml
+        env = azureml.core.runconfig.EnvironmentDefinition()
         env.docker.enabled = True
         env.docker.base_image = self.docker['image']
+        if 'address' in self.docker:
+            env.docker.base_image_registry.address = self.docker['address']
+        if 'username' in self.docker:
+            env.docker.base_image_registry.username = self.docker['username']
+            env.docker.base_image_registry.password = self.docker['password']
         env.docker.shm_size = '1024g'
         env.python.interpreter_path = '/opt/conda/bin/python'
         env.python.user_managed_dependencies = True
